@@ -1,12 +1,23 @@
-import { useRef, useState, useEffect } from 'react';
-import useCanvas from '../lib/useCanvas';
+import { useRef, useState, useEffect } from "react";
+import useCanvas from "../lib/useCanvas";
 
-export default function RightPanel({ layers, canvasW, canvasH, patternInstancesRef, canvasContainerRef }) {
+export default function RightPanel({
+  layers,
+  canvasW,
+  canvasH,
+  patternInstancesRef,
+  canvasContainerRef,
+}) {
   const containerRef = useRef(null);
   const wrapperRef = useRef(null);
   const [scale, setScale] = useState(1);
 
-  const { patternInstances } = useCanvas(containerRef, layers, canvasW, canvasH);
+  const { patternInstances } = useCanvas(
+    containerRef,
+    layers,
+    canvasW,
+    canvasH
+  );
 
   // Expose pattern instances to parent for SVG export
   useEffect(() => {
@@ -35,20 +46,24 @@ export default function RightPanel({ layers, canvasW, canvasH, patternInstancesR
     };
 
     calcScale();
-    window.addEventListener('resize', calcScale);
-    return () => window.removeEventListener('resize', calcScale);
+    window.addEventListener("resize", calcScale);
+    return () => window.removeEventListener("resize", calcScale);
   }, [canvasW, canvasH]);
 
   return (
-    <div ref={wrapperRef} className="flex-1 h-full bg-surface flex items-center justify-center overflow-hidden">
+    <div
+      ref={wrapperRef}
+      className="flex-1 h-full bg-surface flex items-center justify-center overflow-hidden"
+    >
       <div
         style={{
           width: canvasW,
           height: canvasH,
           transform: `scale(${scale})`,
-          transformOrigin: 'center center',
+          transformOrigin: "center center",
+          boxShadow: "7px 7px 25px 2px rgba(0,0,0, 0.5)",
         }}
-        className="shadow-2xl"
+        className=""
       >
         <div ref={containerRef} />
       </div>

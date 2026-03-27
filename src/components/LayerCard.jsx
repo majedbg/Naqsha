@@ -5,8 +5,12 @@ import PatternTabs from "./PatternTabs";
 import PatternParams from "./PatternParams";
 import Slider from "./ui/Slider";
 import { DEFAULT_PARAMS, PATTERN_PARAM_DEFS } from "../constants";
-import { getDynamicDefaults } from "../lib/patternRegistry";
+import {
+  getDynamicDefaults,
+  getDynamicParamDefs,
+} from "../lib/patternRegistry";
 import { useGate } from "../lib/useGate";
+import { UNIVERSAL_PARAM_KEYS } from "../lib/tierLimits";
 
 export default function LayerCard({
   layer,
@@ -23,8 +27,8 @@ export default function LayerCard({
   onMoveDown,
   onOpenAIChat,
 }) {
-  const { check } = useGate();
-  const seedGate = check('seed');
+  const { check, limits } = useGate();
+  const seedGate = check("seed");
   const [collapsed, setCollapsed] = useState(false);
   const [editingName, setEditingName] = useState(false);
   const [editingSeed, setEditingSeed] = useState(false);
@@ -33,7 +37,8 @@ export default function LayerCard({
   const bgColorRef = useRef(null);
 
   const handlePatternChange = (patternType) => {
-    const defaults = DEFAULT_PARAMS[patternType] || getDynamicDefaults(patternType) || {};
+    const defaults =
+      DEFAULT_PARAMS[patternType] || getDynamicDefaults(patternType) || {};
     onUpdate({
       patternType,
       params: { ...defaults },
@@ -104,13 +109,22 @@ export default function LayerCard({
             </span>
           )}
 
-          {/* Duplicate layer */}
-          <IconButton title="Duplicate layer" onClick={onDuplicate}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-              <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
-            </svg>
-          </IconButton>
+          {/* Duplicate layer (hidden when only 1 layer allowed) */}
+          {limits.maxLayers > 1 && (
+            <IconButton title="Duplicate layer" onClick={onDuplicate}>
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+              </svg>
+            </IconButton>
+          )}
 
           {/* Export layer */}
           <div className="export-button ml-auto">
@@ -130,24 +144,26 @@ export default function LayerCard({
             </IconButton>
           </div>
 
-          {/* Delete */}
-          <IconButton
-            title="Delete layer"
-            onClick={onRemove}
-            disabled={!canDelete}
-          >
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
+          {/* Delete (hidden when only 1 layer allowed) */}
+          {limits.maxLayers > 1 && (
+            <IconButton
+              title="Delete layer"
+              onClick={onRemove}
+              disabled={!canDelete}
             >
-              <polyline points="3 6 5 6 21 6" />
-              <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
-            </svg>
-          </IconButton>
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
+                <polyline points="3 6 5 6 21 6" />
+                <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
+              </svg>
+            </IconButton>
+          )}
 
           {/* Collapse */}
           <IconButton
@@ -238,8 +254,8 @@ export default function LayerCard({
           </IconButton>
 
           {/* Seed display (hidden for guests) */}
-          {seedGate.allowed && (
-            editingSeed ? (
+          {seedGate.allowed &&
+            (editingSeed ? (
               <input
                 ref={seedRef}
                 className="bg-[#333] text-gray-500 text-[10px] font-mono w-14 px-1 py-0.5 rounded border border-accent outline-none"
@@ -259,8 +275,7 @@ export default function LayerCard({
               >
                 {layer.seed}
               </span>
-            )
-          )}
+            ))}
         </div>
       </div>
 
@@ -274,6 +289,26 @@ export default function LayerCard({
           {/* Background color with alpha */}
           <div className="space-y-2">
             <span className="text-xs text-gray-400">Background Fill</span>
+            {/* Quick presets */}
+            <div className="flex items-center gap-1.5">
+              {[
+                { color: '#000000', label: 'Black' },
+                { color: '#ffffff', label: 'White' },
+                { color: '#132639', label: 'Navy' },
+              ].map((preset) => (
+                <button
+                  key={preset.color}
+                  className={`w-6 h-6 rounded border transition-colors ${
+                    layer.bgColor === preset.color && layer.bgOpacity === 100
+                      ? 'border-accent ring-1 ring-accent/50'
+                      : 'border-[#444] hover:border-gray-300'
+                  }`}
+                  style={{ backgroundColor: preset.color }}
+                  title={preset.label}
+                  onClick={() => onUpdate({ bgColor: preset.color, bgOpacity: 100 })}
+                />
+              ))}
+            </div>
             <div className="flex items-center gap-3">
               <div className="relative">
                 <div
@@ -322,6 +357,39 @@ export default function LayerCard({
           {/* Randomize checked params button */}
           <div className="flex items-center gap-2">
             <button
+              className={`text-[10px] transition-colors whitespace-nowrap ${
+                hasCheckedKeys
+                  ? "text-accent hover:text-accent-hover font-medium"
+                  : "text-gray-600 hover:text-gray-400"
+              }`}
+              onClick={() => {
+                if (hasCheckedKeys) {
+                  onUpdate({ randomizeKeys: [] });
+                } else {
+                  const defs =
+                    PATTERN_PARAM_DEFS[layer.patternType] ||
+                    getDynamicParamDefs(layer.patternType);
+                  if (defs) {
+                    // Only check params that are unlocked for the current tier
+                    let nonUniversalIdx = 0;
+                    const allowed = defs.filter((d) => {
+                      const isUniversal = UNIVERSAL_PARAM_KEYS.includes(d.key);
+                      const idx = isUniversal ? -1 : nonUniversalIdx++;
+                      const gate = check("param", {
+                        paramKey: d.key,
+                        paramIndex: idx,
+                        isUniversal,
+                      });
+                      return gate.allowed;
+                    });
+                    onUpdate({ randomizeKeys: allowed.map((d) => d.key) });
+                  }
+                }
+              }}
+            >
+              {hasCheckedKeys ? "Clear all" : "Check all"}
+            </button>
+            <button
               onClick={onRandomizeParams}
               disabled={!hasCheckedKeys}
               className="flex-1 py-1.5 text-[11px] font-medium rounded border transition-colors
@@ -335,21 +403,6 @@ export default function LayerCard({
             >
               Randomize Checked Params
               {hasCheckedKeys && ` (${layer.randomizeKeys.length})`}
-            </button>
-            <button
-              className="text-[10px] text-gray-600 hover:text-gray-400 transition-colors whitespace-nowrap"
-              onClick={() => {
-                if (hasCheckedKeys) {
-                  onUpdate({ randomizeKeys: [] });
-                } else {
-                  const defs = PATTERN_PARAM_DEFS[layer.patternType];
-                  if (defs) {
-                    onUpdate({ randomizeKeys: defs.map((d) => d.key) });
-                  }
-                }
-              }}
-            >
-              {hasCheckedKeys ? "Clear all" : "Check all"}
             </button>
           </div>
 

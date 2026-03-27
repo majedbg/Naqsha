@@ -25,7 +25,7 @@ export const TIER_LIMITS = {
       'spirograph', 'flowfield', 'phyllotaxis',
       'wave', 'voronoi', 'feather', 'phyllodash', 'radialetch',
     ],
-    maxLayers: 1,
+    maxLayers: 2,
     presetIndices: null,             // all presets
     allowCustomSize: true,
     maxParamsPerPattern: Infinity,

@@ -88,6 +88,7 @@ export default function Studio() {
   //     loadUserAIPatterns(user.id).catch(console.error);
   //   }
   // }, []);
+  //TODO: uncomment this when we have a way to load user's previously generated AI patterns
 
   const handleOpenAIChat = (layer) => {
     if (layer?.patternType?.startsWith("ai-")) {

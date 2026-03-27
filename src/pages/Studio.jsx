@@ -252,9 +252,28 @@ export default function Studio() {
 
   return (
     <div className="flex flex-col h-screen bg-surface">
+      {/* App title */}
+      <div className="shrink-0 bg-[#0e0e0e] border-b border-[#1a1a1a] px-4 py-2 group/title relative">
+        <h1 className="text-sm font-semibold text-gray-300 tracking-wide cursor-default select-none">
+          Naqsha
+        </h1>
+        <div className="absolute left-4 top-full mt-1 z-50 w-[420px] opacity-0 pointer-events-none group-hover/title:opacity-100 group-hover/title:pointer-events-auto transition-opacity duration-300">
+          <div className="bg-[#1a1a1a] border border-[#333] rounded-lg p-4 shadow-2xl">
+            <p className="text-[11px] text-gray-400 leading-relaxed">
+              <span className="text-gray-200 font-medium">Naqsha</span> takes its name from the Arabic and Persian{" "}
+              <span className="font-medium text-gray-300" dir="rtl">نقشه</span>{" "}
+              — a word that refuses to separate the pattern from the plan, the visible form from the rules that generated it.
+              Naqsha is that process as a tool — generative algorithms, parameters you control, output sized for posters,
+              laser-cut acrylic and pen plotters, each session a record of where your rules led you on that particular day
+              with that particular seed. The design is always regenerable and never finished, which is not a limitation but the point.
+            </p>
+          </div>
+        </div>
+      </div>
+
       {/* Top bar */}
       <div className="shrink-0 h-9 bg-panel border-b border-[#2e2e2e] flex items-center px-4 gap-4">
-        <span className="text-[11px] text-gray-500 select-none">Sonoform</span>
+        <span className="text-[11px] text-gray-500 select-none">Naqsha</span>
         <button
           onClick={() => setShowLoadModal(true)}
           className="text-[11px] text-gray-400 hover:text-accent transition-colors"

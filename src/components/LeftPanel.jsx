@@ -30,9 +30,6 @@ export default function LeftPanel({
       <div className="p-4 space-y-6">
         {/* Title */}
         <div>
-          <h1 className="text-lg font-bold text-gray-100">
-            Generative Art Studio
-          </h1>
           <p className="text-[11px] text-gray-600">
             Multi-layer SVG for laser-cut acrylic
           </p>

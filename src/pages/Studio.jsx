@@ -1,29 +1,36 @@
-import { useState, useRef, useEffect } from 'react';
-import LeftPanel from '../components/LeftPanel';
-import RightPanel from '../components/RightPanel';
-import LayerGroupModal from '../components/LayerGroupModal';
-import CloudSaveModal from '../components/CloudSaveModal';
-import AIPatternChat from '../components/AIPatternChat';
-import useLayers from '../lib/useLayers';
-import { loadUserAIPatterns } from '../lib/aiPatternService';
-import { getDynamicDefaults } from '../lib/patternRegistry';
-import useLayerGroups from '../lib/useLayerGroups';
-import { useAuth } from '../lib/AuthContext';
-import { useGate } from '../lib/useGate';
-import AuthButton from '../components/AuthButton';
-import { saveDesign, loadDesign, countUserDesigns, saveHistorySnapshot } from '../lib/designService';
-import { exportLayerSVG, exportAllLayersSVG } from '../lib/svgExport';
-import { PRESET_SIZES, PPI } from '../constants';
+import { useState, useRef, useEffect } from "react";
+import LeftPanel from "../components/LeftPanel";
+import RightPanel from "../components/RightPanel";
+import LayerGroupModal from "../components/LayerGroupModal";
+import CloudSaveModal from "../components/CloudSaveModal";
+import AIPatternChat from "../components/AIPatternChat";
+import useLayers from "../lib/useLayers";
+import { loadUserAIPatterns } from "../lib/aiPatternService";
+import { getDynamicDefaults } from "../lib/patternRegistry";
+import useLayerGroups from "../lib/useLayerGroups";
+import { useAuth } from "../lib/AuthContext";
+import { useGate } from "../lib/useGate";
+import AuthButton from "../components/AuthButton";
+import {
+  saveDesign,
+  loadDesign,
+  countUserDesigns,
+  saveHistorySnapshot,
+} from "../lib/designService";
+import { exportLayerSVG, exportAllLayersSVG } from "../lib/svgExport";
+import { PRESET_SIZES, PPI } from "../constants";
 
-const CANVAS_STORAGE_KEY = 'sonoform-canvas';
+const CANVAS_STORAGE_KEY = "sonoform-canvas";
 
 function loadCanvasState() {
   try {
     const raw = localStorage.getItem(CANVAS_STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    if (typeof parsed.presetIndex === 'number') return parsed;
-  } catch { /* fall through */ }
+    if (typeof parsed.presetIndex === "number") return parsed;
+  } catch {
+    /* fall through */
+  }
   return null;
 }
 
@@ -32,41 +39,62 @@ export default function Studio() {
   const { limits } = useGate();
   const savedCanvas = loadCanvasState();
   const [presetIndex, setPresetIndex] = useState(savedCanvas?.presetIndex ?? 1);
-  const [canvasW, setCanvasW] = useState(savedCanvas?.canvasW ?? PRESET_SIZES[1].width * PPI);
-  const [canvasH, setCanvasH] = useState(savedCanvas?.canvasH ?? PRESET_SIZES[1].height * PPI);
+  const [canvasW, setCanvasW] = useState(
+    savedCanvas?.canvasW ?? PRESET_SIZES[1].width * PPI
+  );
+  const [canvasH, setCanvasH] = useState(
+    savedCanvas?.canvasH ?? PRESET_SIZES[1].height * PPI
+  );
 
   useEffect(() => {
     try {
-      localStorage.setItem(CANVAS_STORAGE_KEY, JSON.stringify({ presetIndex, canvasW, canvasH }));
-    } catch { /* storage full or unavailable */ }
+      localStorage.setItem(
+        CANVAS_STORAGE_KEY,
+        JSON.stringify({ presetIndex, canvasW, canvasH })
+      );
+    } catch {
+      /* storage full or unavailable */
+    }
   }, [presetIndex, canvasW, canvasH]);
 
-  const { layers, addLayer, duplicateLayer, removeLayer, updateLayer, reorderLayers, randomizeLayer, randomizeAll, randomizeLayerParams, randomizeAllParams, loadLayerSet } = useLayers({ persistToLocal: limits.localStorage });
+  const {
+    layers,
+    addLayer,
+    duplicateLayer,
+    removeLayer,
+    updateLayer,
+    reorderLayers,
+    randomizeLayer,
+    randomizeAll,
+    randomizeLayerParams,
+    randomizeAllParams,
+    loadLayerSet,
+  } = useLayers({ persistToLocal: limits.localStorage });
   const { groups, saveGroup, deleteGroup, renameGroup } = useLayerGroups();
   const patternInstancesRef = useRef({});
   const canvasContainerRef = useRef(null);
   const [showLoadModal, setShowLoadModal] = useState(false);
   const [showCloudModal, setShowCloudModal] = useState(false);
   const [showSaveDialog, setShowSaveDialog] = useState(false);
-  const [saveName, setSaveName] = useState('');
+  const [saveName, setSaveName] = useState("");
   const [currentDesignId, setCurrentDesignId] = useState(null);
   const [aiChatOpen, setAiChatOpen] = useState(false);
-  const [aiChatMode, setAiChatMode] = useState('create');
+  const [aiChatMode, setAiChatMode] = useState("create");
   const [aiChatLayer, setAiChatLayer] = useState(null);
 
   // Load user's previously generated AI patterns on sign-in
-  useEffect(() => {
-    if (user) {
-      loadUserAIPatterns(user.id).catch(console.error);
-    }
-  }, [user]);
+  // useEffect(() => {
+  //   if (user !== null || user !== undefined) {
+  //     loadUserAIPatterns(user.id).catch(console.error);
+  //   }
+  // }, []);
 
   const handleOpenAIChat = (layer) => {
-    if (layer?.patternType?.startsWith('ai-')) {
-      setAiChatMode('revise');
+    if (layer?.patternType?.startsWith("ai-")) {
+      setAiChatMode("revise");
       setAiChatLayer(layer);
     } else {
-      setAiChatMode('create');
+      setAiChatMode("create");
       setAiChatLayer(layer || null);
     }
     setAiChatOpen(true);
@@ -77,7 +105,10 @@ export default function Studio() {
     if (aiChatLayer) {
       updateLayer(aiChatLayer.id, {
         patternType: patternId,
-        params: { ...(defaultParams || {}), ...(getDynamicDefaults(patternId) || {}) },
+        params: {
+          ...(defaultParams || {}),
+          ...(getDynamicDefaults(patternId) || {}),
+        },
       });
     }
   };
@@ -100,29 +131,40 @@ export default function Studio() {
     const layer = layers.find((l) => l.id === layerId);
     const instance = patternInstancesRef.current?.[layerId];
     if (layer && instance) {
-      exportLayerSVG(layer, instance, canvasW, canvasH, { metadata: limits.svgMetadata });
+      exportLayerSVG(layer, instance, canvasW, canvasH, {
+        metadata: limits.svgMetadata,
+      });
     }
   };
 
   const handleExportAll = (includeHidden) => {
-    exportAllLayersSVG(layers, patternInstancesRef.current || {}, canvasW, canvasH, includeHidden, { metadata: limits.svgMetadata });
+    exportAllLayersSVG(
+      layers,
+      patternInstancesRef.current || {},
+      canvasW,
+      canvasH,
+      includeHidden,
+      { metadata: limits.svgMetadata }
+    );
   };
 
   const handleSaveLayerGroup = () => {
-    setSaveName('');
+    setSaveName("");
     setShowSaveDialog(true);
   };
 
   const handleConfirmSave = () => {
     const container = canvasContainerRef.current;
-    const canvas = container?.querySelector('canvas');
+    const canvas = container?.querySelector("canvas");
     let thumbnail = null;
     if (canvas) {
       try {
-        thumbnail = canvas.toDataURL('image/jpeg', 0.7);
-      } catch { /* tainted canvas or unavailable */ }
+        thumbnail = canvas.toDataURL("image/jpeg", 0.7);
+      } catch {
+        /* tainted canvas or unavailable */
+      }
     }
-    const name = saveName.trim() || 'Untitled';
+    const name = saveName.trim() || "Untitled";
     saveGroup(name, layers, canvasW, canvasH, thumbnail);
     setShowSaveDialog(false);
   };
@@ -133,7 +175,10 @@ export default function Studio() {
       setCanvasW(group.canvasW);
       setCanvasH(group.canvasH);
       const matchIdx = PRESET_SIZES.findIndex(
-        (p) => p.width !== null && p.width * PPI === group.canvasW && p.height * PPI === group.canvasH
+        (p) =>
+          p.width !== null &&
+          p.width * PPI === group.canvasW &&
+          p.height * PPI === group.canvasH
       );
       setPresetIndex(matchIdx >= 0 ? matchIdx : PRESET_SIZES.length - 1);
     }
@@ -142,23 +187,35 @@ export default function Studio() {
   const handleSaveToCloud = async () => {
     if (!user) return;
     const container = canvasContainerRef.current;
-    const canvas = container?.querySelector('canvas');
+    const canvas = container?.querySelector("canvas");
     let thumbnail = null;
     if (canvas) {
-      try { thumbnail = canvas.toDataURL('image/jpeg', 0.7); } catch { /* */ }
+      try {
+        thumbnail = canvas.toDataURL("image/jpeg", 0.7);
+      } catch {
+        /* */
+      }
     }
     const config = { layers, canvasW, canvasH, presetIndex };
     try {
-      const design = await saveDesign(user.id, 'Untitled', config, thumbnail, currentDesignId);
+      const design = await saveDesign(
+        user.id,
+        "Untitled",
+        config,
+        thumbnail,
+        currentDesignId
+      );
       if (design) {
         setCurrentDesignId(design.id);
         // Pro: auto-save history snapshot
         if (limits.historySnapshots > 0) {
-          saveHistorySnapshot(design.id, user.id, config, thumbnail).catch(() => {});
+          saveHistorySnapshot(design.id, user.id, config, thumbnail).catch(
+            () => {}
+          );
         }
       }
     } catch (err) {
-      console.error('Cloud save failed:', err);
+      console.error("Cloud save failed:", err);
     }
   };
 
@@ -173,13 +230,14 @@ export default function Studio() {
         setCanvasW(cw);
         setCanvasH(ch);
         const matchIdx = PRESET_SIZES.findIndex(
-          (p) => p.width !== null && p.width * PPI === cw && p.height * PPI === ch
+          (p) =>
+            p.width !== null && p.width * PPI === cw && p.height * PPI === ch
         );
         setPresetIndex(matchIdx >= 0 ? matchIdx : PRESET_SIZES.length - 1);
       }
       setCurrentDesignId(design.id);
     } catch (err) {
-      console.error('Cloud load failed:', err);
+      console.error("Cloud load failed:", err);
     }
   };
 
@@ -246,15 +304,23 @@ export default function Studio() {
 
       {/* Save dialog */}
       {showSaveDialog && (
-        <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center" onClick={() => setShowSaveDialog(false)}>
-          <div className="bg-panel border border-card-border rounded-lg w-80 p-4 space-y-3" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-sm font-semibold text-gray-200">Save Layer Group</h3>
+        <div
+          className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center"
+          onClick={() => setShowSaveDialog(false)}
+        >
+          <div
+            className="bg-panel border border-card-border rounded-lg w-80 p-4 space-y-3"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-sm font-semibold text-gray-200">
+              Save Layer Group
+            </h3>
             <input
               className="w-full bg-[#333] text-gray-200 text-sm px-2.5 py-1.5 rounded border border-[#444] outline-none focus:border-accent"
               placeholder="Untitled"
               value={saveName}
               onChange={(e) => setSaveName(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleConfirmSave()}
+              onKeyDown={(e) => e.key === "Enter" && handleConfirmSave()}
               autoFocus
             />
             <div className="flex gap-2">
@@ -295,9 +361,14 @@ export default function Studio() {
               setCanvasW(config.canvasW);
               setCanvasH(config.canvasH);
               const matchIdx = PRESET_SIZES.findIndex(
-                (p) => p.width !== null && p.width * PPI === config.canvasW && p.height * PPI === config.canvasH
+                (p) =>
+                  p.width !== null &&
+                  p.width * PPI === config.canvasW &&
+                  p.height * PPI === config.canvasH
               );
-              setPresetIndex(matchIdx >= 0 ? matchIdx : PRESET_SIZES.length - 1);
+              setPresetIndex(
+                matchIdx >= 0 ? matchIdx : PRESET_SIZES.length - 1
+              );
             }
           }}
           onClose={() => setShowCloudModal(false)}
@@ -307,7 +378,9 @@ export default function Studio() {
       {aiChatOpen && (
         <AIPatternChat
           mode={aiChatMode}
-          existingSource={aiChatMode === 'revise' && aiChatLayer ? null : undefined}
+          existingSource={
+            aiChatMode === "revise" && aiChatLayer ? null : undefined
+          }
           existingName={aiChatLayer?.name}
           onPatternGenerated={handleAIPatternGenerated}
           onClose={() => setAiChatOpen(false)}

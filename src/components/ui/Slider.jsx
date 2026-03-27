@@ -1,4 +1,29 @@
+import { useState, useRef } from 'react';
+
 export default function Slider({ label, value, min, max, step, onChange, tooltip }) {
+  const [editing, setEditing] = useState(false);
+  const [editValue, setEditValue] = useState('');
+  const inputRef = useRef(null);
+
+  const displayValue = Math.round(Number(value));
+
+  const startEditing = () => {
+    setEditValue(String(displayValue));
+    setEditing(true);
+    requestAnimationFrame(() => inputRef.current?.select());
+  };
+
+  const commitEdit = () => {
+    setEditing(false);
+    const parsed = parseInt(editValue, 10);
+    if (!isNaN(parsed)) {
+      const clamped = Math.max(min, Math.min(max, parsed));
+      // Snap to step
+      const snapped = Math.round(clamped / step) * step;
+      onChange(Math.round(snapped));
+    }
+  };
+
   return (
     <div className="flex flex-col gap-1">
       <div className="flex items-center justify-between">
@@ -13,7 +38,33 @@ export default function Slider({ label, value, min, max, step, onChange, tooltip
             </>
           )}
         </div>
-        <span className="text-xs text-accent font-mono w-12 text-right">{Number(value).toFixed(step < 1 ? String(step).split('.')[1]?.length || 1 : 0)}</span>
+        {editing ? (
+          <input
+            ref={inputRef}
+            type="number"
+            inputMode="numeric"
+            className="text-xs text-accent font-mono w-14 text-right bg-[#333] border border-accent rounded px-1 py-0 outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+            value={editValue}
+            min={min}
+            max={max}
+            step={step}
+            onChange={(e) => setEditValue(e.target.value)}
+            onBlur={commitEdit}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') commitEdit();
+              if (e.key === 'Escape') setEditing(false);
+            }}
+            autoFocus
+          />
+        ) : (
+          <span
+            className="text-xs text-accent font-mono w-12 text-right cursor-text hover:bg-[#333] rounded px-1 transition-colors"
+            onClick={startEditing}
+            title="Click to type a value"
+          >
+            {displayValue}
+          </span>
+        )}
       </div>
       <input
         type="range"
@@ -21,7 +72,7 @@ export default function Slider({ label, value, min, max, step, onChange, tooltip
         max={max}
         step={step}
         value={value}
-        onChange={(e) => onChange(parseFloat(e.target.value))}
+        onChange={(e) => onChange(Math.round(parseFloat(e.target.value)))}
         className="w-full"
       />
     </div>

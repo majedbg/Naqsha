@@ -39,10 +39,20 @@ export default function LayerCard({
   const handlePatternChange = (patternType) => {
     const defaults =
       DEFAULT_PARAMS[patternType] || getDynamicDefaults(patternType) || {};
+    // Pre-check all unlocked params for the new pattern
+    const defs = PATTERN_PARAM_DEFS[patternType] || getDynamicParamDefs(patternType) || [];
+    let nonUniversalIdx = 0;
+    const checkedKeys = defs
+      .filter((d) => {
+        const isUniversal = UNIVERSAL_PARAM_KEYS.includes(d.key);
+        const idx = isUniversal ? -1 : nonUniversalIdx++;
+        return check("param", { paramKey: d.key, paramIndex: idx, isUniversal }).allowed;
+      })
+      .map((d) => d.key);
     onUpdate({
       patternType,
       params: { ...defaults },
-      randomizeKeys: [],
+      randomizeKeys: checkedKeys,
     });
   };
 

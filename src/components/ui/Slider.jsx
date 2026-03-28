@@ -5,22 +5,27 @@ export default function Slider({ label, value, min, max, step, onChange, tooltip
   const [editValue, setEditValue] = useState('');
   const inputRef = useRef(null);
 
-  const displayValue = Math.round(Number(value));
+  // Determine decimal places from step
+  const decimals = step < 1 ? (String(step).split('.')[1]?.length || 1) : 0;
+  const displayValue = Number(value).toFixed(decimals);
+
+  const snapToStep = (v) => {
+    const clamped = Math.max(min, Math.min(max, v));
+    const snapped = Math.round(clamped / step) * step;
+    return parseFloat(snapped.toFixed(decimals));
+  };
 
   const startEditing = () => {
-    setEditValue(String(displayValue));
+    setEditValue(displayValue);
     setEditing(true);
     requestAnimationFrame(() => inputRef.current?.select());
   };
 
   const commitEdit = () => {
     setEditing(false);
-    const parsed = parseInt(editValue, 10);
+    const parsed = parseFloat(editValue);
     if (!isNaN(parsed)) {
-      const clamped = Math.max(min, Math.min(max, parsed));
-      // Snap to step
-      const snapped = Math.round(clamped / step) * step;
-      onChange(Math.round(snapped));
+      onChange(snapToStep(parsed));
     }
   };
 
@@ -42,8 +47,8 @@ export default function Slider({ label, value, min, max, step, onChange, tooltip
           <input
             ref={inputRef}
             type="number"
-            inputMode="numeric"
-            className="text-xs text-accent font-mono w-14 text-right bg-[#333] border border-accent rounded px-1 py-0 outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+            inputMode={decimals > 0 ? 'decimal' : 'numeric'}
+            className="text-xs text-accent font-mono w-16 text-right bg-[#333] border border-accent rounded px-1 py-0 outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
             value={editValue}
             min={min}
             max={max}
@@ -72,7 +77,7 @@ export default function Slider({ label, value, min, max, step, onChange, tooltip
         max={max}
         step={step}
         value={value}
-        onChange={(e) => onChange(Math.round(parseFloat(e.target.value)))}
+        onChange={(e) => onChange(snapToStep(parseFloat(e.target.value)))}
         className="w-full"
       />
     </div>

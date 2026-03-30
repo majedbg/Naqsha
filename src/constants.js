@@ -50,6 +50,7 @@ export const DEFAULT_PARAMS = {
     stepLength: 5,
     noiseScale: 0.004,
     curlStrength: 90,
+    patternScale: 1,
     strokeWeight: 1,
     symmetry: 1,
     startAngle: 0,
@@ -265,6 +266,7 @@ export const PATTERN_PARAM_DEFS = {
     { key: 'stepLength', label: 'Step Length', min: 1, max: 20, step: 1, tooltip: 'Distance each particle moves per step' },
     { key: 'noiseScale', label: 'Noise Scale', min: 0.001, max: 0.02, step: 0.001, tooltip: 'Scale of Perlin noise — smaller = smoother' },
     { key: 'curlStrength', label: 'Curl Strength', min: 1, max: 360, step: 1, tooltip: 'Angle multiplier for noise-based direction' },
+    { key: 'patternScale', label: 'Pattern Scale', min: 1, max: 2, step: 0.05, tooltip: 'Expands the generation area — increase to hide edges when using symmetry' },
     { key: 'strokeWeight', label: 'Stroke Weight', min: 0.3, max: 4, step: 0.1, tooltip: 'Line thickness' },
     SYMMETRY_PARAM,
     START_ANGLE_PARAM,
@@ -512,6 +514,8 @@ export const RANDOMIZE_EXCLUDED_KEYS = [
   'startAngle', 'offsetX', 'offsetY', 'symmetry', 'originX', 'originY',
   // Stroke
   'strokeWeight', 'dashStrokeWeight', 'arcStrokeWeight',
+  // Scale
+  'patternScale',
 ];
 
 // Groups collapsed by default
@@ -562,6 +566,7 @@ export const PARAM_GROUP_MAP = {
   dashLength: 'scale',
   arcMinAngle: 'scale', arcMaxAngle: 'scale', arcMaxLength: 'scale',
   arcRadiusJitter: 'scale',
+  patternScale: 'scale',
 
   // Variation — noise, jitter, distortion
   noiseScale: 'variation', curlStrength: 'variation',

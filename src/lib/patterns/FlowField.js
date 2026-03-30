@@ -15,6 +15,7 @@ export default class FlowField {
       stepLength = 5,
       noiseScale = 0.004,
       curlStrength = 90,
+      patternScale = 1,
       strokeWeight = 1,
       symmetry = 'none',
       startAngle = 0,
@@ -24,8 +25,8 @@ export default class FlowField {
 
     const cx = canvasW / 2;
     const cy = canvasH / 2;
-    const halfW = canvasW / 2;
-    const halfH = canvasH / 2;
+    const halfW = (canvasW / 2) * patternScale;
+    const halfH = (canvasH / 2) * patternScale;
     const maxSteps = 100;
 
     // Generate all particle trails

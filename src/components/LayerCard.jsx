@@ -36,23 +36,46 @@ export default function LayerCard({
   const seedRef = useRef(null);
   const bgColorRef = useRef(null);
 
-  const handlePatternChange = (patternType) => {
-    const defaults =
-      DEFAULT_PARAMS[patternType] || getDynamicDefaults(patternType) || {};
-    // Pre-check all unlocked params for the new pattern
-    const defs = PATTERN_PARAM_DEFS[patternType] || getDynamicParamDefs(patternType) || [];
-    let nonUniversalIdx = 0;
-    const checkedKeys = defs
-      .filter((d) => {
-        const isUniversal = UNIVERSAL_PARAM_KEYS.includes(d.key);
-        const idx = isUniversal ? -1 : nonUniversalIdx++;
-        return check("param", { paramKey: d.key, paramIndex: idx, isUniversal }).allowed;
-      })
-      .map((d) => d.key);
+  const handlePatternChange = (newPatternType) => {
+    // Save current pattern state to cache
+    const updatedCache = {
+      ...(layer.paramsCache || {}),
+      [layer.patternType]: {
+        params: { ...layer.params },
+        randomizeKeys: [...(layer.randomizeKeys || [])],
+      },
+    };
+
+    // Restore from cache if previously visited, otherwise use defaults
+    const cached = updatedCache[newPatternType];
+    let newParams, newRandomizeKeys;
+
+    if (cached) {
+      newParams = { ...cached.params };
+      newRandomizeKeys = [...cached.randomizeKeys];
+    } else {
+      const defaults =
+        DEFAULT_PARAMS[newPatternType] || getDynamicDefaults(newPatternType) || {};
+      newParams = { ...defaults };
+      const defs = PATTERN_PARAM_DEFS[newPatternType] || getDynamicParamDefs(newPatternType) || [];
+      let nonUniversalIdx = 0;
+      newRandomizeKeys = defs
+        .filter((d) => {
+          const isUniversal = UNIVERSAL_PARAM_KEYS.includes(d.key);
+          const idx = isUniversal ? -1 : nonUniversalIdx++;
+          return check("param", { paramKey: d.key, paramIndex: idx, isUniversal }).allowed;
+        })
+        .map((d) => d.key);
+    }
+
+    // Remove the now-active pattern from cache (it lives in params/randomizeKeys)
+    const { [newPatternType]: _, ...cleanedCache } = updatedCache;
+
     onUpdate({
-      patternType,
-      params: { ...defaults },
-      randomizeKeys: checkedKeys,
+      patternType: newPatternType,
+      params: newParams,
+      randomizeKeys: newRandomizeKeys,
+      paramsCache: cleanedCache,
     });
   };
 

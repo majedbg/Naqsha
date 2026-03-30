@@ -27,6 +27,7 @@ function createLayer(index) {
     randomizeKeys: (PATTERN_PARAM_DEFS[patternType] || [])
       .filter((d) => !RANDOMIZE_EXCLUDED_KEYS.includes(d.key))
       .map((d) => d.key),
+    paramsCache: {},
   };
 }
 
@@ -107,6 +108,7 @@ export default function useLayers({ persistToLocal = true } = {}) {
         name: `${source.name} copy`,
         params: { ...source.params },
         randomizeKeys: [...(source.randomizeKeys || [])],
+        paramsCache: JSON.parse(JSON.stringify(source.paramsCache || {})),
       };
       const next = [...prev];
       next.splice(idx + 1, 0, copy);

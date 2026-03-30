@@ -4,7 +4,7 @@ import IconButton from "./ui/IconButton";
 import PatternTabs from "./PatternTabs";
 import PatternParams from "./PatternParams";
 import Slider from "./ui/Slider";
-import { DEFAULT_PARAMS, PATTERN_PARAM_DEFS } from "../constants";
+import { DEFAULT_PARAMS, PATTERN_PARAM_DEFS, RANDOMIZE_EXCLUDED_KEYS } from "../constants";
 import {
   getDynamicDefaults,
   getDynamicParamDefs,
@@ -61,6 +61,7 @@ export default function LayerCard({
       let nonUniversalIdx = 0;
       newRandomizeKeys = defs
         .filter((d) => {
+          if (RANDOMIZE_EXCLUDED_KEYS.includes(d.key)) return false;
           const isUniversal = UNIVERSAL_PARAM_KEYS.includes(d.key);
           const idx = isUniversal ? -1 : nonUniversalIdx++;
           return check("param", { paramKey: d.key, paramIndex: idx, isUniversal }).allowed;

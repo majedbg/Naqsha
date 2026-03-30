@@ -109,6 +109,7 @@ export function AuthProvider({ children }) {
   }, []);
 
   const tier = getEffectiveTier(profile);
+  console.log('[Auth] profile:', profile, 'tier:', tier);
 
   const value = {
     session,

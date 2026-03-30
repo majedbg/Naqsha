@@ -35,7 +35,7 @@ export default function PatternTabs({ active, onChange, onOpenAIChat }) {
               </svg>
               {pt.label}
               <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover/locked:block z-50 px-2.5 py-1.5 text-[10px] text-gray-200 bg-[#222] border border-[#444] rounded-lg shadow-xl whitespace-nowrap">
-                Sign in with Google to use
+                {gate.reason || 'Upgrade to unlock'}
                 <div className="absolute top-full left-1/2 -translate-x-1/2 w-2 h-2 bg-[#222] border-r border-b border-[#444] rotate-45 -mt-1" />
               </div>
             </span>

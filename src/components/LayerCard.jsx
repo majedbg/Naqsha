@@ -388,22 +388,41 @@ export default function LayerCard({
             onOpenAIChat={() => onOpenAIChat && onOpenAIChat(layer)}
           />
 
-          {/* Randomize all checked params across all groups */}
-          <button
-            onClick={onRandomizeParams}
-            disabled={!hasCheckedKeys}
-            className="w-full py-1.5 text-[11px] font-medium rounded border transition-colors
-              disabled:opacity-30 disabled:cursor-not-allowed
-              border-accent/40 text-accent hover:bg-accent/10"
-            title={
-              hasCheckedKeys
-                ? `Randomize ${layer.randomizeKeys.length} checked param(s)`
-                : "Check params in groups below to enable"
-            }
-          >
-            Randomize All Checked
-            {hasCheckedKeys && ` (${layer.randomizeKeys.length})`}
-          </button>
+          {/* Layer-wide action buttons */}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => {
+                const defaults = DEFAULT_PARAMS[layer.patternType] || getDynamicDefaults(layer.patternType) || {};
+                onUpdate({ params: { ...defaults } });
+              }}
+              className="py-1.5 px-3 text-[11px] font-medium rounded border transition-colors
+                border-orange-500/30 text-orange-400 hover:bg-orange-500/10"
+              title="Reset all parameters to defaults"
+            >
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="inline mr-1 -mt-px">
+                <path d="M1 4v6h6" />
+                <path d="M23 20v-6h-6" />
+                <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10" />
+                <path d="M3.51 15A9 9 0 0 0 18.36 18.36L23 14" />
+              </svg>
+              Reset All
+            </button>
+            <button
+              onClick={onRandomizeParams}
+              disabled={!hasCheckedKeys}
+              className="flex-1 py-1.5 text-[11px] font-medium rounded border transition-colors
+                disabled:opacity-30 disabled:cursor-not-allowed
+                border-accent/40 text-accent hover:bg-accent/10"
+              title={
+                hasCheckedKeys
+                  ? `Randomize ${layer.randomizeKeys.length} checked param(s)`
+                  : "Check params in groups below to enable"
+              }
+            >
+              Randomize All Checked
+              {hasCheckedKeys && ` (${layer.randomizeKeys.length})`}
+            </button>
+          </div>
 
           <PatternParams
             patternType={layer.patternType}

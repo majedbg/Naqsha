@@ -1,5 +1,5 @@
-import { PATTERN_PARAM_DEFS, PARAM_GROUPS, PARAM_GROUP_MAP } from '../constants';
-import { getDynamicParamDefs } from '../lib/patternRegistry';
+import { DEFAULT_PARAMS, PATTERN_PARAM_DEFS, PARAM_GROUPS, PARAM_GROUP_MAP } from '../constants';
+import { getDynamicParamDefs, getDynamicDefaults } from '../lib/patternRegistry';
 import { useGate } from '../lib/useGate';
 import { UNIVERSAL_PARAM_KEYS } from '../lib/tierLimits';
 import UpgradePrompt from './UpgradePrompt';
@@ -23,6 +23,7 @@ export default function PatternParams({ patternType, params, onChange, randomize
   const { check, tier } = useGate();
   if (!defs) return null;
 
+  const defaults = DEFAULT_PARAMS[patternType] || getDynamicDefaults(patternType) || {};
   const keys = randomizeKeys || [];
 
   const toggleKey = (key) => {
@@ -49,6 +50,18 @@ export default function PatternParams({ patternType, params, onChange, randomize
       if (keys.includes(def.key)) {
         newParams[def.key] = randomValueForDef(def);
       }
+    }
+    onChange(newParams);
+  };
+
+  const resetSingle = (def) => {
+    onChange({ ...params, [def.key]: defaults[def.key] ?? def.min });
+  };
+
+  const resetGroup = (groupDefs) => {
+    const newParams = { ...params };
+    for (const def of groupDefs) {
+      newParams[def.key] = defaults[def.key] ?? def.min;
     }
     onChange(newParams);
   };
@@ -95,12 +108,15 @@ export default function PatternParams({ patternType, params, onChange, randomize
             group={group}
             items={visibleItems}
             params={params}
+            defaults={defaults}
             randomizeKeys={randomizeKeys}
             onParamChange={onChange}
             onToggleKey={toggleKey}
             onToggleGroupKeys={toggleGroupKeys}
             onRandomizeSingle={randomizeSingle}
             onRandomizeGroup={randomizeGroup}
+            onResetSingle={resetSingle}
+            onResetGroup={resetGroup}
             tier={tier}
           />
         );

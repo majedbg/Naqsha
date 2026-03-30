@@ -4,16 +4,31 @@ import Slider from './ui/Slider';
 import Select from './ui/Select';
 import UpgradePrompt from './UpgradePrompt';
 
+// Reusable reset icon (circular refresh arrows)
+function ResetIcon({ size = 10 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M1 4v6h6" />
+      <path d="M23 20v-6h-6" />
+      <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10" />
+      <path d="M3.51 15A9 9 0 0 0 18.36 18.36L23 14" />
+    </svg>
+  );
+}
+
 export default function ParamGroup({
   group,
   items,
   params,
+  defaults,
   randomizeKeys,
   onParamChange,
   onToggleKey,
   onToggleGroupKeys,
   onRandomizeSingle,
   onRandomizeGroup,
+  onResetSingle,
+  onResetGroup,
   tier,
 }) {
   const [collapsed, setCollapsed] = useState(COLLAPSED_GROUPS.includes(group.id));
@@ -37,6 +52,12 @@ export default function ParamGroup({
 
   const hasCheckedInGroup = checkedCount > 0;
 
+  // Check if any param in the group differs from its default
+  const hasChanges = allowedItems.some((item) => {
+    const defaultVal = defaults[item.def.key] ?? item.def.min;
+    return params[item.def.key] !== defaultVal;
+  });
+
   return (
     <div>
       {/* Group header */}
@@ -56,6 +77,18 @@ export default function ParamGroup({
         <span className="text-[10px] uppercase tracking-wider text-gray-500 font-medium flex-1 text-left">
           {group.label}
         </span>
+
+        {/* Group reset button */}
+        {groupKeys.length > 0 && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onResetGroup(allowedItems.map((i) => i.def)); }}
+            disabled={!hasChanges}
+            className="shrink-0 p-0.5 rounded text-gray-600 hover:text-orange-400 transition-colors disabled:opacity-20 disabled:cursor-not-allowed"
+            title={hasChanges ? `Reset ${group.label} to defaults` : `${group.label} is at defaults`}
+          >
+            <ResetIcon size={10} />
+          </button>
+        )}
 
         {/* Group checkbox */}
         {groupKeys.length > 0 && (
@@ -98,6 +131,9 @@ export default function ParamGroup({
         <div className="pl-3 pt-1.5 space-y-2">
           {allowedItems.map((item) => {
             const { def } = item;
+            const defaultVal = defaults[def.key] ?? def.min;
+            const isDefault = params[def.key] === defaultVal;
+
             return (
               <div key={def.key} className="flex items-start gap-1.5">
                 {/* Randomize checkbox */}
@@ -132,6 +168,16 @@ export default function ParamGroup({
                     />
                   )}
                 </div>
+
+                {/* Per-param reset */}
+                <button
+                  onClick={() => onResetSingle(def)}
+                  disabled={isDefault}
+                  className="mt-[3px] shrink-0 p-0.5 rounded text-gray-600 hover:text-orange-400 transition-colors disabled:opacity-20 disabled:cursor-not-allowed"
+                  title={isDefault ? `${def.label} is at default` : `Reset ${def.label} to default`}
+                >
+                  <ResetIcon size={12} />
+                </button>
 
                 {/* Per-param randomize */}
                 <button

@@ -35,7 +35,7 @@ function loadCanvasState() {
 }
 
 export default function Studio() {
-  const { loading } = useAuth();
+  const { loading, user } = useAuth();
   const { limits } = useGate();
   const savedCanvas = loadCanvasState();
   const [presetIndex, setPresetIndex] = useState(savedCanvas?.presetIndex ?? 1);

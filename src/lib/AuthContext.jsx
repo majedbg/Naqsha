@@ -31,17 +31,33 @@ export function AuthProvider({ children }) {
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(!!supabase); // only loading if supabase is configured
 
-  // Fetch profile from DB
-  const fetchProfile = useCallback(async (userId) => {
-    if (!supabase) return null;
+  // Fetch profile from DB (upsert if missing — trigger may not have fired)
+  const fetchProfile = useCallback(async (user) => {
+    if (!supabase || !user) return null;
     const { data, error } = await supabase
       .from('profiles')
       .select('*')
-      .eq('id', userId)
+      .eq('id', user.id)
       .single();
     if (error) {
-      console.warn('Failed to fetch profile:', error.message);
-      return null;
+      console.warn('Failed to fetch profile:', error.message, '— attempting upsert');
+      // Profile row may not exist (trigger didn't fire); create it client-side
+      const meta = user.user_metadata || {};
+      const { data: upserted, error: upsertErr } = await supabase
+        .from('profiles')
+        .upsert({
+          id: user.id,
+          email: user.email,
+          display_name: meta.full_name || meta.name || user.email?.split('@')[0],
+          avatar_url: meta.avatar_url || null,
+        }, { onConflict: 'id' })
+        .select('*')
+        .single();
+      if (upsertErr) {
+        console.error('Profile upsert failed:', upsertErr.message);
+        return null;
+      }
+      return upserted;
     }
     return data;
   }, []);
@@ -60,7 +76,7 @@ export function AuthProvider({ children }) {
       if (!mounted) return;
       setSession(s);
       if (s?.user) {
-        const p = await fetchProfile(s.user.id);
+        const p = await fetchProfile(s.user);
         if (mounted) setProfile(p);
       }
       if (mounted) setLoading(false);
@@ -77,7 +93,7 @@ export function AuthProvider({ children }) {
         if (!mounted) return;
         setSession(s);
         if (s?.user) {
-          const p = await fetchProfile(s.user.id);
+          const p = await fetchProfile(s.user);
           if (mounted) setProfile(p);
         } else {
           setProfile(null);

@@ -508,3 +508,74 @@ export const DEFAULT_COLORS = ['#00c9b1', '#ff6b6b', '#4ecdc4', '#45b7d1', '#f7d
 // Keys excluded from randomization by default (unchecked when a new layer is created).
 // Users can still check them manually. Edit this list to change defaults.
 export const RANDOMIZE_EXCLUDED_KEYS = ['startAngle', 'offsetX', 'offsetY'];
+
+// Parameter grouping — order determines display order
+export const PARAM_GROUPS = [
+  { id: 'structure', label: 'Structure' },
+  { id: 'scale',     label: 'Scale' },
+  { id: 'variation', label: 'Variation' },
+  { id: 'stroke',    label: 'Stroke' },
+  { id: 'transform', label: 'Transform' },
+];
+
+// Maps every param key to its group. Edit to re-group params.
+export const PARAM_GROUP_MAP = {
+  // Structure — skeleton, topology, counts
+  R: 'structure', r: 'structure', d: 'structure', revolutions: 'structure',
+  particleCount: 'structure', stepLength: 'structure',
+  count: 'structure', angle: 'structure', spacing: 'structure',
+  shape: 'structure', fillMode: 'structure',
+  waveCount: 'structure', frequency: 'structure', amplitude: 'structure',
+  lineSpacing: 'structure',
+  cellCount: 'structure', drawMode: 'structure', relaxationSteps: 'structure',
+  depth: 'structure', scaleFactor: 'structure',
+  seedCount: 'structure', spacingC: 'structure',
+  pointCount: 'structure', relaxPasses: 'structure', neighborK: 'structure',
+  stepsPerParticle: 'structure', sampleEvery: 'structure',
+  curveType: 'structure', roseK: 'structure', roseA: 'structure',
+  sampleCount: 'structure',
+  preset: 'structure', simIterations: 'structure', gridRes: 'structure',
+  targetPoints: 'structure',
+  spiralTurns: 'structure', dashCount: 'structure', arcCount: 'structure',
+  lineCount: 'structure',
+  cols: 'structure', rows: 'structure', margin: 'structure',
+  drawHorizontal: 'structure', drawVertical: 'structure',
+  armCount: 'structure', turns: 'structure', stepsPerTurn: 'structure',
+
+  // Scale — size, extent, radii, lengths
+  minSize: 'scale', maxSize: 'scale', sizeGrowth: 'scale',
+  startScale: 'scale', scaleNonLinearity: 'scale',
+  innerMax: 'scale', outerMax: 'scale',
+  minDashLen: 'scale', maxDashLen: 'scale',
+  innerBase: 'scale', innerAmp: 'scale', outerBase: 'scale',
+  outerAmp: 'scale', harmonicK: 'scale',
+  minSpacing: 'scale',
+  innerRadius: 'scale', outerRadius: 'scale',
+  dashLength: 'scale',
+  arcMinAngle: 'scale', arcMaxAngle: 'scale', arcMaxLength: 'scale',
+  arcRadiusJitter: 'scale',
+
+  // Variation — noise, jitter, distortion
+  noiseScale: 'variation', curlStrength: 'variation',
+  rotation: 'variation', jitter: 'variation',
+  rotationPerLevel: 'variation', strokeDepthDecay: 'variation',
+  spiralGrowth: 'variation',
+  dashLenJitter: 'variation', dashSparsity: 'variation',
+  angleJitter: 'variation',
+  arcSpacingNL: 'variation', arcAngleJitter: 'variation',
+  overlapGap: 'variation', overlapPriority: 'variation',
+  lengthJitter: 'variation', noiseWarp: 'variation',
+  nonLinear: 'variation',
+  growth: 'variation',
+  distortAmount: 'variation', distortScale: 'variation',
+  wobbleAmp: 'variation', wobbleFreq: 'variation',
+
+  // Stroke — line weight, rendering
+  strokeWeight: 'stroke',
+  dashStrokeWeight: 'stroke', arcStrokeWeight: 'stroke',
+
+  // Transform — position, rotation, symmetry
+  symmetry: 'transform', startAngle: 'transform',
+  offsetX: 'transform', offsetY: 'transform',
+  originX: 'transform', originY: 'transform',
+};

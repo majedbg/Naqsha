@@ -1,10 +1,9 @@
-import { PATTERN_PARAM_DEFS } from '../constants';
+import { PATTERN_PARAM_DEFS, PARAM_GROUPS, PARAM_GROUP_MAP } from '../constants';
 import { getDynamicParamDefs } from '../lib/patternRegistry';
 import { useGate } from '../lib/useGate';
 import { UNIVERSAL_PARAM_KEYS } from '../lib/tierLimits';
 import UpgradePrompt from './UpgradePrompt';
-import Slider from './ui/Slider';
-import Select from './ui/Select';
+import ParamGroup from './ParamGroup';
 
 // Generate a random value for a single param definition
 function randomValueForDef(def) {
@@ -31,119 +30,94 @@ export default function PatternParams({ patternType, params, onChange, randomize
     onRandomizeKeysChange(next);
   };
 
+  const toggleGroupKeys = (groupKeys, allChecked) => {
+    if (allChecked) {
+      onRandomizeKeysChange(keys.filter((k) => !groupKeys.includes(k)));
+    } else {
+      const toAdd = groupKeys.filter((k) => !keys.includes(k));
+      onRandomizeKeysChange([...keys, ...toAdd]);
+    }
+  };
+
   const randomizeSingle = (def) => {
     onChange({ ...params, [def.key]: randomValueForDef(def) });
   };
 
-  // Separate non-universal params from universal ones, track original index
+  const randomizeGroup = (groupDefs) => {
+    const newParams = { ...params };
+    for (const def of groupDefs) {
+      if (keys.includes(def.key)) {
+        newParams[def.key] = randomValueForDef(def);
+      }
+    }
+    onChange(newParams);
+  };
+
+  // Build param items with gate checks
   let nonUniversalIndex = 0;
   const paramItems = defs.map((def) => {
     const isUniversal = UNIVERSAL_PARAM_KEYS.includes(def.key);
-    const idx = isUniversal ? -1 : nonUniversalIndex++;
-    return { def, isUniversal, paramIndex: idx };
+    const paramIndex = isUniversal ? -1 : nonUniversalIndex++;
+    const gate = check('param', { paramKey: def.key, paramIndex, isUniversal });
+    return { def, isUniversal, paramIndex, gate };
   });
 
-  // Count locked params for guest summary
-  const lockedCount = paramItems.filter((item) => {
-    const gate = check('param', {
-      paramKey: item.def.key,
-      paramIndex: item.paramIndex,
-      isUniversal: item.isUniversal,
-    });
-    return !gate.allowed;
-  }).length;
+  // Group items by PARAM_GROUP_MAP
+  const grouped = {};
+  for (const item of paramItems) {
+    const groupId = PARAM_GROUP_MAP[item.def.key] || 'structure';
+    if (!grouped[groupId]) grouped[groupId] = [];
+    grouped[groupId].push(item);
+  }
 
-  let shownLockedSummary = false;
+  // Count total locked params for guest summary
+  const lockedCount = paramItems.filter((item) => !item.gate.allowed).length;
 
   return (
-    <div className="space-y-2.5">
-      {paramItems.map((item) => {
-        const { def, isUniversal, paramIndex } = item;
-        const gate = check('param', { paramKey: def.key, paramIndex, isUniversal });
+    <div className="space-y-1.5">
+      {PARAM_GROUPS.map((group) => {
+        const items = grouped[group.id];
+        if (!items || items.length === 0) return null;
 
-        if (!gate.allowed) {
-          // For guest: show a single summary block after the last allowed param
-          if (tier === 'guest') {
-            if (shownLockedSummary) return null;
-            shownLockedSummary = true;
-            return (
-              <div key="__locked_summary" className="flex items-center gap-2 py-2 px-2 rounded bg-[#1e1e1e] border border-[#333]">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-500 shrink-0">
-                  <rect x="3" y="11" width="18" height="11" rx="2" />
-                  <path d="M7 11V7a5 5 0 0110 0v4" />
-                </svg>
-                <span className="text-[11px] text-gray-500">{lockedCount} more parameters</span>
-                <span className="mx-1 text-gray-700">—</span>
-                <UpgradePrompt upgradeTarget={gate.upgradeTarget} compact />
-              </div>
-            );
-          }
+        // For guests, skip groups where ALL items are locked
+        if (tier === 'guest' && items.every((item) => !item.gate.allowed)) return null;
 
-          // For free tier: show individual locked param with Pro badge
-          return (
-            <div key={def.key} className="flex items-center gap-1.5 py-1 px-2 rounded bg-[#1e1e1e] border border-[#333] opacity-60">
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-600 shrink-0">
-                <rect x="3" y="11" width="18" height="11" rx="2" />
-                <path d="M7 11V7a5 5 0 0110 0v4" />
-              </svg>
-              <span className="text-[11px] text-gray-500 flex-1">{def.label}</span>
-              <UpgradePrompt upgradeTarget={gate.upgradeTarget} compact />
-            </div>
-          );
-        }
+        // For guests, only pass allowed items (locked ones are summarized below)
+        const visibleItems = tier === 'guest'
+          ? items.filter((item) => item.gate.allowed)
+          : items;
+
+        if (visibleItems.length === 0) return null;
 
         return (
-          <div key={def.key} className="flex items-start gap-1.5">
-            {/* Randomize checkbox */}
-            <label className="flex items-center mt-[3px] shrink-0" title="Include in batch randomize">
-              <input
-                type="checkbox"
-                checked={keys.includes(def.key)}
-                onChange={() => toggleKey(def.key)}
-                className="accent-accent w-3 h-3 cursor-pointer"
-              />
-            </label>
-
-            {/* The param control */}
-            <div className="flex-1 min-w-0">
-              {def.type === 'select' ? (
-                <Select
-                  label={def.label}
-                  value={params[def.key] || def.options[0].value}
-                  options={def.options}
-                  onChange={(v) => onChange({ ...params, [def.key]: v })}
-                  tooltip={def.tooltip}
-                />
-              ) : (
-                <Slider
-                  label={def.label}
-                  value={params[def.key] ?? def.min}
-                  min={def.min}
-                  max={def.max}
-                  step={def.step}
-                  onChange={(v) => onChange({ ...params, [def.key]: v })}
-                  tooltip={def.tooltip}
-                />
-              )}
-            </div>
-
-            {/* Per-param randomize button */}
-            <button
-              onClick={() => randomizeSingle(def)}
-              className="mt-[3px] shrink-0 p-0.5 rounded text-gray-600 hover:text-accent transition-colors"
-              title={`Randomize ${def.label}`}
-            >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M16 3h5v5" />
-                <path d="M4 20L21 3" />
-                <path d="M21 16v5h-5" />
-                <path d="M15 15l6 6" />
-                <path d="M4 4l5 5" />
-              </svg>
-            </button>
-          </div>
+          <ParamGroup
+            key={group.id}
+            group={group}
+            items={visibleItems}
+            params={params}
+            randomizeKeys={randomizeKeys}
+            onParamChange={onChange}
+            onToggleKey={toggleKey}
+            onToggleGroupKeys={toggleGroupKeys}
+            onRandomizeSingle={randomizeSingle}
+            onRandomizeGroup={randomizeGroup}
+            tier={tier}
+          />
         );
       })}
+
+      {/* Guest locked summary */}
+      {tier === 'guest' && lockedCount > 0 && (
+        <div className="flex items-center gap-2 py-2 px-2 rounded bg-[#1e1e1e] border border-[#333]">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-500 shrink-0">
+            <rect x="3" y="11" width="18" height="11" rx="2" />
+            <path d="M7 11V7a5 5 0 0110 0v4" />
+          </svg>
+          <span className="text-[11px] text-gray-500">{lockedCount} more parameters</span>
+          <span className="mx-1 text-gray-700">—</span>
+          <UpgradePrompt upgradeTarget="free" compact />
+        </div>
+      )}
     </div>
   );
 }

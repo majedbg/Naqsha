@@ -388,57 +388,22 @@ export default function LayerCard({
             onOpenAIChat={() => onOpenAIChat && onOpenAIChat(layer)}
           />
 
-          {/* Randomize checked params button */}
-          <div className="flex items-center gap-2">
-            <button
-              className={`text-[10px] transition-colors whitespace-nowrap ${
-                hasCheckedKeys
-                  ? "text-accent hover:text-accent-hover font-medium"
-                  : "text-gray-600 hover:text-gray-400"
-              }`}
-              onClick={() => {
-                if (hasCheckedKeys) {
-                  onUpdate({ randomizeKeys: [] });
-                } else {
-                  const defs =
-                    PATTERN_PARAM_DEFS[layer.patternType] ||
-                    getDynamicParamDefs(layer.patternType);
-                  if (defs) {
-                    // Only check params that are unlocked for the current tier
-                    let nonUniversalIdx = 0;
-                    const allowed = defs.filter((d) => {
-                      const isUniversal = UNIVERSAL_PARAM_KEYS.includes(d.key);
-                      const idx = isUniversal ? -1 : nonUniversalIdx++;
-                      const gate = check("param", {
-                        paramKey: d.key,
-                        paramIndex: idx,
-                        isUniversal,
-                      });
-                      return gate.allowed;
-                    });
-                    onUpdate({ randomizeKeys: allowed.map((d) => d.key) });
-                  }
-                }
-              }}
-            >
-              {hasCheckedKeys ? "Clear all" : "Check all"}
-            </button>
-            <button
-              onClick={onRandomizeParams}
-              disabled={!hasCheckedKeys}
-              className="flex-1 py-1.5 text-[11px] font-medium rounded border transition-colors
-                disabled:opacity-30 disabled:cursor-not-allowed
-                border-accent/40 text-accent hover:bg-accent/10"
-              title={
-                hasCheckedKeys
-                  ? `Randomize ${layer.randomizeKeys.length} checked param(s)`
-                  : "Check params below to enable"
-              }
-            >
-              Randomize Checked Params
-              {hasCheckedKeys && ` (${layer.randomizeKeys.length})`}
-            </button>
-          </div>
+          {/* Randomize all checked params across all groups */}
+          <button
+            onClick={onRandomizeParams}
+            disabled={!hasCheckedKeys}
+            className="w-full py-1.5 text-[11px] font-medium rounded border transition-colors
+              disabled:opacity-30 disabled:cursor-not-allowed
+              border-accent/40 text-accent hover:bg-accent/10"
+            title={
+              hasCheckedKeys
+                ? `Randomize ${layer.randomizeKeys.length} checked param(s)`
+                : "Check params in groups below to enable"
+            }
+          >
+            Randomize All Checked
+            {hasCheckedKeys && ` (${layer.randomizeKeys.length})`}
+          </button>
 
           <PatternParams
             patternType={layer.patternType}

@@ -104,20 +104,20 @@ export default function RightPanel({
         <div ref={containerRef} />
       </div>
 
-      {/* Background color button */}
-      <div className="relative mt-4" style={{ transform: `scale(${Math.max(fitScale, 0.6)})`, transformOrigin: 'center top' }}>
+      {/* Background color button — bottom left, aligned with zoom controls */}
+      <div className="absolute bottom-4 left-4">
         <button
           onClick={() => setBgPickerOpen(!bgPickerOpen)}
-          className="flex items-center gap-2 px-3 py-1.5 rounded bg-[#1e1e1e] border border-[#333] hover:border-[#555] transition-colors"
+          className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-[#1e1e1e] border border-[#333] hover:border-[#555] transition-colors shadow-lg"
         >
           <div
             className="w-4 h-4 rounded border border-[#555]"
             style={{ backgroundColor: bgColor }}
           />
-          <span className="text-[11px] text-gray-400">Background</span>
+          <span className="text-xs text-gray-400">Background</span>
         </button>
         {bgPickerOpen && (
-          <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 bg-[#1e1e1e] border border-[#444] rounded-lg shadow-xl p-2.5 z-50">
+          <div className="absolute bottom-full left-0 mb-2 bg-[#1e1e1e] border border-[#444] rounded-lg shadow-xl p-2.5 z-50">
             <div className="flex gap-1.5 mb-2">
               {BG_PRESETS.map((preset) => (
                 <button

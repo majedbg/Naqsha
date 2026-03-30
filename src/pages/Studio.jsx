@@ -69,6 +69,8 @@ export default function Studio() {
     randomizeLayerParams,
     randomizeAllParams,
     loadLayerSet,
+    bgColor,
+    setBgColor,
   } = useLayers({ persistToLocal: limits.localStorage });
   const { groups, saveGroup, deleteGroup, renameGroup } = useLayerGroups();
   const patternInstancesRef = useRef({});
@@ -319,6 +321,8 @@ export default function Studio() {
           canvasH={canvasH}
           patternInstancesRef={patternInstancesRef}
           canvasContainerRef={canvasContainerRef}
+          bgColor={bgColor}
+          onBgColorChange={setBgColor}
         />
       </div>
 

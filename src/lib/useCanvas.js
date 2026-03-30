@@ -35,7 +35,7 @@ const PATTERN_CLASSES = {
   spiral: Spiral,
 };
 
-export default function useCanvas(containerRef, layers, canvasW, canvasH) {
+export default function useCanvas(containerRef, layers, canvasW, canvasH, bgColor = '#ffffff') {
   const p5Ref = useRef(null);
   const debounceRef = useRef(null);
   const [patternInstances, setPatternInstances] = useState({});
@@ -45,7 +45,7 @@ export default function useCanvas(containerRef, layers, canvasW, canvasH) {
     if (!p5Ref.current) return;
     const p = p5Ref.current;
     p.clear();
-    p.background(255);
+    p.background(bgColor);
 
     const newInstances = {};
     // Render bottom-to-top: last layer in array is bottom, first is top (front)
@@ -85,7 +85,7 @@ export default function useCanvas(containerRef, layers, canvasW, canvasH) {
     }
     instancesRef.current = newInstances;
     setPatternInstances(newInstances);
-  }, [layers, canvasW, canvasH]);
+  }, [layers, canvasW, canvasH, bgColor]);
 
   // Initialize p5 instance
   useEffect(() => {
@@ -133,7 +133,7 @@ export default function useCanvas(containerRef, layers, canvasW, canvasH) {
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [layers, canvasW, canvasH, renderAll]);
+  }, [layers, canvasW, canvasH, bgColor, renderAll]);
 
   return { patternInstances };
 }

@@ -1,6 +1,9 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { DEFAULT_PARAMS, DEFAULT_COLORS, MAX_LAYERS, PATTERN_PARAM_DEFS, RANDOMIZE_EXCLUDED_KEYS } from '../constants';
 
+const BG_STORAGE_KEY = 'sonoform-bg-color';
+const DEFAULT_BG_COLOR = '#0a1628';
+
 let nextId = 1;
 function genId() {
   return `layer-${nextId++}-${Math.random().toString(36).slice(2, 8)}`;
@@ -45,6 +48,10 @@ function loadLayers() {
     for (const l of parsed) {
       const match = l.id.match(/^layer-(\d+)-/);
       if (match) maxNum = Math.max(maxNum, Number(match[1]));
+      // Sanitize randomizeKeys against current RANDOMIZE_EXCLUDED_KEYS
+      if (l.randomizeKeys) {
+        l.randomizeKeys = l.randomizeKeys.filter((k) => !RANDOMIZE_EXCLUDED_KEYS.includes(k));
+      }
     }
     nextId = maxNum + 1;
     return parsed;
@@ -76,6 +83,14 @@ export default function useLayers({ persistToLocal = true } = {}) {
     return [createLayer(0)];
   });
 
+  // Global background color behind all layers
+  const [bgColor, setBgColor] = useState(() => {
+    if (persistToLocal) {
+      try { return localStorage.getItem(BG_STORAGE_KEY) || DEFAULT_BG_COLOR; } catch { return DEFAULT_BG_COLOR; }
+    }
+    return DEFAULT_BG_COLOR;
+  });
+
   // Debounced save to localStorage (500ms — sliders fire at 60Hz)
   const saveTimer = useRef(null);
   useEffect(() => {
@@ -84,10 +99,11 @@ export default function useLayers({ persistToLocal = true } = {}) {
     saveTimer.current = setTimeout(() => {
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(layers));
+        localStorage.setItem(BG_STORAGE_KEY, bgColor);
       } catch { /* storage full or unavailable */ }
     }, 500);
     return () => clearTimeout(saveTimer.current);
-  }, [layers]);
+  }, [layers, bgColor]);
 
   const addLayer = useCallback(() => {
     setLayers((prev) => {
@@ -205,6 +221,6 @@ export default function useLayers({ persistToLocal = true } = {}) {
   return {
     layers, addLayer, duplicateLayer, removeLayer, updateLayer, reorderLayers,
     randomizeLayer, randomizeAll, randomizeLayerParams, randomizeAllParams,
-    loadLayerSet,
+    loadLayerSet, bgColor, setBgColor,
   };
 }

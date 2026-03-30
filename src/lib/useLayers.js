@@ -1,6 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { DEFAULT_PARAMS, DEFAULT_COLORS, MAX_LAYERS, PATTERN_PARAM_DEFS } from '../constants';
-import { UNIVERSAL_PARAM_KEYS } from './tierLimits';
+import { DEFAULT_PARAMS, DEFAULT_COLORS, MAX_LAYERS, PATTERN_PARAM_DEFS, RANDOMIZE_EXCLUDED_KEYS } from '../constants';
 
 let nextId = 1;
 function genId() {
@@ -26,7 +25,7 @@ function createLayer(index) {
     params: { ...DEFAULT_PARAMS[patternType] },
     seed: randomSeed(),
     randomizeKeys: (PATTERN_PARAM_DEFS[patternType] || [])
-      .filter((d) => !UNIVERSAL_PARAM_KEYS.includes(d.key))
+      .filter((d) => !RANDOMIZE_EXCLUDED_KEYS.includes(d.key))
       .map((d) => d.key),
   };
 }

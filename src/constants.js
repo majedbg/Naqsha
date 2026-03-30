@@ -504,3 +504,7 @@ export const PATTERN_PARAM_DEFS = {
 };
 
 export const DEFAULT_COLORS = ['#00c9b1', '#ff6b6b', '#4ecdc4', '#45b7d1', '#f7dc6f', '#bb8fce'];
+
+// Keys excluded from randomization by default (unchecked when a new layer is created).
+// Users can still check them manually. Edit this list to change defaults.
+export const RANDOMIZE_EXCLUDED_KEYS = ['startAngle', 'offsetX', 'offsetY'];

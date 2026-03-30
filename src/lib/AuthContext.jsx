@@ -1,29 +1,37 @@
-import { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { supabase } from './supabase';
+import {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  useCallback,
+} from "react";
+import { supabase } from "./supabase";
 
 const AuthContext = createContext(null);
 
 // Derive effective tier from profile + subscription state
 function getEffectiveTier(profile) {
-  if (!profile) return 'guest';
-  const { tier, subscription_status, subscription_current_period_end } = profile;
+  if (!profile) return "guest";
+  const { tier, subscription_status, subscription_current_period_end } =
+    profile;
 
   // Pro with active or not-yet-expired canceled subscription
-  if (tier === 'pro' || tier === 'studio') {
-    if (subscription_status === 'active' || subscription_status === 'trialing') return tier;
+  if (tier === "pro" || tier === "studio") {
+    if (subscription_status === "active" || subscription_status === "trialing")
+      return tier;
     // Canceled but period hasn't ended yet — still Pro
-    if (subscription_status === 'canceled' && subscription_current_period_end) {
+    if (subscription_status === "canceled" && subscription_current_period_end) {
       if (new Date(subscription_current_period_end) > new Date()) return tier;
     }
     // Past due — grace period, still Pro
-    if (subscription_status === 'past_due') return tier;
+    if (subscription_status === "past_due") return tier;
     // No subscription info but tier is set (e.g. manually set in DB) — trust it
     if (!subscription_status) return tier;
     // Subscription fully expired
-    return 'free';
+    return "free";
   }
 
-  return tier || 'free';
+  return tier || "free";
 }
 
 export function AuthProvider({ children }) {
@@ -35,26 +43,34 @@ export function AuthProvider({ children }) {
   const fetchProfile = useCallback(async (user) => {
     if (!supabase || !user) return null;
     const { data, error } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', user.id)
+      .from("profiles")
+      .select("*")
+      .eq("id", user.id)
       .single();
     if (error) {
-      console.warn('Failed to fetch profile:', error.message, '— attempting upsert');
+      console.warn(
+        "Failed to fetch profile:",
+        error.message,
+        "— attempting upsert"
+      );
       // Profile row may not exist (trigger didn't fire); create it client-side
       const meta = user.user_metadata || {};
       const { data: upserted, error: upsertErr } = await supabase
-        .from('profiles')
-        .upsert({
-          id: user.id,
-          email: user.email,
-          display_name: meta.full_name || meta.name || user.email?.split('@')[0],
-          avatar_url: meta.avatar_url || null,
-        }, { onConflict: 'id' })
-        .select('*')
+        .from("profiles")
+        .upsert(
+          {
+            id: user.id,
+            email: user.email,
+            display_name:
+              meta.full_name || meta.name || user.email?.split("@")[0],
+            avatar_url: meta.avatar_url || null,
+          },
+          { onConflict: "id" }
+        )
+        .select("*")
         .single();
       if (upsertErr) {
-        console.error('Profile upsert failed:', upsertErr.message);
+        console.error("Profile upsert failed:", upsertErr.message);
         return null;
       }
       return upserted;
@@ -88,18 +104,18 @@ export function AuthProvider({ children }) {
     }, 4000);
 
     // Listen for auth state changes (sign-in, sign-out, token refresh)
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, s) => {
-        if (!mounted) return;
-        setSession(s);
-        if (s?.user) {
-          const p = await fetchProfile(s.user);
-          if (mounted) setProfile(p);
-        } else {
-          setProfile(null);
-        }
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(async (event, s) => {
+      if (!mounted) return;
+      setSession(s);
+      if (s?.user) {
+        const p = await fetchProfile(s.user);
+        if (mounted) setProfile(p);
+      } else {
+        setProfile(null);
       }
-    );
+    });
 
     return () => {
       mounted = false;
@@ -110,9 +126,11 @@ export function AuthProvider({ children }) {
 
   const signIn = useCallback(async () => {
     if (!supabase) return;
-    const redirectTo = `${import.meta.env.VITE_APP_URL || window.location.origin}/auth/callback`;
+    const redirectTo = `${
+      import.meta.env.VITE_APP_URL || window.location.origin
+    }/auth/callback`;
     await supabase.auth.signInWithOAuth({
-      provider: 'google',
+      provider: "google",
       options: { redirectTo },
     });
   }, []);
@@ -120,13 +138,13 @@ export function AuthProvider({ children }) {
   const signOut = useCallback(async () => {
     if (!supabase) return;
     const { error } = await supabase.auth.signOut();
-    if (error) console.error('Sign-out failed:', error.message);
+    if (error) console.error("Sign-out failed:", error.message);
     setSession(null);
     setProfile(null);
   }, []);
 
   const tier = getEffectiveTier(profile);
-  console.log('[Auth] profile:', profile, 'tier:', tier);
+  // console.log('[Auth] profile:', profile, 'tier:', tier);
 
   const value = {
     session,
@@ -143,6 +161,6 @@ export function AuthProvider({ children }) {
 
 export function useAuth() {
   const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error('useAuth must be used within AuthProvider');
+  if (!ctx) throw new Error("useAuth must be used within AuthProvider");
   return ctx;
 }

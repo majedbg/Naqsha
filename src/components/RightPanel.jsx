@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect } from "react";
+import { useRef, useState, useEffect, useCallback } from "react";
 import useCanvas from "../lib/useCanvas";
 
 const BG_PRESETS = [
@@ -6,6 +6,9 @@ const BG_PRESETS = [
   { color: '#ffffff', label: 'White' },
   { color: '#000000', label: 'Black' },
 ];
+
+const MIN_ZOOM = 0.25;
+const MAX_ZOOM = 5;
 
 export default function RightPanel({
   layers,
@@ -18,7 +21,8 @@ export default function RightPanel({
 }) {
   const containerRef = useRef(null);
   const wrapperRef = useRef(null);
-  const [scale, setScale] = useState(1);
+  const [fitScale, setFitScale] = useState(1);
+  const [zoom, setZoom] = useState(1);
   const [bgPickerOpen, setBgPickerOpen] = useState(false);
 
   const { patternInstances } = useCanvas(
@@ -43,7 +47,7 @@ export default function RightPanel({
     }
   }, [canvasContainerRef]);
 
-  // Calculate scale to fit canvas in available space
+  // Calculate fit scale
   useEffect(() => {
     const calcScale = () => {
       if (!wrapperRef.current) return;
@@ -52,7 +56,7 @@ export default function RightPanel({
       const availH = wrapperRef.current.clientHeight - padding * 2;
       const scaleX = availW / canvasW;
       const scaleY = availH / canvasH;
-      setScale(Math.min(scaleX, scaleY, 1));
+      setFitScale(Math.min(scaleX, scaleY, 1));
     };
 
     calcScale();
@@ -60,25 +64,48 @@ export default function RightPanel({
     return () => window.removeEventListener("resize", calcScale);
   }, [canvasW, canvasH]);
 
+  // Scroll wheel zoom
+  const handleWheel = useCallback((e) => {
+    e.preventDefault();
+    const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+    setZoom((z) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z * factor)));
+  }, []);
+
+  // Attach wheel listener with { passive: false } to allow preventDefault
+  useEffect(() => {
+    const el = wrapperRef.current;
+    if (!el) return;
+    el.addEventListener('wheel', handleWheel, { passive: false });
+    return () => el.removeEventListener('wheel', handleWheel);
+  }, [handleWheel]);
+
+  const zoomIn = () => setZoom((z) => Math.min(MAX_ZOOM, z * 1.25));
+  const zoomOut = () => setZoom((z) => Math.max(MIN_ZOOM, z / 1.25));
+  const resetZoom = () => setZoom(1);
+
+  const finalScale = fitScale * zoom;
+  const zoomPercent = Math.round(zoom * 100);
+
   return (
     <div
       ref={wrapperRef}
-      className="flex-1 h-full bg-surface flex flex-col items-center justify-center overflow-hidden"
+      className="flex-1 h-full bg-surface flex flex-col items-center justify-center overflow-auto relative"
     >
       <div
         style={{
           width: canvasW,
           height: canvasH,
-          transform: `scale(${scale})`,
+          transform: `scale(${finalScale})`,
           transformOrigin: "center center",
           boxShadow: "7px 7px 25px 2px rgba(0,0,0, 0.5)",
+          flexShrink: 0,
         }}
       >
         <div ref={containerRef} />
       </div>
 
       {/* Background color button */}
-      <div className="relative mt-4" style={{ transform: `scale(${Math.max(scale, 0.6)})`, transformOrigin: 'center top' }}>
+      <div className="relative mt-4" style={{ transform: `scale(${Math.max(fitScale, 0.6)})`, transformOrigin: 'center top' }}>
         <button
           onClick={() => setBgPickerOpen(!bgPickerOpen)}
           className="flex items-center gap-2 px-3 py-1.5 rounded bg-[#1e1e1e] border border-[#333] hover:border-[#555] transition-colors"
@@ -112,6 +139,31 @@ export default function RightPanel({
             />
           </div>
         )}
+      </div>
+
+      {/* Zoom controls */}
+      <div className="absolute bottom-4 right-4 flex items-center gap-1 bg-[#1e1e1e] border border-[#333] rounded-lg px-1.5 py-1 shadow-lg">
+        <button
+          onClick={zoomOut}
+          className="w-6 h-6 flex items-center justify-center rounded text-gray-400 hover:text-gray-200 hover:bg-[#333] transition-colors text-sm font-medium"
+          title="Zoom out"
+        >
+          −
+        </button>
+        <button
+          onClick={resetZoom}
+          className="px-1.5 min-w-[40px] text-center text-[10px] text-gray-400 hover:text-accent transition-colors font-medium"
+          title="Reset zoom"
+        >
+          {zoomPercent}%
+        </button>
+        <button
+          onClick={zoomIn}
+          className="w-6 h-6 flex items-center justify-center rounded text-gray-400 hover:text-gray-200 hover:bg-[#333] transition-colors text-sm font-medium"
+          title="Zoom in"
+        >
+          +
+        </button>
       </div>
     </div>
   );

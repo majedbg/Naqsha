@@ -39,7 +39,7 @@ export const DEFAULT_PARAMS = {
     r: 75,
     d: 100,
     revolutions: 20,
-    strokeWeight: 0.8,
+    strokeWeight: 1,
     symmetry: 1,
     startAngle: 0,
     offsetX: 0,
@@ -66,7 +66,7 @@ export const DEFAULT_PARAMS = {
     shape: 'circle',
     fillMode: 'outline',
     rotation: 0,
-    strokeWeight: 0.8,
+    strokeWeight: 1,
     jitter: 0,
     symmetry: 1,
     startAngle: 0,
@@ -115,7 +115,7 @@ export const DEFAULT_PARAMS = {
     innerMax: 8,
     outerMax: 18,
     noiseScale: 0.008,
-    strokeWeight: 0.7,
+    strokeWeight: 1,
     symmetry: 1,
     startAngle: 0,
     offsetX: 0,
@@ -141,7 +141,7 @@ export const DEFAULT_PARAMS = {
     noiseScale: 0.005,
     minDashLen: 8,
     maxDashLen: 24,
-    strokeWeight: 0.8,
+    strokeWeight: 1,
     symmetry: 1,
     startAngle: 0,
     offsetX: 0,
@@ -160,7 +160,7 @@ export const DEFAULT_PARAMS = {
     innerAmp: 10,
     outerBase: 2,
     outerAmp: 14,
-    strokeWeight: 0.6,
+    strokeWeight: 1,
     symmetry: 1,
     startAngle: 0,
     offsetX: 0,
@@ -174,7 +174,7 @@ export const DEFAULT_PARAMS = {
     minSpacing: 8,
     minDashLen: 4,
     maxDashLen: 20,
-    strokeWeight: 0.8,
+    strokeWeight: 1,
     symmetry: 1,
     startAngle: 0,
     offsetX: 0,
@@ -203,7 +203,7 @@ export const DEFAULT_PARAMS = {
     angleJitter: 0,
     noiseWarp: 0,
     noiseScale: 0.005,
-    strokeWeight: 0.8,
+    strokeWeight: 1,
     symmetry: 1,
     startAngle: 0,
     offsetX: 0,
@@ -218,7 +218,7 @@ export const DEFAULT_PARAMS = {
     drawHorizontal: 1,
     drawVertical: 1,
     margin: 20,
-    strokeWeight: 0.8,
+    strokeWeight: 1,
     symmetry: 1,
     startAngle: 0,
     offsetX: 0,
@@ -235,7 +235,7 @@ export const DEFAULT_PARAMS = {
     wobbleAmp: 0,
     wobbleFreq: 8,
     stepsPerTurn: 120,
-    strokeWeight: 0.8,
+    strokeWeight: 1,
     symmetry: 1,
     startAngle: 0,
     offsetX: 0,
@@ -507,7 +507,15 @@ export const DEFAULT_COLORS = ['#00c9b1', '#ff6b6b', '#4ecdc4', '#45b7d1', '#f7d
 
 // Keys excluded from randomization by default (unchecked when a new layer is created).
 // Users can still check them manually. Edit this list to change defaults.
-export const RANDOMIZE_EXCLUDED_KEYS = ['startAngle', 'offsetX', 'offsetY'];
+export const RANDOMIZE_EXCLUDED_KEYS = [
+  // Transform
+  'startAngle', 'offsetX', 'offsetY', 'symmetry', 'originX', 'originY',
+  // Stroke
+  'strokeWeight', 'dashStrokeWeight', 'arcStrokeWeight',
+];
+
+// Groups collapsed by default
+export const COLLAPSED_GROUPS = ['stroke', 'transform'];
 
 // Parameter grouping — order determines display order
 export const PARAM_GROUPS = [

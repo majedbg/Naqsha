@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import { COLLAPSED_GROUPS } from '../constants';
 import Slider from './ui/Slider';
 import Select from './ui/Select';
 import UpgradePrompt from './UpgradePrompt';
@@ -15,7 +16,7 @@ export default function ParamGroup({
   onRandomizeGroup,
   tier,
 }) {
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(COLLAPSED_GROUPS.includes(group.id));
   const cbRef = useRef(null);
   const keys = randomizeKeys || [];
 

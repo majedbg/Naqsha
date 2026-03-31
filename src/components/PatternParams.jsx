@@ -1,33 +1,53 @@
-import { DEFAULT_PARAMS, PATTERN_PARAM_DEFS, PARAM_GROUPS, PARAM_GROUP_MAP } from '../constants';
-import { getDynamicParamDefs, getDynamicDefaults } from '../lib/patternRegistry';
-import { useGate } from '../lib/useGate';
-import { UNIVERSAL_PARAM_KEYS } from '../lib/tierLimits';
-import UpgradePrompt from './UpgradePrompt';
-import ParamGroup from './ParamGroup';
+import {
+  DEFAULT_PARAMS,
+  PATTERN_PARAM_DEFS,
+  PARAM_GROUPS,
+  PARAM_GROUP_MAP,
+} from "../constants";
+import {
+  getDynamicParamDefs,
+  getDynamicDefaults,
+} from "../lib/patternRegistry";
+import { useGate } from "../lib/useGate";
+import { UNIVERSAL_PARAM_KEYS } from "../lib/tierLimits";
+import UpgradePrompt from "./UpgradePrompt";
+import ParamGroup from "./ParamGroup";
 
 // Generate a random value for a single param definition
 function randomValueForDef(def) {
-  if (def.type === 'select') {
+  if (def.type === "select") {
     const opts = def.options;
     return opts[Math.floor(Math.random() * opts.length)].value;
   }
   const range = def.max - def.min;
   const raw = def.min + Math.random() * range;
   const snapped = Math.round(raw / def.step) * def.step;
-  const decimals = String(def.step).split('.')[1]?.length || 0;
-  return parseFloat(Math.max(def.min, Math.min(def.max, snapped)).toFixed(decimals));
+  const decimals = String(def.step).split(".")[1]?.length || 0;
+  return parseFloat(
+    Math.max(def.min, Math.min(def.max, snapped)).toFixed(decimals)
+  );
 }
 
-export default function PatternParams({ patternType, params, onChange, randomizeKeys, onRandomizeKeysChange }) {
-  const defs = PATTERN_PARAM_DEFS[patternType] || getDynamicParamDefs(patternType);
+export default function PatternParams({
+  patternType,
+  params,
+  onChange,
+  randomizeKeys,
+  onRandomizeKeysChange,
+}) {
+  const defs =
+    PATTERN_PARAM_DEFS[patternType] || getDynamicParamDefs(patternType);
   const { check, tier } = useGate();
   if (!defs) return null;
 
-  const defaults = DEFAULT_PARAMS[patternType] || getDynamicDefaults(patternType) || {};
+  const defaults =
+    DEFAULT_PARAMS[patternType] || getDynamicDefaults(patternType) || {};
   const keys = randomizeKeys || [];
 
   const toggleKey = (key) => {
-    const next = keys.includes(key) ? keys.filter((k) => k !== key) : [...keys, key];
+    const next = keys.includes(key)
+      ? keys.filter((k) => k !== key)
+      : [...keys, key];
     onRandomizeKeysChange(next);
   };
 
@@ -71,14 +91,14 @@ export default function PatternParams({ patternType, params, onChange, randomize
   const paramItems = defs.map((def) => {
     const isUniversal = UNIVERSAL_PARAM_KEYS.includes(def.key);
     const paramIndex = isUniversal ? -1 : nonUniversalIndex++;
-    const gate = check('param', { paramKey: def.key, paramIndex, isUniversal });
+    const gate = check("param", { paramKey: def.key, paramIndex, isUniversal });
     return { def, isUniversal, paramIndex, gate };
   });
 
   // Group items by PARAM_GROUP_MAP
   const grouped = {};
   for (const item of paramItems) {
-    const groupId = PARAM_GROUP_MAP[item.def.key] || 'structure';
+    const groupId = PARAM_GROUP_MAP[item.def.key] || "structure";
     if (!grouped[groupId]) grouped[groupId] = [];
     grouped[groupId].push(item);
   }
@@ -93,12 +113,12 @@ export default function PatternParams({ patternType, params, onChange, randomize
         if (!items || items.length === 0) return null;
 
         // For guests, skip groups where ALL items are locked
-        if (tier === 'guest' && items.every((item) => !item.gate.allowed)) return null;
+        if (tier === "guest" && items.every((item) => !item.gate.allowed))
+          return null;
 
         // For guests, only pass allowed items (locked ones are summarized below)
-        const visibleItems = tier === 'guest'
-          ? items.filter((item) => item.gate.allowed)
-          : items;
+        const visibleItems =
+          tier === "guest" ? items.filter((item) => item.gate.allowed) : items;
 
         if (visibleItems.length === 0) return null;
 
@@ -123,13 +143,23 @@ export default function PatternParams({ patternType, params, onChange, randomize
       })}
 
       {/* Guest locked summary */}
-      {tier === 'guest' && lockedCount > 0 && (
+      {tier === "guest" && lockedCount > 0 && (
         <div className="flex items-center gap-2 py-2 px-2 rounded bg-[#1e1e1e] border border-[#333]">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-500 shrink-0">
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            className="text-gray-500 shrink-0"
+          >
             <rect x="3" y="11" width="18" height="11" rx="2" />
             <path d="M7 11V7a5 5 0 0110 0v4" />
           </svg>
-          <span className="text-[11px] text-gray-500">{lockedCount} more parameters</span>
+          <span className="text-[11px] text-gray-500">
+            {lockedCount} more parameters
+          </span>
           <span className="mx-1 text-gray-700">—</span>
           <UpgradePrompt upgradeTarget="free" compact />
         </div>

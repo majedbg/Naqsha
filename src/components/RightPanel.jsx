@@ -142,28 +142,35 @@ export default function RightPanel({
       </div>
 
       {/* Zoom controls */}
-      <div className="absolute bottom-4 right-4 flex items-center gap-1 bg-[#1e1e1e] border border-[#333] rounded-lg px-1.5 py-1 shadow-lg">
-        <button
-          onClick={zoomOut}
-          className="w-6 h-6 flex items-center justify-center rounded text-gray-400 hover:text-gray-200 hover:bg-[#333] transition-colors text-sm font-medium"
-          title="Zoom out"
-        >
-          −
-        </button>
-        <button
-          onClick={resetZoom}
-          className="px-1.5 min-w-[40px] text-center text-[10px] text-gray-400 hover:text-accent transition-colors font-medium"
-          title="Reset zoom"
-        >
-          {zoomPercent}%
-        </button>
-        <button
-          onClick={zoomIn}
-          className="w-6 h-6 flex items-center justify-center rounded text-gray-400 hover:text-gray-200 hover:bg-[#333] transition-colors text-sm font-medium"
-          title="Zoom in"
-        >
-          +
-        </button>
+      <div className="absolute bottom-4 right-4 flex flex-col items-end gap-1.5">
+        {zoomPercent > 120 && (
+          <div className="text-[9px] text-gray-500 bg-[#1e1e1e]/90 border border-[#333] rounded px-2 py-1 max-w-[180px] text-right leading-snug">
+            Preview may appear pixelated, but exported vector file will not be
+          </div>
+        )}
+        <div className="flex items-center gap-1 bg-[#1e1e1e] border border-[#333] rounded-lg px-1.5 py-1 shadow-lg">
+          <button
+            onClick={zoomOut}
+            className="w-6 h-6 flex items-center justify-center rounded text-gray-400 hover:text-gray-200 hover:bg-[#333] transition-colors text-sm font-medium"
+            title="Zoom out"
+          >
+            −
+          </button>
+          <button
+            onClick={resetZoom}
+            className="px-1.5 min-w-[40px] text-center text-[10px] text-gray-400 hover:text-accent transition-colors font-medium"
+            title="Reset zoom"
+          >
+            {zoomPercent}%
+          </button>
+          <button
+            onClick={zoomIn}
+            className="w-6 h-6 flex items-center justify-center rounded text-gray-400 hover:text-gray-200 hover:bg-[#333] transition-colors text-sm font-medium"
+            title="Zoom in"
+          >
+            +
+          </button>
+        </div>
       </div>
     </div>
   );

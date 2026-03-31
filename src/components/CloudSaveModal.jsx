@@ -2,12 +2,12 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '../lib/AuthContext';
 import { useGate } from '../lib/useGate';
 import { loadUserDesigns, deleteDesign } from '../lib/designService';
-import { loadCollections, createCollection, deleteCollection, addDesignToCollection, removeDesignFromCollection, loadCollectionDesigns } from '../lib/collectionService';
+import { loadCollections, createCollection, deleteCollection, loadCollectionDesigns } from '../lib/collectionService';
 import { supabase } from '../lib/supabase';
 
 export default function CloudSaveModal({ onLoad, onLoadConfig, onClose }) {
   const { user } = useAuth();
-  const { check, limits } = useGate();
+  const { limits } = useGate();
   const [tab, setTab] = useState('designs'); // 'designs' | 'collections'
   const [designs, setDesigns] = useState([]);
   const [loading, setLoading] = useState(true);

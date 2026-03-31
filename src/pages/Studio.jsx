@@ -5,7 +5,7 @@ import LayerGroupModal from "../components/LayerGroupModal";
 import CloudSaveModal from "../components/CloudSaveModal";
 import AIPatternChat from "../components/AIPatternChat";
 import useLayers from "../lib/useLayers";
-import { loadUserAIPatterns } from "../lib/aiPatternService";
+// import { loadUserAIPatterns } from "../lib/aiPatternService";
 import { getDynamicDefaults } from "../lib/patternRegistry";
 import useLayerGroups from "../lib/useLayerGroups";
 import { useAuth } from "../lib/AuthContext";
@@ -14,7 +14,6 @@ import AuthButton from "../components/AuthButton";
 import {
   saveDesign,
   loadDesign,
-  countUserDesigns,
   saveHistorySnapshot,
 } from "../lib/designService";
 import { exportLayerSVG, exportAllLayersSVG } from "../lib/svgExport";

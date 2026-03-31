@@ -164,7 +164,7 @@ function createOffscreenProxy(realP5) {
     line: () => {},
     ellipse: () => {},
     rect: () => {},
-    color: (c) => ({ setAlpha: () => {} }),
+    color: () => ({ setAlpha: () => {} }),
     CLOSE: 'close',
   };
 }

@@ -6,8 +6,7 @@ import UpgradePrompt from './UpgradePrompt';
 export default function ExportSection({ onExportAll, onSaveLayerGroup, onSaveToCloud, onOpenCloudDesigns }) {
   const [includeHidden, setIncludeHidden] = useState(false);
   const { user } = useAuth();
-  const { check, limits } = useGate();
-  const saveGate = check('cloudSave');
+  const { limits } = useGate();
 
   return (
     <div className="space-y-3 border-t border-[#2e2e2e] pt-4">

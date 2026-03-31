@@ -1,14 +1,5 @@
 import { applySymmetryDraw, wrapSVGSymmetry } from './symmetryUtils';
 
-function gcd(a, b) {
-  a = Math.abs(Math.round(a));
-  b = Math.abs(Math.round(b));
-  while (b) {
-    [a, b] = [b, a % b];
-  }
-  return a;
-}
-
 export default class Feather {
   constructor() {
     this.svgElements = [];

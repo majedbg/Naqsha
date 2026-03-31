@@ -50,9 +50,9 @@ export default class FractalTree {
 
     const startX = 0;
     const startY = canvasH * 0.3;
-    const startAngle = -Math.PI / 2;
+    const trunkAngle = -Math.PI / 2;
 
-    branch(startX, startY, startAngle, initialLength, iterations);
+    branch(startX, startY, trunkAngle, initialLength, iterations);
 
     // Build SVG path data for each segment
     for (const seg of segments) {

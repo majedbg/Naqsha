@@ -1,12 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
 import { PATTERN_TYPES } from '../constants';
 import { useGate } from '../lib/useGate';
-import { useAuth } from '../lib/AuthContext';
+
 import { getDynamicTypes, onRegistryChange } from '../lib/patternRegistry';
 
 export default function PatternTabs({ active, onChange, onOpenAIChat }) {
   const { check, tier } = useGate();
-  const { profile } = useAuth();
   const [dynamicTypes, setDynamicTypes] = useState(getDynamicTypes());
   const [expanded, setExpanded] = useState(false);
   const rowRef = useRef(null);

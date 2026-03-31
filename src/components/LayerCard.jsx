@@ -39,7 +39,6 @@ export default function LayerCard({
   const [editingSeed, setEditingSeed] = useState(false);
   const nameRef = useRef(null);
   const seedRef = useRef(null);
-  const bgColorRef = useRef(null);
 
   const handlePatternChange = (newPatternType) => {
     // Save current pattern state to cache

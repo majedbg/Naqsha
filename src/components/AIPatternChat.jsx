@@ -13,7 +13,7 @@ export default function AIPatternChat({ mode: initialMode, existingSource, exist
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
+  const [_Error, setError] = useState(null);
   const [credits, setCredits] = useState(profile?.ai_credits ?? 0);
   const scrollRef = useRef(null);
 

@@ -291,8 +291,34 @@ export default function Studio() {
 
       {/* Main content — column on mobile (canvas on top), row on desktop */}
       <div className="flex flex-col md:flex-row flex-1 min-h-0">
-        {/* Canvas first on mobile (appears on top), second on desktop (appears right) */}
-        <div className="order-1 md:order-2 flex-1 min-h-0 md:h-full">
+        {/* LeftPanel: DOM-first (natural for desktop row), ordered below canvas on mobile */}
+        <div className="order-2 md:order-none shrink-0 flex-1 md:flex-none min-h-0 overflow-hidden">
+          <LeftPanel
+            width={canvasW}
+            height={canvasH}
+            presetIndex={presetIndex}
+            onPresetChange={handlePresetChange}
+            onCustomChange={handleCustomChange}
+            layers={layers}
+            onUpdateLayer={updateLayer}
+            onRemoveLayer={removeLayer}
+            onAddLayer={addLayer}
+            onDuplicateLayer={duplicateLayer}
+            onRandomizeLayer={randomizeLayer}
+            onRandomizeAll={randomizeAll}
+            onRandomizeLayerParams={randomizeLayerParams}
+            onRandomizeAllParams={randomizeAllParams}
+            onReorderLayers={reorderLayers}
+            onExportLayer={handleExportLayer}
+            onExportAll={handleExportAll}
+            onSaveLayerGroup={handleSaveLayerGroup}
+            onSaveToCloud={handleSaveToCloud}
+            onOpenCloudDesigns={() => setShowCloudModal(true)}
+            onOpenAIChat={handleOpenAIChat}
+          />
+        </div>
+        {/* Canvas: DOM-second, ordered first on mobile (top), fills remaining space on desktop */}
+        <div className="order-1 md:order-none flex-1 min-h-[40vh] md:min-h-0 min-w-0">
           <RightPanel
             layers={layers}
             canvasW={canvasW}
@@ -302,31 +328,6 @@ export default function Studio() {
             bgColor={bgColor}
             onBgColorChange={setBgColor}
           />
-        </div>
-        <div className="order-2 md:order-1 min-h-0 flex-1 md:flex-none overflow-hidden">
-        <LeftPanel
-          width={canvasW}
-          height={canvasH}
-          presetIndex={presetIndex}
-          onPresetChange={handlePresetChange}
-          onCustomChange={handleCustomChange}
-          layers={layers}
-          onUpdateLayer={updateLayer}
-          onRemoveLayer={removeLayer}
-          onAddLayer={addLayer}
-          onDuplicateLayer={duplicateLayer}
-          onRandomizeLayer={randomizeLayer}
-          onRandomizeAll={randomizeAll}
-          onRandomizeLayerParams={randomizeLayerParams}
-          onRandomizeAllParams={randomizeAllParams}
-          onReorderLayers={reorderLayers}
-          onExportLayer={handleExportLayer}
-          onExportAll={handleExportAll}
-          onSaveLayerGroup={handleSaveLayerGroup}
-          onSaveToCloud={handleSaveToCloud}
-          onOpenCloudDesigns={() => setShowCloudModal(true)}
-          onOpenAIChat={handleOpenAIChat}
-        />
         </div>
       </div>
 

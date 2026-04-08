@@ -89,7 +89,7 @@ export default function RightPanel({
   return (
     <div
       ref={wrapperRef}
-      className="flex-1 h-full min-h-[40vh] md:min-h-0 bg-surface flex flex-col items-center justify-center overflow-auto relative"
+      className="h-full bg-surface flex flex-col items-center justify-center overflow-auto relative"
     >
       <div
         style={{

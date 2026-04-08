@@ -89,7 +89,7 @@ export default function RightPanel({
   return (
     <div
       ref={wrapperRef}
-      className="h-full bg-surface flex flex-col items-center justify-center overflow-auto relative"
+      className={`h-full bg-surface flex flex-col items-center justify-center relative ${zoom > 1.25 ? "overflow-auto" : "overflow-hidden"}`}
     >
       <div
         style={{

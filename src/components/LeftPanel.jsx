@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect } from "react";
 import DimensionsSection from "./DimensionsSection";
 import LayersSection from "./LayersSection";
 import ExportSection from "./ExportSection";
+import { useGate } from "../lib/useGate";
 
 function useIsMobile(breakpoint = 768) {
   const [isMobile, setIsMobile] = useState(() =>
@@ -40,6 +41,7 @@ export default function LeftPanel({
   onOpenAIChat,
 }) {
   const isMobile = useIsMobile();
+  const { check, limits } = useGate();
   const [collapsed, setCollapsed] = useState(false);
   const [activeLayerIndex, setActiveLayerIndex] = useState(0);
 
@@ -181,6 +183,19 @@ export default function LeftPanel({
                       {layer.name || `Layer ${i + 1}`}
                     </button>
                   ))}
+                  {/* + New layer pill */}
+                  {check("layers", layers.length + 1).allowed &&
+                    layers.length < limits.maxLayers && (
+                      <button
+                        onClick={() => {
+                          onAddLayer();
+                          setActiveLayerIndex(layers.length);
+                        }}
+                        className="shrink-0 px-2.5 py-1 rounded-md text-[11px] font-medium bg-[#252525] text-gray-500 border border-dashed border-[#444] active:bg-[#333] hover:text-accent hover:border-accent transition-colors"
+                      >
+                        + New
+                      </button>
+                    )}
                 </div>
 
                 <button

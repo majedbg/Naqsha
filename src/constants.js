@@ -35,10 +35,10 @@ export const MAX_LAYERS = 6;
 
 export const DEFAULT_PARAMS = {
   spirograph: {
-    R: 200,
-    r: 75,
-    d: 100,
-    revolutions: 20,
+    R: 440,
+    r: 565,
+    d: 181,
+    revolutions: 35,
     strokeWeight: 1,
     symmetry: 1,
     startAngle: 0,

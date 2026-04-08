@@ -289,8 +289,21 @@ export default function Studio() {
         </div>
       </div>
 
-      {/* Main content */}
-      <div className="flex flex-1 min-h-0">
+      {/* Main content — column on mobile (canvas on top), row on desktop */}
+      <div className="flex flex-col md:flex-row flex-1 min-h-0">
+        {/* Canvas first on mobile (appears on top), second on desktop (appears right) */}
+        <div className="order-1 md:order-2 flex-1 min-h-0 md:h-full">
+          <RightPanel
+            layers={layers}
+            canvasW={canvasW}
+            canvasH={canvasH}
+            patternInstancesRef={patternInstancesRef}
+            canvasContainerRef={canvasContainerRef}
+            bgColor={bgColor}
+            onBgColorChange={setBgColor}
+          />
+        </div>
+        <div className="order-2 md:order-1">
         <LeftPanel
           width={canvasW}
           height={canvasH}
@@ -314,15 +327,7 @@ export default function Studio() {
           onOpenCloudDesigns={() => setShowCloudModal(true)}
           onOpenAIChat={handleOpenAIChat}
         />
-        <RightPanel
-          layers={layers}
-          canvasW={canvasW}
-          canvasH={canvasH}
-          patternInstancesRef={patternInstancesRef}
-          canvasContainerRef={canvasContainerRef}
-          bgColor={bgColor}
-          onBgColorChange={setBgColor}
-        />
+        </div>
       </div>
 
       {/* Save dialog */}

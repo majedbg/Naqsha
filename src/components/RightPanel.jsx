@@ -2,9 +2,9 @@ import { useRef, useState, useEffect, useCallback } from "react";
 import useCanvas from "../lib/useCanvas";
 
 const BG_PRESETS = [
-  { color: '#0a1628', label: 'Dark Blue' },
-  { color: '#ffffff', label: 'White' },
-  { color: '#000000', label: 'Black' },
+  { color: "#0a1628", label: "Dark Blue" },
+  { color: "#ffffff", label: "White" },
+  { color: "#000000", label: "Black" },
 ];
 
 const MIN_ZOOM = 0.25;
@@ -75,8 +75,8 @@ export default function RightPanel({
   useEffect(() => {
     const el = wrapperRef.current;
     if (!el) return;
-    el.addEventListener('wheel', handleWheel, { passive: false });
-    return () => el.removeEventListener('wheel', handleWheel);
+    el.addEventListener("wheel", handleWheel, { passive: false });
+    return () => el.removeEventListener("wheel", handleWheel);
   }, [handleWheel]);
 
   const zoomIn = () => setZoom((z) => Math.min(MAX_ZOOM, z * 1.25));
@@ -89,7 +89,7 @@ export default function RightPanel({
   return (
     <div
       ref={wrapperRef}
-      className="flex-1 h-full bg-surface flex flex-col items-center justify-center overflow-auto relative"
+      className="flex-1 h-full min-h-[40vh] md:min-h-0 bg-surface flex flex-col items-center justify-center overflow-auto relative"
     >
       <div
         style={{
@@ -122,9 +122,14 @@ export default function RightPanel({
               {BG_PRESETS.map((preset) => (
                 <button
                   key={preset.color}
-                  onClick={() => { onBgColorChange(preset.color); setBgPickerOpen(false); }}
+                  onClick={() => {
+                    onBgColorChange(preset.color);
+                    setBgPickerOpen(false);
+                  }}
                   className={`w-7 h-7 rounded border-2 transition-colors ${
-                    bgColor === preset.color ? 'border-accent' : 'border-[#555] hover:border-[#888]'
+                    bgColor === preset.color
+                      ? "border-accent"
+                      : "border-[#555] hover:border-[#888]"
                   }`}
                   style={{ backgroundColor: preset.color }}
                   title={preset.label}

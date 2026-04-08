@@ -58,3 +58,26 @@ input[type="range"]::-moz-range-thumb {
 ::-webkit-scrollbar-thumb:hover {
   background: #555;
 }
+
+/* Mobile panel styles */
+@media (max-width: 767px) {
+  /* Prevent body scroll when interacting with sliders */
+  .mobile-panel-content {
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Prevent slider touches from scrolling the page */
+  .mobile-panel-content input[type="range"] {
+    touch-action: none;
+  }
+
+  /* Hide scrollbar on layer pill row */
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+}

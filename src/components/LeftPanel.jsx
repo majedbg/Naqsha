@@ -62,7 +62,7 @@ export default function LeftPanel({
   // Desktop layout — unchanged
   if (!isMobile) {
     return (
-      <div className="w-[420px] min-w-[420px] h-full bg-panel border-r border-[#2e2e2e] overflow-y-auto">
+      <div className="w-[320px] min-w-[320px] lg:w-[420px] lg:min-w-[420px] h-full bg-panel border-r border-[#2e2e2e] overflow-y-auto">
         <div className="p-4 space-y-6">
           <div>
             <p className="text-[11px] text-gray-600">

@@ -71,36 +71,32 @@ export function AuthProvider({ children }) {
         .single();
       if (upsertErr) {
         console.error("Profile upsert failed:", upsertErr.message);
-        return null;
+        // Fallback: construct minimal profile from user metadata
+        // so tier resolves to "free" (authenticated) not "guest"
+        const fallbackMeta = user.user_metadata || {};
+        return {
+          id: user.id,
+          email: user.email,
+          display_name:
+            fallbackMeta.full_name || fallbackMeta.name || user.email?.split("@")[0],
+          avatar_url: fallbackMeta.avatar_url || null,
+          tier: "free",
+        };
       }
       return upserted;
     }
     return data;
   }, []);
 
-  // Initialize: restore session + listen for auth changes
+  // Initialize: use onAuthStateChange as single source of truth.
+  // Supabase fires INITIAL_SESSION on mount, so no separate getSession() needed.
+  // This eliminates the race between getSession and onAuthStateChange that caused
+  // profile fetches to fail with stale tokens on reload.
   useEffect(() => {
     if (!supabase) return;
 
     let mounted = true;
 
-    // Get current session
-    supabase.auth.getSession().then(async ({ data: { session: s } }) => {
-      if (!mounted) return;
-      setSession(s);
-      if (s?.user) {
-        const p = await fetchProfile(s.user);
-        if (mounted) setProfile(p);
-      }
-      if (mounted) setLoading(false);
-    });
-
-    // Timeout fallback: if session check takes >4s, stop loading
-    const timeout = setTimeout(() => {
-      if (mounted && loading) setLoading(false);
-    }, 4000);
-
-    // Listen for auth state changes (sign-in, sign-out, token refresh)
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (event, s) => {
@@ -112,7 +108,13 @@ export function AuthProvider({ children }) {
       } else {
         setProfile(null);
       }
+      if (mounted) setLoading(false);
     });
+
+    // Timeout fallback: if auth check takes >4s, stop loading
+    const timeout = setTimeout(() => {
+      if (mounted) setLoading(false);
+    }, 4000);
 
     return () => {
       mounted = false;

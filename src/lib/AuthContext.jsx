@@ -9,6 +9,43 @@ import { supabase } from "./supabase";
 
 const AuthContext = createContext(null);
 
+const PROFILE_CACHE_KEY = "sonoform-profile";
+const CACHE_TTL_MS = 3 * 24 * 60 * 60 * 1000; // 3 days
+
+function cacheProfile(profile) {
+  try {
+    localStorage.setItem(
+      PROFILE_CACHE_KEY,
+      JSON.stringify({ profile, ts: Date.now() })
+    );
+  } catch {
+    /* storage full or unavailable */
+  }
+}
+
+function loadCachedProfile() {
+  try {
+    const raw = localStorage.getItem(PROFILE_CACHE_KEY);
+    if (!raw) return null;
+    const { profile, ts } = JSON.parse(raw);
+    if (Date.now() - ts > CACHE_TTL_MS) {
+      localStorage.removeItem(PROFILE_CACHE_KEY);
+      return null;
+    }
+    return profile;
+  } catch {
+    return null;
+  }
+}
+
+function clearCachedProfile() {
+  try {
+    localStorage.removeItem(PROFILE_CACHE_KEY);
+  } catch {
+    /* */
+  }
+}
+
 // Derive effective tier from profile + subscription state
 function getEffectiveTier(profile) {
   if (!profile) return "guest";
@@ -36,7 +73,8 @@ function getEffectiveTier(profile) {
 
 export function AuthProvider({ children }) {
   const [session, setSession] = useState(null);
-  const [profile, setProfile] = useState(null);
+  // Hydrate profile from cache immediately — no loading flash
+  const [profile, setProfile] = useState(() => loadCachedProfile());
   const [loading, setLoading] = useState(!!supabase); // only loading if supabase is configured
 
   // Fetch profile from DB (upsert if missing — trigger may not have fired)
@@ -89,24 +127,32 @@ export function AuthProvider({ children }) {
   }, []);
 
   // Initialize: use onAuthStateChange as single source of truth.
-  // Supabase fires INITIAL_SESSION on mount, so no separate getSession() needed.
-  // This eliminates the race between getSession and onAuthStateChange that caused
-  // profile fetches to fail with stale tokens on reload.
+  // Sequence counter ensures only the latest event's profile fetch wins,
+  // preventing stale results from overwriting fresh ones.
   useEffect(() => {
     if (!supabase) return;
 
     let mounted = true;
+    let seq = 0;
 
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (event, s) => {
       if (!mounted) return;
       setSession(s);
+
       if (s?.user) {
+        const mySeq = ++seq;
         const p = await fetchProfile(s.user);
-        if (mounted) setProfile(p);
+        // Only apply if this is still the latest event (prevents race)
+        if (mySeq === seq && mounted) {
+          setProfile(p);
+          if (p) cacheProfile(p);
+        }
       } else {
+        seq++;
         setProfile(null);
+        clearCachedProfile();
       }
       if (mounted) setLoading(false);
     });
@@ -140,10 +186,10 @@ export function AuthProvider({ children }) {
     if (error) console.error("Sign-out failed:", error.message);
     setSession(null);
     setProfile(null);
+    clearCachedProfile();
   }, []);
 
   const tier = getEffectiveTier(profile);
-  // console.log('[Auth] profile:', profile, 'tier:', tier);
 
   const value = {
     session,

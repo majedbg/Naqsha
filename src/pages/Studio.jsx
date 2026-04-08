@@ -292,7 +292,7 @@ export default function Studio() {
       {/* Main content — column on mobile (canvas on top), row on desktop */}
       <div className="flex flex-col md:flex-row flex-1 min-h-0">
         {/* LeftPanel: DOM-first (natural for desktop row), ordered below canvas on mobile */}
-        <div className="order-2 md:order-none shrink-0 flex-1 md:flex-none min-h-0 overflow-hidden">
+        <div className="order-2 md:order-none md:flex-none min-h-0 overflow-hidden">
           <LeftPanel
             width={canvasW}
             height={canvasH}

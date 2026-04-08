@@ -106,7 +106,7 @@ export default function LeftPanel({
 
   // Mobile layout — collapsible panel below canvas
   return (
-    <div className="w-full bg-panel border-t border-[#2e2e2e] flex flex-col mobile-panel">
+    <div className="w-full h-full bg-panel border-t border-[#2e2e2e] flex flex-col mobile-panel">
       {/* Collapse toggle bar */}
       <button
         onClick={() => setCollapsed((c) => !c)}

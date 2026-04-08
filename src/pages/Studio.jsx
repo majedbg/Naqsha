@@ -303,7 +303,7 @@ export default function Studio() {
             onBgColorChange={setBgColor}
           />
         </div>
-        <div className="order-2 md:order-1">
+        <div className="order-2 md:order-1 min-h-0 flex-1 md:flex-none overflow-hidden">
         <LeftPanel
           width={canvasW}
           height={canvasH}

@@ -244,7 +244,7 @@ export const DEFAULT_PARAMS = {
   },
 };
 
-const SYMMETRY_PARAM = { key: 'symmetry', label: 'Radial Symmetry', min: 1, max: 11, step: 1, tooltip: 'Number of radial copies — 1 = none, 2 = mirror, 3 = 120°, etc.' };
+const SYMMETRY_PARAM = { key: 'symmetry', label: 'Radial Symmetry', min: 1, max: 11, step: 1, randomMax: 10, tooltip: 'Number of radial copies — 1 = none, 2 = mirror, 3 = 120°, etc.' };
 const START_ANGLE_PARAM = { key: 'startAngle', label: 'Start Angle', min: 0, max: 360, step: 1, tooltip: 'Rotates the entire pattern by this many degrees' };
 const OFFSET_X_PARAM = { key: 'offsetX', label: 'Offset X', min: -500, max: 500, step: 1, tooltip: 'Shifts the pattern horizontally in pixels' };
 const OFFSET_Y_PARAM = { key: 'offsetY', label: 'Offset Y', min: -500, max: 500, step: 1, tooltip: 'Shifts the pattern vertically in pixels' };
@@ -335,10 +335,10 @@ export const PATTERN_PARAM_DEFS = {
       { value: 'hexagon', label: 'Hexagon' },
       { value: 'circle', label: 'Circle (72-gon)' },
     ], tooltip: 'Base shape for recursive subdivision' },
-    { key: 'depth', label: 'Depth', min: 1, max: 12, step: 1, tooltip: 'Recursion depth — more = more nested shapes' },
+    { key: 'depth', label: 'Depth', min: 1, max: 12, step: 1, randomMax: 5, tooltip: 'Recursion depth — more = more nested shapes' },
     { key: 'startScale', label: 'Start Size %', min: 20, max: 200, step: 5, tooltip: 'Starting radius as % of half-canvas — over 100% extends beyond the frame edges' },
     { key: 'rotationPerLevel', label: 'Rotation/Level', min: 0, max: 90, step: 1, tooltip: 'Rotation applied at each recursion level' },
-    { key: 'scaleFactor', label: 'Scale Factor', min: 0.3, max: 0.95, step: 0.01, tooltip: 'Size multiplier per recursion level' },
+    { key: 'scaleFactor', label: 'Scale Factor', min: 0.3, max: 0.95, step: 0.01, randomMin: 0.4, randomMax: 0.8, tooltip: 'Size multiplier per recursion level' },
     { key: 'scaleNonLinearity', label: 'Scale Non-Linearity', min: -1, max: 1, step: 0.05, tooltip: 'Curves the scale decay — negative = slower start/faster end, positive = faster start/slower end' },
     { key: 'strokeWeight', label: 'Stroke Weight', min: 0.3, max: 3, step: 0.1, tooltip: 'Base line thickness at level 0' },
     { key: 'strokeDepthDecay', label: 'Stroke Depth Decay', min: 0, max: 1, step: 0.05, tooltip: 'How much stroke thins per recursion level — 0 = uniform, 1 = max thinning' },

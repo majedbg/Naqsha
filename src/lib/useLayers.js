@@ -60,19 +60,23 @@ function loadLayers() {
   }
 }
 
-// Generate a random value for a param definition
+// Generate a random value for a param definition.
+// Supports optional randomMin/randomMax to cap randomization range
+// while keeping the slider's full min/max range for manual control.
 function randomValueForDef(def) {
   if (def.type === 'select') {
-    const opts = def.options;
+    const opts = def.randomOptions || def.options;
     return opts[Math.floor(Math.random() * opts.length)].value;
   }
-  // Numeric: random within [min, max], snapped to step
-  const range = def.max - def.min;
-  const raw = def.min + Math.random() * range;
+  // Numeric: random within [randomMin..randomMax] or [min..max], snapped to step
+  const lo = def.randomMin ?? def.min;
+  const hi = def.randomMax ?? def.max;
+  const range = hi - lo;
+  const raw = lo + Math.random() * range;
   const snapped = Math.round(raw / def.step) * def.step;
   // Clamp and fix floating point
   const decimals = String(def.step).split('.')[1]?.length || 0;
-  return parseFloat(Math.max(def.min, Math.min(def.max, snapped)).toFixed(decimals));
+  return parseFloat(Math.max(lo, Math.min(hi, snapped)).toFixed(decimals));
 }
 
 export default function useLayers({ persistToLocal = true } = {}) {

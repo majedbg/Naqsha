@@ -13,18 +13,21 @@ import { UNIVERSAL_PARAM_KEYS } from "../lib/tierLimits";
 import UpgradePrompt from "./UpgradePrompt";
 import ParamGroup from "./ParamGroup";
 
-// Generate a random value for a single param definition
+// Generate a random value for a single param definition.
+// Supports optional randomMin/randomMax to cap randomization range.
 function randomValueForDef(def) {
   if (def.type === "select") {
-    const opts = def.options;
+    const opts = def.randomOptions || def.options;
     return opts[Math.floor(Math.random() * opts.length)].value;
   }
-  const range = def.max - def.min;
-  const raw = def.min + Math.random() * range;
+  const lo = def.randomMin ?? def.min;
+  const hi = def.randomMax ?? def.max;
+  const range = hi - lo;
+  const raw = lo + Math.random() * range;
   const snapped = Math.round(raw / def.step) * def.step;
   const decimals = String(def.step).split(".")[1]?.length || 0;
   return parseFloat(
-    Math.max(def.min, Math.min(def.max, snapped)).toFixed(decimals)
+    Math.max(lo, Math.min(hi, snapped)).toFixed(decimals)
   );
 }
 

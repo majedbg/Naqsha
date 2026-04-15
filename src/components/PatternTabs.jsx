@@ -5,7 +5,7 @@ import { useGate } from '../lib/useGate';
 import { getDynamicTypes, onRegistryChange } from '../lib/patternRegistry';
 
 export default function PatternTabs({ active, onChange, onOpenAIChat }) {
-  const { check, tier } = useGate();
+  const { check } = useGate();
   const [dynamicTypes, setDynamicTypes] = useState(getDynamicTypes());
   const [expanded, setExpanded] = useState(false);
   const rowRef = useRef(null);
@@ -16,7 +16,9 @@ export default function PatternTabs({ active, onChange, onOpenAIChat }) {
   }, []);
 
   const allTypes = [...PATTERN_TYPES, ...dynamicTypes];
-  const isPro = tier === 'pro' || tier === 'studio';
+  // AI pattern generation is allowed for anyone whose tier enables it
+  // (now Free + Pro + Studio — Guest still locked behind sign-in).
+  const aiAllowed = check('aiCredits').allowed;
 
   // Sort: active first, then unlocked, then locked
   const sorted = [...allTypes].sort((a, b) => {
@@ -81,15 +83,15 @@ export default function PatternTabs({ active, onChange, onOpenAIChat }) {
           {/* + New Pattern button */}
           <button
             onClick={onOpenAIChat}
-            disabled={!isPro}
+            disabled={!aiAllowed}
             className={`px-2 py-1 text-[11px] rounded border border-dashed transition-colors flex items-center gap-1 ${
-              isPro
+              aiAllowed
                 ? 'border-purple-500/50 text-purple-400 hover:bg-purple-500/10 hover:border-purple-400'
                 : 'border-[#444] text-gray-600 cursor-not-allowed'
             }`}
-            title={isPro
+            title={aiAllowed
               ? 'Describe a pattern and have AI create it'
-              : 'Pro feature: AI pattern generation'
+              : 'Sign in to generate an AI pattern'
             }
           >
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
@@ -97,9 +99,6 @@ export default function PatternTabs({ active, onChange, onOpenAIChat }) {
               <line x1="5" y1="12" x2="19" y2="12" />
             </svg>
             New
-            {!isPro && (
-              <span className="text-[8px] bg-purple-500/20 text-purple-400 px-1 rounded ml-0.5">PRO</span>
-            )}
           </button>
         </div>
 

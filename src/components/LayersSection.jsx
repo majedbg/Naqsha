@@ -85,8 +85,10 @@ export default function LayersSection({
               <rect x="3" y="11" width="18" height="11" rx="2" />
               <path d="M7 11V7a5 5 0 0110 0v4" />
             </svg>
-            <span className="text-[11px] text-gray-500">Multi-layer requires Pro</span>
-            <UpgradePrompt upgradeTarget="pro" compact />
+            <span className="text-[11px] text-gray-500">
+              {layerGate.reason || 'Layer limit reached'}
+            </span>
+            <UpgradePrompt upgradeTarget={layerGate.upgradeTarget || 'free'} compact />
           </div>
         </div>
       ) : (

@@ -65,21 +65,12 @@ export default function AuthButton() {
             <p className="text-[10px] text-gray-500 truncate">{user.email}</p>
             <p className={`text-[10px] font-medium mt-0.5 ${tierColor}`}>{tierLabel} tier</p>
           </div>
-          {(tier === 'pro' || tier === 'studio') && (
-            <div className="px-3 py-1.5 border-b border-[#333]">
-              <p className="text-[10px] text-gray-500">
-                AI Credits: <span className="text-accent font-medium">{profile?.ai_credits ?? 0}</span>
-              </p>
-            </div>
-          )}
-          {tier === 'free' && (
-            <button
-              className="w-full px-3 py-1.5 text-left text-[11px] text-accent hover:bg-[#333] transition-colors"
-              onClick={() => { setOpen(false); /* placeholder */ }}
-            >
-              Upgrade to Pro
-            </button>
-          )}
+          <div className="px-3 py-1.5 border-b border-[#333]">
+            <p className="text-[10px] text-gray-500">
+              AI Credits: <span className="text-accent font-medium">{profile?.ai_credits ?? 0}</span>
+              <span className="text-gray-600"> / 24</span>
+            </p>
+          </div>
           <button
             className="w-full px-3 py-1.5 text-left text-[11px] text-gray-400 hover:bg-[#333] hover:text-gray-200 transition-colors"
             onClick={() => { setOpen(false); signOut(); }}

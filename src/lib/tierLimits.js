@@ -20,29 +20,26 @@ export const TIER_LIMITS = {
     historySnapshots: 0,
     aiCredits: false,             // no AI access
   },
+  // Free tier = full creative product. The only scarce resource is the AI
+  // credit balance (enforced by the deduct_ai_credits RPC). Pro / Studio
+  // remain in this file as the landing pad for any future paid upgrade.
   free: {
-    patterns: [
-      'spirograph', 'flowfield', 'phyllotaxis', 'recursive',
-      'wave', 'voronoi', 'feather', 'phyllodash', 'radialetch',
-    ],
-    maxLayers: 2,
-    presetIndices: null,             // all presets
+    patterns: null,                  // null = all patterns
+    maxLayers: 6,
+    presetIndices: null,
     allowCustomSize: true,
     maxParamsPerPattern: Infinity,
-    lockedParamKeys: [
-      'sizeGrowth', 'scaleNonLinearity', 'spiralGrowth',
-      'arcSpacingNL', 'overlapPriority', 'nonLinear', 'growth',
-    ],
+    lockedParamKeys: [],
     seedVisible: true,
     seedEditable: true,
     svgMetadata: false,
-    maxCloudSaves: 3,
+    maxCloudSaves: 100,
     canShare: true,
-    canFork: false,
+    canFork: true,
     localStorage: true,
-    collections: false,
-    historySnapshots: 0,
-    aiCredits: false,             // no AI access
+    collections: true,
+    historySnapshots: 50,
+    aiCredits: true,              // capped at 24 credits per account (see migration 003)
   },
   pro: {
     patterns: null,                  // null = all patterns
@@ -107,10 +104,15 @@ export function checkGate(tier, feature, value) {
     case 'layers': {
       const count = value || 1;
       const allowed = count <= limits.maxLayers;
+      // Post-flatten only guests can trip this; signed-in users have 6 layers.
       return {
         allowed,
-        reason: allowed ? null : `Up to ${limits.maxLayers} layer${limits.maxLayers === 1 ? '' : 's'} on your plan`,
-        upgradeTarget: 'pro',
+        reason: allowed
+          ? null
+          : tier === 'guest'
+            ? `Sign in for up to 6 layers`
+            : `Up to ${limits.maxLayers} layer${limits.maxLayers === 1 ? '' : 's'} on your plan`,
+        upgradeTarget: tier === 'guest' ? 'free' : 'pro',
       };
     }
 
@@ -176,32 +178,35 @@ export function checkGate(tier, feature, value) {
         upgradeTarget: 'free',
       };
 
+    // Post-flatten, these only block guests (signed-in users have them all).
+    // Point upgradeTarget at 'free' for guests so the UpgradePrompt renders
+    // a sign-in CTA instead of a dead-end "Upgrade to Pro" button.
     case 'fork':
       return {
         allowed: limits.canFork,
-        reason: limits.canFork ? null : 'Upgrade to Pro to fork designs',
-        upgradeTarget: 'pro',
+        reason: limits.canFork ? null : 'Sign in to fork designs',
+        upgradeTarget: tier === 'guest' ? 'free' : 'pro',
       };
 
     case 'collections':
       return {
         allowed: limits.collections,
-        reason: limits.collections ? null : 'Collections require Pro',
-        upgradeTarget: 'pro',
+        reason: limits.collections ? null : 'Sign in to use collections',
+        upgradeTarget: tier === 'guest' ? 'free' : 'pro',
       };
 
     case 'history':
       return {
         allowed: limits.historySnapshots > 0,
-        reason: limits.historySnapshots > 0 ? null : 'Design history requires Pro',
-        upgradeTarget: 'pro',
+        reason: limits.historySnapshots > 0 ? null : 'Sign in for design history',
+        upgradeTarget: tier === 'guest' ? 'free' : 'pro',
       };
 
     case 'aiCredits':
       return {
         allowed: !!limits.aiCredits,
-        reason: limits.aiCredits ? null : 'AI pattern generation requires Pro',
-        upgradeTarget: 'pro',
+        reason: limits.aiCredits ? null : 'Sign in to generate AI patterns',
+        upgradeTarget: tier === 'guest' ? 'free' : 'pro',
       };
 
     default:

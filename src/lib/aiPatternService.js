@@ -7,13 +7,6 @@ const CREDIT_COST_REVISION = 4;
 
 export { CREDIT_COST_NEW, CREDIT_COST_REVISION };
 
-// Credit pack pricing
-export const CREDIT_PACKS = [
-  { credits: 12, price: 3, label: '12 credits — $3' },
-  { credits: 24, price: 5, label: '24 credits — $5' },
-  { credits: 48, price: 8, label: '48 credits — $8' },
-];
-
 /**
  * Generate a new pattern or revise an existing one via Claude API.
  * Calls the Supabase Edge Function 'generate-pattern' which proxies to Claude.

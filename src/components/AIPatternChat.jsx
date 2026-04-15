@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect } from 'react';
 import { useAuth } from '../lib/AuthContext';
-import { generatePattern, CREDIT_COST_NEW, CREDIT_COST_REVISION, CREDIT_PACKS } from '../lib/aiPatternService';
+import { generatePattern, CREDIT_COST_NEW, CREDIT_COST_REVISION } from '../lib/aiPatternService';
+
+const STARTING_CREDITS = 24; // matches supabase/003_free_ai_allowance.sql default
 
 /**
  * AI Pattern Chat modal.
@@ -129,20 +131,15 @@ export default function AIPatternChat({ mode: initialMode, existingSource, exist
         {/* Credits bar */}
         <div className="px-4 py-1.5 flex items-center justify-between border-b border-[#333] bg-[#1a1a1a]">
           <span className="text-[10px] text-gray-500">
-            Credits: <span className={`font-medium ${credits >= cost ? 'text-accent' : 'text-red-400'}`}>{credits}</span>
+            AI credits:{' '}
+            <span className={`font-medium ${credits >= cost ? 'text-accent' : 'text-red-400'}`}>
+              {credits}
+            </span>
+            <span className="text-gray-600"> / {STARTING_CREDITS}</span>
           </span>
-          <div className="flex items-center gap-2">
-            {CREDIT_PACKS.map((pack) => (
-              <button
-                key={pack.credits}
-                className="text-[9px] text-gray-600 hover:text-accent transition-colors"
-                title={`Buy ${pack.credits} credits for $${pack.price}`}
-                onClick={() => { /* Stripe checkout placeholder */ }}
-              >
-                +{pack.credits} (${pack.price})
-              </button>
-            ))}
-          </div>
+          <span className="text-[9px] text-gray-600">
+            One allowance per account
+          </span>
         </div>
 
         {/* Messages */}
@@ -206,8 +203,9 @@ export default function AIPatternChat({ mode: initialMode, existingSource, exist
             </button>
           </div>
           {!canGenerate && (
-            <p className="text-[10px] text-red-400 mt-1">
-              Not enough credits. Purchase more to continue generating patterns.
+            <p className="text-[10px] text-gray-400 mt-1">
+              You&apos;ve used your AI allowance for this account. New patterns and
+              revisions are disabled.
             </p>
           )}
         </div>

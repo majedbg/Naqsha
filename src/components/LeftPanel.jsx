@@ -54,6 +54,11 @@ export default function LeftPanel({
   prepareConfigured,
   outputMode,
   onOutputModeChange,
+  optimizations,
+  onOptimizationChange,
+  onOptimizationApply,
+  onOptimizationRevert,
+  patternInstances,
   layers,
   onUpdateLayer,
   onRemoveLayer,
@@ -157,6 +162,11 @@ export default function LeftPanel({
               onCustomChange={onCustomChange}
               outputMode={outputMode}
               onOutputModeChange={onOutputModeChange}
+              optimizations={optimizations}
+              onOptimizationChange={onOptimizationChange}
+              onOptimizationApply={onOptimizationApply}
+              onOptimizationRevert={onOptimizationRevert}
+              patternInstances={patternInstances}
               layers={layers}
               onUpdateLayer={onUpdateLayer}
             />

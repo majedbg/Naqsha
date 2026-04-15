@@ -4,9 +4,32 @@
 // stays in the pixel coordinate space that the pattern classes already
 // draw in — so path data doesn't need transforming on export.
 
+import { optimizeGroup } from './plotter/pipeline';
+
 const PPI = 96;
 const MM_PER_IN = 25.4;
 const pxToMm = (px) => (px / PPI) * MM_PER_IN;
+
+function anyOptEnabled(optimizations) {
+  if (!optimizations) return false;
+  return !!(
+    optimizations.simplify?.enabled ||
+    optimizations.merge?.enabled ||
+    optimizations.reorder?.enabled
+  );
+}
+
+function maybeOptimize(rawGroup, optimizations) {
+  if (!anyOptEnabled(optimizations)) return rawGroup;
+  try {
+    const { svg } = optimizeGroup(rawGroup, optimizations);
+    return svg;
+  } catch {
+    // If path parsing fails for any reason, fall back to the raw group so the
+    // export still succeeds. Optimization is a bonus, not a prerequisite.
+    return rawGroup;
+  }
+}
 
 function downloadSVG(svgString, filename) {
   const blob = new Blob([svgString], { type: 'image/svg+xml' });
@@ -44,9 +67,10 @@ function buildMeta({ metadata, manifest }) {
   return parts.length ? `\n  ${parts.join('\n  ')}` : '';
 }
 
-export function exportLayerSVG(layer, patternInstance, canvasW, canvasH, { metadata = false, manifest, filename } = {}) {
+export function exportLayerSVG(layer, patternInstance, canvasW, canvasH, { metadata = false, manifest, filename, optimizations } = {}) {
   const bgRect = layerBgRect(layer, canvasW, canvasH);
-  const group = patternInstance.toSVGGroup(layer.id, layer.color, layer.opacity);
+  const rawGroup = patternInstance.toSVGGroup(layer.id, layer.color, layer.opacity);
+  const group = maybeOptimize(rawGroup, optimizations);
   const meta = buildMeta({ metadata, manifest });
   const svg = `${svgOpen(canvasW, canvasH, meta)}
   <rect width="100%" height="100%" fill="white"/>
@@ -55,7 +79,7 @@ ${bgRect ? `  ${bgRect}\n` : ''}  ${group}
   downloadSVG(svg, filename || `${layer.name.replace(/\s+/g, '_')}.svg`);
 }
 
-export function exportAllLayersSVG(layers, patternInstances, canvasW, canvasH, includeHidden = false, { metadata = false, manifest, filename } = {}) {
+export function exportAllLayersSVG(layers, patternInstances, canvasW, canvasH, includeHidden = false, { metadata = false, manifest, filename, optimizations } = {}) {
   // Reverse so bottom layers come first in SVG (matching visual order)
   const ordered = [...layers].reverse();
   const groups = ordered
@@ -64,7 +88,8 @@ export function exportAllLayersSVG(layers, patternInstances, canvasW, canvasH, i
       const instance = patternInstances[l.id];
       if (!instance) return '';
       const bgRect = layerBgRect(l, canvasW, canvasH);
-      const group = instance.toSVGGroup(l.id, l.color, l.opacity);
+      const rawGroup = instance.toSVGGroup(l.id, l.color, l.opacity);
+      const group = maybeOptimize(rawGroup, optimizations);
       return (bgRect ? bgRect + '\n  ' : '') + group;
     })
     .join('\n  ');

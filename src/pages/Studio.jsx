@@ -66,6 +66,32 @@ export default function Studio() {
     const saved = savedCanvas?.outputMode;
     return saved === 'laser' || saved === 'plotter' ? saved : 'plotter';
   });
+  // Optimization state — each pipeline step tracks its preview value
+  // (what the slider shows) vs. its appliedTolerance (what export uses).
+  // Export only reads `enabled && appliedTolerance`, so slider drift never
+  // silently changes the exported file.
+  const [optimizations, setOptimizations] = useState({
+    simplify: { enabled: false, tolerance: 0.3, appliedTolerance: null },
+    merge:    { enabled: false, tolerance: 0.5, appliedTolerance: null },
+    reorder:  { enabled: false },
+  });
+  const [livePatternInstances, setLivePatternInstances] = useState({});
+  const updateOptimization = (key, patch) => {
+    setOptimizations((prev) => ({ ...prev, [key]: { ...prev[key], ...patch } }));
+  };
+  const applyOptimization = (key) => {
+    setOptimizations((prev) => {
+      const cur = prev[key];
+      if (key === 'reorder') return { ...prev, reorder: { enabled: true } };
+      return { ...prev, [key]: { ...cur, enabled: true, appliedTolerance: cur.tolerance } };
+    });
+  };
+  const revertOptimization = (key) => {
+    setOptimizations((prev) => {
+      if (key === 'reorder') return { ...prev, reorder: { enabled: false } };
+      return { ...prev, [key]: { ...prev[key], enabled: false, appliedTolerance: null } };
+    });
+  };
   // Prepare tab is "configured" once the user has picked a non-default
   // preset, custom size, or margin — controls whether the stale yellow-dot
   // indicator appears when Design edits happen after Prepare is set.
@@ -174,6 +200,24 @@ export default function Studio() {
     setCanvasH(Math.round(h));
   };
 
+  // Build the pipeline opts used by the export — only "applied" tolerances flow through.
+  const appliedOptimizations = {
+    simplify: {
+      enabled: optimizations.simplify.enabled,
+      tolerance: optimizations.simplify.appliedTolerance ?? 0,
+    },
+    merge: {
+      enabled: optimizations.merge.enabled,
+      tolerance: optimizations.merge.appliedTolerance ?? 0,
+    },
+    reorder: { enabled: optimizations.reorder.enabled },
+  };
+  const appliedOpsList = [
+    appliedOptimizations.simplify.enabled ? `simplify(${appliedOptimizations.simplify.tolerance}mm)` : null,
+    appliedOptimizations.merge.enabled    ? `merge(${appliedOptimizations.merge.tolerance}mm)`       : null,
+    appliedOptimizations.reorder.enabled  ? 'reorder'                                                : null,
+  ].filter(Boolean);
+
   const buildExportManifest = () => buildManifest({
     version: '1',
     outputMode,
@@ -181,6 +225,7 @@ export default function Studio() {
     bedH: (canvasH / 96 * 25.4).toFixed(1),
     bedUnit: 'mm',
     layers,
+    optimizations: appliedOpsList,
   });
 
   const handleExportLayer = (layerId) => {
@@ -190,6 +235,7 @@ export default function Studio() {
       exportLayerSVG(applyOutputMode(layer, outputMode), instance, canvasW, canvasH, {
         metadata: limits.svgMetadata,
         manifest: buildExportManifest(),
+        optimizations: appliedOptimizations,
       });
     }
   };
@@ -206,6 +252,7 @@ export default function Studio() {
         metadata: limits.svgMetadata,
         manifest: buildExportManifest(),
         filename: opts.filename,
+        optimizations: appliedOptimizations,
       }
     );
   };
@@ -380,6 +427,11 @@ export default function Studio() {
             prepareConfigured={prepareConfigured}
             outputMode={outputMode}
             onOutputModeChange={setOutputMode}
+            optimizations={optimizations}
+            onOptimizationChange={updateOptimization}
+            onOptimizationApply={applyOptimization}
+            onOptimizationRevert={revertOptimization}
+            patternInstances={livePatternInstances}
             layers={layers}
             onUpdateLayer={updateLayer}
             onRemoveLayer={removeLayer}
@@ -406,6 +458,7 @@ export default function Studio() {
             canvasH={canvasH}
             patternInstancesRef={patternInstancesRef}
             canvasContainerRef={canvasContainerRef}
+            onPatternInstancesChange={setLivePatternInstances}
             bgColor={bgColor}
             onBgColorChange={setBgColor}
             displayMode={activeTab}

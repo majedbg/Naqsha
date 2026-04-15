@@ -1,5 +1,6 @@
 import CanvasSection from './CanvasSection';
 import OutputModeSection from './OutputModeSection';
+import OptimizeSection from './OptimizeSection';
 
 export default function PrepareTab({
   width,
@@ -13,6 +14,11 @@ export default function PrepareTab({
   onCustomChange,
   outputMode,
   onOutputModeChange,
+  optimizations,
+  onOptimizationChange,
+  onOptimizationApply,
+  onOptimizationRevert,
+  patternInstances,
   layers,
   onUpdateLayer,
 }) {
@@ -49,16 +55,14 @@ export default function PrepareTab({
         onUpdateLayer={onUpdateLayer}
       />
 
-      <section className="space-y-2 opacity-60">
-        <h3 className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">
-          Optimize
-        </h3>
-        <p className="text-[11px] text-gray-600 leading-relaxed">
-          Simplify · Merge · Reorder — preview &amp; apply controls land next.
-          Every optimization will default off, preview before applying, and
-          stay revertable.
-        </p>
-      </section>
+      <OptimizeSection
+        optimizations={optimizations}
+        patternInstances={patternInstances}
+        layers={layers}
+        onChange={onOptimizationChange}
+        onApply={onOptimizationApply}
+        onRevert={onOptimizationRevert}
+      />
     </div>
   );
 }

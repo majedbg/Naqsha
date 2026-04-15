@@ -17,6 +17,7 @@ export default function RightPanel({
   canvasH,
   patternInstancesRef,
   canvasContainerRef,
+  onPatternInstancesChange,
   bgColor,
   onBgColorChange,
   displayMode = 'design',
@@ -37,12 +38,15 @@ export default function RightPanel({
     bgColor
   );
 
-  // Expose pattern instances to parent for SVG export
+  // Expose pattern instances to parent for SVG export and optimization stats.
   useEffect(() => {
     if (patternInstancesRef) {
       patternInstancesRef.current = patternInstances;
     }
-  }, [patternInstances, patternInstancesRef]);
+    if (onPatternInstancesChange) {
+      onPatternInstancesChange(patternInstances);
+    }
+  }, [patternInstances, patternInstancesRef, onPatternInstancesChange]);
 
   // Expose canvas container so parent can grab thumbnails
   useEffect(() => {

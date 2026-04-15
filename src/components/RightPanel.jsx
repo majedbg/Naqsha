@@ -1,5 +1,6 @@
 import { useRef, useState, useEffect, useCallback } from "react";
 import useCanvas from "../lib/useCanvas";
+import BedOverlay from "./canvas/BedOverlay";
 
 const BG_PRESETS = [
   { color: "#0a1628", label: "Dark Blue" },
@@ -18,6 +19,9 @@ export default function RightPanel({
   canvasContainerRef,
   bgColor,
   onBgColorChange,
+  displayMode = 'design',
+  unit = 'mm',
+  marginPx = 0,
 }) {
   const containerRef = useRef(null);
   const wrapperRef = useRef(null);
@@ -86,22 +90,40 @@ export default function RightPanel({
   const finalScale = fitScale * zoom;
   const zoomPercent = Math.round(zoom * 100);
 
+  const isPrepare = displayMode === 'prepare';
+
   return (
     <div
       ref={wrapperRef}
       className={`h-full bg-surface flex flex-col items-center justify-center relative ${zoom > 1.25 ? "overflow-auto" : "overflow-hidden"}`}
     >
+      {isPrepare && (
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-[#141414]/90 border border-accent/40 text-accent/90 text-[10px] uppercase tracking-wider font-semibold rounded-md px-2.5 py-1 z-10 pointer-events-none">
+          Prepare · Bed view
+        </div>
+      )}
       <div
         style={{
           width: canvasW,
           height: canvasH,
           transform: `scale(${finalScale})`,
           transformOrigin: "center center",
-          boxShadow: "7px 7px 25px 2px rgba(0,0,0, 0.5)",
+          boxShadow: isPrepare
+            ? "0 0 0 1px rgba(0,201,177,0.35), 7px 7px 25px 2px rgba(0,0,0, 0.5)"
+            : "7px 7px 25px 2px rgba(0,0,0, 0.5)",
           flexShrink: 0,
+          position: "relative",
         }}
       >
         <div ref={containerRef} />
+        {isPrepare && (
+          <BedOverlay
+            canvasW={canvasW}
+            canvasH={canvasH}
+            marginPx={marginPx}
+            unit={unit}
+          />
+        )}
       </div>
 
       {/* Background color button — bottom left, aligned with zoom controls */}

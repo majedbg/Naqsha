@@ -31,6 +31,10 @@ function createLayer(index) {
       .filter((d) => !RANDOMIZE_EXCLUDED_KEYS.includes(d.key))
       .map((d) => d.key),
     paramsCache: {},
+    // Fabrication metadata — consumed only when Prepare's output mode
+    // applies. Safe to exist in plotter/design modes; just ignored.
+    role: 'cut',          // 'cut' | 'score' | 'engrave' — used in laser output mode
+    penSlot: (index % 4) + 1, // 1..4 — used in plotter output mode
   };
 }
 

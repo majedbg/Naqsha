@@ -16,10 +16,16 @@ import {
   loadDesign,
   saveHistorySnapshot,
 } from "../lib/designService";
-import { exportLayerSVG, exportAllLayersSVG } from "../lib/svgExport";
+import { exportLayerSVG, exportAllLayersSVG, buildManifest } from "../lib/svgExport";
 import { PRESET_SIZES, PPI } from "../constants";
+import { DEFAULT_UNIT } from "../lib/units";
+import { decodeShare, readShareTokenFromUrl, clearShareTokenFromUrl } from "../lib/shareLink";
+import ShareLinkButton from "../components/ShareLinkButton";
+import { applyOutputMode } from "../lib/fabrication";
 
 const CANVAS_STORAGE_KEY = "sonoform-canvas";
+const VALID_TABS = ["design", "prepare", "export"];
+const VALID_UNITS = ["mm", "in", "px"];
 
 function loadCanvasState() {
   try {
@@ -44,17 +50,38 @@ export default function Studio() {
   const [canvasH, setCanvasH] = useState(
     savedCanvas?.canvasH ?? PRESET_SIZES[1].height * PPI
   );
+  const [activeTab, setActiveTab] = useState(() => {
+    const saved = savedCanvas?.activeTab;
+    return VALID_TABS.includes(saved) ? saved : "design";
+  });
+  const [unit, setUnit] = useState(() => {
+    // Prefer saved unit; otherwise let the preset hint it (A4 → mm, AxiDraw → in).
+    const saved = savedCanvas?.unit;
+    if (VALID_UNITS.includes(saved)) return saved;
+    const presetHint = PRESET_SIZES[savedCanvas?.presetIndex ?? 1]?.unitHint;
+    return VALID_UNITS.includes(presetHint) ? presetHint : DEFAULT_UNIT;
+  });
+  const [margin, setMargin] = useState(savedCanvas?.margin ?? 0);
+  const [outputMode, setOutputMode] = useState(() => {
+    const saved = savedCanvas?.outputMode;
+    return saved === 'laser' || saved === 'plotter' ? saved : 'plotter';
+  });
+  // Prepare tab is "configured" once the user has picked a non-default
+  // preset, custom size, or margin — controls whether the stale yellow-dot
+  // indicator appears when Design edits happen after Prepare is set.
+  const prepareConfigured =
+    presetIndex !== 1 || margin > 0 || unit !== DEFAULT_UNIT;
 
   useEffect(() => {
     try {
       localStorage.setItem(
         CANVAS_STORAGE_KEY,
-        JSON.stringify({ presetIndex, canvasW, canvasH })
+        JSON.stringify({ presetIndex, canvasW, canvasH, activeTab, unit, margin, outputMode })
       );
     } catch {
       /* storage full or unavailable */
     }
-  }, [presetIndex, canvasW, canvasH]);
+  }, [presetIndex, canvasW, canvasH, activeTab, unit, margin, outputMode]);
 
   const {
     layers,
@@ -71,6 +98,24 @@ export default function Studio() {
     bgColor,
     setBgColor,
   } = useLayers({ persistToLocal: limits.localStorage });
+
+  // On mount, if the URL carries a ?s=<share-token>, hydrate state from it.
+  // Intentionally runs once; strips the param so refresh doesn't re-apply.
+  useEffect(() => {
+    const token = readShareTokenFromUrl();
+    if (!token) return;
+    const state = decodeShare(token);
+    if (!state) return;
+    if (Array.isArray(state.layers) && state.layers.length > 0) loadLayerSet(state.layers);
+    if (typeof state.canvasW === 'number') setCanvasW(state.canvasW);
+    if (typeof state.canvasH === 'number') setCanvasH(state.canvasH);
+    if (typeof state.presetIndex === 'number') setPresetIndex(state.presetIndex);
+    if (typeof state.unit === 'string' && VALID_UNITS.includes(state.unit)) setUnit(state.unit);
+    if (typeof state.margin === 'number') setMargin(state.margin);
+    if (typeof state.bgColor === 'string') setBgColor(state.bgColor);
+    clearShareTokenFromUrl();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const { groups, saveGroup, deleteGroup, renameGroup } = useLayerGroups();
   const patternInstancesRef = useRef({});
   const canvasContainerRef = useRef(null);
@@ -129,24 +174,39 @@ export default function Studio() {
     setCanvasH(Math.round(h));
   };
 
+  const buildExportManifest = () => buildManifest({
+    version: '1',
+    outputMode,
+    bedW: (canvasW / 96 * 25.4).toFixed(1),
+    bedH: (canvasH / 96 * 25.4).toFixed(1),
+    bedUnit: 'mm',
+    layers,
+  });
+
   const handleExportLayer = (layerId) => {
     const layer = layers.find((l) => l.id === layerId);
     const instance = patternInstancesRef.current?.[layerId];
     if (layer && instance) {
-      exportLayerSVG(layer, instance, canvasW, canvasH, {
+      exportLayerSVG(applyOutputMode(layer, outputMode), instance, canvasW, canvasH, {
         metadata: limits.svgMetadata,
+        manifest: buildExportManifest(),
       });
     }
   };
 
-  const handleExportAll = (includeHidden) => {
+  const handleExportAll = (includeHidden, opts = {}) => {
+    const mapped = layers.map((l) => applyOutputMode(l, outputMode));
     exportAllLayersSVG(
-      layers,
+      mapped,
       patternInstancesRef.current || {},
       canvasW,
       canvasH,
       includeHidden,
-      { metadata: limits.svgMetadata }
+      {
+        metadata: limits.svgMetadata,
+        manifest: buildExportManifest(),
+        filename: opts.filename,
+      }
     );
   };
 
@@ -284,6 +344,17 @@ export default function Studio() {
             <span className="ml-1 text-gray-600">({groups.length})</span>
           )}
         </button>
+        <ShareLinkButton
+          buildState={() => ({
+            canvasW,
+            canvasH,
+            presetIndex,
+            unit,
+            margin,
+            bgColor,
+            layers,
+          })}
+        />
         <div className="ml-auto">
           <AuthButton />
         </div>
@@ -297,8 +368,18 @@ export default function Studio() {
             width={canvasW}
             height={canvasH}
             presetIndex={presetIndex}
+            unit={unit}
+            onUnitChange={setUnit}
+            margin={margin}
+            onMarginChange={setMargin}
             onPresetChange={handlePresetChange}
             onCustomChange={handleCustomChange}
+            activeTab={activeTab}
+            onTabChange={setActiveTab}
+            prepareStale={false}
+            prepareConfigured={prepareConfigured}
+            outputMode={outputMode}
+            onOutputModeChange={setOutputMode}
             layers={layers}
             onUpdateLayer={updateLayer}
             onRemoveLayer={removeLayer}
@@ -327,6 +408,9 @@ export default function Studio() {
             canvasContainerRef={canvasContainerRef}
             bgColor={bgColor}
             onBgColorChange={setBgColor}
+            displayMode={activeTab}
+            unit={unit}
+            marginPx={margin}
           />
         </div>
       </div>

@@ -1,14 +1,34 @@
+// Canvas/bed presets. Width/height in inches (internal canonical unit).
+// IMPORTANT: Indices 0-2 are the guest-tier allowed set (see tierLimits.js
+// `presetIndices: [0, 1, 2]`). Keep those three entries in place.
+// `category` groups entries in the UI; `unitHint` is the unit used in labels
+// and default-display for that preset.
 export const PRESET_SIZES = [
-  { label: '6 × 12"', width: 6, height: 12 },
-  { label: '12 × 12"', width: 12, height: 12 },
-  { label: '12 × 18"', width: 12, height: 18 },
-  { label: '12 × 24"', width: 12, height: 24 },
-  { label: '18 × 24"', width: 18, height: 24 },
-  { label: '18 × 32"', width: 18, height: 32 },
-  { label: '24 × 24"', width: 24, height: 24 },
-  { label: '24 × 36"', width: 24, height: 36 },
-  { label: '24 × 48"', width: 24, height: 48 },
-  { label: 'Custom', width: null, height: null },
+  // 0-2: Guest-tier artwork sizes (do not reorder)
+  { label: '6 × 12"',  width: 6,  height: 12, category: 'artwork', unitHint: 'in' },
+  { label: '12 × 12"', width: 12, height: 12, category: 'artwork', unitHint: 'in' },
+  { label: '12 × 18"', width: 12, height: 18, category: 'artwork', unitHint: 'in' },
+  // Larger artwork
+  { label: '12 × 24"', width: 12, height: 24, category: 'artwork', unitHint: 'in' },
+  { label: '18 × 24"', width: 18, height: 24, category: 'artwork', unitHint: 'in' },
+  { label: '18 × 32"', width: 18, height: 32, category: 'artwork', unitHint: 'in' },
+  { label: '24 × 24"', width: 24, height: 24, category: 'artwork', unitHint: 'in' },
+  { label: '24 × 36"', width: 24, height: 36, category: 'artwork', unitHint: 'in' },
+  { label: '24 × 48"', width: 24, height: 48, category: 'artwork', unitHint: 'in' },
+  // Paper sizes
+  { label: 'A5 — 148 × 210 mm',  width: 148 / 25.4, height: 210 / 25.4, category: 'paper', unitHint: 'mm' },
+  { label: 'A4 — 210 × 297 mm',  width: 210 / 25.4, height: 297 / 25.4, category: 'paper', unitHint: 'mm' },
+  { label: 'A3 — 297 × 420 mm',  width: 297 / 25.4, height: 420 / 25.4, category: 'paper', unitHint: 'mm' },
+  { label: 'US Letter — 8.5 × 11"', width: 8.5, height: 11, category: 'paper', unitHint: 'in' },
+  // Pen plotter beds
+  { label: 'AxiDraw V3 — 6 × 8"',        width: 6,    height: 8,    category: 'plotter', unitHint: 'in' },
+  { label: 'AxiDraw Mini — 6 × 4"',      width: 6,    height: 4,    category: 'plotter', unitHint: 'in' },
+  { label: 'AxiDraw SE/A3 — 11.7 × 16.5"', width: 11.7, height: 16.5, category: 'plotter', unitHint: 'in' },
+  // Laser cutter beds
+  { label: 'Glowforge Plus — 11 × 19.5"', width: 11, height: 19.5, category: 'laser', unitHint: 'in' },
+  { label: 'xTool P2 — 16 × 24"',         width: 16, height: 24,   category: 'laser', unitHint: 'in' },
+  // Custom (sentinel: null dims)
+  { label: 'Custom', width: null, height: null, category: 'custom', unitHint: 'in' },
 ];
 
 export const PPI = 96;

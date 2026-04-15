@@ -1,6 +1,8 @@
 import CanvasSection from './CanvasSection';
 import OutputModeSection from './OutputModeSection';
 import OptimizeSection from './OptimizeSection';
+import OverlapWarnings from './OverlapWarnings';
+import PlotPreviewSection from './PlotPreviewSection';
 
 export default function PrepareTab({
   width,
@@ -15,6 +17,7 @@ export default function PrepareTab({
   outputMode,
   onOutputModeChange,
   optimizations,
+  appliedOptimizations,
   onOptimizationChange,
   onOptimizationApply,
   onOptimizationRevert,
@@ -62,6 +65,17 @@ export default function PrepareTab({
         onChange={onOptimizationChange}
         onApply={onOptimizationApply}
         onRevert={onOptimizationRevert}
+      />
+
+      <OverlapWarnings layers={layers} patternInstances={patternInstances} />
+
+      <PlotPreviewSection
+        layers={layers}
+        patternInstances={patternInstances}
+        canvasW={width}
+        canvasH={height}
+        appliedOptimizations={appliedOptimizations}
+        unit={unit}
       />
     </div>
   );

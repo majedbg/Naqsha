@@ -428,6 +428,7 @@ export default function Studio() {
             outputMode={outputMode}
             onOutputModeChange={setOutputMode}
             optimizations={optimizations}
+            appliedOptimizations={appliedOptimizations}
             onOptimizationChange={updateOptimization}
             onOptimizationApply={applyOptimization}
             onOptimizationRevert={revertOptimization}

@@ -55,6 +55,7 @@ export default function LeftPanel({
   outputMode,
   onOutputModeChange,
   optimizations,
+  appliedOptimizations,
   onOptimizationChange,
   onOptimizationApply,
   onOptimizationRevert,
@@ -163,6 +164,7 @@ export default function LeftPanel({
               outputMode={outputMode}
               onOutputModeChange={onOutputModeChange}
               optimizations={optimizations}
+              appliedOptimizations={appliedOptimizations}
               onOptimizationChange={onOptimizationChange}
               onOptimizationApply={onOptimizationApply}
               onOptimizationRevert={onOptimizationRevert}

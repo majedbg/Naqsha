@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { splitGroup } from '../../lib/plotter/pipeline';
+import { extractRenderedPaths } from '../../lib/plotter/pipeline';
 import { countOverlaps } from '../../lib/plotter/overlapCheck';
 
 // Collects paths from all visible layers (post-applied-optimizations) and
@@ -23,7 +23,9 @@ function useOverlapSummary(layers, patternInstances) {
       } catch {
         continue;
       }
-      const { paths } = splitGroup(group);
+      // Use transformed paths so overlap counts reflect what the plotter
+      // will actually draw — including radial-symmetry copies.
+      const paths = extractRenderedPaths(group);
       const res = countOverlaps(paths);
       totalCount += res.count;
       totalSegments += res.segmentCount;

@@ -1,5 +1,5 @@
 import { useMemo, useState, useEffect, useRef } from 'react';
-import { splitGroup, optimizeGroup, formatSeconds } from '../../lib/plotter/pipeline';
+import { extractRenderedPaths, optimizeGroup, formatSeconds } from '../../lib/plotter/pipeline';
 import { pxToMm } from '../../lib/plotter/pathOps';
 
 // Pen speeds in mm/s — loosely match AxiDraw V3 factory tuning.
@@ -28,7 +28,10 @@ function buildRoute(layers, patternInstances, appliedOptimizations) {
     const groupSvg = appliedOptimizations
       ? optimizeGroup(raw, appliedOptimizations).svg
       : raw;
-    const { paths } = splitGroup(groupSvg);
+    // extractRenderedPaths composes <g transform="..."> with each <path>,
+    // so the polylines come out in viewBox coordinates and symmetry copies
+    // are already materialized — exactly what the plotter will draw.
+    const paths = extractRenderedPaths(groupSvg);
     for (const p of paths) {
       if (!p.points || p.points.length < 2) continue;
       // Travel to the first point (pen-up)

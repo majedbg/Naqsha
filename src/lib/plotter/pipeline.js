@@ -4,6 +4,61 @@ import {
   pathStats, estimateTimeSec,
 } from './pathOps.js';
 
+// -------------- Affine transform helpers --------------
+// 2D affine matrix stored as [a, b, c, d, e, f] meaning
+//   x' = a*x + c*y + e
+//   y' = b*x + d*y + f
+const IDENTITY = Object.freeze([1, 0, 0, 1, 0, 0]);
+
+function multiply(A, B) {
+  return [
+    A[0] * B[0] + A[2] * B[1],
+    A[1] * B[0] + A[3] * B[1],
+    A[0] * B[2] + A[2] * B[3],
+    A[1] * B[2] + A[3] * B[3],
+    A[0] * B[4] + A[2] * B[5] + A[4],
+    A[1] * B[4] + A[3] * B[5] + A[5],
+  ];
+}
+
+function applyMatrix(M, p) {
+  return [M[0] * p[0] + M[2] * p[1] + M[4], M[1] * p[0] + M[3] * p[1] + M[5]];
+}
+
+// Parses an SVG `transform` attribute into a single affine matrix.
+// Handles translate(...), rotate(angle [, cx, cy]), scale(...), matrix(...).
+function parseTransformAttr(str) {
+  if (!str) return IDENTITY.slice();
+  let M = IDENTITY.slice();
+  const re = /(translate|rotate|scale|matrix)\(([^)]*)\)/g;
+  let m;
+  while ((m = re.exec(str)) !== null) {
+    const fn = m[1];
+    const args = m[2].trim().split(/[\s,]+/).map(parseFloat).filter((n) => !Number.isNaN(n));
+    let T = IDENTITY.slice();
+    if (fn === 'translate') {
+      T = [1, 0, 0, 1, args[0] || 0, args[1] || 0];
+    } else if (fn === 'scale') {
+      const sx = args[0] || 1;
+      const sy = args.length > 1 ? args[1] : sx;
+      T = [sx, 0, 0, sy, 0, 0];
+    } else if (fn === 'rotate') {
+      const a = (args[0] || 0) * Math.PI / 180;
+      const c = Math.cos(a);
+      const s = Math.sin(a);
+      T = [c, s, -s, c, 0, 0];
+      if (args.length >= 3) {
+        const cx = args[1]; const cy = args[2];
+        T = multiply([1, 0, 0, 1, cx, cy], multiply(T, [1, 0, 0, 1, -cx, -cy]));
+      }
+    } else if (fn === 'matrix') {
+      if (args.length === 6) T = args;
+    }
+    M = multiply(M, T);
+  }
+  return M;
+}
+
 // Extract pattern <path/> elements from a layer's SVG group string.
 // Returns: { prefix, suffix, paths: [{ points, closed, attrs }] }
 // The prefix is everything up to the first <path/>; suffix is everything
@@ -88,6 +143,55 @@ export function previewOne(svgGroup, only, opts) {
   };
   isolated[only] = { ...opts[only], enabled: true };
   return optimizeGroup(svgGroup, isolated);
+}
+
+// Walk the inner structure of a layer `<g id="layer-...">` group and return
+// a flat list of polylines already transformed into the outer viewBox
+// coordinate space. For designs with radial symmetry the single inner path
+// block is replicated N times here — one polyline per symmetry copy — so
+// the consumer (plot preview, overlap check, travel estimator) sees what
+// the plotter will actually draw, not the raw pre-transform shape.
+export function extractRenderedPaths(svgGroup) {
+  if (!svgGroup || typeof DOMParser === 'undefined') {
+    // Fall back to untransformed extraction outside the browser (tests / node).
+    return splitGroup(svgGroup).paths.map((p) => ({
+      points: p.points,
+      closed: p.closed,
+      color: extractStrokeFromAttrs(p.attrs),
+    }));
+  }
+  const wrapped = `<svg xmlns="http://www.w3.org/2000/svg">${svgGroup}</svg>`;
+  const doc = new DOMParser().parseFromString(wrapped, 'image/svg+xml');
+  const root = doc.documentElement;
+  const out = [];
+
+  function walk(node, M, inheritedStroke) {
+    const children = node.children || [];
+    for (let i = 0; i < children.length; i++) {
+      const child = children[i];
+      let nextM = M;
+      const tAttr = child.getAttribute && child.getAttribute('transform');
+      if (tAttr) nextM = multiply(M, parseTransformAttr(tAttr));
+      const strokeAttr = child.getAttribute && child.getAttribute('stroke');
+      const stroke = strokeAttr || inheritedStroke;
+      if (child.tagName && child.tagName.toLowerCase() === 'path') {
+        const d = child.getAttribute('d') || '';
+        const parsed = parsePathD(d);
+        const pts = parsed.points.map((p) => applyMatrix(nextM, p));
+        out.push({ points: pts, closed: parsed.closed, color: stroke || '#888' });
+      } else {
+        walk(child, nextM, stroke);
+      }
+    }
+  }
+  walk(root, IDENTITY.slice(), null);
+  return out;
+}
+
+function extractStrokeFromAttrs(attrs) {
+  if (!attrs) return '#888';
+  const m = attrs.match(/stroke="([^"]*)"/);
+  return m ? m[1] : '#888';
 }
 
 // Short, human-readable format for stats strips (the before/after chips).

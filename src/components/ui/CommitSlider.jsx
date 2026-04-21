@@ -167,6 +167,10 @@ export default function CommitSlider({
         )}
       </div>
 
+      {/* Track region — visual layers first (all pointer-events: none), then
+          the native input LAST so it captures every pointer event above the
+          custom visuals. Prevents the painted cell from stealing click
+          targets from the underlying drag handle. */}
       <div className="slider-track-region relative h-[22px] flex items-center">
         <svg
           className="slider-graticule absolute inset-x-0 top-1/2 -translate-y-1/2 h-2.5 pointer-events-none"
@@ -187,21 +191,6 @@ export default function CommitSlider({
             />
           ))}
         </svg>
-
-        <input
-          id={id}
-          type="range"
-          min={min}
-          max={max}
-          step={step}
-          value={value}
-          onChange={(e) => onChange(snapToStep(parseFloat(e.target.value)))}
-          onKeyDown={handleKeyDown}
-          disabled={disabled}
-          className="slider-input absolute inset-0 w-full h-full opacity-0 cursor-pointer disabled:cursor-not-allowed"
-          aria-label={label}
-          title={tooltip ? undefined : 'Arrow: step · Shift: coarse · Option: fine'}
-        />
 
         <div
           className="slider-track absolute inset-x-0 top-1/2 -translate-y-1/2 pointer-events-none"
@@ -236,9 +225,66 @@ export default function CommitSlider({
           style={{ left: `var(--slider-percent)` }}
           aria-hidden="true"
         />
+
+        {/* Native input — LAST in DOM, fully invisible but fully interactive.
+            Generous 24px invisible native thumb widens the drag hit area. */}
+        <input
+          id={id}
+          type="range"
+          min={min}
+          max={max}
+          step={step}
+          value={value}
+          onChange={(e) => onChange(snapToStep(parseFloat(e.target.value)))}
+          onKeyDown={handleKeyDown}
+          disabled={disabled}
+          className="slider-input absolute inset-0 w-full h-full opacity-0 cursor-pointer disabled:cursor-not-allowed"
+          style={{ touchAction: 'manipulation' }}
+          aria-label={label}
+          title={tooltip ? undefined : 'Arrow: step · Shift: coarse · Option: fine'}
+        />
       </div>
 
       <style>{`
+        /* Native input sits on top and is fully invisible, but its native
+           thumb is generous (24×22px) so clicks near the painted cell
+           reliably start a drag on all browsers. */
+        .slider-root .slider-input {
+          -webkit-appearance: none;
+          appearance: none;
+          background: transparent;
+          margin: 0;
+        }
+        .slider-root .slider-input::-webkit-slider-runnable-track {
+          background: transparent;
+          height: 22px;
+          border: none;
+        }
+        .slider-root .slider-input::-moz-range-track {
+          background: transparent;
+          height: 22px;
+          border: none;
+        }
+        .slider-root .slider-input::-webkit-slider-thumb {
+          -webkit-appearance: none;
+          appearance: none;
+          width: 24px;
+          height: 22px;
+          background: transparent;
+          border: none;
+          cursor: grab;
+          margin-top: 0;
+        }
+        .slider-root .slider-input:active::-webkit-slider-thumb { cursor: grabbing; }
+        .slider-root .slider-input::-moz-range-thumb {
+          width: 24px;
+          height: 22px;
+          background: transparent;
+          border: none;
+          cursor: grab;
+        }
+        .slider-root .slider-input:active::-moz-range-thumb { cursor: grabbing; }
+
         .slider-root .slider-graticule {
           color: var(--ink-soft);
           opacity: 0;

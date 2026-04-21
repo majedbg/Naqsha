@@ -189,7 +189,10 @@ export default function Slider({
         )}
       </div>
 
-      {/* Track region — the graticule, the native input, and the painted cell. */}
+      {/* Track region — visual layers rendered first (all pointer-events:
+          none), then the native input LAST so it unambiguously captures
+          every pointer event. The native thumb is styled generous-and-
+          invisible so clicks anywhere near the painted cell start a drag. */}
       <div className="slider-track-region relative h-[22px] flex items-center">
         {/* Graticule — 9 ticks marking 8 even subdivisions of the range.
             Fades in on hover / focus. */}
@@ -213,8 +216,26 @@ export default function Slider({
           ))}
         </svg>
 
-        {/* Native input — accessibility, keyboard, pointer. Visually the
-            track is rendered by CSS below; the native thumb is hidden. */}
+        {/* Visual track — a hairline line that thickens on hover. */}
+        <div
+          className="slider-track absolute inset-x-0 top-1/2 -translate-y-1/2 pointer-events-none"
+          aria-hidden="true"
+        />
+
+        {/* The painted cell. Square at rest. Diamond when the hand is on it.
+            pointer-events:none (applied below) — purely visual; the native
+            input beneath handles all interaction. */}
+        <div
+          className="slider-thumb"
+          style={{ left: `var(--slider-percent)` }}
+          aria-hidden="true"
+        />
+
+        {/* Native input — LAST in DOM so it sits above the visuals and
+            captures every pointer event. Opacity-0 but fully interactive.
+            The invisible native thumb is widened to ~24px so the drag
+            gesture still starts when the cursor lands near the painted
+            cell, even if pixel-perfect registration drifts by a few pixels. */}
         <input
           id={id}
           type="range"
@@ -226,25 +247,53 @@ export default function Slider({
           onKeyDown={handleKeyDown}
           disabled={disabled}
           className="slider-input absolute inset-0 w-full h-full opacity-0 cursor-pointer disabled:cursor-not-allowed"
+          style={{ touchAction: 'manipulation' }}
           aria-label={label}
           title={tooltip ? undefined : 'Arrow: step · Shift: coarse · Option: fine'}
-        />
-
-        {/* Visual track — a hairline line that thickens on hover. */}
-        <div
-          className="slider-track absolute inset-x-0 top-1/2 -translate-y-1/2 pointer-events-none"
-          aria-hidden="true"
-        />
-
-        {/* The painted cell. Square at rest. Diamond when the hand is on it. */}
-        <div
-          className="slider-thumb"
-          style={{ left: `var(--slider-percent)` }}
-          aria-hidden="true"
         />
       </div>
 
       <style>{`
+        /* Native input sits on top and is fully invisible, but its native
+           thumb is generous (24×22px) so clicks near the painted cell
+           reliably start a drag. Without this, clicking the painted cell
+           can land on the native track (jump, don't drag) on some browsers. */
+        .slider-root .slider-input {
+          -webkit-appearance: none;
+          appearance: none;
+          background: transparent;
+          margin: 0;
+        }
+        .slider-root .slider-input::-webkit-slider-runnable-track {
+          background: transparent;
+          height: 22px;
+          border: none;
+        }
+        .slider-root .slider-input::-moz-range-track {
+          background: transparent;
+          height: 22px;
+          border: none;
+        }
+        .slider-root .slider-input::-webkit-slider-thumb {
+          -webkit-appearance: none;
+          appearance: none;
+          width: 24px;
+          height: 22px;
+          background: transparent;
+          border: none;
+          cursor: grab;
+          margin-top: 0;
+        }
+        .slider-root .slider-input:active::-webkit-slider-thumb { cursor: grabbing; }
+        .slider-root .slider-input::-moz-range-thumb {
+          width: 24px;
+          height: 22px;
+          background: transparent;
+          border: none;
+          cursor: grab;
+        }
+        .slider-root .slider-input:active::-moz-range-thumb { cursor: grabbing; }
+
         .slider-root .slider-graticule {
           color: var(--ink-soft);
           opacity: 0;

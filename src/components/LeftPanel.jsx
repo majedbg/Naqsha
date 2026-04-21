@@ -346,6 +346,16 @@ export default function LeftPanel({
                 onMarginChange={onMarginChange}
                 onPresetChange={onPresetChange}
                 onCustomChange={onCustomChange}
+                outputMode={outputMode}
+                onOutputModeChange={onOutputModeChange}
+                optimizations={optimizations}
+                appliedOptimizations={appliedOptimizations}
+                onOptimizationChange={onOptimizationChange}
+                onOptimizationApply={onOptimizationApply}
+                onOptimizationRevert={onOptimizationRevert}
+                patternInstances={patternInstances}
+                layers={layers}
+                onUpdateLayer={onUpdateLayer}
               />
             )}
 

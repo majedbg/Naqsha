@@ -74,7 +74,7 @@ export default function ParamGroup({
       {/* Group header */}
       <button
         onClick={() => setCollapsed(!collapsed)}
-        className="w-full flex items-center gap-1.5 px-2 py-1.5 rounded bg-[#1a1a1a] hover:bg-[#1e1e1e] transition-colors group/hdr"
+        className="w-full flex items-center gap-1.5 px-2 py-1.5 rounded bg-paper-warm hover:bg-paper-warm transition-colors group/hdr"
       >
         {/* Chevron */}
         <svg
@@ -84,7 +84,7 @@ export default function ParamGroup({
           fill="none"
           stroke="currentColor"
           strokeWidth="3"
-          className={`text-gray-600 shrink-0 transition-transform ${
+          className={`text-ink-soft shrink-0 transition-transform ${
             collapsed ? "-rotate-90" : ""
           }`}
         >
@@ -92,7 +92,7 @@ export default function ParamGroup({
         </svg>
 
         {/* Group label */}
-        <span className="text-[10px] uppercase tracking-wider text-gray-500 font-medium flex-1 text-left">
+        <span className="text-[10px] uppercase tracking-wider text-ink-soft font-medium flex-1 text-left">
           {group.label}
         </span>
 
@@ -104,7 +104,7 @@ export default function ParamGroup({
               onResetGroup(allowedItems.map((i) => i.def));
             }}
             disabled={!hasChanges}
-            className="shrink-0 p-0.5 rounded text-gray-600 hover:text-orange-400 transition-colors disabled:opacity-20 disabled:cursor-not-allowed"
+            className="shrink-0 p-0.5 rounded text-ink-soft hover:text-tone-mild transition-colors disabled:opacity-20 disabled:cursor-not-allowed"
             title={
               hasChanges
                 ? `Reset ${group.label} to defaults`
@@ -127,7 +127,7 @@ export default function ParamGroup({
               type="checkbox"
               checked={allChecked}
               onChange={() => onToggleGroupKeys(groupKeys, allChecked)}
-              className="accent-accent w-3 h-3 cursor-pointer"
+              className="accent-saffron w-3 h-3 cursor-pointer"
             />
           </label>
         )}
@@ -140,7 +140,7 @@ export default function ParamGroup({
               onRandomizeGroup(allowedItems.map((i) => i.def));
             }}
             disabled={!hasCheckedInGroup}
-            className="shrink-0 p-0.5 rounded text-gray-600 hover:text-accent transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+            className="shrink-0 p-0.5 rounded text-ink-soft hover:text-saffron transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
             title={
               hasCheckedInGroup
                 ? `Randomize ${group.label}`
@@ -206,7 +206,7 @@ export default function ParamGroup({
                 <button
                   onClick={() => onResetSingle(def)}
                   disabled={isDefault}
-                  className="mt-[3px] shrink-0 p-0.5 rounded text-gray-600 hover:text-orange-400 transition-colors disabled:opacity-20 disabled:cursor-not-allowed"
+                  className="mt-[3px] shrink-0 p-0.5 rounded text-ink-soft hover:text-tone-mild transition-colors disabled:opacity-20 disabled:cursor-not-allowed"
                   title={
                     isDefault
                       ? `${def.label} is at default`
@@ -224,13 +224,13 @@ export default function ParamGroup({
                     type="checkbox"
                     checked={keys.includes(def.key)}
                     onChange={() => onToggleKey(def.key)}
-                    className="accent-accent w-3 h-3 cursor-pointer"
+                    className="accent-saffron w-3 h-3 cursor-pointer"
                   />
                 </label>
                 {/* Per-param randomize */}
                 <button
                   onClick={() => onRandomizeSingle(def)}
-                  className="mt-[3px] shrink-0 p-0.5 rounded text-gray-600 hover:text-accent transition-colors"
+                  className="mt-[3px] shrink-0 p-0.5 rounded text-ink-soft hover:text-saffron transition-colors"
                   title={`Randomize ${def.label}`}
                 >
                   <svg
@@ -257,7 +257,7 @@ export default function ParamGroup({
             lockedItems.map((item) => (
               <div
                 key={item.def.key}
-                className="flex items-center gap-1.5 py-1 px-2 rounded bg-[#1e1e1e] border border-[#333] opacity-60"
+                className="flex items-center gap-1.5 py-1 px-2 rounded bg-paper-warm border border-hairline opacity-60"
               >
                 <svg
                   width="10"
@@ -266,12 +266,12 @@ export default function ParamGroup({
                   fill="none"
                   stroke="currentColor"
                   strokeWidth="2"
-                  className="text-gray-600 shrink-0"
+                  className="text-ink-soft shrink-0"
                 >
                   <rect x="3" y="11" width="18" height="11" rx="2" />
                   <path d="M7 11V7a5 5 0 0110 0v4" />
                 </svg>
-                <span className="text-[11px] text-gray-500 flex-1">
+                <span className="text-[11px] text-ink-soft flex-1">
                   {item.def.label}
                 </span>
                 <UpgradePrompt

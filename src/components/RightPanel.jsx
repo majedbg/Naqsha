@@ -102,7 +102,7 @@ export default function RightPanel({
       className={`h-full bg-surface flex flex-col items-center justify-center relative ${zoom > 1.25 ? "overflow-auto" : "overflow-hidden"}`}
     >
       {isPrepare && (
-        <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-[#141414]/90 border border-accent/40 text-accent/90 text-[10px] uppercase tracking-wider font-semibold rounded-md px-2.5 py-1 z-10 pointer-events-none">
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-paper/90 border border-violet/40 text-accent/90 text-[10px] uppercase tracking-wider font-semibold rounded-md px-2.5 py-1 z-10 pointer-events-none">
           Prepare · Bed view
         </div>
       )}
@@ -134,16 +134,16 @@ export default function RightPanel({
       <div className="absolute bottom-4 left-4">
         <button
           onClick={() => setBgPickerOpen(!bgPickerOpen)}
-          className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-[#1e1e1e] border border-[#333] hover:border-[#555] transition-colors shadow-lg"
+          className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-paper-warm border border-hairline hover:border-ink-soft transition-colors shadow-lg"
         >
           <div
-            className="w-4 h-4 rounded border border-[#555]"
+            className="w-4 h-4 rounded border border-hairline"
             style={{ backgroundColor: bgColor }}
           />
-          <span className="text-xs text-gray-400">Background</span>
+          <span className="text-xs text-ink-soft">Background</span>
         </button>
         {bgPickerOpen && (
-          <div className="absolute bottom-full left-0 mb-2 bg-[#1e1e1e] border border-[#444] rounded-lg shadow-xl p-2.5 z-50">
+          <div className="absolute bottom-full left-0 mb-2 bg-paper-warm border border-hairline rounded-lg shadow-xl p-2.5 z-50">
             <div className="flex gap-1.5 mb-2">
               {BG_PRESETS.map((preset) => (
                 <button
@@ -154,8 +154,8 @@ export default function RightPanel({
                   }}
                   className={`w-7 h-7 rounded border-2 transition-colors ${
                     bgColor === preset.color
-                      ? "border-accent"
-                      : "border-[#555] hover:border-[#888]"
+                      ? "border-violet"
+                      : "border-hairline hover:border-ink-soft"
                   }`}
                   style={{ backgroundColor: preset.color }}
                   title={preset.label}
@@ -175,28 +175,28 @@ export default function RightPanel({
       {/* Zoom controls */}
       <div className="absolute bottom-4 right-4 flex flex-col items-end gap-1.5">
         {zoomPercent > 120 && (
-          <div className="text-[9px] text-gray-500 bg-[#1e1e1e]/90 border border-[#333] rounded px-2 py-1 max-w-[180px] text-right leading-snug">
+          <div className="text-[9px] text-ink-soft bg-paper-warm/90 border border-hairline rounded px-2 py-1 max-w-[180px] text-right leading-snug">
             Preview may appear pixelated, but exported vector file will not be
           </div>
         )}
-        <div className="flex items-center gap-1 bg-[#1e1e1e] border border-[#333] rounded-lg px-1.5 py-1 shadow-lg">
+        <div className="flex items-center gap-1 bg-paper-warm border border-hairline rounded-lg px-1.5 py-1 shadow-lg">
           <button
             onClick={zoomOut}
-            className="w-6 h-6 flex items-center justify-center rounded text-gray-400 hover:text-gray-200 hover:bg-[#333] transition-colors text-sm font-medium"
+            className="w-6 h-6 flex items-center justify-center rounded text-ink-soft hover:text-ink hover:bg-muted transition-colors text-sm font-medium"
             title="Zoom out"
           >
             −
           </button>
           <button
             onClick={resetZoom}
-            className="px-1.5 min-w-[40px] text-center text-[10px] text-gray-400 hover:text-accent transition-colors font-medium"
+            className="px-1.5 min-w-[40px] text-center text-[10px] text-ink-soft hover:text-saffron transition-colors font-medium"
             title="Reset zoom"
           >
             {zoomPercent}%
           </button>
           <button
             onClick={zoomIn}
-            className="w-6 h-6 flex items-center justify-center rounded text-gray-400 hover:text-gray-200 hover:bg-[#333] transition-colors text-sm font-medium"
+            className="w-6 h-6 flex items-center justify-center rounded text-ink-soft hover:text-ink hover:bg-muted transition-colors text-sm font-medium"
             title="Zoom in"
           >
             +

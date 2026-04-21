@@ -33,7 +33,7 @@ export default function PrepareTab({
       className="space-y-6"
     >
       <div className="px-1">
-        <p className="text-[11px] text-gray-500 leading-relaxed">
+        <p className="text-[11px] text-ink-soft leading-relaxed">
           Bed size, units, and output mode live here — this is where the design
           becomes a plan for a real machine.
         </p>

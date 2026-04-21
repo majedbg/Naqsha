@@ -14,7 +14,7 @@ export default function UpgradePrompt({ upgradeTarget = 'free', reason, compact 
       return (
         <button
           onClick={signIn}
-          className="text-[10px] text-accent hover:text-accent-hover transition-colors"
+          className="text-[10px] text-accent hover:text-saffron-hover transition-colors"
         >
           Sign in to unlock
         </button>
@@ -22,10 +22,10 @@ export default function UpgradePrompt({ upgradeTarget = 'free', reason, compact 
     }
     return (
       <div className="flex flex-col items-center gap-2 py-3">
-        {reason && <p className="text-[11px] text-gray-500">{reason}</p>}
+        {reason && <p className="text-[11px] text-ink-soft">{reason}</p>}
         <button
           onClick={signIn}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-white text-xs text-gray-700 font-medium hover:bg-gray-100 transition-colors"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-white text-xs text-ink font-medium hover:bg-muted transition-colors"
         >
           <GoogleLogo />
           Sign in with Google
@@ -42,7 +42,7 @@ export default function UpgradePrompt({ upgradeTarget = 'free', reason, compact 
   }
   return (
     <div className="flex flex-col items-center gap-2 py-3">
-      {reason && <p className="text-[11px] text-gray-500">{reason}</p>}
+      {reason && <p className="text-[11px] text-ink-soft">{reason}</p>}
       <button
         className="px-3 py-1.5 rounded bg-accent/20 text-xs text-accent font-medium hover:bg-accent/30 transition-colors"
         onClick={() => { /* Stripe checkout placeholder */ }}

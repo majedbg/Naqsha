@@ -63,13 +63,13 @@ export default function CanvasSection({
   return (
     <section className="space-y-3">
       <header className="flex items-center justify-between">
-        <h3 className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">
+        <h3 className="text-[11px] font-semibold text-ink-soft uppercase tracking-wider">
           Canvas
         </h3>
         <div
           role="radiogroup"
           aria-label="Display units"
-          className="flex items-center bg-[#161616] border border-[#2a2a2a] rounded-md p-0.5"
+          className="flex items-center bg-paper-warm border border-paper-warm rounded-md p-0.5"
         >
           {UNIT_OPTIONS.map((u) => (
             <button
@@ -79,8 +79,8 @@ export default function CanvasSection({
               onClick={() => onUnitChange(u.value)}
               className={`px-2 py-0.5 text-[10px] font-medium rounded transition-colors ${
                 unit === u.value
-                  ? 'bg-[#2a2a2a] text-gray-100'
-                  : 'text-gray-500 hover:text-gray-300'
+                  ? 'bg-paper-warm text-ink'
+                  : 'text-ink-soft hover:text-ink'
               }`}
             >
               {u.label}
@@ -91,7 +91,7 @@ export default function CanvasSection({
 
       {/* Bed/paper preset */}
       <div className="space-y-1.5">
-        <label className="block text-[10px] text-gray-500">Bed / paper</label>
+        <label className="block text-[10px] text-ink-soft">Bed / paper</label>
         <select
           value={presetIndex}
           onChange={(e) => {
@@ -102,7 +102,7 @@ export default function CanvasSection({
             if (!isCustomIdx && !presetGate.allowed) return;
             onPresetChange(idx);
           }}
-          className="w-full bg-[#1e1e1e] text-gray-200 text-sm px-2.5 py-2 rounded border border-[#333] outline-none focus:border-accent"
+          className="w-full bg-paper-warm text-ink text-sm px-2.5 py-2 rounded border border-hairline outline-none focus:border-violet"
         >
           {Object.entries(grouped).map(([cat, items]) =>
             items.length > 0 ? (
@@ -123,7 +123,7 @@ export default function CanvasSection({
 
       {/* Dimensions */}
       <div className="space-y-1.5">
-        <label className="block text-[10px] text-gray-500">Dimensions</label>
+        <label className="block text-[10px] text-ink-soft">Dimensions</label>
         {isCustom ? (
           <div className="flex gap-2">
             <NumberInput
@@ -144,12 +144,12 @@ export default function CanvasSection({
             />
           </div>
         ) : (
-          <div className="text-[13px] text-gray-300 flex items-baseline gap-2">
+          <div className="text-[13px] text-ink flex items-baseline gap-2">
             <span>{displayW.toFixed(unit === 'in' ? 2 : 0)}</span>
-            <span className="text-gray-500">×</span>
+            <span className="text-ink-soft">×</span>
             <span>{displayH.toFixed(unit === 'in' ? 2 : 0)}</span>
-            <span className="text-[10px] text-gray-500 ml-1">{unit}</span>
-            <span className="text-[10px] text-gray-600 ml-auto">
+            <span className="text-[10px] text-ink-soft ml-1">{unit}</span>
+            <span className="text-[10px] text-ink-soft ml-auto">
               {Math.round(width)} × {Math.round(height)} px
             </span>
           </div>
@@ -159,7 +159,7 @@ export default function CanvasSection({
       {/* Margin */}
       <div className="space-y-1.5">
         <label
-          className="block text-[10px] text-gray-500 cursor-help"
+          className="block text-[10px] text-ink-soft cursor-help"
           title="Safe margin — plotters can't draw to the very edge; lasers often need clearance for material warping. Dashed inset on the canvas shows the unsafe zone."
         >
           Margin ({unit})
@@ -174,7 +174,7 @@ export default function CanvasSection({
         />
       </div>
 
-      <p className="text-[10px] text-gray-600 leading-relaxed">
+      <p className="text-[10px] text-ink-soft leading-relaxed">
         Canvas storage is 96&nbsp;PPI pixels internally. Output SVG carries real-world dimensions.
       </p>
     </section>

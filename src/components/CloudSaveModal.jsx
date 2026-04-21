@@ -116,23 +116,23 @@ export default function CloudSaveModal({ onLoad, onLoadConfig, onClose }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 flex items-start justify-center pt-16 px-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-ink/70 flex items-start justify-center pt-16 px-4" onClick={onClose}>
       <div
         className="bg-panel border border-card-border rounded-lg w-full max-w-[720px] max-h-[75vh] flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between px-4 py-3 border-b border-[#333] shrink-0">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-hairline shrink-0">
           <div className="flex items-center gap-3">
             <button
               onClick={() => { setTab('designs'); setSelectedCollection(null); }}
-              className={`text-sm font-semibold transition-colors ${tab === 'designs' ? 'text-gray-200' : 'text-gray-600 hover:text-gray-400'}`}
+              className={`text-sm font-semibold transition-colors ${tab === 'designs' ? 'text-ink' : 'text-ink-soft hover:text-ink-soft'}`}
             >
               Designs
             </button>
             {hasCollections && (
               <button
                 onClick={() => setTab('collections')}
-                className={`text-sm font-semibold transition-colors ${tab === 'collections' ? 'text-gray-200' : 'text-gray-600 hover:text-gray-400'}`}
+                className={`text-sm font-semibold transition-colors ${tab === 'collections' ? 'text-ink' : 'text-ink-soft hover:text-ink-soft'}`}
               >
                 Collections
               </button>
@@ -140,7 +140,7 @@ export default function CloudSaveModal({ onLoad, onLoadConfig, onClose }) {
           </div>
           <button
             onClick={onClose}
-            className="text-gray-500 hover:text-gray-300 transition-colors text-lg leading-none px-1"
+            className="text-ink-soft hover:text-ink transition-colors text-lg leading-none px-1"
           >
             &times;
           </button>
@@ -152,7 +152,7 @@ export default function CloudSaveModal({ onLoad, onLoadConfig, onClose }) {
             <div className="space-y-3">
               <div className="flex gap-2">
                 <input
-                  className="flex-1 bg-[#333] text-gray-200 text-xs px-2 py-1.5 rounded border border-[#444] outline-none focus:border-accent"
+                  className="flex-1 bg-muted text-ink text-xs px-2 py-1.5 rounded border border-hairline outline-none focus:border-violet"
                   placeholder="New collection name..."
                   value={newCollectionName}
                   onChange={(e) => setNewCollectionName(e.target.value)}
@@ -169,19 +169,19 @@ export default function CloudSaveModal({ onLoad, onLoadConfig, onClose }) {
               {selectedCollection ? (
                 <div className="space-y-2">
                   <div className="flex items-center gap-2">
-                    <button onClick={() => { setSelectedCollection(null); setCollectionDesigns([]); }} className="text-[11px] text-gray-500 hover:text-gray-300">&larr; Back</button>
-                    <span className="text-xs font-medium text-gray-200">{selectedCollection.name}</span>
+                    <button onClick={() => { setSelectedCollection(null); setCollectionDesigns([]); }} className="text-[11px] text-ink-soft hover:text-ink">&larr; Back</button>
+                    <span className="text-xs font-medium text-ink">{selectedCollection.name}</span>
                   </div>
                   {collectionDesigns.length === 0 ? (
-                    <p className="text-[11px] text-gray-600 py-4 text-center">No designs in this collection</p>
+                    <p className="text-[11px] text-ink-soft py-4 text-center">No designs in this collection</p>
                   ) : (
                     <div className="grid grid-cols-3 gap-2">
                       {collectionDesigns.map((d) => (
-                        <div key={d.id} className="bg-card border border-card-border rounded overflow-hidden cursor-pointer hover:border-accent/50" onClick={() => { onLoad(d.id); onClose(); }}>
+                        <div key={d.id} className="bg-card border border-card-border rounded overflow-hidden cursor-pointer hover:border-violet/50" onClick={() => { onLoad(d.id); onClose(); }}>
                           <div className="aspect-square bg-white">
-                            {d.thumbnail ? <img src={d.thumbnail} alt="" className="w-full h-full object-contain" /> : <div className="w-full h-full flex items-center justify-center text-gray-500 text-[9px]">No preview</div>}
+                            {d.thumbnail ? <img src={d.thumbnail} alt="" className="w-full h-full object-contain" /> : <div className="w-full h-full flex items-center justify-center text-ink-soft text-[9px]">No preview</div>}
                           </div>
-                          <p className="text-[10px] text-gray-300 truncate px-1.5 py-1">{d.name}</p>
+                          <p className="text-[10px] text-ink truncate px-1.5 py-1">{d.name}</p>
                         </div>
                       ))}
                     </div>
@@ -190,51 +190,51 @@ export default function CloudSaveModal({ onLoad, onLoadConfig, onClose }) {
               ) : (
                 <div className="space-y-1.5">
                   {collections.length === 0 ? (
-                    <p className="text-[11px] text-gray-600 py-8 text-center">No collections yet</p>
+                    <p className="text-[11px] text-ink-soft py-8 text-center">No collections yet</p>
                   ) : collections.map((col) => (
-                    <div key={col.id} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-[#333] transition-colors">
-                      <button onClick={() => handleSelectCollection(col)} className="flex-1 text-left text-xs text-gray-200 truncate">{col.name}</button>
-                      <span className="text-[10px] text-gray-600">{new Date(col.updated_at).toLocaleDateString()}</span>
-                      <button onClick={() => handleDeleteCollection(col.id)} className="text-[10px] text-gray-600 hover:text-red-400 transition-colors">Delete</button>
+                    <div key={col.id} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-muted transition-colors">
+                      <button onClick={() => handleSelectCollection(col)} className="flex-1 text-left text-xs text-ink truncate">{col.name}</button>
+                      <span className="text-[10px] text-ink-soft">{new Date(col.updated_at).toLocaleDateString()}</span>
+                      <button onClick={() => handleDeleteCollection(col.id)} className="text-[10px] text-ink-soft hover:text-tone-strong transition-colors">Delete</button>
                     </div>
                   ))}
                 </div>
               )}
             </div>
           ) : loading ? (
-            <p className="text-center text-gray-600 text-sm py-12">Loading...</p>
+            <p className="text-center text-ink-soft text-sm py-12">Loading...</p>
           ) : designs.length === 0 ? (
-            <p className="text-center text-gray-600 text-sm py-12">
+            <p className="text-center text-ink-soft text-sm py-12">
               No saved designs yet. Use "Save to Cloud" to store your work.
             </p>
           ) : (
             <div className="grid grid-cols-2 gap-3">
               {designs.map((design) => (
-                <div key={design.id} className="bg-card border border-card-border rounded-lg overflow-hidden hover:border-accent/50 transition-colors group">
+                <div key={design.id} className="bg-card border border-card-border rounded-lg overflow-hidden hover:border-violet/50 transition-colors group">
                   {/* Thumbnail */}
                   <div className="aspect-square bg-white relative overflow-hidden cursor-pointer" onClick={() => { onLoad(design.id); onClose(); }}>
                     {design.thumbnail ? (
                       <img src={design.thumbnail} alt={design.name} className="w-full h-full object-contain" />
                     ) : (
-                      <div className="w-full h-full flex items-center justify-center text-gray-400 text-xs">No preview</div>
+                      <div className="w-full h-full flex items-center justify-center text-ink-soft text-xs">No preview</div>
                     )}
                     <div className="absolute inset-0 bg-accent/0 group-hover:bg-accent/10 transition-colors flex items-center justify-center">
-                      <span className="opacity-0 group-hover:opacity-100 transition-opacity text-accent text-xs font-medium bg-black/60 px-2 py-1 rounded">Load</span>
+                      <span className="opacity-0 group-hover:opacity-100 transition-opacity text-accent text-xs font-medium bg-ink/60 px-2 py-1 rounded">Load</span>
                     </div>
                   </div>
 
                   {/* Info */}
                   <div className="px-2.5 py-2 space-y-1">
-                    <p className="text-xs font-medium text-gray-200 truncate">{design.name}</p>
+                    <p className="text-xs font-medium text-ink truncate">{design.name}</p>
                     <div className="flex items-center justify-between">
-                      <span className="text-[10px] text-gray-600">
+                      <span className="text-[10px] text-ink-soft">
                         {new Date(design.updated_at).toLocaleDateString()}
                       </span>
                       <div className="flex items-center gap-2">
                         {hasHistory && (
                           <button
                             onClick={(e) => { e.stopPropagation(); toggleHistory(design.id); }}
-                            className={`text-[10px] transition-colors ${historyDesignId === design.id ? 'text-accent' : 'text-gray-600 hover:text-gray-400'}`}
+                            className={`text-[10px] transition-colors ${historyDesignId === design.id ? 'text-accent' : 'text-ink-soft hover:text-ink-soft'}`}
                           >
                             History
                           </button>
@@ -244,13 +244,13 @@ export default function CloudSaveModal({ onLoad, onLoadConfig, onClose }) {
                             <div className="flex gap-1">
                               <button
                                 onClick={(e) => { e.stopPropagation(); handleDelete(design.id); }}
-                                className="text-[10px] text-red-400 hover:text-red-300"
+                                className="text-[10px] text-tone-strong hover:text-tone-strong"
                               >
                                 Confirm
                               </button>
                               <button
                                 onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(null); }}
-                                className="text-[10px] text-gray-500"
+                                className="text-[10px] text-ink-soft"
                               >
                                 Cancel
                               </button>
@@ -258,7 +258,7 @@ export default function CloudSaveModal({ onLoad, onLoadConfig, onClose }) {
                           ) : (
                             <button
                               onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(design.id); }}
-                              className="text-[10px] text-gray-600 hover:text-red-400 transition-colors"
+                              className="text-[10px] text-ink-soft hover:text-tone-strong transition-colors"
                             >
                               Delete
                             </button>
@@ -272,23 +272,23 @@ export default function CloudSaveModal({ onLoad, onLoadConfig, onClose }) {
 
                     {/* History panel (Pro) */}
                     {historyDesignId === design.id && (
-                      <div className="border-t border-[#333] pt-1.5 mt-1.5">
+                      <div className="border-t border-hairline pt-1.5 mt-1.5">
                         {historyLoading ? (
-                          <p className="text-[10px] text-gray-600">Loading history...</p>
+                          <p className="text-[10px] text-ink-soft">Loading history...</p>
                         ) : historyItems.length === 0 ? (
-                          <p className="text-[10px] text-gray-600">No snapshots yet</p>
+                          <p className="text-[10px] text-ink-soft">No snapshots yet</p>
                         ) : (
                           <div className="space-y-1 max-h-32 overflow-y-auto">
                             {historyItems.map((snap) => (
                               <button
                                 key={snap.id}
                                 onClick={(e) => { e.stopPropagation(); loadHistorySnapshot(snap.id); }}
-                                className="w-full flex items-center gap-2 py-0.5 hover:bg-[#333] rounded px-1 transition-colors"
+                                className="w-full flex items-center gap-2 py-0.5 hover:bg-muted rounded px-1 transition-colors"
                               >
                                 {snap.thumbnail && (
                                   <img src={snap.thumbnail} alt="" className="w-6 h-6 rounded object-contain bg-white shrink-0" />
                                 )}
-                                <span className="text-[10px] text-gray-400">
+                                <span className="text-[10px] text-ink-soft">
                                   {new Date(snap.created_at).toLocaleString()}
                                 </span>
                               </button>

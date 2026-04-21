@@ -28,11 +28,11 @@ function SizeChip({ width, height, unit, preset, onClick }) {
     <button
       onClick={onClick}
       title="Change size in Prepare"
-      className="flex items-center gap-2 px-2.5 py-1 rounded-md bg-[#161616] border border-[#2a2a2a] text-[11px] text-gray-400 hover:text-gray-200 hover:border-[#3a3a3a] transition-colors"
+      className="flex items-center gap-2 px-2.5 py-1 rounded-md bg-paper-warm border border-paper-warm text-[11px] text-ink-soft hover:text-ink hover:border-ink-soft transition-colors"
     >
       <span className="font-mono">{w.toFixed(precision)} × {h.toFixed(precision)} {unit}</span>
       {preset?.category && preset.category !== 'custom' && preset.category !== 'artwork' && (
-        <span className="text-[9px] uppercase tracking-wider text-gray-600">· {preset.category}</span>
+        <span className="text-[9px] uppercase tracking-wider text-ink-soft">· {preset.category}</span>
       )}
     </button>
   );
@@ -102,9 +102,9 @@ export default function LeftPanel({
   // Desktop layout — tabbed (Design / Prepare / Export)
   if (!isMobile) {
     return (
-      <div className="w-[320px] min-w-[320px] lg:w-[420px] lg:min-w-[420px] h-full bg-panel border-r border-[#2e2e2e] overflow-hidden flex flex-col">
+      <div className="w-[320px] min-w-[320px] lg:w-[420px] lg:min-w-[420px] h-full bg-panel border-r border-hairline overflow-hidden flex flex-col">
         {/* Sticky tab header */}
-        <div className="shrink-0 p-3 pb-2 border-b border-[#2a2a2a] bg-panel space-y-2">
+        <div className="shrink-0 p-3 pb-2 border-b border-paper-warm bg-panel space-y-2">
           <SidebarTabs
             activeTab={activeTab}
             onChange={onTabChange}
@@ -113,7 +113,7 @@ export default function LeftPanel({
           />
           {activeTab === 'design' && (
             <div className="flex items-center justify-between">
-              <p className="text-[10px] text-gray-600">Multi-layer SVG for laser + plotter</p>
+              <p className="text-[10px] text-ink-soft">Multi-layer SVG for laser + plotter</p>
               <SizeChip
                 width={width}
                 height={height}
@@ -204,15 +204,15 @@ export default function LeftPanel({
 
   // Mobile layout — collapsible panel below canvas
   return (
-    <div className={`w-full bg-panel border-t border-[#2e2e2e] flex flex-col mobile-panel ${
+    <div className={`w-full bg-panel border-t border-hairline flex flex-col mobile-panel ${
       collapsed ? "shrink-0" : "flex-1 min-h-0"
     }`}>
       {/* Collapse toggle bar */}
       <button
         onClick={() => setCollapsed((c) => !c)}
-        className="flex items-center justify-between px-4 py-2.5 bg-[#1a1a1a] border-b border-[#2e2e2e] active:bg-[#222] transition-colors"
+        className="flex items-center justify-between px-4 py-2.5 bg-paper-warm border-b border-hairline active:bg-paper-warm transition-colors"
       >
-        <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
+        <span className="text-xs font-semibold text-ink-soft uppercase tracking-wider">
           Controls
         </span>
         <svg
@@ -224,7 +224,7 @@ export default function LeftPanel({
           strokeWidth="2"
           strokeLinecap="round"
           strokeLinejoin="round"
-          className={`text-gray-500 transition-transform duration-200 ${
+          className={`text-ink-soft transition-transform duration-200 ${
             collapsed ? "" : "rotate-180"
           }`}
         >
@@ -234,7 +234,7 @@ export default function LeftPanel({
 
       {!collapsed && (
         <div className="overflow-y-auto overscroll-contain flex-1 mobile-panel-content">
-          <div className="p-3 pb-2 border-b border-[#2a2a2a] bg-panel">
+          <div className="p-3 pb-2 border-b border-paper-warm bg-panel">
             <SidebarTabs
               activeTab={activeTab}
               onChange={onTabChange}
@@ -246,7 +246,7 @@ export default function LeftPanel({
             {activeTab === 'design' && (
               <>
                 <div className="flex items-center justify-between">
-                  <p className="text-[10px] text-gray-600">Design</p>
+                  <p className="text-[10px] text-ink-soft">Design</p>
                   <SizeChip
                     width={width}
                     height={height}
@@ -257,10 +257,10 @@ export default function LeftPanel({
                 </div>
                 <div>
                   <div className="flex items-center justify-between mb-2">
-                    <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                    <h3 className="text-xs font-semibold text-ink-soft uppercase tracking-wider">
                       Layers
                     </h3>
-                    <span className="text-[10px] text-gray-600">
+                    <span className="text-[10px] text-ink-soft">
                       {activeLayerIndex + 1} / {layers.length}
                     </span>
                   </div>
@@ -269,7 +269,7 @@ export default function LeftPanel({
                   <div className="flex items-center gap-2 mb-3">
                     <button
                       onClick={prevLayer}
-                      className="w-8 h-8 flex items-center justify-center rounded-lg bg-[#252525] border border-[#333] text-gray-400 hover:text-accent hover:border-accent active:bg-[#333] transition-colors"
+                      className="w-8 h-8 flex items-center justify-center rounded-lg bg-paper-warm border border-hairline text-ink-soft hover:text-saffron hover:border-violet active:bg-muted transition-colors"
                       aria-label="Previous layer"
                     >
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -284,8 +284,8 @@ export default function LeftPanel({
                           onClick={() => setActiveLayerIndex(i)}
                           className={`shrink-0 px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors ${
                             i === activeLayerIndex
-                              ? "bg-accent/20 text-accent border border-accent/40"
-                              : "bg-[#252525] text-gray-500 border border-[#333] active:bg-[#333]"
+                              ? "bg-accent/20 text-accent border border-violet/40"
+                              : "bg-paper-warm text-ink-soft border border-hairline active:bg-muted"
                           }`}
                         >
                           {layer.name || `Layer ${i + 1}`}
@@ -298,7 +298,7 @@ export default function LeftPanel({
                               onAddLayer();
                               setActiveLayerIndex(layers.length);
                             }}
-                            className="shrink-0 px-2.5 py-1 rounded-md text-[11px] font-medium bg-[#252525] text-gray-500 border border-dashed border-[#444] active:bg-[#333] hover:text-accent hover:border-accent transition-colors"
+                            className="shrink-0 px-2.5 py-1 rounded-md text-[11px] font-medium bg-paper-warm text-ink-soft border border-dashed border-hairline active:bg-muted hover:text-saffron hover:border-violet transition-colors"
                           >
                             + New
                           </button>
@@ -307,7 +307,7 @@ export default function LeftPanel({
 
                     <button
                       onClick={nextLayer}
-                      className="w-8 h-8 flex items-center justify-center rounded-lg bg-[#252525] border border-[#333] text-gray-400 hover:text-accent hover:border-accent active:bg-[#333] transition-colors"
+                      className="w-8 h-8 flex items-center justify-center rounded-lg bg-paper-warm border border-hairline text-ink-soft hover:text-saffron hover:border-violet active:bg-muted transition-colors"
                       aria-label="Next layer"
                     >
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">

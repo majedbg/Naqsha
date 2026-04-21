@@ -27,21 +27,21 @@ export default function LayersSection({
     <div className="space-y-3">
       {!isMobileSingle && (
         <div className="flex items-center justify-between">
-          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
-            Layers <span className="text-gray-600 normal-case font-normal">(top = front)</span>
+          <h3 className="text-xs font-semibold text-ink-soft uppercase tracking-wider">
+            Layers <span className="text-ink-soft normal-case font-normal">(top = front)</span>
           </h3>
           <div className="flex items-center gap-3">
             <button
               onClick={onRandomizeAllParams}
               disabled={!anyChecked}
-              className="text-[11px] text-gray-500 hover:text-accent transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+              className="text-[11px] text-ink-soft hover:text-saffron transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
               title="Randomize all checked params across all layers"
             >
               Rand Params
             </button>
             <button
               onClick={onRandomizeAll}
-              className="text-[11px] text-gray-500 hover:text-accent transition-colors"
+              className="text-[11px] text-ink-soft hover:text-saffron transition-colors"
               title="Randomize seeds for all layers"
             >
               Rand Seeds
@@ -79,13 +79,13 @@ export default function LayersSection({
       </div>
 
       {atMax && !layerGate.allowed ? (
-        <div className="w-full py-2 text-center rounded border border-dashed border-[#333] bg-[#1e1e1e]">
+        <div className="w-full py-2 text-center rounded border border-dashed border-hairline bg-paper-warm">
           <div className="flex items-center justify-center gap-2">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-600">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-ink-soft">
               <rect x="3" y="11" width="18" height="11" rx="2" />
               <path d="M7 11V7a5 5 0 0110 0v4" />
             </svg>
-            <span className="text-[11px] text-gray-500">
+            <span className="text-[11px] text-ink-soft">
               {layerGate.reason || 'Layer limit reached'}
             </span>
             <UpgradePrompt upgradeTarget={layerGate.upgradeTarget || 'free'} compact />
@@ -95,7 +95,7 @@ export default function LayersSection({
         <button
           onClick={onAdd}
           disabled={atMax}
-          className="w-full py-2 text-sm rounded border border-dashed border-[#444] text-gray-500 hover:text-accent hover:border-accent disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+          className="w-full py-2 text-sm rounded border border-dashed border-hairline text-ink-soft hover:text-saffron hover:border-violet disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
         >
           + Add Layer {atMax && `(max ${limits.maxLayers})`}
         </button>

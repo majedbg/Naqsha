@@ -6,7 +6,7 @@ export default function LayerBgFill({ layer, onUpdate }) {
 
   return (
     <div className="space-y-2">
-      <span className="text-xs text-gray-400">Background Fill</span>
+      <span className="text-xs text-ink-soft">Background Fill</span>
       {/* Quick presets */}
       <div className="flex items-center gap-1.5">
         {[
@@ -18,8 +18,8 @@ export default function LayerBgFill({ layer, onUpdate }) {
             key={preset.color}
             className={`w-6 h-6 rounded border transition-colors ${
               layer.bgColor === preset.color && layer.bgOpacity === 100
-                ? "border-accent ring-1 ring-accent/50"
-                : "border-[#444] hover:border-gray-300"
+                ? "border-violet ring-1 ring-accent/50"
+                : "border-hairline hover:border-ink-soft"
             }`}
             style={{ backgroundColor: preset.color }}
             title={preset.label}
@@ -30,7 +30,7 @@ export default function LayerBgFill({ layer, onUpdate }) {
       <div className="flex items-center gap-3">
         <div className="relative">
           <div
-            className="w-6 h-6 rounded cursor-pointer border border-[#444] hover:border-accent transition-colors"
+            className="w-6 h-6 rounded cursor-pointer border border-hairline hover:border-violet transition-colors"
             style={{
               backgroundColor: layer.bgColor,
               opacity: layer.bgOpacity / 100,

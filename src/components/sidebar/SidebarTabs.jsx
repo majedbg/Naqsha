@@ -25,7 +25,7 @@ export default function SidebarTabs({ activeTab, onChange, prepareStale = false,
       role="tablist"
       aria-label="Workflow stage"
       ref={tablistRef}
-      className="flex items-center bg-[#141414] border border-[#2e2e2e] rounded-lg p-1 gap-1"
+      className="flex items-center bg-paper border border-hairline rounded-lg p-1 gap-1"
     >
       {TABS.map((t) => {
         const active = activeTab === t.id;
@@ -40,8 +40,8 @@ export default function SidebarTabs({ activeTab, onChange, prepareStale = false,
             onClick={() => onChange(t.id)}
             className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-medium transition-all ${
               active
-                ? 'bg-[#2a2a2a] text-gray-100 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)]'
-                : 'text-gray-500 hover:text-gray-300'
+                ? 'bg-paper-warm text-ink shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)]'
+                : 'text-ink-soft hover:text-ink'
             }`}
             title={`${t.label} (${t.shortcut})`}
           >
@@ -50,7 +50,7 @@ export default function SidebarTabs({ activeTab, onChange, prepareStale = false,
               <span
                 aria-label="Design changed — re-prepare to update"
                 title="Design changed — re-prepare to update"
-                className="w-1.5 h-1.5 rounded-full bg-yellow-400"
+                className="w-1.5 h-1.5 rounded-full bg-tone-mild"
               />
             )}
           </button>

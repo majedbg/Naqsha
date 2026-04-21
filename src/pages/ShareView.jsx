@@ -48,7 +48,7 @@ export default function ShareView() {
   if (loading) {
     return (
       <div className="h-screen bg-surface flex items-center justify-center">
-        <p className="text-sm text-gray-500">Loading shared design...</p>
+        <p className="text-sm text-ink-soft">Loading shared design...</p>
       </div>
     );
   }
@@ -56,8 +56,8 @@ export default function ShareView() {
   if (error) {
     return (
       <div className="h-screen bg-surface flex flex-col items-center justify-center gap-4">
-        <p className="text-sm text-gray-400">{error}</p>
-        <Link to="/" className="text-sm text-accent hover:text-accent-hover transition-colors">
+        <p className="text-sm text-ink-soft">{error}</p>
+        <Link to="/" className="text-sm text-accent hover:text-saffron-hover transition-colors">
           Open the editor
         </Link>
       </div>
@@ -67,11 +67,11 @@ export default function ShareView() {
   return (
     <div className="flex flex-col h-screen bg-surface">
       {/* Header */}
-      <div className="shrink-0 h-10 bg-panel border-b border-[#2e2e2e] flex items-center px-4 gap-4">
-        <Link to="/" className="text-[11px] text-gray-500 hover:text-accent transition-colors">
+      <div className="shrink-0 h-10 bg-panel border-b border-hairline flex items-center px-4 gap-4">
+        <Link to="/" className="text-[11px] text-ink-soft hover:text-saffron transition-colors">
           Sonoform
         </Link>
-        <span className="text-sm text-gray-200 font-medium truncate flex-1">
+        <span className="text-sm text-ink font-medium truncate flex-1">
           {design.name}
         </span>
         {design.author && (
@@ -79,13 +79,13 @@ export default function ShareView() {
             {design.avatar_url && (
               <img src={design.avatar_url} alt="" className="w-4 h-4 rounded-full" referrerPolicy="no-referrer" />
             )}
-            <span className="text-[11px] text-gray-500">by {design.author}</span>
+            <span className="text-[11px] text-ink-soft">by {design.author}</span>
           </div>
         )}
         {design.share_mode === 'fork' && (
           <Link
             to="/"
-            className="text-[11px] text-accent hover:text-accent-hover transition-colors"
+            className="text-[11px] text-accent hover:text-saffron-hover transition-colors"
           >
             Fork this design
           </Link>

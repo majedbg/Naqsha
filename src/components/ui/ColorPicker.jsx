@@ -6,7 +6,7 @@ export default function ColorPicker({ color, onChange }) {
   return (
     <div className="relative">
       <div
-        className="w-6 h-6 rounded cursor-pointer border border-[#444] hover:border-accent transition-colors"
+        className="w-6 h-6 rounded cursor-pointer border border-hairline hover:border-violet transition-colors"
         style={{ backgroundColor: color }}
         onClick={() => inputRef.current?.click()}
       />

@@ -1,3 +1,6 @@
+@import url('https://fonts.googleapis.com/css2?family=Commissioner:opsz,wght@14..64,300..700&family=Ibarra+Real+Nova:ital,wght@0,400..700;1,400..700&display=swap');
+@import './styles/tokens.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -6,18 +9,96 @@
   box-sizing: border-box;
 }
 
+html,
 body {
   margin: 0;
   padding: 0;
-  overflow: hidden;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: var(--text-base);
+  line-height: var(--lh-base);
+  font-feature-settings: "kern" 1, "liga" 1;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
+body {
+  overflow: hidden;
+}
+
+/* Numeric surfaces — tabular lining figures so columns of values align. */
+.num,
+[data-num] {
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+/* Display type — for section headers, logo, marketing moments.
+ * Display is a serif; body is a grotesque. The pair earns the contrast. */
+.display,
+[data-display] {
+  font-family: var(--font-display);
+  font-feature-settings: "kern" 1, "liga" 1, "dlig" 1;
+  letter-spacing: -0.01em;
+}
+
+/* === Selection — saffron on paper, paper on saffron ===
+ * Not a violet selection because violet is reserved for focus/outlines.
+ * Selection is the only place saffron-spice appears as a background fill
+ * at rest (everywhere else it's interaction-only). */
+::selection {
+  background: var(--saffron);
+  color: var(--ink);
+}
+
+/* === Scrollbars — hairline on paper, barely visible === */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--hairline);
+  border-radius: 4px;
+  border: 2px solid var(--paper);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--ink-soft);
+}
+
+/* === Firefox scrollbar === */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--hairline) transparent;
+}
+
+/* === Focus visible — violet ring on keyboard focus, nothing on mouse ===
+ * Applied globally as a fallback. Individual components may override to
+ * position their rings more precisely (e.g. the slider thumb). */
+:focus {
+  outline: none;
+}
+
+:focus-visible {
+  outline: 2px solid var(--violet);
+  outline-offset: 2px;
+  border-radius: var(--radius-xs);
+}
+
+/* === Native range input — styled via tokens ===
+ * The Slider component uses a hidden range input for keyboard access and
+ * overlays its own visual thumb. But any raw <input type="range"> in the
+ * app still uses this base styling so nothing looks broken. */
 input[type="range"] {
   -webkit-appearance: none;
   appearance: none;
   height: 4px;
-  background: #444;
+  background: var(--hairline);
   border-radius: 2px;
   outline: none;
   cursor: pointer;
@@ -28,51 +109,31 @@ input[type="range"]::-webkit-slider-thumb {
   appearance: none;
   width: 14px;
   height: 14px;
-  background: #00c9b1;
-  border-radius: 50%;
+  background: var(--ink);
+  border-radius: 2px;
   cursor: pointer;
 }
 
 input[type="range"]::-moz-range-thumb {
   width: 14px;
   height: 14px;
-  background: #00c9b1;
-  border-radius: 50%;
+  background: var(--ink);
+  border-radius: 2px;
   cursor: pointer;
   border: none;
 }
 
-::-webkit-scrollbar {
-  width: 6px;
-}
-
-::-webkit-scrollbar-track {
-  background: #1c1c1c;
-}
-
-::-webkit-scrollbar-thumb {
-  background: #444;
-  border-radius: 3px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: #555;
-}
-
-/* Mobile panel styles */
+/* === Mobile panel styles — preserved from original === */
 @media (max-width: 767px) {
-  /* Prevent body scroll when interacting with sliders */
   .mobile-panel-content {
     overscroll-behavior: contain;
     -webkit-overflow-scrolling: touch;
   }
 
-  /* Prevent slider touches from scrolling the page */
   .mobile-panel-content input[type="range"] {
     touch-action: none;
   }
 
-  /* Hide scrollbar on layer pill row */
   .no-scrollbar {
     -ms-overflow-style: none;
     scrollbar-width: none;

@@ -11,6 +11,7 @@ import useLayerGroups from "../lib/useLayerGroups";
 import { useAuth } from "../lib/AuthContext";
 import { useGate } from "../lib/useGate";
 import AuthButton from "../components/AuthButton";
+import ThemeToggle from "../components/ui/ThemeToggle";
 import {
   saveDesign,
   loadDesign,
@@ -352,24 +353,24 @@ export default function Studio() {
 
   if (loading) {
     return (
-      <div className="h-screen bg-surface flex items-center justify-center">
-        <p className="text-sm text-gray-600">Loading...</p>
+      <div className="h-screen bg-paper flex items-center justify-center">
+        <p className="text-sm text-ink-soft">Loading…</p>
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col h-screen bg-surface">
-      {/* App title */}
-      <div className="shrink-0 bg-[#0e0e0e] border-b border-[#1a1a1a] px-4 py-2 group/title relative">
-        <h1 className="text-sm font-semibold text-gray-300 tracking-wide cursor-default select-none">
+    <div className="flex flex-col h-screen bg-paper">
+      {/* App title — the naqsheh etymology lives in the hover card. */}
+      <div className="shrink-0 bg-paper-warm border-b border-hairline px-4 py-2 group/title relative">
+        <h1 className="display text-md font-semibold text-ink tracking-tight cursor-default select-none">
           Naqsha
         </h1>
-        <div className="absolute left-4 top-full mt-1 z-50 w-[420px] opacity-0 pointer-events-none group-hover/title:opacity-100 group-hover/title:pointer-events-auto transition-opacity duration-300">
-          <div className="bg-[#1a1a1a] border border-[#333] rounded-lg p-4 shadow-2xl">
-            <p className="text-[11px] text-gray-400 leading-relaxed">
-              <span className="text-gray-200 font-medium">Naqsha</span> takes its name from the Arabic and Persian{" "}
-              <span className="font-medium text-gray-300" dir="rtl">نقشه</span>{" "}
+        <div className="absolute left-4 top-full mt-1 z-50 w-[420px] opacity-0 pointer-events-none group-hover/title:opacity-100 group-hover/title:pointer-events-auto transition-opacity duration-medium ease-out-quart">
+          <div className="bg-paper border border-hairline rounded-sm p-4">
+            <p className="text-xs text-ink-soft leading-relaxed">
+              <span className="text-ink font-medium">Naqsha</span> takes its name from the Arabic and Persian{" "}
+              <span className="font-medium text-ink display" dir="rtl">نقشه</span>{" "}
               — a word that refuses to separate the pattern from the plan, the visible form from the rules that generated it.
               Naqsha is that process as a tool — generative algorithms, parameters you control, output sized for posters,
               laser-cut acrylic and pen plotters, each session a record of where your rules led you on that particular day
@@ -380,15 +381,15 @@ export default function Studio() {
       </div>
 
       {/* Top bar */}
-      <div className="shrink-0 h-9 bg-panel border-b border-[#2e2e2e] flex items-center px-4 gap-4">
-        <span className="text-[11px] text-gray-500 select-none">Naqsha</span>
+      <div className="shrink-0 h-9 bg-paper border-b border-hairline flex items-center px-4 gap-4">
+        <span className="text-xs text-ink-soft select-none">Naqsha</span>
         <button
           onClick={() => setShowLoadModal(true)}
-          className="text-[11px] text-gray-400 hover:text-accent transition-colors"
+          className="text-xs text-ink-soft hover:text-ink transition-colors duration-fast ease-out-quart"
         >
-          Load Existing
+          Load existing
           {groups.length > 0 && (
-            <span className="ml-1 text-gray-600">({groups.length})</span>
+            <span className="ml-1 text-ink-soft/70 num">({groups.length})</span>
           )}
         </button>
         <ShareLinkButton
@@ -402,7 +403,8 @@ export default function Studio() {
             layers,
           })}
         />
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-xs">
+          <ThemeToggle />
           <AuthButton />
         </div>
       </div>
@@ -472,18 +474,18 @@ export default function Studio() {
       {/* Save dialog */}
       {showSaveDialog && (
         <div
-          className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center"
+          className="fixed inset-0 z-50 bg-ink/40 flex items-center justify-center"
           onClick={() => setShowSaveDialog(false)}
         >
           <div
-            className="bg-panel border border-card-border rounded-lg w-80 p-4 space-y-3"
+            className="bg-paper border border-hairline rounded-sm w-80 p-4 space-y-3"
             onClick={(e) => e.stopPropagation()}
           >
-            <h3 className="text-sm font-semibold text-gray-200">
-              Save Layer Group
+            <h3 className="text-sm font-semibold text-ink">
+              Save layer group
             </h3>
             <input
-              className="w-full bg-[#333] text-gray-200 text-sm px-2.5 py-1.5 rounded border border-[#444] outline-none focus:border-accent"
+              className="w-full bg-paper-warm text-ink text-sm px-2.5 py-1.5 rounded-xs border border-hairline outline-none focus:border-violet transition-colors duration-fast ease-out-quart"
               placeholder="Untitled"
               value={saveName}
               onChange={(e) => setSaveName(e.target.value)}
@@ -493,13 +495,13 @@ export default function Studio() {
             <div className="flex gap-2">
               <button
                 onClick={handleConfirmSave}
-                className="flex-1 py-1.5 text-sm font-medium rounded bg-accent text-black hover:bg-accent-hover transition-colors"
+                className="flex-1 py-1.5 text-sm font-medium rounded-xs bg-saffron text-ink hover:bg-saffron-hover transition-colors duration-fast ease-out-quart"
               >
                 Save
               </button>
               <button
                 onClick={() => setShowSaveDialog(false)}
-                className="flex-1 py-1.5 text-sm font-medium rounded bg-[#333] text-gray-400 hover:bg-[#3a3a3a] transition-colors"
+                className="flex-1 py-1.5 text-sm font-medium rounded-xs bg-paper-warm text-ink-soft hover:bg-muted hover:text-ink transition-colors duration-fast ease-out-quart"
               >
                 Cancel
               </button>

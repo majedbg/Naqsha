@@ -147,7 +147,7 @@ export default function PatternParams({
 
       {/* Guest locked summary */}
       {tier === "guest" && lockedCount > 0 && (
-        <div className="flex items-center gap-2 py-2 px-2 rounded bg-[#1e1e1e] border border-[#333]">
+        <div className="flex items-center gap-2 py-2 px-2 rounded bg-paper-warm border border-hairline">
           <svg
             width="12"
             height="12"
@@ -155,15 +155,15 @@ export default function PatternParams({
             fill="none"
             stroke="currentColor"
             strokeWidth="2"
-            className="text-gray-500 shrink-0"
+            className="text-ink-soft shrink-0"
           >
             <rect x="3" y="11" width="18" height="11" rx="2" />
             <path d="M7 11V7a5 5 0 0110 0v4" />
           </svg>
-          <span className="text-[11px] text-gray-500">
+          <span className="text-[11px] text-ink-soft">
             {lockedCount} more parameters
           </span>
-          <span className="mx-1 text-gray-700">—</span>
+          <span className="mx-1 text-ink">—</span>
           <UpgradePrompt upgradeTarget="free" compact />
         </div>
       )}

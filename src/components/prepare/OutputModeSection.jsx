@@ -40,7 +40,7 @@ export default function OutputModeSection({ outputMode, onOutputModeChange, laye
   return (
     <section className="space-y-3">
       <header>
-        <h3 className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">
+        <h3 className="text-[11px] font-semibold text-ink-soft uppercase tracking-wider">
           Output mode
         </h3>
       </header>
@@ -57,12 +57,12 @@ export default function OutputModeSection({ outputMode, onOutputModeChange, laye
               onClick={() => onOutputModeChange(m.value)}
               className={`text-left p-2.5 rounded-md border transition-colors ${
                 active
-                  ? 'border-accent/60 bg-accent/10 text-gray-100'
-                  : 'border-[#2a2a2a] bg-[#161616] text-gray-400 hover:border-[#3a3a3a] hover:text-gray-200'
+                  ? 'border-violet/60 bg-accent/10 text-ink'
+                  : 'border-paper-warm bg-paper-warm text-ink-soft hover:border-ink-soft hover:text-ink'
               }`}
             >
               <div className="text-[12px] font-medium">{m.label}</div>
-              <div className="text-[10px] text-gray-500 mt-0.5 leading-snug">{m.hint}</div>
+              <div className="text-[10px] text-ink-soft mt-0.5 leading-snug">{m.hint}</div>
             </button>
           );
         })}
@@ -71,11 +71,11 @@ export default function OutputModeSection({ outputMode, onOutputModeChange, laye
       {/* Per-layer mapping */}
       <div className="space-y-2">
         <div className="flex items-center justify-between">
-          <label className="text-[10px] text-gray-500">
+          <label className="text-[10px] text-ink-soft">
             {outputMode === 'laser' ? 'Layer roles' : 'Pen assignment'}
           </label>
           <span
-            className="text-[9px] text-gray-600 cursor-help"
+            className="text-[9px] text-ink-soft cursor-help"
             title={
               outputMode === 'laser'
                 ? 'Red = cut, blue = score, black = engrave. LightBurn / Glowforge / xTool auto-detect these on import.'
@@ -89,10 +89,10 @@ export default function OutputModeSection({ outputMode, onOutputModeChange, laye
           {layers.map((layer) => (
             <li
               key={layer.id}
-              className="flex items-center gap-2 p-2 rounded-md bg-[#141414] border border-[#252525]"
+              className="flex items-center gap-2 p-2 rounded-md bg-paper border border-paper-warm"
             >
               <span
-                className="inline-block w-3 h-3 rounded-sm border border-[#333] shrink-0"
+                className="inline-block w-3 h-3 rounded-sm border border-hairline shrink-0"
                 style={{
                   backgroundColor:
                     outputMode === 'laser'
@@ -101,11 +101,11 @@ export default function OutputModeSection({ outputMode, onOutputModeChange, laye
                 }}
                 aria-hidden="true"
               />
-              <span className="text-[11px] text-gray-300 truncate flex-1">
+              <span className="text-[11px] text-ink truncate flex-1">
                 {layer.name || 'Layer'}
               </span>
               {outputMode === 'laser' ? (
-                <div className="flex items-center gap-0.5 bg-[#1a1a1a] border border-[#262626] rounded p-0.5">
+                <div className="flex items-center gap-0.5 bg-paper-warm border border-hairline rounded p-0.5">
                   {LASER_ROLES.map((r) => {
                     const active = (layer.role ?? 'cut') === r.value;
                     return (
@@ -115,8 +115,8 @@ export default function OutputModeSection({ outputMode, onOutputModeChange, laye
                         title={r.label}
                         className={`flex items-center justify-center w-6 h-5 rounded transition-colors ${
                           active
-                            ? 'bg-[#2a2a2a] text-gray-100'
-                            : 'text-gray-500 hover:text-gray-300'
+                            ? 'bg-paper-warm text-ink'
+                            : 'text-ink-soft hover:text-ink'
                         }`}
                         style={active ? { color: r.color } : undefined}
                       >
@@ -129,7 +129,7 @@ export default function OutputModeSection({ outputMode, onOutputModeChange, laye
                 <select
                   value={layer.penSlot ?? 1}
                   onChange={(e) => onUpdateLayer(layer.id, { penSlot: parseInt(e.target.value, 10) })}
-                  className="bg-[#1a1a1a] border border-[#262626] text-gray-300 text-[11px] rounded px-1.5 py-0.5 outline-none focus:border-accent"
+                  className="bg-paper-warm border border-hairline text-ink text-[11px] rounded px-1.5 py-0.5 outline-none focus:border-violet"
                   aria-label={`Pen slot for ${layer.name || 'layer'}`}
                 >
                   {Array.from({ length: MAX_PEN_SLOTS }, (_, i) => i + 1).map((n) => (
@@ -143,10 +143,10 @@ export default function OutputModeSection({ outputMode, onOutputModeChange, laye
       </div>
 
       {outputMode === 'laser' && (
-        <p className="text-[10px] text-gray-600 leading-relaxed">
+        <p className="text-[10px] text-ink-soft leading-relaxed">
           On export, layer colors are overridden to pure RGB so
           {' '}
-          <span className="text-gray-400">{activeMode.label}</span>
+          <span className="text-ink-soft">{activeMode.label}</span>
           {' '}
           imports map automatically to cut / score / engrave passes.
         </p>

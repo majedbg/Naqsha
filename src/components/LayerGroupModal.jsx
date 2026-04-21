@@ -5,17 +5,17 @@ const patternLabel = (id) => PATTERN_TYPES.find((p) => p.id === id)?.label || id
 
 export default function LayerGroupModal({ groups, onLoad, onDelete, onRename, onClose }) {
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 flex items-start justify-center pt-16 px-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-ink/70 flex items-start justify-center pt-16 px-4" onClick={onClose}>
       <div
         className="bg-panel border border-card-border rounded-lg w-full max-w-[720px] max-h-[75vh] flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-[#333] shrink-0">
-          <h2 className="text-sm font-semibold text-gray-200">Saved Layer Groups</h2>
+        <div className="flex items-center justify-between px-4 py-3 border-b border-hairline shrink-0">
+          <h2 className="text-sm font-semibold text-ink">Saved Layer Groups</h2>
           <button
             onClick={onClose}
-            className="text-gray-500 hover:text-gray-300 transition-colors text-lg leading-none px-1"
+            className="text-ink-soft hover:text-ink transition-colors text-lg leading-none px-1"
           >
             &times;
           </button>
@@ -24,7 +24,7 @@ export default function LayerGroupModal({ groups, onLoad, onDelete, onRename, on
         {/* Body */}
         <div className="overflow-y-auto p-4">
           {groups.length === 0 ? (
-            <p className="text-center text-gray-600 text-sm py-12">
+            <p className="text-center text-ink-soft text-sm py-12">
               No saved layer groups yet. Use "Save Layer Group" to save your current work.
             </p>
           ) : (
@@ -59,7 +59,7 @@ function GroupCard({ group, onLoad, onDelete, onRename }) {
   };
 
   return (
-    <div className="bg-card border border-card-border rounded-lg overflow-hidden hover:border-accent/50 transition-colors group">
+    <div className="bg-card border border-card-border rounded-lg overflow-hidden hover:border-violet/50 transition-colors group">
       {/* Thumbnail */}
       <div
         className="aspect-square bg-white cursor-pointer relative overflow-hidden"
@@ -72,12 +72,12 @@ function GroupCard({ group, onLoad, onDelete, onRename }) {
             className="w-full h-full object-contain"
           />
         ) : (
-          <div className="w-full h-full flex items-center justify-center text-gray-400 text-xs">
+          <div className="w-full h-full flex items-center justify-center text-ink-soft text-xs">
             No preview
           </div>
         )}
         <div className="absolute inset-0 bg-accent/0 group-hover:bg-accent/10 transition-colors flex items-center justify-center">
-          <span className="opacity-0 group-hover:opacity-100 transition-opacity text-accent text-xs font-medium bg-black/60 px-2 py-1 rounded">
+          <span className="opacity-0 group-hover:opacity-100 transition-opacity text-accent text-xs font-medium bg-ink/60 px-2 py-1 rounded">
             Load
           </span>
         </div>
@@ -88,7 +88,7 @@ function GroupCard({ group, onLoad, onDelete, onRename }) {
         {/* Name + date */}
         {editing ? (
           <input
-            className="bg-[#333] text-gray-200 text-xs px-1 py-0.5 rounded border border-accent outline-none w-full"
+            className="bg-muted text-ink text-xs px-1 py-0.5 rounded border border-violet outline-none w-full"
             value={name}
             onChange={(e) => setName(e.target.value)}
             onBlur={handleRename}
@@ -98,13 +98,13 @@ function GroupCard({ group, onLoad, onDelete, onRename }) {
         ) : (
           <p className="text-xs font-medium truncate" title={group.name}>
             {group.name === 'Untitled' ? (
-              <span className="text-gray-500 italic">Untitled</span>
+              <span className="text-ink-soft italic">Untitled</span>
             ) : (
-              <span className="text-gray-200">{group.name}</span>
+              <span className="text-ink">{group.name}</span>
             )}
           </p>
         )}
-        <span className="text-[10px] text-gray-600">
+        <span className="text-[10px] text-ink-soft">
           {new Date(group.timestamp).toLocaleString()}
         </span>
 
@@ -131,30 +131,30 @@ function GroupCard({ group, onLoad, onDelete, onRename }) {
           <div className="flex items-center justify-end gap-2">
             <button
               onClick={(e) => { e.stopPropagation(); setName(group.name); setEditing(true); }}
-              className="text-[10px] text-gray-600 hover:text-accent transition-colors"
+              className="text-[10px] text-ink-soft hover:text-saffron transition-colors"
             >
               Rename
             </button>
             <button
               onClick={(e) => { e.stopPropagation(); setConfirmDelete(true); }}
-              className="text-[10px] text-gray-600 hover:text-red-400 transition-colors"
+              className="text-[10px] text-ink-soft hover:text-tone-strong transition-colors"
             >
               Delete
             </button>
           </div>
           {confirmDelete && (
-            <div className="absolute bottom-6 right-0 bg-[#2a2a2a] border border-[#444] rounded-lg shadow-xl p-2.5 z-10 w-40">
-              <p className="text-[11px] text-gray-300 mb-2">Delete this group?</p>
+            <div className="absolute bottom-6 right-0 bg-paper-warm border border-hairline rounded-lg shadow-xl p-2.5 z-10 w-40">
+              <p className="text-[11px] text-ink mb-2">Delete this group?</p>
               <div className="flex gap-1.5">
                 <button
                   onClick={(e) => { e.stopPropagation(); onDelete(); }}
-                  className="flex-1 text-[10px] py-1 rounded bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-colors"
+                  className="flex-1 text-[10px] py-1 rounded bg-tone-strong/20 text-tone-strong hover:bg-tone-strong/30 transition-colors"
                 >
                   Confirm
                 </button>
                 <button
                   onClick={(e) => { e.stopPropagation(); setConfirmDelete(false); }}
-                  className="flex-1 text-[10px] py-1 rounded bg-[#333] text-gray-400 hover:bg-[#3a3a3a] transition-colors"
+                  className="flex-1 text-[10px] py-1 rounded bg-muted text-ink-soft hover:bg-muted transition-colors"
                 >
                   Cancel
                 </button>

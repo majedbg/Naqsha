@@ -29,12 +29,12 @@ export default function ShareLinkButton({ buildState, size = 'sm' }) {
     <button
       onClick={onClick}
       title="Copy a link that reproduces this design — includes pattern, params, seed, layers, and canvas."
-      className={`${sizeCls} rounded-md border text-gray-400 transition-colors font-medium ${
+      className={`${sizeCls} rounded-md border text-ink-soft transition-colors font-medium ${
         copied
-          ? 'border-accent/50 text-accent bg-accent/10'
+          ? 'border-violet/50 text-accent bg-accent/10'
           : failed
-            ? 'border-red-400/40 text-red-400'
-            : 'border-[#2e2e2e] hover:text-gray-200 hover:border-[#3a3a3a]'
+            ? 'border-tone-strong/40 text-tone-strong'
+            : 'border-hairline hover:text-ink hover:border-ink-soft'
       }`}
     >
       {label}

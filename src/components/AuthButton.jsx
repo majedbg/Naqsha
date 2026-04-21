@@ -17,7 +17,7 @@ export default function AuthButton() {
   }, [open]);
 
   if (loading) {
-    return <span className="text-[10px] text-gray-600">...</span>;
+    return <span className="text-[10px] text-ink-soft">...</span>;
   }
 
   // Guest: show sign-in button
@@ -25,7 +25,7 @@ export default function AuthButton() {
     return (
       <button
         onClick={signIn}
-        className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-white text-[11px] text-gray-700 font-medium hover:bg-gray-100 transition-colors"
+        className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-white text-[11px] text-ink font-medium hover:bg-muted transition-colors"
       >
         <GoogleLogo />
         Sign in
@@ -35,7 +35,7 @@ export default function AuthButton() {
 
   // Logged in: avatar + dropdown
   const tierLabel = tier === 'pro' ? 'Pro' : tier === 'studio' ? 'Studio' : 'Free';
-  const tierColor = tier === 'pro' || tier === 'studio' ? 'text-accent' : 'text-gray-500';
+  const tierColor = tier === 'pro' || tier === 'studio' ? 'text-accent' : 'text-ink-soft';
 
   return (
     <div ref={ref} className="relative">
@@ -59,20 +59,20 @@ export default function AuthButton() {
       </button>
 
       {open && (
-        <div className="absolute right-0 top-7 bg-[#2a2a2a] border border-[#444] rounded-lg shadow-xl w-52 py-2 z-50">
-          <div className="px-3 py-1.5 border-b border-[#333]">
-            <p className="text-xs text-gray-200 truncate">{profile?.display_name || 'User'}</p>
-            <p className="text-[10px] text-gray-500 truncate">{user.email}</p>
+        <div className="absolute right-0 top-7 bg-paper-warm border border-hairline rounded-lg shadow-xl w-52 py-2 z-50">
+          <div className="px-3 py-1.5 border-b border-hairline">
+            <p className="text-xs text-ink truncate">{profile?.display_name || 'User'}</p>
+            <p className="text-[10px] text-ink-soft truncate">{user.email}</p>
             <p className={`text-[10px] font-medium mt-0.5 ${tierColor}`}>{tierLabel} tier</p>
           </div>
-          <div className="px-3 py-1.5 border-b border-[#333]">
-            <p className="text-[10px] text-gray-500">
+          <div className="px-3 py-1.5 border-b border-hairline">
+            <p className="text-[10px] text-ink-soft">
               AI Credits: <span className="text-accent font-medium">{profile?.ai_credits ?? 0}</span>
-              <span className="text-gray-600"> / 24</span>
+              <span className="text-ink-soft"> / 24</span>
             </p>
           </div>
           <button
-            className="w-full px-3 py-1.5 text-left text-[11px] text-gray-400 hover:bg-[#333] hover:text-gray-200 transition-colors"
+            className="w-full px-3 py-1.5 text-left text-[11px] text-ink-soft hover:bg-muted hover:text-ink transition-colors"
             onClick={() => { setOpen(false); signOut(); }}
           >
             Sign out

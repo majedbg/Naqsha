@@ -151,27 +151,27 @@ export default function PlotPreviewSection({
   return (
     <section className="space-y-2">
       <div className="flex items-center justify-between">
-        <h3 className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">
+        <h3 className="text-[11px] font-semibold text-ink-soft uppercase tracking-wider">
           Plot preview
         </h3>
         <button
           onClick={() => setExpanded((x) => !x)}
-          className="text-[10px] text-gray-500 hover:text-gray-300 transition-colors"
+          className="text-[10px] text-ink-soft hover:text-ink transition-colors"
         >
           {expanded ? 'Hide' : 'Show'}
         </button>
       </div>
 
       {!expanded ? (
-        <p className="text-[10px] text-gray-600 leading-snug">
-          Estimated plot: <span className="text-gray-400 font-mono">{formatSeconds(timing.seconds)}</span>
+        <p className="text-[10px] text-ink-soft leading-snug">
+          Estimated plot: <span className="text-ink-soft font-mono">{formatSeconds(timing.seconds)}</span>
           {' '} · {Math.round(timing.drawMm)} mm draw + {Math.round(timing.travelMm)} mm travel.
           Expand to watch the pen route.
         </p>
       ) : (
         <div className="space-y-2">
           <div
-            className="relative rounded-md overflow-hidden bg-[#0a0a0a] border border-[#252525] mx-auto"
+            className="relative rounded-md overflow-hidden bg-paper-warm border border-paper-warm mx-auto"
             style={{ width: displayW, maxWidth: '100%' }}
           >
             <svg
@@ -256,10 +256,10 @@ export default function PlotPreviewSection({
               step={0.001}
               value={progress}
               onChange={(e) => { setPlaying(false); setProgress(parseFloat(e.target.value)); }}
-              className="flex-1 accent-accent"
+              className="flex-1 accent-saffron"
               aria-label="Scrub plot progress"
             />
-            <div role="radiogroup" aria-label="Playback speed" className="flex items-center bg-[#161616] border border-[#2a2a2a] rounded p-0.5">
+            <div role="radiogroup" aria-label="Playback speed" className="flex items-center bg-paper-warm border border-paper-warm rounded p-0.5">
               {SPEEDS.map((s) => (
                 <button
                   key={s.value}
@@ -268,8 +268,8 @@ export default function PlotPreviewSection({
                   onClick={() => setSpeed(s.value)}
                   className={`px-1.5 py-0.5 text-[10px] font-mono rounded transition-colors ${
                     speed === s.value
-                      ? 'bg-[#2a2a2a] text-gray-100'
-                      : 'text-gray-500 hover:text-gray-300'
+                      ? 'bg-paper-warm text-ink'
+                      : 'text-ink-soft hover:text-ink'
                   }`}
                 >
                   {s.label}
@@ -278,7 +278,7 @@ export default function PlotPreviewSection({
             </div>
           </div>
 
-          <div className="flex justify-between text-[10px] font-mono text-gray-500">
+          <div className="flex justify-between text-[10px] font-mono text-ink-soft">
             <span>{formatSeconds(elapsedSec)} / {formatSeconds(timing.seconds)}</span>
             <span>
               {Math.round(currentPx ? pxToMm(currentPx) : 0)} / {Math.round(pxToMm(timing.totalPx))} mm
@@ -286,7 +286,7 @@ export default function PlotPreviewSection({
             <span>ETA {formatSeconds(remainingSec)}</span>
           </div>
 
-          <p className="text-[9px] text-gray-600 leading-snug">
+          <p className="text-[9px] text-ink-soft leading-snug">
             Timing uses AxiDraw V3 defaults ({DRAW_SPEED}&nbsp;mm/s draw, {TRAVEL_SPEED}&nbsp;mm/s travel).
             Real speeds vary by hardware and pen choice.
           </p>

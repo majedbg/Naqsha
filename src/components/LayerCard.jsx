@@ -140,7 +140,7 @@ export default function LayerCard({
           {editingName ? (
             <input
               ref={nameRef}
-              className="bg-[#333] text-gray-200 text-sm px-1 py-0.5 rounded border border-accent outline-none flex-1 min-w-0"
+              className="bg-muted text-ink text-sm px-1 py-0.5 rounded border border-violet outline-none flex-1 min-w-0"
               value={layer.name}
               onChange={(e) => onUpdate({ name: e.target.value })}
               onBlur={() => setEditingName(false)}
@@ -149,7 +149,7 @@ export default function LayerCard({
             />
           ) : (
             <span
-              className="text-sm text-gray-200 flex-1 min-w-0 truncate cursor-text"
+              className="text-sm text-ink flex-1 min-w-0 truncate cursor-text"
               onDoubleClick={() => setEditingName(true)}
             >
               {layer.name}
@@ -305,7 +305,7 @@ export default function LayerCard({
             (editingSeed ? (
               <input
                 ref={seedRef}
-                className="bg-[#333] text-gray-500 text-[10px] font-mono w-14 px-1 py-0.5 rounded border border-accent outline-none"
+                className="bg-muted text-ink-soft text-[10px] font-mono w-14 px-1 py-0.5 rounded border border-violet outline-none"
                 value={layer.seed}
                 onChange={(e) =>
                   onUpdate({ seed: parseInt(e.target.value) || 0 })
@@ -316,7 +316,7 @@ export default function LayerCard({
               />
             ) : (
               <span
-                className="text-[10px] text-gray-600 font-mono cursor-pointer hover:text-gray-400"
+                className="text-[10px] text-ink-soft font-mono cursor-pointer hover:text-ink-soft"
                 onClick={() => setEditingSeed(true)}
                 title="Click to edit seed"
               >
@@ -332,7 +332,7 @@ export default function LayerCard({
           collapsed ? "max-h-0" : "max-h-[2000px]"
         }`}
       >
-        <div className="px-3 pb-3 space-y-3 border-t border-[#333] pt-3">
+        <div className="px-3 pb-3 space-y-3 border-t border-hairline pt-3">
           {/* Background color with alpha */}
           {/* <LayerBgFill layer={layer} onUpdate={onUpdate} /> */}
 
@@ -359,7 +359,7 @@ export default function LayerCard({
                   disabled={changedCount === 0}
                   className="ml-auto flex items-center gap-1 py-1 px-2 rounded border transition-colors
                     disabled:opacity-30 disabled:cursor-not-allowed
-                    border-orange-500/30 text-orange-400 hover:bg-orange-500/10"
+                    border-tone-mild/30 text-tone-mild hover:bg-tone-mild/10"
                   title={
                     changedCount > 0
                       ? `Reset ${changedCount} changed param(s) to defaults`
@@ -392,7 +392,7 @@ export default function LayerCard({
                   disabled={!hasCheckedKeys}
                   className="flex items-center gap-1 py-1 px-2 rounded border transition-colors
                     disabled:opacity-30 disabled:cursor-not-allowed
-                    border-accent/40 text-accent hover:bg-accent/10"
+                    border-violet/40 text-accent hover:bg-accent/10"
                   title={
                     hasCheckedKeys
                       ? `Randomize ${checkedCount} checked param(s)`

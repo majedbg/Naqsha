@@ -49,7 +49,7 @@ export default function ShareButton({ designId, userId, shareToken, shareMode, o
       <button
         onClick={() => handleEnable('view')}
         disabled={loading}
-        className="text-[11px] text-gray-500 hover:text-accent transition-colors disabled:opacity-50"
+        className="text-[11px] text-ink-soft hover:text-saffron transition-colors disabled:opacity-50"
       >
         {loading ? 'Sharing...' : 'Share'}
       </button>
@@ -62,12 +62,12 @@ export default function ShareButton({ designId, userId, shareToken, shareMode, o
         <input
           readOnly
           value={shareUrl}
-          className="flex-1 bg-[#333] text-[10px] text-gray-400 font-mono px-2 py-1 rounded border border-[#444] outline-none"
+          className="flex-1 bg-muted text-[10px] text-ink-soft font-mono px-2 py-1 rounded border border-hairline outline-none"
           onClick={(e) => e.target.select()}
         />
         <button
           onClick={handleCopy}
-          className="text-[10px] text-accent hover:text-accent-hover shrink-0"
+          className="text-[10px] text-accent hover:text-saffron-hover shrink-0"
         >
           {copied ? 'Copied!' : 'Copy'}
         </button>
@@ -78,7 +78,7 @@ export default function ShareButton({ designId, userId, shareToken, shareMode, o
             onClick={() => handleEnable(shareMode === 'fork' ? 'view' : 'fork')}
             disabled={loading}
             className={`text-[10px] transition-colors ${
-              shareMode === 'fork' ? 'text-accent' : 'text-gray-600 hover:text-gray-400'
+              shareMode === 'fork' ? 'text-accent' : 'text-ink-soft hover:text-ink-soft'
             }`}
           >
             {shareMode === 'fork' ? 'Forkable' : 'Allow forking'}
@@ -87,7 +87,7 @@ export default function ShareButton({ designId, userId, shareToken, shareMode, o
         <button
           onClick={handleRevoke}
           disabled={loading}
-          className="text-[10px] text-gray-600 hover:text-red-400 transition-colors"
+          className="text-[10px] text-ink-soft hover:text-tone-strong transition-colors"
         >
           Revoke
         </button>

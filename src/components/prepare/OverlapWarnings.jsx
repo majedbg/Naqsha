@@ -44,10 +44,10 @@ function tone(count, truncated) {
 }
 
 const TONE_STYLES = {
-  ok:      'border-green-400/30 bg-green-400/5   text-green-400',
-  mild:    'border-yellow-400/30 bg-yellow-400/5 text-yellow-400',
-  strong:  'border-red-400/40  bg-red-400/5     text-red-400',
-  neutral: 'border-[#2a2a2a]   bg-[#141414]     text-gray-400',
+  ok:      'border-tone-ok/30 bg-tone-ok/5   text-tone-ok',
+  mild:    'border-tone-mild/30 bg-tone-mild/5 text-tone-mild',
+  strong:  'border-tone-strong/40  bg-tone-strong/5     text-tone-strong',
+  neutral: 'border-paper-warm   bg-paper     text-ink-soft',
 };
 
 export default function OverlapWarnings({ layers, patternInstances }) {
@@ -73,7 +73,7 @@ export default function OverlapWarnings({ layers, patternInstances }) {
 
   return (
     <section className="space-y-2">
-      <h3 className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">
+      <h3 className="text-[11px] font-semibold text-ink-soft uppercase tracking-wider">
         Overlap check
       </h3>
       <div className={`rounded-md border p-2.5 ${TONE_STYLES[t]}`}>

@@ -4,7 +4,33 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Generative Art Studio</title>
+    <title>Naqsha — a painted grid for plotters and lasers</title>
+
+    <!--
+      Theme flash prevention. Runs before first paint so the correct
+      data-theme attribute is set before any styled content renders.
+      Persisted user preference wins; otherwise honor the OS setting.
+    -->
+    <script>
+      (function () {
+        try {
+          var stored = localStorage.getItem('sonoform-theme');
+          var theme =
+            stored === 'light' || stored === 'dark'
+              ? stored
+              : window.matchMedia('(prefers-color-scheme: dark)').matches
+              ? 'dark'
+              : 'light';
+          document.documentElement.setAttribute('data-theme', theme);
+        } catch (e) {
+          document.documentElement.setAttribute('data-theme', 'light');
+        }
+      })();
+    </script>
+
+    <!-- Preconnect to font CDN so first paint doesn't wait on DNS. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   </head>
   <body>
     <div id="root"></div>

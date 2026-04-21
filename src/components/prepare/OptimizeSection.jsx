@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { previewOne, formatSeconds } from '../../lib/plotter/pipeline';
+import CommitSlider from '../ui/CommitSlider';
 
 // State chip shown per optimization control.
 // - Original: never applied
@@ -20,10 +21,10 @@ function chipState(opt) {
 
 function StateChip({ state }) {
   const styles = {
-    original:   'text-gray-500 border-[#2a2a2a] bg-[#161616]',
-    previewing: 'text-blue-400 border-blue-400/40 bg-blue-400/10',
-    applied:    'text-green-400 border-green-400/40 bg-green-400/10',
-    stale:      'text-yellow-400 border-yellow-400/40 bg-yellow-400/10',
+    original:   'text-ink-soft border-paper-warm bg-paper-warm',
+    previewing: 'text-tone-ok border-tone-ok/40 bg-tone-ok/10',
+    applied:    'text-tone-ok border-tone-ok/40 bg-tone-ok/10',
+    stale:      'text-tone-mild border-tone-mild/40 bg-tone-mild/10',
   };
   const label = { original: 'Original', previewing: 'Preview', applied: 'Applied', stale: 'Re-apply' }[state];
   return (
@@ -73,12 +74,12 @@ function StatRow({ before, after, unitBefore = '', unitAfter = '' }) {
   const decrease = after < before;
   const arrow = after === before ? '=' : decrease ? '↓' : '↑';
   const pct = before === 0 ? 0 : Math.round(((after - before) / before) * 100);
-  const color = after === before ? 'text-gray-500' : decrease ? 'text-green-400' : 'text-yellow-400';
+  const color = after === before ? 'text-ink-soft' : decrease ? 'text-tone-ok' : 'text-tone-mild';
   return (
     <div className="flex items-baseline gap-1 text-[10px] font-mono">
-      <span className="text-gray-500">{formatStatValue(before)}{unitBefore}</span>
+      <span className="text-ink-soft">{formatStatValue(before)}{unitBefore}</span>
       <span className={color}>{arrow}</span>
-      <span className="text-gray-200">{formatStatValue(after)}{unitAfter}</span>
+      <span className="text-ink">{formatStatValue(after)}{unitAfter}</span>
       {pct !== 0 && (
         <span className={`ml-1 ${color}`}>
           ({pct > 0 ? '+' : ''}{pct}%)
@@ -122,17 +123,17 @@ function OptimizationRow({
   const after  = stats?.after;
 
   return (
-    <div className="space-y-2 p-3 rounded-md bg-[#141414] border border-[#252525]">
+    <div className="space-y-2 p-3 rounded-md bg-paper border border-paper-warm">
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
-          <span className="text-[12px] font-medium text-gray-200">{title}</span>
+          <span className="text-[12px] font-medium text-ink">{title}</span>
           <StateChip state={state} />
         </div>
         <div className="flex items-center gap-1.5">
           {opt.enabled && (
             <button
               onClick={onRevert}
-              className="text-[10px] text-gray-500 hover:text-red-400 transition-colors"
+              className="text-[10px] text-ink-soft hover:text-tone-strong transition-colors"
             >
               Revert
             </button>
@@ -140,41 +141,35 @@ function OptimizationRow({
           <button
             onClick={onApply}
             disabled={state === 'applied'}
-            className={`text-[10px] px-2 py-1 rounded font-medium transition-colors ${
+            className={`text-[10px] px-2 py-1 rounded-xs font-medium transition-colors duration-fast ease-out-quart ${
               state === 'applied'
-                ? 'bg-green-400/10 text-green-400 cursor-default'
+                ? 'bg-tone-ok/10 text-tone-ok cursor-default'
                 : state === 'stale'
-                  ? 'bg-yellow-400/10 text-yellow-400 hover:bg-yellow-400/20'
-                  : 'bg-accent/10 text-accent hover:bg-accent/20'
+                  ? 'bg-tone-mild/10 text-tone-mild hover:bg-tone-mild/20'
+                  : 'bg-saffron text-ink hover:bg-saffron-hover'
             }`}
           >
-            {state === 'applied' ? '✓ Applied' : state === 'stale' ? 'Re-apply' : 'Apply'}
+            {state === 'applied' ? 'Applied' : state === 'stale' ? 'Re-apply' : 'Apply'}
           </button>
         </div>
       </div>
 
-      <p className="text-[10px] text-gray-500 leading-snug">{description}</p>
+      <p className="text-[10px] text-ink-soft leading-snug">{description}</p>
 
       {sliderProps && (
-        <div className="flex items-center gap-2">
-          <input
-            type="range"
-            min={sliderProps.min}
-            max={sliderProps.max}
-            step={sliderProps.step}
-            value={opt.previewTolerance}
-            onChange={(e) => onChange({ previewTolerance: parseFloat(e.target.value) })}
-            className="flex-1 accent-accent"
-            aria-label={`${title} tolerance`}
-          />
-          <span className="text-[10px] font-mono text-gray-400 w-14 text-right">
-            {opt.previewTolerance.toFixed(2)} mm
-          </span>
-        </div>
+        <CommitSlider
+          label={`${title} tolerance (mm)`}
+          value={opt.previewTolerance}
+          committedValue={opt.appliedTolerance}
+          min={sliderProps.min}
+          max={sliderProps.max}
+          step={sliderProps.step}
+          onChange={(v) => onChange({ previewTolerance: v })}
+        />
       )}
 
       {before && after && statRenderer && (
-        <div className="pt-1 border-t border-[#222]">
+        <div className="pt-1 border-t border-paper-warm">
           {statRenderer(before, after)}
         </div>
       )}
@@ -193,10 +188,10 @@ export default function OptimizeSection({
   return (
     <section className="space-y-3">
       <header>
-        <h3 className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">
+        <h3 className="text-[11px] font-semibold text-ink-soft uppercase tracking-wider">
           Optimize
         </h3>
-        <p className="text-[10px] text-gray-600 leading-snug mt-0.5">
+        <p className="text-[10px] text-ink-soft leading-snug mt-0.5">
           Each optimization previews before applying. Values only reach your
           export after you click&nbsp;Apply.
         </p>
@@ -221,11 +216,11 @@ export default function OptimizeSection({
         statRenderer={(b, a) => (
           <div className="space-y-0.5">
             <div className="flex justify-between">
-              <span className="text-[10px] text-gray-500">Points</span>
+              <span className="text-[10px] text-ink-soft">Points</span>
               <StatRow before={b.points} after={a.points} />
             </div>
             <div className="flex justify-between">
-              <span className="text-[10px] text-gray-500">Draw length</span>
+              <span className="text-[10px] text-ink-soft">Draw length</span>
               <StatRow before={Math.round(b.drawMm)} after={Math.round(a.drawMm)} unitBefore="mm" unitAfter="mm" />
             </div>
           </div>
@@ -251,7 +246,7 @@ export default function OptimizeSection({
         statRenderer={(b, a) => (
           <div className="space-y-0.5">
             <div className="flex justify-between">
-              <span className="text-[10px] text-gray-500">Paths</span>
+              <span className="text-[10px] text-ink-soft">Paths</span>
               <StatRow before={b.paths} after={a.paths} />
             </div>
           </div>
@@ -277,11 +272,11 @@ export default function OptimizeSection({
         statRenderer={(b, a) => (
           <div className="space-y-0.5">
             <div className="flex justify-between">
-              <span className="text-[10px] text-gray-500">Travel</span>
+              <span className="text-[10px] text-ink-soft">Travel</span>
               <StatRow before={Math.round(b.travelMm)} after={Math.round(a.travelMm)} unitBefore="mm" unitAfter="mm" />
             </div>
             <div className="flex justify-between">
-              <span className="text-[10px] text-gray-500">Plot time</span>
+              <span className="text-[10px] text-ink-soft">Plot time</span>
               <StatRow
                 before={Math.round(b.seconds)}
                 after={Math.round(a.seconds)}
@@ -289,7 +284,7 @@ export default function OptimizeSection({
                 unitAfter="s"
               />
             </div>
-            <div className="text-[9px] text-gray-600 text-right">
+            <div className="text-[9px] text-ink-soft text-right">
               Est: {formatSeconds(b.seconds)} → {formatSeconds(a.seconds)}
               {' '} (AxiDraw V3 defaults)
             </div>

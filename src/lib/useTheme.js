@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 
 const STORAGE_KEY = 'sonoform-theme';
 
@@ -9,24 +9,14 @@ function readTheme() {
     : 'light';
 }
 
+// Naqsha defaults to light regardless of OS preference. The OS
+// prefers-color-scheme change listener has been intentionally removed —
+// the naqsheh anchor is paper, and a user sitting down to the tool for the
+// first time should always see paper, even if their system-wide theme is
+// dark. The in-UI toggle is the only way to switch; that choice persists
+// to localStorage and wins on subsequent visits.
 export function useTheme() {
   const [theme, setThemeState] = useState(readTheme);
-
-  // Listen for OS-level theme changes — only apply if the user has not set
-  // an explicit preference (the flash-prevention script in index.html uses
-  // the same priority order).
-  useEffect(() => {
-    const mq = window.matchMedia('(prefers-color-scheme: dark)');
-    const handler = (e) => {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored === 'light' || stored === 'dark') return;
-      const next = e.matches ? 'dark' : 'light';
-      document.documentElement.setAttribute('data-theme', next);
-      setThemeState(next);
-    };
-    mq.addEventListener('change', handler);
-    return () => mq.removeEventListener('change', handler);
-  }, []);
 
   const setTheme = useCallback((next) => {
     document.documentElement.setAttribute('data-theme', next);

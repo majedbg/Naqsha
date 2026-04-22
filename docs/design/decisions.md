@@ -13,6 +13,7 @@
 ---
 
 ## Decision 01 — The load-bearing accent is saffron, with violet as its
+
 ornament
 
 **Question.** A single load-bearing UI accent needs to carry the brand —
@@ -20,15 +21,15 @@ hovers, focus, primary buttons, interactive affordances. Which color?
 
 **Options considered.**
 
-- *Cobalt.* The archetypal Persian blue. Trustworthy, serious, survives both
+- _Cobalt._ The archetypal Persian blue. Trustworthy, serious, survives both
   light and dark modes. The safe, classical choice.
-- *Madder red.* Bold and painterly, high-contrast on cream. Risk: on a paper
+- _Madder red._ Bold and painterly, high-contrast on cream. Risk: on a paper
   ground, madder on every interaction reads alarming instead of inviting.
-- *Saffron.* Warm yellow-orange-gold. Optimistic, high-signal. Risk: saffron
+- _Saffron._ Warm yellow-orange-gold. Optimistic, high-signal. Risk: saffron
   on cream paper is low-contrast on its own — it needs help to meet WCAG AA.
 
-**Decision.** *Saffron as the primary accent, with saffron-flower violet as
-an ornamental secondary.*
+**Decision.** _Saffron as the primary accent, with saffron-flower violet as
+an ornamental secondary._
 
 The choice is rooted in the plant itself. A saffron crocus has deep violet
 petals; the orange-red stigma threads inside those petals are what become the
@@ -51,6 +52,7 @@ rhythm.
 ---
 
 ## Decision 02 — A disciplined chrome palette, a separate jewel palette for
+
 user drawings
 
 **Question.** How many named colors should the system expose, and where is
@@ -58,14 +60,14 @@ each one allowed to appear?
 
 **Options considered.**
 
-- *Lean (6 tokens).* Force every surface to live off `paper / ink /
-  hairline / muted / accent / danger`. Maximum discipline, minimum warmth.
-- *Full jewel palette for everything.* Ten or twelve tokens, every surface
+- _Lean (6 tokens)._ Force every surface to live off `paper / ink /
+hairline / muted / accent / danger`. Maximum discipline, minimum warmth.
+- _Full jewel palette for everything._ Ten or twelve tokens, every surface
   free to reach for cobalt or madder. Maximum warmth, risk of noise.
-- *Split.* Chrome tokens handle the interface; a separate jewel palette is
+- _Split._ Chrome tokens handle the interface; a separate jewel palette is
   reserved strictly for user-drawn content.
 
-**Decision.** *Split.*
+**Decision.** _Split._
 
 Two distinct palettes live in the codebase. Neither leaks into the other.
 
@@ -93,14 +95,14 @@ because it's not also the color of the sidebar background.
 
 **Options considered.**
 
-- *Warm bone.* `oklch(0.98 0.008 85)`. The slightly-yellowed paper of an
+- _Warm bone._ `oklch(0.98 0.008 85)`. The slightly-yellowed paper of an
   actual naqsheh scan.
-- *Cooler pure.* `oklch(0.99 0.003 85)`. Nearly pure white. Reads as "modern
+- _Cooler pure._ `oklch(0.99 0.003 85)`. Nearly pure white. Reads as "modern
   software."
-- *Violet-whispered cream.* Paper subtly tinted toward the brand violet so it
+- _Violet-whispered cream._ Paper subtly tinted toward the brand violet so it
   rhymes with the accent.
 
-**Decision.** *Warm bone.*
+**Decision.** _Warm bone._
 
 The naqsheh reference images are unambiguous: the paper has age and
 temperature. A cooler pure-white ground would have translated the product
@@ -122,14 +124,14 @@ paper?
 
 **Options considered.**
 
-- *Near-black, slightly warm.* Safest, highest contrast, generic
+- _Near-black, slightly warm._ Safest, highest contrast, generic
   "well-crafted dark text."
-- *Deep iron-gall indigo.* `oklch(0.24 0.05 270)`. The actual ink Persian
+- _Deep iron-gall indigo._ `oklch(0.24 0.05 270)`. The actual ink Persian
   manuscripts were painted with. A subtle move most users won't notice.
-- *Ink tinted toward the brand violet.* Ties ink subliminally to the
+- _Ink tinted toward the brand violet._ Ties ink subliminally to the
   ornament.
 
-**Decision.** *Iron-gall indigo.*
+**Decision.** _Iron-gall indigo._
 
 The naqsheh framing is the product's soul. If the paper is bone, the ink
 should be the ink that naqshehs were actually painted with — iron-gall,
@@ -152,14 +154,14 @@ a follow-up, or build both into the token system from day one?
 
 **Options considered.**
 
-- *Light-only first.* Safer scope, but every existing user wakes up on a
+- _Light-only first._ Safer scope, but every existing user wakes up on a
   different theme — a cold migration.
-- *Both at once.* Doubles the surface of one design pass but halves
+- _Both at once._ Doubles the surface of one design pass but halves
   migration anxiety and means we never touch the color system again.
-- *Dark default with light as opt-in.* Staged rollout. Defers the real
+- _Dark default with light as opt-in._ Staged rollout. Defers the real
   decision.
 
-**Decision.** *Both at once.*
+**Decision.** _Both at once._
 
 The expensive part of a theme system is the naming and semantic structure
 (`paper`, `ink`, `hairline`, etc.) — that work is being done regardless.
@@ -178,17 +180,17 @@ question stops costing us attention.
 
 **Options considered.**
 
-- *Warm deep indigo.* The inverted naqsheh: the ink becomes the light tone,
+- _Warm deep indigo._ The inverted naqsheh: the ink becomes the light tone,
   the paper becomes the dyed ground.
-- *Warm charcoal.* Near-black with a warm tint. Safer, more neutral.
-- *Deep violet-ink.* A dark version of the ornamental accent.
+- _Warm charcoal._ Near-black with a warm tint. Safer, more neutral.
+- _Deep violet-ink._ A dark version of the ornamental accent.
 
-**Decision.** *Warm deep indigo — `oklch(0.22 0.03 265)`.*
+**Decision.** _Warm deep indigo — `oklch(0.22 0.03 265)`._
 
 Dark mode inverts the naqsheh metaphor on purpose: the paper is now indigo
 vellum, the text is bone ink on that vellum. Iron-gall indigo stops being
 the ink and becomes the paper; the bone that was the paper in light mode
-is now the text. The relationship between colors is *preserved*, only the
+is now the text. The relationship between colors is _preserved_, only the
 direction flips. Saffron and saffron-flower violet still read as jewels
 against a dyed ground rather than as neon accents on a generic dark
 surface — which is what most "dark mode" actually looks like and what this
@@ -201,6 +203,7 @@ ground. Those adjustments live in the token values, not in component code.
 ---
 
 ## Decision 07 — The slider thumb is a cell that becomes a diamond under
+
 the hand
 
 **Question.** Naqsha is a product named after a grid. Where does the grid
@@ -214,18 +217,18 @@ physically, it should be this one.
 
 **Options considered.**
 
-- *Visible graticule on every slider track at rest.* Most literal, most
+- _Visible graticule on every slider track at rest._ Most literal, most
   overt; risks turning a panel of twenty sliders into a ruled notebook.
-- *Painted-cell-only aesthetic with no grid DNA.* Cleanest at density;
+- _Painted-cell-only aesthetic with no grid DNA._ Cleanest at density;
   sacrifices the metaphor.
-- *A track made of literal cells.* A row of tiny cells lights up one at a
+- _A track made of literal cells._ A row of tiny cells lights up one at a
   time as the thumb moves. Most unforgettable; risks feeling toy-like at
   the precision level plotter users demand.
-- *Quiet at rest, painted-cell on interaction.* Defaults to a plain
+- _Quiet at rest, painted-cell on interaction._ Defaults to a plain
   hairline + small square thumb; reveals graticule and color on touch.
 
-**Decision.** *Quiet at rest, painted-cell on interaction — with the thumb
-itself doing the signature gesture.*
+**Decision.** _Quiet at rest, painted-cell on interaction — with the thumb
+itself doing the signature gesture._
 
 The thumb is a small filled square. At rest it sits axis-aligned — a
 painted cell on a ruled page. When the user's cursor arrives, the square
@@ -238,9 +241,9 @@ back to ink, and the grid fades out. All easing is exponential,
 
 **Why this matters.** The rotation is the entire story of the product
 compressed into one interaction. A naqsheh cell sits still until the
-designer handles it. When they do, it becomes live — *a decision being
-made*. When they let go, it settles back into the grid — *a decision
-committed*. Every time a Naqsha user drags a slider they re-enact the
+designer handles it. When they do, it becomes live — _a decision being
+made_. When they let go, it settles back into the grid — _a decision
+committed_. Every time a Naqsha user drags a slider they re-enact the
 craft the product is named after. The metaphor isn't decorative; it's
 mechanical, and it lives in the primitive they touch the most.
 
@@ -258,22 +261,22 @@ a skilled user wants without inventing shortcuts nobody will discover?
 
 **Options considered.**
 
-- *Baseline only.* Arrow keys step, value readout is editable. No
+- _Baseline only._ Arrow keys step, value readout is editable. No
   modifiers. Cleanest, slowest.
-- *Power-user modifiers.* Shift for coarse jumps, Alt for fine adjust,
+- _Power-user modifiers._ Shift for coarse jumps, Alt for fine adjust,
   Home/End for extremes.
-- *Modifiers plus reset-to-default on Cmd+click.* Adds a hidden reset
+- _Modifiers plus reset-to-default on Cmd+click._ Adds a hidden reset
   affordance.
-- *Drag-to-scrub on the value readout.* Vertical drag nudges the number
+- _Drag-to-scrub on the value readout._ Vertical drag nudges the number
   (familiar from Blender, Figma, After Effects).
 
-**Decision.** *Power-user modifiers — `Shift = ×10`, `Option/Alt = ÷10`,
-`Home`/`End` for min/max.*
+**Decision.** _Power-user modifiers — `Shift = ×10`, `Option/Alt = ÷10`,
+`Home`/`End` for min/max._
 
 The choice earns its weight from the metaphor. A naqsheh designer works at
-three different scales depending on what they're doing: *cell by cell* when
-painting a single motif detail, *motif by motif* when laying out a repeat,
-*whole-carpet* when balancing color weight across the field. The keyboard
+three different scales depending on what they're doing: _cell by cell_ when
+painting a single motif detail, _motif by motif_ when laying out a repeat,
+_whole-carpet_ when balancing color weight across the field. The keyboard
 map is literally those three scales.
 
 ```
@@ -288,9 +291,9 @@ map is literally those three scales.
   Home / End  →  jump to the edges
 ```
 
-*Arrow* walks one cell. *Shift+Arrow* walks ten — a motif-sized region,
+_Arrow_ walks one cell. _Shift+Arrow_ walks ten — a motif-sized region,
 the jump a designer makes when they're balancing the composition rather
-than detailing. *Option+Arrow* subdivides the cell, the move a designer
+than detailing. _Option+Arrow_ subdivides the cell, the move a designer
 makes when they want precision the grid doesn't natively offer.
 
 **Why this matters.** The slider isn't a volume knob — it's a tool inside
@@ -308,6 +311,7 @@ more fundamental gestures.
 ---
 
 ## Decision 09 — The human-in-the-loop principle is drawn into the slider
+
 itself, but only where it earns its cost
 
 **Question.** Naqsha commits to a human-in-the-loop principle: every
@@ -319,18 +323,18 @@ where it matters?
 
 **Options considered.**
 
-- *Keep the slider primitive neutral.* The parent renders dirty state on
+- _Keep the slider primitive neutral._ The parent renders dirty state on
   its own. The slider is a dumb precise input reusable across every
   parameter in the app.
-- *Every slider understands dirty.* Outline goes dashed, value turns
+- _Every slider understands dirty._ Outline goes dashed, value turns
   violet when the value diverges from the last applied one. Consistent
   across the app; costs visual weight on sliders that don't have an
   apply step at all.
-- *Slider shows both values side by side.* The live thumb sits at
+- _Slider shows both values side by side._ The live thumb sits at
   `value`, a ghost thumb sits at `committedValue`, and a hairline ties
   them together. Literally draws the preview→apply distinction.
 
-**Decision.** *Two components. A neutral primitive, and an opt-in variant.*
+**Decision.** _Two components. A neutral primitive, and an opt-in variant._
 
 ```
   primitive (Slider) — used everywhere
@@ -357,16 +361,16 @@ have.
 The variant `<CommitSlider>` takes an extra `committedValue` prop. When
 the live value diverges from the committed value, a ghost square thumb
 appears at the committed position, outlined but not filled, and a thin
-line ties the two positions together. The user can literally see *where
-they came from and where they are now* — the transformation the product
+line ties the two positions together. The user can literally see _where
+they came from and where they are now_ — the transformation the product
 performs rendered directly into the control that performs it.
 
 **Why this matters.** A principle that only lives in written docs drifts
 out of the product with the first missed review. A principle rendered
 into the physical shape of the primitive that carries it cannot drift —
 if the ghost thumb disappears, the feature is visibly broken. The
-optimize section is the one place in Naqsha where the loop — *preview,
-apply, revert* — is load-bearing for correctness (not just ergonomics):
+optimize section is the one place in Naqsha where the loop — _preview,
+apply, revert_ — is load-bearing for correctness (not just ergonomics):
 the exported SVG reads `appliedTolerance`, not the live slider value, so
 the dissonance between the two must be impossible to miss.
 
@@ -386,7 +390,7 @@ with a display face that evokes hand-painted manuscript captions. Which
 specific faces, given that the usual reflexes — Inter, IBM Plex, Fraunces,
 Space Grotesk — all lead to AI monoculture?
 
-**Decision.** *Body: **Commissioner**. Display: **Ibarra Real Nova**.*
+**Decision.** _Body: **Commissioner**. Display: **Ibarra Real Nova**._
 
 **Commissioner** is a humanist grotesque designed by Kostas Bartsokas for
 an indie literary magazine. It's a variable font with optical sizing and a
@@ -422,11 +426,11 @@ marketing surface or the section header, Ibarra Real Nova quietly says
 
 **Question.** The app distinguishes AI-generated patterns from built-in
 ones. The current implementation paints every AI tab purple — both fill
-and hover — which makes AI *feel* like a different kind of object than
+and hover — which makes AI _feel_ like a different kind of object than
 regular patterns. Do AI tabs stay visually categorical, or become
 indistinguishable from built-ins?
 
-**Decision.** *AI gets a small violet dot before its label. That's it.*
+**Decision.** _AI gets a small violet dot before its label. That's it._
 
 An AI-generated pattern isn't a different kind of pattern; it's a pattern
 with a different origin. The interface should reflect that. The 1.5×1.5px
@@ -440,17 +444,18 @@ margin of a manuscript.
 most recognizable AI design tells of 2024–2026: purple-everything,
 purple-to-blue gradients, "✨" emoji, aurora effects. Naqsha refuses to
 advertise the AI. A user picks a pattern because of what it looks like on
-paper, not because the app painted it a different color to say *look, I
-used a language model*. The dot preserves the information that the
+paper, not because the app painted it a different color to say _look, I
+used a language model_. The dot preserves the information that the
 pattern is AI-generated without turning origin into spectacle.
 
 The "New" button that opens the AI chat keeps a dashed violet outline
-instead of a full saffron fill — the outline signals *"this is where
-something is invented"* without paying the saturation cost of purple fill.
+instead of a full saffron fill — the outline signals _"this is where
+something is invented"_ without paying the saturation cost of purple fill.
 
 ---
 
 ## Decision 12 — Ship the theme toggle wired, with a mirror-migration of
+
 97 hex literals in the same commit
 
 **Question.** The brief called for light and dark themes shipped
@@ -459,8 +464,8 @@ the existing codebase had 97 hex-color literals hard-coded across 28
 component files — all of them dark-mode-only. Ship the toggle immediately
 (but see a broken light mode full of black islands) or stage the work?
 
-**Decision.** *Ship in a single commit. Toggle mounted in the global
-header; every hex literal migrated to a semantic token in the same pass.*
+**Decision.** _Ship in a single commit. Toggle mounted in the global
+header; every hex literal migrated to a semantic token in the same pass._
 
 An honest system ships honestly. A theme toggle that reveals broken
 surfaces teaches users the product isn't finished. The migration was
@@ -481,4 +486,4 @@ theme, which is the only way a theme system earns the word "system."
 
 ---
 
-*More decisions will be appended as the design conversation continues.*
+_More decisions will be appended as the design conversation continues._

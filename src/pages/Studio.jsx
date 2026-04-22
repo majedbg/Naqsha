@@ -409,10 +409,14 @@ export default function Studio() {
         </div>
       </div>
 
-      {/* Main content — column on mobile (canvas on top), row on desktop */}
+      {/* Main content — column on mobile (canvas on top), row on desktop.
+          Mobile: canvas gets a fixed 45vh, LeftPanel gets the remaining space
+          with an internal scroll. Desktop: LeftPanel has a fixed width,
+          canvas fills the rest horizontally. */}
       <div className="flex flex-col md:flex-row flex-1 min-h-0">
-        {/* LeftPanel: DOM-first (natural for desktop row), ordered below canvas on mobile */}
-        <div className="order-2 md:order-none md:flex-none min-h-0 overflow-hidden">
+        {/* LeftPanel: below canvas on mobile (flex-1 so internal scroll has a
+            height to scroll against); fixed-width on desktop. */}
+        <div className="order-2 md:order-none flex-1 md:flex-none min-h-0 overflow-hidden">
           <LeftPanel
             width={canvasW}
             height={canvasH}
@@ -453,8 +457,10 @@ export default function Studio() {
             onOpenAIChat={handleOpenAIChat}
           />
         </div>
-        {/* Canvas: DOM-second, ordered first on mobile (top), fills remaining space on desktop */}
-        <div className="order-1 md:order-none flex-1 min-h-[40vh] md:min-h-0 min-w-0">
+        {/* Canvas: DOM-second, ordered first on mobile (top). Mobile gets a
+            fixed 45vh so it doesn't eat the LeftPanel's scroll area; desktop
+            fills the remaining horizontal space. */}
+        <div className="order-1 md:order-none shrink-0 md:shrink h-[45vh] md:h-auto md:flex-1 md:min-h-0 min-w-0">
           <RightPanel
             layers={layers}
             canvasW={canvasW}

@@ -73,13 +73,18 @@ let template = JSON.parse(templateMatch[1]);
 // ──────────────────────────────────────────────────────────────────
 const entriesByFilename = {};
 for (const row of ROWS) {
+  row.files = row.files.filter((f) => {
+    if (fs.existsSync(path.join(HERE, f))) return true;
+    console.log('Skipping missing file:', f);
+    return false;
+  });
   for (const f of row.files) {
     const rec = loadPngAsManifestEntry(f);
     entriesByFilename[f] = rec;
     manifest[rec.uuid] = rec.entry;
   }
 }
-console.log('Added 9 PNG manifest entries.');
+console.log('Added', Object.keys(entriesByFilename).length, 'PNG manifest entries.');
 
 // ──────────────────────────────────────────────────────────────────
 // 3. Inject CSS — make .roll-row img look the same shape the .ph had

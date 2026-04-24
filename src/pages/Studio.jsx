@@ -416,7 +416,7 @@ export default function Studio() {
       <div className="flex flex-col md:flex-row flex-1 min-h-0">
         {/* LeftPanel: below canvas on mobile (flex-1 so internal scroll has a
             height to scroll against); fixed-width on desktop. */}
-        <div className="order-2 md:order-none flex-1 md:flex-none min-h-0 overflow-hidden">
+        <div className="order-2 md:order-none flex flex-col flex-1 md:flex-none min-h-0 overflow-hidden">
           <LeftPanel
             width={canvasW}
             height={canvasH}

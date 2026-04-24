@@ -23,8 +23,11 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+html,
 body {
+  height: 100%;
   overflow: hidden;
+  overscroll-behavior: none;
 }
 
 /* Numeric surfaces — tabular lining figures so columns of values align. */

@@ -360,7 +360,7 @@ export default function Studio() {
   }
 
   return (
-    <div className="flex flex-col h-screen bg-paper">
+    <div className="flex flex-col h-dvh bg-paper">
       {/* App title — the naqsheh etymology lives in the hover card. */}
       <div className="shrink-0 bg-paper-warm border-b border-hairline px-4 py-2 group/title relative">
         <h1 className="display text-md font-semibold text-ink tracking-tight cursor-default select-none">
@@ -460,7 +460,7 @@ export default function Studio() {
         {/* Canvas: DOM-second, ordered first on mobile (top). Mobile gets a
             fixed 45vh so it doesn't eat the LeftPanel's scroll area; desktop
             fills the remaining horizontal space. */}
-        <div className="order-1 md:order-none shrink-0 md:shrink h-[45vh] md:h-auto md:flex-1 md:min-h-0 min-w-0">
+        <div className="order-1 md:order-none shrink-0 md:shrink h-[45dvh] md:h-auto md:flex-1 md:min-h-0 min-w-0">
           <RightPanel
             layers={layers}
             canvasW={canvasW}

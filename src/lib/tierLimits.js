@@ -81,7 +81,7 @@ export const TIER_LIMITS = {
 
 // Universal param keys that are always hidden for guests
 // (they appear at the end of every pattern's param defs)
-export const UNIVERSAL_PARAM_KEYS = ['symmetry', 'startAngle', 'offsetX', 'offsetY'];
+export const UNIVERSAL_PARAM_KEYS = ['symmetry', 'startAngle', 'offsetX', 'offsetY', 'offset'];
 
 /**
  * Check whether a feature is allowed for the given tier.

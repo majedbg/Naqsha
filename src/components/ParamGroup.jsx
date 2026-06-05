@@ -1,8 +1,14 @@
 import { useState, useRef, useEffect } from "react";
 import { COLLAPSED_GROUPS } from "../constants";
-import Slider from "./ui/Slider";
-import Select from "./ui/Select";
+import ParamRow from "./ui/ParamRow";
 import UpgradePrompt from "./UpgradePrompt";
+
+// A row is at default when every underlying key (composite `keys` or single
+// `key`) equals its default.
+function isRowDefault(def, params, defaults) {
+  const keys = def.keys || [def.key];
+  return keys.every((k) => params[k] === (defaults[k] ?? def.min));
+}
 
 // Reusable reset icon (circular refresh arrows)
 function ResetIcon({ size = 10 }) {
@@ -64,10 +70,9 @@ export default function ParamGroup({
   const hasCheckedInGroup = checkedCount > 0;
 
   // Check if any param in the group differs from its default
-  const hasChanges = allowedItems.some((item) => {
-    const defaultVal = defaults[item.def.key] ?? item.def.min;
-    return params[item.def.key] !== defaultVal;
-  });
+  const hasChanges = allowedItems.some(
+    (item) => !isRowDefault(item.def, params, defaults)
+  );
 
   return (
     <div>
@@ -168,89 +173,19 @@ export default function ParamGroup({
       {/* Group body */}
       {!collapsed && (
         <div className="pl-3 pt-1.5 space-y-2">
-          {allowedItems.map((item) => {
-            const { def } = item;
-            const defaultVal = defaults[def.key] ?? def.min;
-            const isDefault = params[def.key] === defaultVal;
-
-            return (
-              <div key={def.key} className="flex items-start gap-1.5">
-                {/* Param control */}
-                <div className="flex-1 min-w-0">
-                  {def.type === "select" ? (
-                    <Select
-                      label={def.label}
-                      value={params[def.key] || def.options[0].value}
-                      options={def.options}
-                      onChange={(v) =>
-                        onParamChange({ ...params, [def.key]: v })
-                      }
-                      tooltip={def.tooltip}
-                    />
-                  ) : (
-                    <Slider
-                      label={def.label}
-                      value={params[def.key] ?? def.min}
-                      min={def.min}
-                      max={def.max}
-                      step={def.step}
-                      onChange={(v) =>
-                        onParamChange({ ...params, [def.key]: v })
-                      }
-                      tooltip={def.tooltip}
-                    />
-                  )}
-                </div>
-
-                {/* Per-param reset */}
-                <button
-                  onClick={() => onResetSingle(def)}
-                  disabled={isDefault}
-                  className="mt-[3px] shrink-0 p-0.5 rounded text-ink-soft hover:text-tone-mild transition-colors disabled:opacity-20 disabled:cursor-not-allowed"
-                  title={
-                    isDefault
-                      ? `${def.label} is at default`
-                      : `Reset ${def.label} to default`
-                  }
-                >
-                  <ResetIcon size={12} />
-                </button>
-                {/* Randomize checkbox */}
-                <label
-                  className="flex items-center mt-[3px] shrink-0"
-                  title="Include in randomize"
-                >
-                  <input
-                    type="checkbox"
-                    checked={keys.includes(def.key)}
-                    onChange={() => onToggleKey(def.key)}
-                    className="accent-saffron w-3 h-3 cursor-pointer"
-                  />
-                </label>
-                {/* Per-param randomize */}
-                <button
-                  onClick={() => onRandomizeSingle(def)}
-                  className="mt-[3px] shrink-0 p-0.5 rounded text-ink-soft hover:text-saffron transition-colors"
-                  title={`Randomize ${def.label}`}
-                >
-                  <svg
-                    width="12"
-                    height="12"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                  >
-                    <path d="M16 3h5v5" />
-                    <path d="M4 20L21 3" />
-                    <path d="M21 16v5h-5" />
-                    <path d="M15 15l6 6" />
-                    <path d="M4 4l5 5" />
-                  </svg>
-                </button>
-              </div>
-            );
-          })}
+          {allowedItems.map((item) => (
+            <ParamRow
+              key={item.def.key}
+              def={item.def}
+              params={params}
+              defaults={defaults}
+              randomizeKeys={randomizeKeys}
+              onParamChange={onParamChange}
+              onToggleKey={onToggleKey}
+              onRandomizeSingle={onRandomizeSingle}
+              onResetSingle={onResetSingle}
+            />
+          ))}
 
           {/* Free-tier locked params within this group */}
           {tier !== "guest" &&

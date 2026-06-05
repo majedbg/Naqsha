@@ -531,7 +531,7 @@ export const DEFAULT_COLORS = ['#00c9b1', '#ff6b6b', '#4ecdc4', '#45b7d1', '#f7d
 // Users can still check them manually. Edit this list to change defaults.
 export const RANDOMIZE_EXCLUDED_KEYS = [
   // Transform
-  'startAngle', 'offsetX', 'offsetY', 'symmetry', 'originX', 'originY',
+  'startAngle', 'offsetX', 'offsetY', 'offset', 'symmetry', 'originX', 'originY',
   // Stroke
   'strokeWeight', 'dashStrokeWeight', 'arcStrokeWeight',
   // Scale
@@ -549,6 +549,13 @@ export const PARAM_GROUPS = [
   { id: 'stroke',    label: 'Stroke' },
   { id: 'transform', label: 'Transform' },
 ];
+
+// One param rendered above all groups, always visible, ungrouped. Keyed by
+// patternType. Symmetry leads on the patterns where it's most structural.
+export const FEATURED_PARAMS = {
+  flowfield: 'symmetry',
+  recursive: 'symmetry',
+};
 
 // Maps every param key to its group. Edit to re-group params.
 export const PARAM_GROUP_MAP = {
@@ -609,6 +616,6 @@ export const PARAM_GROUP_MAP = {
 
   // Transform — position, rotation, symmetry
   symmetry: 'transform', startAngle: 'transform',
-  offsetX: 'transform', offsetY: 'transform',
+  offsetX: 'transform', offsetY: 'transform', offset: 'transform',
   originX: 'transform', originY: 'transform',
 };

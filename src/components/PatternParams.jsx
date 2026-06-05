@@ -3,6 +3,7 @@ import {
   PATTERN_PARAM_DEFS,
   PARAM_GROUPS,
   PARAM_GROUP_MAP,
+  FEATURED_PARAMS,
 } from "../constants";
 import {
   getDynamicParamDefs,
@@ -12,11 +13,14 @@ import { useGate } from "../lib/useGate";
 import { UNIVERSAL_PARAM_KEYS } from "../lib/tierLimits";
 import UpgradePrompt from "./UpgradePrompt";
 import ParamGroup from "./ParamGroup";
+import ParamRow from "./ui/ParamRow";
 
 // Generate a random value for a single param definition.
-// Supports optional randomMin/randomMax to cap randomization range.
+// Branches on `def.options` presence (not `type`), so option-bearing controls
+// of any type — select, iconselect (WI-5) — hit the enumerated path, while
+// every numeric control hits the numeric path. Supports randomMin/randomMax caps.
 function randomValueForDef(def) {
-  if (def.type === "select") {
+  if (def.options) {
     const opts = def.randomOptions || def.options;
     return opts[Math.floor(Math.random() * opts.length)].value;
   }
@@ -29,6 +33,27 @@ function randomValueForDef(def) {
   return parseFloat(
     Math.max(lo, Math.min(hi, snapped)).toFixed(decimals)
   );
+}
+
+// A param row maps to one OR many real keys. Composite defs (WI-3's pad2d)
+// carry `def.keys`; single defs carry `def.key`. These helpers return a *patch
+// object* spanning every real key so reset/randomize stay key-count agnostic.
+function randomPatchForDef(def) {
+  if (def.keys) {
+    const patch = {};
+    for (const k of def.keys) patch[k] = randomValueForDef(def);
+    return patch;
+  }
+  return { [def.key]: randomValueForDef(def) };
+}
+
+function defaultPatchForDef(def, defaults) {
+  if (def.keys) {
+    const patch = {};
+    for (const k of def.keys) patch[k] = defaults[k] ?? def.min;
+    return patch;
+  }
+  return { [def.key]: defaults[def.key] ?? def.min };
 }
 
 export default function PatternParams({
@@ -64,27 +89,29 @@ export default function PatternParams({
   };
 
   const randomizeSingle = (def) => {
-    onChange({ ...params, [def.key]: randomValueForDef(def) });
+    onChange({ ...params, ...randomPatchForDef(def) });
   };
 
   const randomizeGroup = (groupDefs) => {
     const newParams = { ...params };
     for (const def of groupDefs) {
+      // The randomize checkbox is keyed on the row's (synthetic) key; a checked
+      // composite row patches all of its real keys.
       if (keys.includes(def.key)) {
-        newParams[def.key] = randomValueForDef(def);
+        Object.assign(newParams, randomPatchForDef(def));
       }
     }
     onChange(newParams);
   };
 
   const resetSingle = (def) => {
-    onChange({ ...params, [def.key]: defaults[def.key] ?? def.min });
+    onChange({ ...params, ...defaultPatchForDef(def, defaults) });
   };
 
   const resetGroup = (groupDefs) => {
     const newParams = { ...params };
     for (const def of groupDefs) {
-      newParams[def.key] = defaults[def.key] ?? def.min;
+      Object.assign(newParams, defaultPatchForDef(def, defaults));
     }
     onChange(newParams);
   };
@@ -98,9 +125,20 @@ export default function PatternParams({
     return { def, isUniversal, paramIndex, gate };
   });
 
-  // Group items by PARAM_GROUP_MAP
+  // Featured param: one param pinned above all groups for this pattern type.
+  // Only show it featured if its gate allows (else fall back to normal flow —
+  // never render a locked slot at the very top).
+  const featuredKey = FEATURED_PARAMS[patternType];
+  const featuredItem = featuredKey
+    ? paramItems.find((item) => item.def.key === featuredKey)
+    : null;
+  const showFeatured = Boolean(featuredItem && featuredItem.gate.allowed);
+
+  // Group items by PARAM_GROUP_MAP. When a param is shown featured, exclude it
+  // from its normal group so it doesn't render twice.
   const grouped = {};
   for (const item of paramItems) {
+    if (showFeatured && item.def.key === featuredKey) continue;
     const groupId = PARAM_GROUP_MAP[item.def.key] || "structure";
     if (!grouped[groupId]) grouped[groupId] = [];
     grouped[groupId].push(item);
@@ -111,6 +149,22 @@ export default function PatternParams({
 
   return (
     <div className="space-y-1.5">
+      {/* Featured param — pinned above all groups, ungrouped, always visible */}
+      {showFeatured && (
+        <div className="pl-3 pb-0.5">
+          <ParamRow
+            def={featuredItem.def}
+            params={params}
+            defaults={defaults}
+            randomizeKeys={randomizeKeys}
+            onParamChange={onChange}
+            onToggleKey={toggleKey}
+            onRandomizeSingle={randomizeSingle}
+            onResetSingle={resetSingle}
+          />
+        </div>
+      )}
+
       {PARAM_GROUPS.map((group) => {
         const items = grouped[group.id];
         if (!items || items.length === 0) return null;

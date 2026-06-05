@@ -264,7 +264,7 @@ export const DEFAULT_PARAMS = {
   },
 };
 
-const SYMMETRY_PARAM = { key: 'symmetry', label: 'Radial Symmetry', min: 1, max: 11, step: 1, randomMax: 10, tooltip: 'Number of radial copies — 1 = none, 2 = mirror, 3 = 120°, etc.' };
+const SYMMETRY_PARAM = { key: 'symmetry', label: 'Radial Symmetry', type: 'iconselect', glyph: 'symmetry', range: { min: 1, max: 11, step: 1 }, min: 1, max: 11, step: 1, randomMax: 10, tooltip: 'Radial copies — 1 = none, 2 = 180°, 3 = 120°, 4 = +, …' };
 const START_ANGLE_PARAM = { key: 'startAngle', label: 'Start Angle', min: 0, max: 360, step: 1, tooltip: 'Rotates the entire pattern by this many degrees' };
 const OFFSET_X_PARAM = { key: 'offsetX', label: 'Offset X', min: -500, max: 500, step: 1, tooltip: 'Shifts the pattern horizontally in pixels' };
 const OFFSET_Y_PARAM = { key: 'offsetY', label: 'Offset Y', min: -500, max: 500, step: 1, tooltip: 'Shifts the pattern vertically in pixels' };

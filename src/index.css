@@ -126,6 +126,29 @@ input[type="range"]::-moz-range-thumb {
   border: none;
 }
 
+/* === Entrance motion — patient fade + rise ===
+ * Durations are driven by the motion tokens, so prefers-reduced-motion
+ * collapses them to 0ms automatically (the tokens go to 0ms in that mode).
+ * Used by the Examples gallery cards and transient dialogs — the one
+ * orchestrated load moment, decelerating like a hand setting something down. */
+@keyframes naqsha-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes naqsha-rise {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.anim-fade {
+  animation: naqsha-fade var(--motion-fast) var(--ease-out-quart) both;
+}
+
+.anim-rise {
+  animation: naqsha-rise var(--motion-medium) var(--ease-out-quart) both;
+}
+
 /* === Mobile panel styles — preserved from original === */
 @media (max-width: 767px) {
   .mobile-panel-content {

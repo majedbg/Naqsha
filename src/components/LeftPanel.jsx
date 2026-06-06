@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect } from "react";
 import LayersSection from "./LayersSection";
 import ExportSection from "./ExportSection";
 import SidebarTabs from "./sidebar/SidebarTabs";
+import ExamplesGallery from "./sidebar/ExamplesGallery";
 import PrepareTab from "./prepare/PrepareTab";
 import { useGate } from "../lib/useGate";
 import { pxToUnit } from "../lib/units";
@@ -76,6 +77,10 @@ export default function LeftPanel({
   onSaveToCloud,
   onOpenCloudDesigns,
   onOpenAIChat,
+  examplesOpen = false,
+  examples = [],
+  onSelectExample,
+  onCloseExamples,
 }) {
   const isMobile = useIsMobile();
   const { check, limits } = useGate();
@@ -103,6 +108,14 @@ export default function LeftPanel({
   if (!isMobile) {
     return (
       <div className="w-[320px] min-w-[320px] lg:w-[420px] lg:min-w-[420px] h-full bg-panel border-r border-hairline overflow-hidden flex flex-col">
+        {examplesOpen ? (
+          <ExamplesGallery
+            examples={examples}
+            onSelect={onSelectExample}
+            onClose={onCloseExamples}
+          />
+        ) : (
+        <>
         {/* Sticky tab header */}
         <div className="shrink-0 p-3 pb-2 border-b border-paper-warm bg-panel space-y-2">
           <SidebarTabs
@@ -198,6 +211,8 @@ export default function LeftPanel({
             </div>
           )}
         </div>
+        </>
+        )}
       </div>
     );
   }
@@ -232,7 +247,17 @@ export default function LeftPanel({
         </svg>
       </button>
 
-      {!collapsed && (
+      {!collapsed && examplesOpen && (
+        <div className="flex-1 min-h-0">
+          <ExamplesGallery
+            examples={examples}
+            onSelect={onSelectExample}
+            onClose={onCloseExamples}
+          />
+        </div>
+      )}
+
+      {!collapsed && !examplesOpen && (
         <div className="overflow-y-auto overscroll-contain flex-1 mobile-panel-content">
           <div className="p-3 pb-2 border-b border-paper-warm bg-panel">
             <SidebarTabs

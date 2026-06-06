@@ -1,0 +1,66 @@
+{
+  "id": "orbit",
+  "name": "Orbit",
+  "description": "Two spirographs overlaid — madder over cobalt.",
+  "order": 3,
+  "thumb": "orbit.png",
+  "config": {
+    "canvasW": 1152,
+    "canvasH": 1152,
+    "bgColor": "#0a1628",
+    "layers": [
+      {
+        "id": "inner-spirograph",
+        "name": "Inner",
+        "color": "#45b7d1",
+        "opacity": 70,
+        "visible": true,
+        "bgColor": "#ffffff",
+        "bgOpacity": 0,
+        "patternType": "spirograph",
+        "params": {
+          "R": 360,
+          "r": 220,
+          "d": 160,
+          "revolutions": 40,
+          "strokeWeight": 1,
+          "symmetry": 1,
+          "startAngle": 0,
+          "offsetX": 0,
+          "offsetY": 0
+        },
+        "seed": 1337,
+        "randomizeKeys": [],
+        "paramsCache": {},
+        "role": "cut",
+        "penSlot": 1
+      },
+      {
+        "id": "outer-spirograph",
+        "name": "Outer",
+        "color": "#ff6b6b",
+        "opacity": 100,
+        "visible": true,
+        "bgColor": "#ffffff",
+        "bgOpacity": 0,
+        "patternType": "spirograph",
+        "params": {
+          "R": 440,
+          "r": 565,
+          "d": 181,
+          "revolutions": 35,
+          "strokeWeight": 1,
+          "symmetry": 1,
+          "startAngle": 0,
+          "offsetX": 0,
+          "offsetY": 0
+        },
+        "seed": 5150,
+        "randomizeKeys": [],
+        "paramsCache": {},
+        "role": "cut",
+        "penSlot": 1
+      }
+    ]
+  }
+}

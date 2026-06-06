@@ -1,5 +1,7 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import LeftPanel from "../components/LeftPanel";
+import ConfirmDialog from "../components/ui/ConfirmDialog";
+import { EXAMPLES, EXAMPLE_COUNT } from "../examples";
 import RightPanel from "../components/RightPanel";
 import LayerGroupModal from "../components/LayerGroupModal";
 import CloudSaveModal from "../components/CloudSaveModal";
@@ -126,6 +128,61 @@ export default function Studio() {
     setBgColor,
   } = useLayers({ persistToLocal: limits.localStorage });
 
+  // === Unsaved-work tracking ===
+  // The baseline is a *known-clean* state: a freshly loaded example/design/
+  // group, a successful save, or — on first run only — the pristine defaults.
+  // Work restored from localStorage is treated as dirty (its provenance is
+  // unknown), so loading an example over it prompts rather than silently
+  // discarding it. `null` means "unknown" → dirty.
+  const cleanRef = useRef(null);
+
+  // Serialize the canvas for comparison. paramsCache is excluded: it's derived
+  // cache that mutates on pattern-type switches without a user-visible change.
+  const serializeState = useCallback(
+    (lyrs, bg) =>
+      JSON.stringify({
+        bg,
+        // eslint-disable-next-line no-unused-vars
+        layers: lyrs.map(({ paramsCache, ...rest }) => rest),
+      }),
+    []
+  );
+
+  // Snapshot an explicit just-loaded/just-saved state as the clean baseline.
+  // Takes the values directly (not React state) so it's correct even when
+  // called in the same tick as the setState that applied them.
+  const markCleanFrom = useCallback(
+    (lyrs, bg) => {
+      cleanRef.current = serializeState(lyrs, bg);
+    },
+    [serializeState]
+  );
+
+  const isDirty = useCallback(() => {
+    if (cleanRef.current === null) return true;
+    return serializeState(layers, bgColor) !== cleanRef.current;
+  }, [serializeState, layers, bgColor]);
+
+  // First-run baseline: only when there's no share token and no stored work do
+  // the pristine defaults count as clean. Otherwise cleanRef stays null (dirty)
+  // until an explicit load/save sets it. Runs once.
+  useEffect(() => {
+    const token = readShareTokenFromUrl();
+    // Only persisted work counts as restored: guests don't write localStorage
+    // (persistToLocal === limits.localStorage), so any stale value there isn't
+    // the current canvas and shouldn't trigger a false "unsaved" prompt.
+    let hadStored = false;
+    if (limits.localStorage) {
+      try {
+        hadStored = !!localStorage.getItem("sonoform-layers");
+      } catch {
+        /* storage unavailable */
+      }
+    }
+    if (!token && !hadStored) markCleanFrom(layers, bgColor);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // On mount, if the URL carries a ?s=<share-token>, hydrate state from it.
   // Intentionally runs once; strips the param so refresh doesn't re-apply.
   useEffect(() => {
@@ -140,6 +197,11 @@ export default function Studio() {
     if (typeof state.unit === 'string' && VALID_UNITS.includes(state.unit)) setUnit(state.unit);
     if (typeof state.margin === 'number') setMargin(state.margin);
     if (typeof state.bgColor === 'string') setBgColor(state.bgColor);
+    // The shared design is the clean baseline once hydrated.
+    markCleanFrom(
+      Array.isArray(state.layers) ? state.layers : layers,
+      typeof state.bgColor === 'string' ? state.bgColor : bgColor
+    );
     clearShareTokenFromUrl();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -151,6 +213,9 @@ export default function Studio() {
   const [showSaveDialog, setShowSaveDialog] = useState(false);
   const [saveName, setSaveName] = useState("");
   const [currentDesignId, setCurrentDesignId] = useState(null);
+  const [showExamples, setShowExamples] = useState(false);
+  // Example awaiting confirmation when the canvas has unsaved work.
+  const [pendingExample, setPendingExample] = useState(null);
   const [aiChatOpen, setAiChatOpen] = useState(false);
   const [aiChatMode, setAiChatMode] = useState("create");
   const [aiChatLayer, setAiChatLayer] = useState(null);
@@ -292,6 +357,7 @@ export default function Studio() {
       );
       setPresetIndex(matchIdx >= 0 ? matchIdx : PRESET_SIZES.length - 1);
     }
+    markCleanFrom(group.layers, bgColor);
   };
 
   const handleSaveToCloud = async () => {
@@ -317,6 +383,7 @@ export default function Studio() {
       );
       if (design) {
         setCurrentDesignId(design.id);
+        markCleanFrom(layers, bgColor);
         // Pro: auto-save history snapshot
         if (limits.historySnapshots > 0) {
           saveHistorySnapshot(design.id, user.id, config, thumbnail).catch(
@@ -346,10 +413,51 @@ export default function Studio() {
         setPresetIndex(matchIdx >= 0 ? matchIdx : PRESET_SIZES.length - 1);
       }
       setCurrentDesignId(design.id);
+      markCleanFrom(savedLayers || layers, bgColor);
     } catch (err) {
       console.error("Cloud load failed:", err);
     }
   };
+
+  // === Examples ===
+  // Apply a curated example onto the canvas: layers, background, and size.
+  // presetIndex is recomputed from the canvas size (as the cloud loader does),
+  // so the example JSON never has to store it. currentDesignId is cleared so a
+  // later Save creates a new design rather than overwriting a real saved one.
+  const applyExample = useCallback(
+    (example) => {
+      const cfg = example?.config;
+      if (!cfg?.layers) return;
+      loadLayerSet(cfg.layers);
+      if (typeof cfg.bgColor === "string") setBgColor(cfg.bgColor);
+      if (cfg.canvasW && cfg.canvasH) {
+        setCanvasW(cfg.canvasW);
+        setCanvasH(cfg.canvasH);
+        const matchIdx = PRESET_SIZES.findIndex(
+          (p) =>
+            p.width !== null &&
+            p.width * PPI === cfg.canvasW &&
+            p.height * PPI === cfg.canvasH
+        );
+        setPresetIndex(matchIdx >= 0 ? matchIdx : PRESET_SIZES.length - 1);
+      }
+      setCurrentDesignId(null);
+      markCleanFrom(cfg.layers, cfg.bgColor ?? bgColor);
+      setActiveTab("design");
+      setShowExamples(false);
+      setPendingExample(null);
+    },
+    [loadLayerSet, setBgColor, markCleanFrom, bgColor]
+  );
+
+  // Card click: confirm first if there's unsaved work, otherwise load now.
+  const handleSelectExample = useCallback(
+    (example) => {
+      if (isDirty()) setPendingExample(example);
+      else applyExample(example);
+    },
+    [isDirty, applyExample]
+  );
 
   if (loading) {
     return (
@@ -383,6 +491,18 @@ export default function Studio() {
       {/* Top bar */}
       <div className="shrink-0 h-9 bg-paper border-b border-hairline flex items-center px-4 gap-4">
         <span className="text-xs text-ink-soft select-none">Naqsha</span>
+        <button
+          onClick={() => setShowExamples((v) => !v)}
+          aria-pressed={showExamples}
+          className={`text-xs transition-colors duration-fast ease-out-quart ${
+            showExamples ? "text-ink" : "text-ink-soft hover:text-ink"
+          }`}
+        >
+          Examples
+          {EXAMPLE_COUNT > 0 && (
+            <span className="ml-1 text-ink-soft/70 num">({EXAMPLE_COUNT})</span>
+          )}
+        </button>
         <button
           onClick={() => setShowLoadModal(true)}
           className="text-xs text-ink-soft hover:text-ink transition-colors duration-fast ease-out-quart"
@@ -455,6 +575,10 @@ export default function Studio() {
             onSaveToCloud={handleSaveToCloud}
             onOpenCloudDesigns={() => setShowCloudModal(true)}
             onOpenAIChat={handleOpenAIChat}
+            examplesOpen={showExamples}
+            examples={EXAMPLES}
+            onSelectExample={handleSelectExample}
+            onCloseExamples={() => setShowExamples(false)}
           />
         </div>
         {/* Canvas: DOM-second, ordered first on mobile (top). Mobile gets a
@@ -545,6 +669,7 @@ export default function Studio() {
                 matchIdx >= 0 ? matchIdx : PRESET_SIZES.length - 1
               );
             }
+            markCleanFrom(config.layers || layers, bgColor);
           }}
           onClose={() => setShowCloudModal(false)}
         />
@@ -561,6 +686,16 @@ export default function Studio() {
           onClose={() => setAiChatOpen(false)}
         />
       )}
+
+      <ConfirmDialog
+        open={pendingExample !== null}
+        title="Discard current work?"
+        message="Loading this example replaces everything on the canvas. This can't be undone."
+        confirmLabel="Load example"
+        cancelLabel="Cancel"
+        onConfirm={() => applyExample(pendingExample)}
+        onCancel={() => setPendingExample(null)}
+      />
     </div>
   );
 }

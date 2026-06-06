@@ -1,0 +1,46 @@
+{
+  "id": "bloom",
+  "name": "Bloom",
+  "description": "Phyllotaxis spiral — sunflower geometry in saffron.",
+  "order": 1,
+  "thumb": "bloom.png",
+  "config": {
+    "canvasW": 1152,
+    "canvasH": 1152,
+    "bgColor": "#0a1628",
+    "layers": [
+      {
+        "id": "bloom-phyllotaxis",
+        "name": "Bloom",
+        "color": "#f7dc6f",
+        "opacity": 100,
+        "visible": true,
+        "bgColor": "#ffffff",
+        "bgOpacity": 0,
+        "patternType": "phyllotaxis",
+        "params": {
+          "count": 1400,
+          "angle": 137.508,
+          "spacing": 13,
+          "minSize": 2,
+          "maxSize": 14,
+          "sizeGrowth": 0.5,
+          "shape": "circle",
+          "fillMode": "outline",
+          "rotation": 0,
+          "strokeWeight": 1,
+          "jitter": 0,
+          "symmetry": 1,
+          "startAngle": 0,
+          "offsetX": 0,
+          "offsetY": 0
+        },
+        "seed": 4211,
+        "randomizeKeys": [],
+        "paramsCache": {},
+        "role": "cut",
+        "penSlot": 1
+      }
+    ]
+  }
+}

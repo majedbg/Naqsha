@@ -1,0 +1,41 @@
+{
+  "id": "drift",
+  "name": "Drift",
+  "description": "Flow field — particles tracing a curl-noise current.",
+  "order": 2,
+  "thumb": "drift.png",
+  "config": {
+    "canvasW": 1152,
+    "canvasH": 1728,
+    "bgColor": "#0a1628",
+    "layers": [
+      {
+        "id": "drift-flowfield",
+        "name": "Drift",
+        "color": "#4ecdc4",
+        "opacity": 100,
+        "visible": true,
+        "bgColor": "#ffffff",
+        "bgOpacity": 0,
+        "patternType": "flowfield",
+        "params": {
+          "particleCount": 2000,
+          "stepLength": 4,
+          "noiseScale": 0.0035,
+          "curlStrength": 70,
+          "patternScale": 1,
+          "strokeWeight": 1,
+          "symmetry": 1,
+          "startAngle": 0,
+          "offsetX": 0,
+          "offsetY": 0
+        },
+        "seed": 9072,
+        "randomizeKeys": [],
+        "paramsCache": {},
+        "role": "cut",
+        "penSlot": 1
+      }
+    ]
+  }
+}

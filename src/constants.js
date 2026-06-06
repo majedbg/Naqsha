@@ -265,7 +265,7 @@ export const DEFAULT_PARAMS = {
 };
 
 const SYMMETRY_PARAM = { key: 'symmetry', label: 'Radial Symmetry', type: 'iconselect', glyph: 'symmetry', range: { min: 1, max: 11, step: 1 }, min: 1, max: 11, step: 1, randomMax: 10, tooltip: 'Radial copies — 1 = none, 2 = 180°, 3 = 120°, 4 = +, …' };
-const START_ANGLE_PARAM = { key: 'startAngle', label: 'Start Angle', min: 0, max: 360, step: 1, tooltip: 'Rotates the entire pattern by this many degrees' };
+const START_ANGLE_PARAM = { key: 'startAngle', label: 'Start Angle', type: 'dial', wrap: true, min: 0, max: 360, step: 1, tooltip: 'Rotates the entire pattern by this many degrees' };
 // Composite 2D pad (WI-3): one draggable nub writes both offsetX + offsetY.
 // `key: 'offset'` is the synthetic primary key (grouping/gating/reset/randomize);
 // `keys` is the real value set. DEFAULT_PARAMS still carries offsetX/offsetY.
@@ -295,7 +295,7 @@ export const PATTERN_PARAM_DEFS = {
   ],
   phyllotaxis: [
     { key: 'count', label: 'Count', min: 10, max: 5000, step: 10, tooltip: 'Number of elements — higher values fill more of the frame' },
-    { key: 'angle', label: 'Divergence Angle', min: 100, max: 170, step: 0.01, tooltip: 'Angle between elements — 137.508° is the golden angle' },
+    { key: 'angle', label: 'Divergence Angle', type: 'dial', detent: 137.508, detentLabel: 'Golden', min: 100, max: 170, step: 0.01, tooltip: 'Angle between elements — 137.508° is the golden angle' },
     { key: 'spacing', label: 'Spacing', min: 0.5, max: 30, step: 0.5, tooltip: 'Radial spacing — larger values spread the spiral beyond the frame edges' },
     { key: 'minSize', label: 'Min Size', min: 0.5, max: 40, step: 0.5, tooltip: 'Size of innermost elements' },
     { key: 'maxSize', label: 'Max Size', min: 1, max: 120, step: 0.5, tooltip: 'Size of outermost elements' },

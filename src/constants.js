@@ -300,17 +300,17 @@ export const PATTERN_PARAM_DEFS = {
     { key: 'minSize', label: 'Min Size', min: 0.5, max: 40, step: 0.5, tooltip: 'Size of innermost elements' },
     { key: 'maxSize', label: 'Max Size', min: 1, max: 120, step: 0.5, tooltip: 'Size of outermost elements' },
     { key: 'sizeGrowth', label: 'Size Growth', min: 0, max: 3, step: 0.05, tooltip: 'How size scales from center to edge — 0 = uniform, 1 = linear, >1 = accelerating' },
-    { key: 'shape', label: 'Shape', type: 'select', options: [
-      { value: 'circle', label: 'Circle' },
-      { value: 'square', label: 'Square' },
-      { value: 'triangle', label: 'Triangle' },
-      { value: 'hexagon', label: 'Hexagon' },
-      { value: 'star', label: 'Star' },
+    { key: 'shape', label: 'Shape', type: 'iconselect', options: [
+      { value: 'circle', label: 'Circle', glyph: 'circle' },
+      { value: 'square', label: 'Square', glyph: 'square' },
+      { value: 'triangle', label: 'Triangle', glyph: 'triangle' },
+      { value: 'hexagon', label: 'Hexagon', glyph: 'hexagon' },
+      { value: 'star', label: 'Star', glyph: 'star' },
     ], tooltip: 'Shape of each element' },
-    { key: 'fillMode', label: 'Fill Mode', type: 'select', options: [
-      { value: 'outline', label: 'Outline (cut)' },
-      { value: 'fill', label: 'Fill (engrave)' },
-      { value: 'both', label: 'Fill + Outline' },
+    { key: 'fillMode', label: 'Fill Mode', type: 'iconselect', options: [
+      { value: 'outline', label: 'Outline (cut)', glyph: 'outline' },
+      { value: 'fill', label: 'Fill (engrave)', glyph: 'fill' },
+      { value: 'both', label: 'Fill + Outline', glyph: 'both' },
     ], tooltip: 'Outline for laser cut, fill for engraving' },
     { key: 'rotation', label: 'Element Rotation', min: 0, max: 360, step: 1, tooltip: 'Base rotation of each element in degrees' },
     { key: 'strokeWeight', label: 'Stroke Weight', min: 0.3, max: 4, step: 0.1, tooltip: 'Outline thickness' },
@@ -345,12 +345,12 @@ export const PATTERN_PARAM_DEFS = {
     OFFSET_PAD_PARAM,
   ],
   recursive: [
-    { key: 'shape', label: 'Shape', type: 'select', options: [
-      { value: 'square', label: 'Square' },
-      { value: 'triangle', label: 'Triangle' },
-      { value: 'pentagon', label: 'Pentagon' },
-      { value: 'hexagon', label: 'Hexagon' },
-      { value: 'circle', label: 'Circle (72-gon)' },
+    { key: 'shape', label: 'Shape', type: 'iconselect', options: [
+      { value: 'square', label: 'Square', glyph: 'square' },
+      { value: 'triangle', label: 'Triangle', glyph: 'triangle' },
+      { value: 'pentagon', label: 'Pentagon', glyph: 'pentagon' },
+      { value: 'hexagon', label: 'Hexagon', glyph: 'hexagon' },
+      { value: 'circle', label: 'Circle (72-gon)', glyph: 'circle' },
     ], tooltip: 'Base shape for recursive subdivision' },
     { key: 'depth', label: 'Depth', min: 1, max: 12, step: 1, randomMax: 5, tooltip: 'Recursion depth — more = more nested shapes' },
     { key: 'startScale', label: 'Start Size %', min: 20, max: 200, step: 5, tooltip: 'Starting radius as % of half-canvas — over 100% extends beyond the frame edges' },

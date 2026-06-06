@@ -90,6 +90,79 @@ export const GENERATED_GLYPHS = {
   symmetry: (value) => symmetryGlyph(value),
 };
 
-// Enumerated glyphs: keyed by name. WI-5 (Shape IconSelect) appends the
-// geometric shape + fill glyphs here.
-export const GLYPHS = {};
+// --- WI-5: enumerated shape + fill glyphs ---------------------------------
+//
+// Lowercase helpers (NOT components) build the SVG geometry; the resulting
+// nodes are stored in GLYPHS below. Shapes are inscribed in r = ARM so they
+// sit on the same metric grid as the symmetry glyph. Outline shapes are
+// hairline strokes (cut metaphor); `fill` is a solid mark (engrave); `both`
+// is a solid mark with a *separated* concentric ring so it reads as fill AND
+// a discrete outline, not just a heavier fill (D2 — legible distinction).
+
+// Points string for a regular n-gon, first vertex at the top (-90°).
+function polygonPoints(sides, r = ARM, rotationDeg = -90) {
+  return Array.from({ length: sides }, (_, i) => {
+    const rad = ((rotationDeg + (i * 360) / sides) * Math.PI) / 180;
+    return `${(C + r * Math.cos(rad)).toFixed(2)},${(C + r * Math.sin(rad)).toFixed(2)}`;
+  }).join(" ");
+}
+
+// Points string for a 5-point star: outer + inner radii alternate, top point up.
+function starPoints(outer = ARM, inner = ARM * 0.42, rotationDeg = -90) {
+  return Array.from({ length: 10 }, (_, i) => {
+    const r = i % 2 === 0 ? outer : inner;
+    const rad = ((rotationDeg + (i * 360) / 10) * Math.PI) / 180;
+    return `${(C + r * Math.cos(rad)).toFixed(2)},${(C + r * Math.sin(rad)).toFixed(2)}`;
+  }).join(" ");
+}
+
+// Hairline-stroke wrapper: an outline shape (cut metaphor).
+function outlineSvg(child) {
+  return (
+    <svg viewBox={`0 0 ${VB} ${VB}`} width="100%" height="100%" aria-hidden="true">
+      {child}
+    </svg>
+  );
+}
+
+const STROKE = {
+  fill: "none",
+  stroke: "currentColor",
+  strokeWidth: 1.5,
+  strokeLinejoin: "round",
+  strokeLinecap: "round",
+};
+
+// Enumerated glyphs: keyed by name, consumed by IconSelect as `GLYPHS[name]`.
+// Each value is a JSX node (no exported component — keeps react-refresh happy).
+export const GLYPHS = {
+  // --- geometric shapes (hairline outline) ---
+  circle: outlineSvg(<circle cx={C} cy={C} r={ARM} {...STROKE} />),
+  square: outlineSvg(
+    <rect
+      x={C - ARM * 0.78}
+      y={C - ARM * 0.78}
+      width={ARM * 1.56}
+      height={ARM * 1.56}
+      rx="1"
+      {...STROKE}
+    />,
+  ),
+  triangle: outlineSvg(<polygon points={polygonPoints(3)} {...STROKE} />),
+  pentagon: outlineSvg(<polygon points={polygonPoints(5)} {...STROKE} />),
+  hexagon: outlineSvg(<polygon points={polygonPoints(6)} {...STROKE} />),
+  star: outlineSvg(<polygon points={starPoints()} {...STROKE} />),
+
+  // --- fill modes (use the circle as the carrier mark) ---
+  // outline = hairline ring (laser-cut metaphor).
+  outline: outlineSvg(<circle cx={C} cy={C} r={ARM} {...STROKE} />),
+  // fill = solid mark (engrave metaphor).
+  fill: outlineSvg(<circle cx={C} cy={C} r={ARM} fill="currentColor" />),
+  // both = solid mark + separated concentric ring (fill AND a discrete outline).
+  both: outlineSvg(
+    <>
+      <circle cx={C} cy={C} r={ARM} fill="none" stroke="currentColor" strokeWidth="1.5" />
+      <circle cx={C} cy={C} r={ARM * 0.62} fill="currentColor" />
+    </>,
+  ),
+};

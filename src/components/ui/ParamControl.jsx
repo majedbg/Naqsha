@@ -2,6 +2,7 @@ import Slider from "./Slider";
 import Select from "./Select";
 import IconSelect from "./IconSelect";
 import Pad2D from "./Pad2D";
+import ParamPlot from "./ParamPlot";
 import AngleDial from "./AngleDial";
 import CurveEditor from "./CurveEditor";
 
@@ -36,6 +37,11 @@ export default function ParamControl({ def, params, onChange }) {
     // through and let it map the keys.
     case "pad2d":
       return <Pad2D def={def} params={params} onChange={onChange} />;
+
+    // Composite: ParamPlot reads/writes both def.keys, each over its own axis
+    // range. Two differently-ranged named scalars on one labelled plane.
+    case "plot2d":
+      return <ParamPlot def={def} params={params} onChange={onChange} />;
 
     // Single-key (like Slider): reads params[def.key], writes a one-key patch.
     // Carries dial-specific props wrap / detent / detentLabel.

@@ -39,6 +39,13 @@ function randomValueForDef(def) {
 // carry `def.keys`; single defs carry `def.key`. These helpers return a *patch
 // object* spanning every real key so reset/randomize stay key-count agnostic.
 function randomPatchForDef(def) {
+  // Composite with per-axis ranges (plot2d): each key randomizes over its OWN
+  // axis range. Without this, both keys would share def's single min/max.
+  if (def.axes) {
+    const patch = {};
+    for (const ax of def.axes) patch[ax.key] = randomValueForDef(ax);
+    return patch;
+  }
   if (def.keys) {
     const patch = {};
     for (const k of def.keys) patch[k] = randomValueForDef(def);

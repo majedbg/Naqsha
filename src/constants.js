@@ -271,10 +271,24 @@ const START_ANGLE_PARAM = { key: 'startAngle', label: 'Start Angle', type: 'dial
 // `keys` is the real value set. DEFAULT_PARAMS still carries offsetX/offsetY.
 const OFFSET_PAD_PARAM = { key: 'offset', type: 'pad2d', label: 'Offset', keys: ['offsetX', 'offsetY'], min: -500, max: 500, step: 1, tooltip: 'Drag to shift the pattern. Center = no offset.' };
 
+// Composite 2D plot (Outer × Inner radius): the two spirograph radii — which
+// have DIFFERENT ranges and no shared origin — share one labelled plane instead
+// of two sliders. `key: 'radii'` is the synthetic primary key (grouping/gating/
+// reset/randomize); `keys` is the real value set; `axes` carries each axis's own
+// range + default. DEFAULT_PARAMS still carries R / r. The R/r ratio sets the
+// number of lobes, so plotting them together makes that relationship legible.
+const RADII_PLOT_PARAM = {
+  key: 'radii', type: 'plot2d', label: 'Radii', keys: ['R', 'r'],
+  axes: [
+    { key: 'R', label: 'Outer Radius', short: 'Outer', min: 50, max: 1200, step: 1, default: 440 },
+    { key: 'r', label: 'Inner Radius', short: 'Inner', min: 10, max: 600, step: 1, default: 565 },
+  ],
+  tooltip: 'Outer × inner radius on one plane — right is a wider outer circle, up is a larger rolling circle. Their ratio sets how many lobes the curve has.',
+};
+
 export const PATTERN_PARAM_DEFS = {
   spirograph: [
-    { key: 'R', label: 'Outer Radius', min: 50, max: 1200, step: 1, tooltip: 'Radius of the outer fixed circle — can exceed frame for edge-to-edge coverage' },
-    { key: 'r', label: 'Inner Radius', min: 10, max: 600, step: 1, tooltip: 'Radius of the rolling inner circle' },
+    RADII_PLOT_PARAM,
     { key: 'd', label: 'Pen Offset', min: 10, max: 600, step: 1, tooltip: 'Distance from center of inner circle to pen point' },
     { key: 'revolutions', label: 'Revolutions', min: 1, max: 40, step: 1, tooltip: 'Number of full rotations to draw' },
     { key: 'strokeWeight', label: 'Stroke Weight', min: 0.3, max: 3, step: 0.1, tooltip: 'Line thickness' },
@@ -547,7 +561,7 @@ export const FEATURED_PARAMS = {
 // Maps every param key to its group. Edit to re-group params.
 export const PARAM_GROUP_MAP = {
   // Structure — skeleton, topology, counts
-  R: 'structure', r: 'structure', d: 'structure', revolutions: 'structure',
+  R: 'structure', r: 'structure', radii: 'structure', d: 'structure', revolutions: 'structure',
   particleCount: 'structure', stepLength: 'structure',
   count: 'structure', angle: 'structure', spacing: 'structure',
   shape: 'structure', fillMode: 'structure',

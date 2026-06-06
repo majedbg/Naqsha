@@ -83,6 +83,24 @@ function randomValueForDef(def) {
   return parseFloat(Math.max(lo, Math.min(hi, snapped)).toFixed(decimals));
 }
 
+// Map a (possibly composite) def to a patch over its REAL keys. Composite rows
+// carry a synthetic key ('radii', 'offset') that the engine never reads, so a
+// global randomize must expand to the underlying keys. `axes` randomizes each
+// over its own range; `keys` shares the def's range; otherwise it's single-key.
+function randomPatchForDef(def) {
+  if (def.axes) {
+    const patch = {};
+    for (const ax of def.axes) patch[ax.key] = randomValueForDef(ax);
+    return patch;
+  }
+  if (def.keys) {
+    const patch = {};
+    for (const k of def.keys) patch[k] = randomValueForDef(def);
+    return patch;
+  }
+  return { [def.key]: randomValueForDef(def) };
+}
+
 export default function useLayers({ persistToLocal = true } = {}) {
   const [layers, setLayers] = useState(() => {
     if (persistToLocal) {
@@ -187,7 +205,7 @@ export default function useLayers({ persistToLocal = true } = {}) {
         for (const key of keys) {
           const def = defs.find((d) => d.key === key);
           if (def) {
-            newParams[key] = randomValueForDef(def);
+            Object.assign(newParams, randomPatchForDef(def));
           }
         }
         return { ...l, params: newParams };
@@ -207,7 +225,7 @@ export default function useLayers({ persistToLocal = true } = {}) {
         for (const key of keys) {
           const def = defs.find((d) => d.key === key);
           if (def) {
-            newParams[key] = randomValueForDef(def);
+            Object.assign(newParams, randomPatchForDef(def));
           }
         }
         return { ...l, params: newParams };

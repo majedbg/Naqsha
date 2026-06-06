@@ -356,7 +356,7 @@ export const PATTERN_PARAM_DEFS = {
     { key: 'startScale', label: 'Start Size %', min: 20, max: 200, step: 5, tooltip: 'Starting radius as % of half-canvas — over 100% extends beyond the frame edges' },
     { key: 'rotationPerLevel', label: 'Rotation/Level', min: 0, max: 90, step: 1, tooltip: 'Rotation applied at each recursion level' },
     { key: 'scaleFactor', label: 'Scale Factor', min: 0.3, max: 0.95, step: 0.01, randomMin: 0.4, randomMax: 0.8, tooltip: 'Size multiplier per recursion level' },
-    { key: 'scaleNonLinearity', label: 'Scale Non-Linearity', min: -1, max: 1, step: 0.05, tooltip: 'Curves the scale decay — negative = slower start/faster end, positive = faster start/slower end' },
+    { key: 'scaleNonLinearity', type: 'curve', label: 'Scale Non-Linearity', min: -1, max: 1, step: 0.05, tooltip: 'Curves the scale decay — negative = slower start/faster end, positive = faster start/slower end' },
     { key: 'strokeWeight', label: 'Stroke Weight', min: 0.3, max: 3, step: 0.1, tooltip: 'Base line thickness at level 0' },
     { key: 'strokeDepthDecay', label: 'Stroke Depth Decay', min: 0, max: 1, step: 0.05, tooltip: 'How much stroke thins per recursion level — 0 = uniform, 1 = max thinning' },
     SYMMETRY_PARAM,

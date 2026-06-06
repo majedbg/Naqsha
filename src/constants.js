@@ -266,8 +266,10 @@ export const DEFAULT_PARAMS = {
 
 const SYMMETRY_PARAM = { key: 'symmetry', label: 'Radial Symmetry', type: 'iconselect', glyph: 'symmetry', range: { min: 1, max: 11, step: 1 }, min: 1, max: 11, step: 1, randomMax: 10, tooltip: 'Radial copies — 1 = none, 2 = 180°, 3 = 120°, 4 = +, …' };
 const START_ANGLE_PARAM = { key: 'startAngle', label: 'Start Angle', min: 0, max: 360, step: 1, tooltip: 'Rotates the entire pattern by this many degrees' };
-const OFFSET_X_PARAM = { key: 'offsetX', label: 'Offset X', min: -500, max: 500, step: 1, tooltip: 'Shifts the pattern horizontally in pixels' };
-const OFFSET_Y_PARAM = { key: 'offsetY', label: 'Offset Y', min: -500, max: 500, step: 1, tooltip: 'Shifts the pattern vertically in pixels' };
+// Composite 2D pad (WI-3): one draggable nub writes both offsetX + offsetY.
+// `key: 'offset'` is the synthetic primary key (grouping/gating/reset/randomize);
+// `keys` is the real value set. DEFAULT_PARAMS still carries offsetX/offsetY.
+const OFFSET_PAD_PARAM = { key: 'offset', type: 'pad2d', label: 'Offset', keys: ['offsetX', 'offsetY'], min: -500, max: 500, step: 1, tooltip: 'Drag to shift the pattern. Center = no offset.' };
 
 export const PATTERN_PARAM_DEFS = {
   spirograph: [
@@ -278,8 +280,7 @@ export const PATTERN_PARAM_DEFS = {
     { key: 'strokeWeight', label: 'Stroke Weight', min: 0.3, max: 3, step: 0.1, tooltip: 'Line thickness' },
     SYMMETRY_PARAM,
     START_ANGLE_PARAM,
-    OFFSET_X_PARAM,
-    OFFSET_Y_PARAM,
+    OFFSET_PAD_PARAM,
   ],
   flowfield: [
     { key: 'particleCount', label: 'Particle Count', min: 100, max: 3000, step: 10, tooltip: 'Number of particles tracing the flow field' },
@@ -290,8 +291,7 @@ export const PATTERN_PARAM_DEFS = {
     { key: 'strokeWeight', label: 'Stroke Weight', min: 0.3, max: 4, step: 0.1, tooltip: 'Line thickness' },
     SYMMETRY_PARAM,
     START_ANGLE_PARAM,
-    OFFSET_X_PARAM,
-    OFFSET_Y_PARAM,
+    OFFSET_PAD_PARAM,
   ],
   phyllotaxis: [
     { key: 'count', label: 'Count', min: 10, max: 5000, step: 10, tooltip: 'Number of elements — higher values fill more of the frame' },
@@ -317,8 +317,7 @@ export const PATTERN_PARAM_DEFS = {
     { key: 'jitter', label: 'Jitter', min: 0, max: 100, step: 1, tooltip: 'Random displacement of each element' },
     SYMMETRY_PARAM,
     START_ANGLE_PARAM,
-    OFFSET_X_PARAM,
-    OFFSET_Y_PARAM,
+    OFFSET_PAD_PARAM,
   ],
   wave: [
     { key: 'waveCount', label: 'Wave Count', min: 2, max: 12, step: 1, tooltip: 'Number of overlapping wave layers' },
@@ -328,8 +327,7 @@ export const PATTERN_PARAM_DEFS = {
     { key: 'strokeWeight', label: 'Stroke Weight', min: 0.3, max: 3, step: 0.1, tooltip: 'Line thickness' },
     SYMMETRY_PARAM,
     START_ANGLE_PARAM,
-    OFFSET_X_PARAM,
-    OFFSET_Y_PARAM,
+    OFFSET_PAD_PARAM,
   ],
   voronoi: [
     { key: 'cellCount', label: 'Cell Count', min: 10, max: 800, step: 1, tooltip: 'Number of Voronoi seed points' },
@@ -344,8 +342,7 @@ export const PATTERN_PARAM_DEFS = {
     { key: 'strokeWeight', label: 'Stroke Weight', min: 0.3, max: 3, step: 0.1, tooltip: 'Line thickness' },
     SYMMETRY_PARAM,
     START_ANGLE_PARAM,
-    OFFSET_X_PARAM,
-    OFFSET_Y_PARAM,
+    OFFSET_PAD_PARAM,
   ],
   recursive: [
     { key: 'shape', label: 'Shape', type: 'select', options: [
@@ -364,8 +361,7 @@ export const PATTERN_PARAM_DEFS = {
     { key: 'strokeDepthDecay', label: 'Stroke Depth Decay', min: 0, max: 1, step: 0.05, tooltip: 'How much stroke thins per recursion level — 0 = uniform, 1 = max thinning' },
     SYMMETRY_PARAM,
     START_ANGLE_PARAM,
-    OFFSET_X_PARAM,
-    OFFSET_Y_PARAM,
+    OFFSET_PAD_PARAM,
   ],
   phyllodash: [
     { key: 'seedCount', label: 'Seed Count', min: 200, max: 8000, step: 50, tooltip: 'Number of anchor points in the phyllotaxis spiral' },
@@ -376,8 +372,7 @@ export const PATTERN_PARAM_DEFS = {
     { key: 'strokeWeight', label: 'Stroke Weight', min: 0.3, max: 3, step: 0.1, tooltip: 'Line thickness' },
     SYMMETRY_PARAM,
     START_ANGLE_PARAM,
-    OFFSET_X_PARAM,
-    OFFSET_Y_PARAM,
+    OFFSET_PAD_PARAM,
   ],
   grainfield: [
     { key: 'pointCount', label: 'Point Count', min: 40, max: 600, step: 10, tooltip: 'Number of seed points for CVT relaxation' },
@@ -388,8 +383,7 @@ export const PATTERN_PARAM_DEFS = {
     { key: 'strokeWeight', label: 'Stroke Weight', min: 0.3, max: 3, step: 0.1, tooltip: 'Line thickness' },
     SYMMETRY_PARAM,
     START_ANGLE_PARAM,
-    OFFSET_X_PARAM,
-    OFFSET_Y_PARAM,
+    OFFSET_PAD_PARAM,
   ],
   flowhatch: [
     { key: 'particleCount', label: 'Particle Count', min: 50, max: 1000, step: 10, tooltip: 'Number of particles walking the flow field' },
@@ -402,8 +396,7 @@ export const PATTERN_PARAM_DEFS = {
     { key: 'strokeWeight', label: 'Stroke Weight', min: 0.3, max: 3, step: 0.1, tooltip: 'Line thickness' },
     SYMMETRY_PARAM,
     START_ANGLE_PARAM,
-    OFFSET_X_PARAM,
-    OFFSET_Y_PARAM,
+    OFFSET_PAD_PARAM,
   ],
   feather: [
     { key: 'curveType', label: 'Curve Type', type: 'select', options: [
@@ -424,8 +417,7 @@ export const PATTERN_PARAM_DEFS = {
     { key: 'strokeWeight', label: 'Stroke Weight', min: 0.3, max: 2, step: 0.1, tooltip: 'Line thickness' },
     SYMMETRY_PARAM,
     START_ANGLE_PARAM,
-    OFFSET_X_PARAM,
-    OFFSET_Y_PARAM,
+    OFFSET_PAD_PARAM,
   ],
   turing: [
     { key: 'preset', label: 'Pattern Preset', type: 'select', options: [
@@ -443,8 +435,7 @@ export const PATTERN_PARAM_DEFS = {
     { key: 'strokeWeight', label: 'Stroke Weight', min: 0.3, max: 3, step: 0.1, tooltip: 'Line thickness' },
     SYMMETRY_PARAM,
     START_ANGLE_PARAM,
-    OFFSET_X_PARAM,
-    OFFSET_Y_PARAM,
+    OFFSET_PAD_PARAM,
   ],
   duality: [
     // Spiral + dashes
@@ -474,8 +465,7 @@ export const PATTERN_PARAM_DEFS = {
     { key: 'originY', label: 'Origin Y', min: 0, max: 1, step: 0.01, tooltip: 'Vertical origin (0=top, 0.5=center, 1=bottom)' },
     SYMMETRY_PARAM,
     START_ANGLE_PARAM,
-    OFFSET_X_PARAM,
-    OFFSET_Y_PARAM,
+    OFFSET_PAD_PARAM,
   ],
   radialetch: [
     { key: 'lineCount', label: 'Line Count', min: 10, max: 500, step: 1, tooltip: 'Number of radial lines emanating from center' },
@@ -488,8 +478,7 @@ export const PATTERN_PARAM_DEFS = {
     { key: 'strokeWeight', label: 'Stroke Weight', min: 0.3, max: 3, step: 0.1, tooltip: 'Line thickness' },
     SYMMETRY_PARAM,
     START_ANGLE_PARAM,
-    OFFSET_X_PARAM,
-    OFFSET_Y_PARAM,
+    OFFSET_PAD_PARAM,
   ],
   grid: [
     { key: 'cols', label: 'Columns', min: 2, max: 60, step: 1, tooltip: 'Number of vertical lines' },
@@ -503,8 +492,7 @@ export const PATTERN_PARAM_DEFS = {
     { key: 'strokeWeight', label: 'Stroke Weight', min: 0.3, max: 3, step: 0.1, tooltip: 'Line thickness' },
     SYMMETRY_PARAM,
     START_ANGLE_PARAM,
-    OFFSET_X_PARAM,
-    OFFSET_Y_PARAM,
+    OFFSET_PAD_PARAM,
   ],
   spiral: [
     { key: 'armCount', label: 'Arms', min: 1, max: 12, step: 1, tooltip: 'Number of spiral arms evenly spaced' },
@@ -520,8 +508,7 @@ export const PATTERN_PARAM_DEFS = {
     { key: 'strokeWeight', label: 'Stroke Weight', min: 0.3, max: 3, step: 0.1, tooltip: 'Line thickness' },
     SYMMETRY_PARAM,
     START_ANGLE_PARAM,
-    OFFSET_X_PARAM,
-    OFFSET_Y_PARAM,
+    OFFSET_PAD_PARAM,
   ],
 };
 

@@ -27,7 +27,8 @@ function applyMatrix(M, p) {
 
 // Parses an SVG `transform` attribute into a single affine matrix.
 // Handles translate(...), rotate(angle [, cx, cy]), scale(...), matrix(...).
-function parseTransformAttr(str) {
+// Exported for testing; also used internally by extractRenderedPaths.
+export function parseTransformAttr(str) {
   if (!str) return IDENTITY.slice();
   let M = IDENTITY.slice();
   const re = /(translate|rotate|scale|matrix)\(([^)]*)\)/g;
@@ -65,7 +66,12 @@ function parseTransformAttr(str) {
 // after the last <path/>. Caller re-assembles as `prefix + renderPaths(...) + suffix`.
 // This is surgical by design — we mutate only the path block, so every
 // surrounding <g transform="..."> wrapper is preserved verbatim.
-const PATH_RE = /<path\s+d="([^"]*)"([^/]*)\/>/g;
+//
+// Attribute-order-tolerant: matches the full <path .../> element regardless of
+// which attribute comes first, then extracts `d` separately.  Patterns that
+// emit  stroke="…" d="…"  (or any other attribute order) are handled correctly.
+const PATH_RE = /<path(\s[^/]*)\/>/g;
+const D_ATTR_RE = /\bd="([^"]*)"/;
 
 export function splitGroup(svgGroup) {
   const paths = [];
@@ -73,8 +79,17 @@ export function splitGroup(svgGroup) {
   let m;
   PATH_RE.lastIndex = 0;
   while ((m = PATH_RE.exec(svgGroup)) !== null) {
-    const parsed = parsePathD(m[1]);
-    paths.push({ points: parsed.points, closed: parsed.closed, attrs: m[2] });
+    const allAttrs = m[1] || '';
+    const dMatch = D_ATTR_RE.exec(allAttrs);
+    if (!dMatch) continue; // <path/> with no d attribute — skip
+    const d = dMatch[1];
+    // Build the remaining attrs string: everything except the d="…" attribute.
+    // Collapse any runs of whitespace left by the removal to a single space,
+    // then trim trailing whitespace.  This keeps the leading space that
+    // renderPaths expects (e.g. ` stroke="#f00"`) without double-spacing.
+    const otherAttrs = allAttrs.replace(D_ATTR_RE, '').replace(/\s{2,}/g, ' ').trimEnd();
+    const parsed = parsePathD(d);
+    paths.push({ points: parsed.points, closed: parsed.closed, attrs: otherAttrs });
     matches.push({ start: m.index, end: m.index + m[0].length });
   }
   if (matches.length === 0) {

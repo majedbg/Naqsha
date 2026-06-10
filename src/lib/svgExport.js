@@ -5,9 +5,8 @@
 // draw in — so path data doesn't need transforming on export.
 
 import { optimizeGroup } from './plotter/pipeline';
+import { PPI, MM_PER_IN } from './plotter/constants.js';
 
-const PPI = 96;
-const MM_PER_IN = 25.4;
 const pxToMm = (px) => (px / PPI) * MM_PER_IN;
 
 function anyOptEnabled(optimizations) {

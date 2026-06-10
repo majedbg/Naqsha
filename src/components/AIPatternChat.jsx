@@ -1,8 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useAuth } from '../lib/AuthContext';
 import { generatePattern, CREDIT_COST_NEW, CREDIT_COST_REVISION } from '../lib/aiPatternService';
-
-const STARTING_CREDITS = 24; // matches supabase/003_free_ai_allowance.sql default
+import { STARTING_CREDITS } from '../lib/creditModel';
 
 /**
  * AI Pattern Chat modal.

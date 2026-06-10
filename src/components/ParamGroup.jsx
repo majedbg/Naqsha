@@ -1,14 +1,8 @@
 import { useState, useRef, useEffect } from "react";
 import { COLLAPSED_GROUPS } from "../constants";
+import { isRowDefault } from "../lib/params/paramOps";
 import ParamRow from "./ui/ParamRow";
 import UpgradePrompt from "./UpgradePrompt";
-
-// A row is at default when every underlying key (composite `keys` or single
-// `key`) equals its default.
-function isRowDefault(def, params, defaults) {
-  const keys = def.keys || [def.key];
-  return keys.every((k) => params[k] === (defaults[k] ?? def.min));
-}
 
 // Reusable reset icon (circular refresh arrows)
 function ResetIcon({ size = 10 }) {

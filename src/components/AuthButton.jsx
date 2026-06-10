@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { useAuth } from '../lib/AuthContext';
+import { STARTING_CREDITS } from '../lib/creditModel';
 
 export default function AuthButton() {
   const { user, profile, tier, loading, signIn, signOut } = useAuth();
@@ -68,7 +69,7 @@ export default function AuthButton() {
           <div className="px-3 py-1.5 border-b border-hairline">
             <p className="text-[10px] text-ink-soft">
               AI Credits: <span className="text-accent font-medium">{profile?.ai_credits ?? 0}</span>
-              <span className="text-ink-soft"> / 24</span>
+              <span className="text-ink-soft"> / {STARTING_CREDITS}</span>
             </p>
           </div>
           <button

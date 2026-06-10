@@ -2,9 +2,13 @@
 // Canvas storage stays in pixels at 96 PPI internally — this module only
 // converts between pixels and the user-facing unit for display/input.
 
-export const PPI = 96;
-export const MM_PER_IN = 25.4;
-export const PX_PER_MM = PPI / MM_PER_IN;
+// Import from the single-sourced constants module. The named exports below
+// re-expose them so existing importers that pull PPI / MM_PER_IN / PX_PER_MM
+// from units.js continue to work unchanged.
+import { PPI as _PPI, MM_PER_IN as _MM_PER_IN, PX_PER_MM as _PX_PER_MM } from './plotter/constants.js';
+export const PPI = _PPI;
+export const MM_PER_IN = _MM_PER_IN;
+export const PX_PER_MM = _PX_PER_MM;
 
 export const UNIT_OPTIONS = [
   { value: 'mm', label: 'mm' },

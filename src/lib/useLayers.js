@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { DEFAULT_PARAMS, DEFAULT_COLORS, MAX_LAYERS, PATTERN_PARAM_DEFS, RANDOMIZE_EXCLUDED_KEYS } from '../constants';
+import { randomPatchForDef } from './params/paramOps';
 
 const BG_STORAGE_KEY = 'sonoform-bg-color';
 const DEFAULT_BG_COLOR = '#0a1628';
@@ -64,42 +65,10 @@ function loadLayers() {
   }
 }
 
-// Generate a random value for a param definition.
-// Supports optional randomMin/randomMax to cap randomization range
-// while keeping the slider's full min/max range for manual control.
-function randomValueForDef(def) {
-  if (def.type === 'select') {
-    const opts = def.randomOptions || def.options;
-    return opts[Math.floor(Math.random() * opts.length)].value;
-  }
-  // Numeric: random within [randomMin..randomMax] or [min..max], snapped to step
-  const lo = def.randomMin ?? def.min;
-  const hi = def.randomMax ?? def.max;
-  const range = hi - lo;
-  const raw = lo + Math.random() * range;
-  const snapped = Math.round(raw / def.step) * def.step;
-  // Clamp and fix floating point
-  const decimals = String(def.step).split('.')[1]?.length || 0;
-  return parseFloat(Math.max(lo, Math.min(hi, snapped)).toFixed(decimals));
-}
-
-// Map a (possibly composite) def to a patch over its REAL keys. Composite rows
-// carry a synthetic key ('radii', 'offset') that the engine never reads, so a
-// global randomize must expand to the underlying keys. `axes` randomizes each
-// over its own range; `keys` shares the def's range; otherwise it's single-key.
-function randomPatchForDef(def) {
-  if (def.axes) {
-    const patch = {};
-    for (const ax of def.axes) patch[ax.key] = randomValueForDef(ax);
-    return patch;
-  }
-  if (def.keys) {
-    const patch = {};
-    for (const k of def.keys) patch[k] = randomValueForDef(def);
-    return patch;
-  }
-  return { [def.key]: randomValueForDef(def) };
-}
+// randomPatchForDef is imported from ./params/paramOps (canonical single source
+// of truth). The old inline copies had a bug: randomValueForDef branched on
+// `def.type === 'select'` which missed `iconselect` defs (e.g. shape, fillMode)
+// and produced NaN. paramOps branches on `def.options` presence instead.
 
 export default function useLayers({ persistToLocal = true } = {}) {
   const [layers, setLayers] = useState(() => {

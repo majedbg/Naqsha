@@ -1,9 +1,7 @@
 import { supabase } from './supabase';
 import { registerPattern } from './patternRegistry';
 import { applySymmetryDraw, wrapSVGSymmetry } from './patterns/symmetryUtils';
-
-const CREDIT_COST_NEW = 12;
-const CREDIT_COST_REVISION = 4;
+import { CREDIT_COST_NEW, CREDIT_COST_REVISION } from './creditModel';
 
 export { CREDIT_COST_NEW, CREDIT_COST_REVISION };
 

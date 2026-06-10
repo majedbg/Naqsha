@@ -11,57 +11,10 @@ import {
 } from "../lib/patternRegistry";
 import { useGate } from "../lib/useGate";
 import { UNIVERSAL_PARAM_KEYS } from "../lib/tierLimits";
+import { randomPatchForDef, defaultPatchForDef } from "../lib/params/paramOps";
 import UpgradePrompt from "./UpgradePrompt";
 import ParamGroup from "./ParamGroup";
 import ParamRow from "./ui/ParamRow";
-
-// Generate a random value for a single param definition.
-// Branches on `def.options` presence (not `type`), so option-bearing controls
-// of any type — select, iconselect (WI-5) — hit the enumerated path, while
-// every numeric control hits the numeric path. Supports randomMin/randomMax caps.
-function randomValueForDef(def) {
-  if (def.options) {
-    const opts = def.randomOptions || def.options;
-    return opts[Math.floor(Math.random() * opts.length)].value;
-  }
-  const lo = def.randomMin ?? def.min;
-  const hi = def.randomMax ?? def.max;
-  const range = hi - lo;
-  const raw = lo + Math.random() * range;
-  const snapped = Math.round(raw / def.step) * def.step;
-  const decimals = String(def.step).split(".")[1]?.length || 0;
-  return parseFloat(
-    Math.max(lo, Math.min(hi, snapped)).toFixed(decimals)
-  );
-}
-
-// A param row maps to one OR many real keys. Composite defs (WI-3's pad2d)
-// carry `def.keys`; single defs carry `def.key`. These helpers return a *patch
-// object* spanning every real key so reset/randomize stay key-count agnostic.
-function randomPatchForDef(def) {
-  // Composite with per-axis ranges (plot2d): each key randomizes over its OWN
-  // axis range. Without this, both keys would share def's single min/max.
-  if (def.axes) {
-    const patch = {};
-    for (const ax of def.axes) patch[ax.key] = randomValueForDef(ax);
-    return patch;
-  }
-  if (def.keys) {
-    const patch = {};
-    for (const k of def.keys) patch[k] = randomValueForDef(def);
-    return patch;
-  }
-  return { [def.key]: randomValueForDef(def) };
-}
-
-function defaultPatchForDef(def, defaults) {
-  if (def.keys) {
-    const patch = {};
-    for (const k of def.keys) patch[k] = defaults[k] ?? def.min;
-    return patch;
-  }
-  return { [def.key]: defaults[def.key] ?? def.min };
-}
 
 export default function PatternParams({
   patternType,

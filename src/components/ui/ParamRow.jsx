@@ -1,4 +1,5 @@
 import ParamControl from "./ParamControl";
+import { isRowDefault } from "../../lib/params/paramOps";
 
 // Reusable reset icon (circular refresh arrows)
 function ResetIcon({ size = 12 }) {
@@ -19,13 +20,6 @@ function ResetIcon({ size = 12 }) {
       <path d="M3.51 15A9 9 0 0 0 18.36 18.36L23 14" />
     </svg>
   );
-}
-
-// A param key (or composite `keys`) is at default when every underlying key
-// equals its default. Mirrors the previous single-key `params[key] === default`.
-function isRowDefault(def, params, defaults) {
-  const keys = def.keys || [def.key];
-  return keys.every((k) => params[k] === (defaults[k] ?? def.min));
 }
 
 // One parameter row: control + per-param reset + randomize checkbox + randomize

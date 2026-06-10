@@ -49,6 +49,22 @@ export function buildShareUrl(state) {
   return `${base}?${PARAM_KEY}=${token}`;
 }
 
+// Safe variant — returns { url: string, tooLarge: false } for normal-sized
+// states, or { url: null, tooLarge: true } when the encoded URL would exceed
+// the safe URL ceiling (~8000 chars). Use this instead of buildShareUrl when
+// the caller needs to surface a user-visible signal.
+const URL_LENGTH_CEILING = 8000;
+
+export function buildShareUrlSafe(state) {
+  const token = encodeShare(state);
+  const base = window.location.origin + window.location.pathname;
+  const url = `${base}?${PARAM_KEY}=${token}`;
+  if (url.length > URL_LENGTH_CEILING) {
+    return { url: null, tooLarge: true };
+  }
+  return { url, tooLarge: false };
+}
+
 export function readShareTokenFromUrl() {
   try {
     const params = new URLSearchParams(window.location.search);

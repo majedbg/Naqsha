@@ -10,9 +10,11 @@
 // preserved by the higher-level pipeline, so optimizations apply identically
 // to every symmetry copy.
 
-const MM_PER_IN = 25.4;
-const PPI = 96;
-export const PX_PER_MM = PPI / MM_PER_IN;
+import { PX_PER_MM as _PX_PER_MM, DRAW_SPEED, TRAVEL_SPEED } from './constants.js';
+
+// Re-export PX_PER_MM so existing importers (e.g. PlotPreviewSection) continue
+// to resolve it from this module without breakage.
+export const PX_PER_MM = _PX_PER_MM;
 
 export function mmToPx(mm) { return mm * PX_PER_MM; }
 export function pxToMm(px) { return px / PX_PER_MM; }
@@ -229,7 +231,7 @@ export function pathStats(paths) {
 }
 
 // Convert mm totals into a plot time estimate in seconds.
-// Defaults loosely match AxiDraw V3 factory tuning.
-export function estimateTimeSec({ drawMm, travelMm }, { drawSpeed = 200, travelSpeed = 500 } = {}) {
+// Defaults loosely match AxiDraw V3 factory tuning (200/500 mm/s).
+export function estimateTimeSec({ drawMm, travelMm }, { drawSpeed = DRAW_SPEED, travelSpeed = TRAVEL_SPEED } = {}) {
   return drawMm / drawSpeed + travelMm / travelSpeed;
 }

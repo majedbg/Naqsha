@@ -286,6 +286,20 @@ const RADII_PLOT_PARAM = {
   tooltip: 'Outer × inner radius on one plane — right is a wider outer circle, up is a larger rolling circle. Their ratio sets how many lobes the curve has.',
 };
 
+// Phyllotaxis count + spacing share one plane: they jointly control how densely the
+// spiral fills the frame, so plotting them together makes that trade-off legible.
+// `key: 'density'` is the synthetic primary key (grouping/gating/reset/randomize);
+// `keys` is the real value set; `axes` carries each axis's own range + default.
+// DEFAULT_PARAMS still carries count / spacing. Ranges match the prior sliders.
+const DENSITY_PLOT_PARAM = {
+  key: 'density', type: 'plot2d', label: 'Count × Spacing', keys: ['count', 'spacing'],
+  axes: [
+    { key: 'count', label: 'Count', short: 'Count', min: 10, max: 5000, step: 10, default: 500 },
+    { key: 'spacing', label: 'Spacing', short: 'Spacing', min: 0.5, max: 30, step: 0.5, default: 6 },
+  ],
+  tooltip: 'Number of elements × radial spacing on one plane — right is more elements, up is wider spacing. Together they set how densely the spiral fills the frame.',
+};
+
 export const PATTERN_PARAM_DEFS = {
   spirograph: [
     RADII_PLOT_PARAM,
@@ -308,9 +322,8 @@ export const PATTERN_PARAM_DEFS = {
     OFFSET_PAD_PARAM,
   ],
   phyllotaxis: [
-    { key: 'count', label: 'Count', min: 10, max: 5000, step: 10, tooltip: 'Number of elements — higher values fill more of the frame' },
+    DENSITY_PLOT_PARAM,
     { key: 'angle', label: 'Divergence Angle', type: 'dial', detent: 137.508, detentLabel: 'Golden', min: 100, max: 170, step: 0.01, tooltip: 'Angle between elements — 137.508° is the golden angle' },
-    { key: 'spacing', label: 'Spacing', min: 0.5, max: 30, step: 0.5, tooltip: 'Radial spacing — larger values spread the spiral beyond the frame edges' },
     { key: 'minSize', label: 'Min Size', min: 0.5, max: 40, step: 0.5, tooltip: 'Size of innermost elements' },
     { key: 'maxSize', label: 'Max Size', min: 1, max: 120, step: 0.5, tooltip: 'Size of outermost elements' },
     { key: 'sizeGrowth', label: 'Size Growth', min: 0, max: 3, step: 0.05, tooltip: 'How size scales from center to edge — 0 = uniform, 1 = linear, >1 = accelerating' },

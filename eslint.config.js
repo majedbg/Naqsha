@@ -26,4 +26,23 @@ export default defineConfig([
       'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]' }],
     },
   },
+  // Test files: Vitest injects describe/it/expect/vi as globals (globals: true).
+  // Also allow node globals for any fixture I/O.
+  {
+    files: ['**/*.{test,spec}.{js,jsx}', 'src/test/**/*.{js,jsx}'],
+    languageOptions: {
+      globals: { ...globals.node, ...globals.vitest },
+    },
+  },
+  // Build/test config files run in Node and are not React components, so the
+  // react-refresh "only export components" rule does not apply.
+  {
+    files: ['*.config.{js,ts}', 'vite.config.js', 'vitest.config.js'],
+    languageOptions: {
+      globals: globals.node,
+    },
+    rules: {
+      'react-refresh/only-export-components': 'off',
+    },
+  },
 ])

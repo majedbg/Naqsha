@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useCallback } from "react";
 import LeftPanel from "../components/LeftPanel";
 import ConfirmDialog from "../components/ui/ConfirmDialog";
 import { EXAMPLES, EXAMPLE_COUNT } from "../examples";
@@ -7,111 +7,74 @@ import LayerGroupModal from "../components/LayerGroupModal";
 import CloudSaveModal from "../components/CloudSaveModal";
 import AIPatternChat from "../components/AIPatternChat";
 import useLayers from "../lib/useLayers";
-// import { loadUserAIPatterns } from "../lib/aiPatternService";
 import { getDynamicDefaults } from "../lib/patternRegistry";
 import useLayerGroups from "../lib/useLayerGroups";
 import { useAuth } from "../lib/AuthContext";
 import { useGate } from "../lib/useGate";
 import AuthButton from "../components/AuthButton";
 import ThemeToggle from "../components/ui/ThemeToggle";
-import {
-  saveDesign,
-  loadDesign,
-  saveHistorySnapshot,
-} from "../lib/designService";
 import { exportLayerSVG, exportAllLayersSVG, buildManifest } from "../lib/svgExport";
-import { PRESET_SIZES, PPI } from "../constants";
-import { DEFAULT_UNIT } from "../lib/units";
-import { decodeShare, readShareTokenFromUrl, clearShareTokenFromUrl } from "../lib/shareLink";
 import ShareLinkButton from "../components/ShareLinkButton";
 import { applyOutputMode } from "../lib/fabrication";
-
-const CANVAS_STORAGE_KEY = "sonoform-canvas";
-const VALID_TABS = ["design", "prepare", "export"];
-const VALID_UNITS = ["mm", "in", "px"];
-
-function loadCanvasState() {
-  try {
-    const raw = localStorage.getItem(CANVAS_STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (typeof parsed.presetIndex === "number") return parsed;
-  } catch {
-    /* fall through */
-  }
-  return null;
-}
+import useCanvasSize, { loadCanvasState } from "../lib/hooks/useCanvasSize";
+import useUIState from "../lib/hooks/useUIState";
+import useOptimizations from "../lib/hooks/useOptimizations";
+import useDesignPersistence from "../lib/hooks/useDesignPersistence";
+import useCloudPersistence from "../lib/hooks/useCloudPersistence";
 
 export default function Studio() {
   const { loading, user } = useAuth();
   const { limits } = useGate();
   const savedCanvas = loadCanvasState();
-  const [presetIndex, setPresetIndex] = useState(savedCanvas?.presetIndex ?? 1);
-  const [canvasW, setCanvasW] = useState(
-    savedCanvas?.canvasW ?? PRESET_SIZES[1].width * PPI
-  );
-  const [canvasH, setCanvasH] = useState(
-    savedCanvas?.canvasH ?? PRESET_SIZES[1].height * PPI
-  );
-  const [activeTab, setActiveTab] = useState(() => {
-    const saved = savedCanvas?.activeTab;
-    return VALID_TABS.includes(saved) ? saved : "design";
-  });
-  const [unit, setUnit] = useState(() => {
-    // Prefer saved unit; otherwise let the preset hint it (A4 → mm, AxiDraw → in).
-    const saved = savedCanvas?.unit;
-    if (VALID_UNITS.includes(saved)) return saved;
-    const presetHint = PRESET_SIZES[savedCanvas?.presetIndex ?? 1]?.unitHint;
-    return VALID_UNITS.includes(presetHint) ? presetHint : DEFAULT_UNIT;
-  });
-  const [margin, setMargin] = useState(savedCanvas?.margin ?? 0);
-  const [outputMode, setOutputMode] = useState(() => {
-    const saved = savedCanvas?.outputMode;
-    return saved === 'laser' || saved === 'plotter' ? saved : 'plotter';
-  });
-  // Optimization state — each pipeline step tracks its preview value
-  // (what the slider shows) vs. its appliedTolerance (what export uses).
-  // Export only reads `enabled && appliedTolerance`, so slider drift never
-  // silently changes the exported file.
-  const [optimizations, setOptimizations] = useState({
-    simplify: { enabled: false, tolerance: 0.3, appliedTolerance: null },
-    merge:    { enabled: false, tolerance: 0.5, appliedTolerance: null },
-    reorder:  { enabled: false },
-  });
-  const [livePatternInstances, setLivePatternInstances] = useState({});
-  const updateOptimization = (key, patch) => {
-    setOptimizations((prev) => ({ ...prev, [key]: { ...prev[key], ...patch } }));
-  };
-  const applyOptimization = (key) => {
-    setOptimizations((prev) => {
-      const cur = prev[key];
-      if (key === 'reorder') return { ...prev, reorder: { enabled: true } };
-      return { ...prev, [key]: { ...cur, enabled: true, appliedTolerance: cur.tolerance } };
-    });
-  };
-  const revertOptimization = (key) => {
-    setOptimizations((prev) => {
-      if (key === 'reorder') return { ...prev, reorder: { enabled: false } };
-      return { ...prev, [key]: { ...prev[key], enabled: false, appliedTolerance: null } };
-    });
-  };
-  // Prepare tab is "configured" once the user has picked a non-default
-  // preset, custom size, or margin — controls whether the stale yellow-dot
-  // indicator appears when Design edits happen after Prepare is set.
-  const prepareConfigured =
-    presetIndex !== 1 || margin > 0 || unit !== DEFAULT_UNIT;
 
-  useEffect(() => {
-    try {
-      localStorage.setItem(
-        CANVAS_STORAGE_KEY,
-        JSON.stringify({ presetIndex, canvasW, canvasH, activeTab, unit, margin, outputMode })
-      );
-    } catch {
-      /* storage full or unavailable */
-    }
-  }, [presetIndex, canvasW, canvasH, activeTab, unit, margin, outputMode]);
+  // === UI chrome (active tab + modals + AI-chat) ===
+  const { ui, set: setUI } = useUIState({ savedTab: savedCanvas?.activeTab });
+  const {
+    activeTab,
+    showLoadModal,
+    showCloudModal,
+    showSaveDialog,
+    saveName,
+    showExamples,
+    pendingExample,
+    aiChatOpen,
+    aiChatMode,
+    aiChatLayer,
+  } = ui;
 
+  // === Canvas sizing (owns the sonoform-canvas blob incl. activeTab) ===
+  const {
+    presetIndex,
+    setPresetIndex,
+    canvasW,
+    setCanvasW,
+    canvasH,
+    setCanvasH,
+    unit,
+    setUnit,
+    margin,
+    setMargin,
+    outputMode,
+    setOutputMode,
+    prepareConfigured,
+    handlePresetChange,
+    handleCustomChange,
+    applyCanvasSize,
+    bedWmm,
+    bedHmm,
+  } = useCanvasSize({ savedCanvas, activeTab });
+
+  // === Optimization preview/applied state machine ===
+  const {
+    optimizations,
+    updateOptimization,
+    applyOptimization,
+    revertOptimization,
+    appliedOptimizations,
+    appliedOpsList,
+  } = useOptimizations();
+
+  // === Layers ===
   const {
     layers,
     addLayer,
@@ -128,115 +91,53 @@ export default function Studio() {
     setBgColor,
   } = useLayers({ persistToLocal: limits.localStorage });
 
-  // === Unsaved-work tracking ===
-  // The baseline is a *known-clean* state: a freshly loaded example/design/
-  // group, a successful save, or — on first run only — the pristine defaults.
-  // Work restored from localStorage is treated as dirty (its provenance is
-  // unknown), so loading an example over it prompts rather than silently
-  // discarding it. `null` means "unknown" → dirty.
-  const cleanRef = useRef(null);
-
-  // Serialize the canvas for comparison. paramsCache is excluded: it's derived
-  // cache that mutates on pattern-type switches without a user-visible change.
-  const serializeState = useCallback(
-    (lyrs, bg) =>
-      JSON.stringify({
-        bg,
-        // eslint-disable-next-line no-unused-vars
-        layers: lyrs.map(({ paramsCache, ...rest }) => rest),
-      }),
-    []
-  );
-
-  // Snapshot an explicit just-loaded/just-saved state as the clean baseline.
-  // Takes the values directly (not React state) so it's correct even when
-  // called in the same tick as the setState that applied them.
-  const markCleanFrom = useCallback(
-    (lyrs, bg) => {
-      cleanRef.current = serializeState(lyrs, bg);
-    },
-    [serializeState]
-  );
-
-  const isDirty = useCallback(() => {
-    if (cleanRef.current === null) return true;
-    return serializeState(layers, bgColor) !== cleanRef.current;
-  }, [serializeState, layers, bgColor]);
-
-  // First-run baseline: only when there's no share token and no stored work do
-  // the pristine defaults count as clean. Otherwise cleanRef stays null (dirty)
-  // until an explicit load/save sets it. Runs once.
-  useEffect(() => {
-    const token = readShareTokenFromUrl();
-    // Only persisted work counts as restored: guests don't write localStorage
-    // (persistToLocal === limits.localStorage), so any stale value there isn't
-    // the current canvas and shouldn't trigger a false "unsaved" prompt.
-    let hadStored = false;
-    if (limits.localStorage) {
-      try {
-        hadStored = !!localStorage.getItem("sonoform-layers");
-      } catch {
-        /* storage unavailable */
-      }
-    }
-    if (!token && !hadStored) markCleanFrom(layers, bgColor);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // On mount, if the URL carries a ?s=<share-token>, hydrate state from it.
-  // Intentionally runs once; strips the param so refresh doesn't re-apply.
-  useEffect(() => {
-    const token = readShareTokenFromUrl();
-    if (!token) return;
-    const state = decodeShare(token);
-    if (!state) return;
-    if (Array.isArray(state.layers) && state.layers.length > 0) loadLayerSet(state.layers);
-    if (typeof state.canvasW === 'number') setCanvasW(state.canvasW);
-    if (typeof state.canvasH === 'number') setCanvasH(state.canvasH);
-    if (typeof state.presetIndex === 'number') setPresetIndex(state.presetIndex);
-    if (typeof state.unit === 'string' && VALID_UNITS.includes(state.unit)) setUnit(state.unit);
-    if (typeof state.margin === 'number') setMargin(state.margin);
-    if (typeof state.bgColor === 'string') setBgColor(state.bgColor);
-    // The shared design is the clean baseline once hydrated.
-    markCleanFrom(
-      Array.isArray(state.layers) ? state.layers : layers,
-      typeof state.bgColor === 'string' ? state.bgColor : bgColor
-    );
-    clearShareTokenFromUrl();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
   const { groups, saveGroup, deleteGroup, renameGroup } = useLayerGroups();
   const patternInstancesRef = useRef({});
   const canvasContainerRef = useRef(null);
-  const [showLoadModal, setShowLoadModal] = useState(false);
-  const [showCloudModal, setShowCloudModal] = useState(false);
-  const [showSaveDialog, setShowSaveDialog] = useState(false);
-  const [saveName, setSaveName] = useState("");
-  const [currentDesignId, setCurrentDesignId] = useState(null);
-  const [showExamples, setShowExamples] = useState(false);
-  // Example awaiting confirmation when the canvas has unsaved work.
-  const [pendingExample, setPendingExample] = useState(null);
-  const [aiChatOpen, setAiChatOpen] = useState(false);
-  const [aiChatMode, setAiChatMode] = useState("create");
-  const [aiChatLayer, setAiChatLayer] = useState(null);
+  const [livePatternInstances, setLivePatternInstances] = useState({});
 
-  // Load user's previously generated AI patterns on sign-in
-  // useEffect(() => {
-  //   if (user !== null || user !== undefined) {
-  //     loadUserAIPatterns(user.id).catch(console.error);
-  //   }
-  // }, []);
-  //TODO: uncomment this when we have a way to load user's previously generated AI patterns
+  // === Dirty-tracking + share-link hydration ===
+  const { markCleanFrom, isDirty } = useDesignPersistence({
+    layers,
+    bgColor,
+    loadLayerSet,
+    setBgColor,
+    setCanvasW,
+    setCanvasH,
+    setPresetIndex,
+    setUnit,
+    setMargin,
+    persistToLocal: limits.localStorage,
+  });
+
+  // === Cloud save/load ===
+  const {
+    setCurrentDesignId,
+    handleSaveToCloud,
+    handleLoadCloudDesign,
+  } = useCloudPersistence({
+    user,
+    limits,
+    layers,
+    canvasW,
+    canvasH,
+    presetIndex,
+    bgColor,
+    loadLayerSet,
+    applyCanvasSize,
+    markCleanFrom,
+    canvasContainerRef,
+  });
 
   const handleOpenAIChat = (layer) => {
     if (layer?.patternType?.startsWith("ai-")) {
-      setAiChatMode("revise");
-      setAiChatLayer(layer);
+      setUI("aiChatMode", "revise");
+      setUI("aiChatLayer", layer);
     } else {
-      setAiChatMode("create");
-      setAiChatLayer(layer || null);
+      setUI("aiChatMode", "create");
+      setUI("aiChatLayer", layer || null);
     }
-    setAiChatOpen(true);
+    setUI("aiChatOpen", true);
   };
 
   const handleAIPatternGenerated = (patternId, defaultParams) => {
@@ -252,47 +153,16 @@ export default function Studio() {
     }
   };
 
-  const handlePresetChange = (index) => {
-    setPresetIndex(index);
-    const preset = PRESET_SIZES[index];
-    if (preset.width !== null) {
-      setCanvasW(preset.width * PPI);
-      setCanvasH(preset.height * PPI);
-    }
-  };
-
-  const handleCustomChange = (w, h) => {
-    setCanvasW(Math.round(w));
-    setCanvasH(Math.round(h));
-  };
-
-  // Build the pipeline opts used by the export — only "applied" tolerances flow through.
-  const appliedOptimizations = {
-    simplify: {
-      enabled: optimizations.simplify.enabled,
-      tolerance: optimizations.simplify.appliedTolerance ?? 0,
-    },
-    merge: {
-      enabled: optimizations.merge.enabled,
-      tolerance: optimizations.merge.appliedTolerance ?? 0,
-    },
-    reorder: { enabled: optimizations.reorder.enabled },
-  };
-  const appliedOpsList = [
-    appliedOptimizations.simplify.enabled ? `simplify(${appliedOptimizations.simplify.tolerance}mm)` : null,
-    appliedOptimizations.merge.enabled    ? `merge(${appliedOptimizations.merge.tolerance}mm)`       : null,
-    appliedOptimizations.reorder.enabled  ? 'reorder'                                                : null,
-  ].filter(Boolean);
-
-  const buildExportManifest = () => buildManifest({
-    version: '1',
-    outputMode,
-    bedW: (canvasW / 96 * 25.4).toFixed(1),
-    bedH: (canvasH / 96 * 25.4).toFixed(1),
-    bedUnit: 'mm',
-    layers,
-    optimizations: appliedOpsList,
-  });
+  const buildExportManifest = () =>
+    buildManifest({
+      version: "1",
+      outputMode,
+      bedW: bedWmm,
+      bedH: bedHmm,
+      bedUnit: "mm",
+      layers,
+      optimizations: appliedOpsList,
+    });
 
   const handleExportLayer = (layerId) => {
     const layer = layers.find((l) => l.id === layerId);
@@ -324,8 +194,8 @@ export default function Studio() {
   };
 
   const handleSaveLayerGroup = () => {
-    setSaveName("");
-    setShowSaveDialog(true);
+    setUI("saveName", "");
+    setUI("showSaveDialog", true);
   };
 
   const handleConfirmSave = () => {
@@ -341,82 +211,15 @@ export default function Studio() {
     }
     const name = saveName.trim() || "Untitled";
     saveGroup(name, layers, canvasW, canvasH, thumbnail);
-    setShowSaveDialog(false);
+    setUI("showSaveDialog", false);
   };
 
   const handleLoadGroup = (group) => {
     loadLayerSet(group.layers);
     if (group.canvasW && group.canvasH) {
-      setCanvasW(group.canvasW);
-      setCanvasH(group.canvasH);
-      const matchIdx = PRESET_SIZES.findIndex(
-        (p) =>
-          p.width !== null &&
-          p.width * PPI === group.canvasW &&
-          p.height * PPI === group.canvasH
-      );
-      setPresetIndex(matchIdx >= 0 ? matchIdx : PRESET_SIZES.length - 1);
+      applyCanvasSize(group.canvasW, group.canvasH);
     }
     markCleanFrom(group.layers, bgColor);
-  };
-
-  const handleSaveToCloud = async () => {
-    if (!user) return;
-    const container = canvasContainerRef.current;
-    const canvas = container?.querySelector("canvas");
-    let thumbnail = null;
-    if (canvas) {
-      try {
-        thumbnail = canvas.toDataURL("image/jpeg", 0.7);
-      } catch {
-        /* */
-      }
-    }
-    const config = { layers, canvasW, canvasH, presetIndex };
-    try {
-      const design = await saveDesign(
-        user.id,
-        "Untitled",
-        config,
-        thumbnail,
-        currentDesignId
-      );
-      if (design) {
-        setCurrentDesignId(design.id);
-        markCleanFrom(layers, bgColor);
-        // Pro: auto-save history snapshot
-        if (limits.historySnapshots > 0) {
-          saveHistorySnapshot(design.id, user.id, config, thumbnail).catch(
-            () => {}
-          );
-        }
-      }
-    } catch (err) {
-      console.error("Cloud save failed:", err);
-    }
-  };
-
-  const handleLoadCloudDesign = async (designId) => {
-    if (!user) return;
-    try {
-      const design = await loadDesign(designId, user.id);
-      if (!design?.config) return;
-      const { layers: savedLayers, canvasW: cw, canvasH: ch } = design.config;
-      if (savedLayers) loadLayerSet(savedLayers);
-      if (cw && ch) {
-        setCanvasW(cw);
-        setCanvasH(ch);
-        const matchIdx = PRESET_SIZES.findIndex(
-          (p) =>
-            p.width !== null && p.width * PPI === cw && p.height * PPI === ch
-        );
-        setPresetIndex(matchIdx >= 0 ? matchIdx : PRESET_SIZES.length - 1);
-      }
-      setCurrentDesignId(design.id);
-      markCleanFrom(savedLayers || layers, bgColor);
-    } catch (err) {
-      console.error("Cloud load failed:", err);
-    }
   };
 
   // === Examples ===
@@ -431,32 +234,32 @@ export default function Studio() {
       loadLayerSet(cfg.layers);
       if (typeof cfg.bgColor === "string") setBgColor(cfg.bgColor);
       if (cfg.canvasW && cfg.canvasH) {
-        setCanvasW(cfg.canvasW);
-        setCanvasH(cfg.canvasH);
-        const matchIdx = PRESET_SIZES.findIndex(
-          (p) =>
-            p.width !== null &&
-            p.width * PPI === cfg.canvasW &&
-            p.height * PPI === cfg.canvasH
-        );
-        setPresetIndex(matchIdx >= 0 ? matchIdx : PRESET_SIZES.length - 1);
+        applyCanvasSize(cfg.canvasW, cfg.canvasH);
       }
       setCurrentDesignId(null);
       markCleanFrom(cfg.layers, cfg.bgColor ?? bgColor);
-      setActiveTab("design");
-      setShowExamples(false);
-      setPendingExample(null);
+      setUI("activeTab", "design");
+      setUI("showExamples", false);
+      setUI("pendingExample", null);
     },
-    [loadLayerSet, setBgColor, markCleanFrom, bgColor]
+    [
+      loadLayerSet,
+      setBgColor,
+      applyCanvasSize,
+      setCurrentDesignId,
+      markCleanFrom,
+      bgColor,
+      setUI,
+    ]
   );
 
   // Card click: confirm first if there's unsaved work, otherwise load now.
   const handleSelectExample = useCallback(
     (example) => {
-      if (isDirty()) setPendingExample(example);
+      if (isDirty()) setUI("pendingExample", example);
       else applyExample(example);
     },
-    [isDirty, applyExample]
+    [isDirty, applyExample, setUI]
   );
 
   if (loading) {
@@ -492,7 +295,7 @@ export default function Studio() {
       <div className="shrink-0 h-9 bg-paper border-b border-hairline flex items-center px-4 gap-4">
         <span className="text-xs text-ink-soft select-none">Naqsha</span>
         <button
-          onClick={() => setShowExamples((v) => !v)}
+          onClick={() => setUI("showExamples", !showExamples)}
           aria-pressed={showExamples}
           className={`text-xs transition-colors duration-fast ease-out-quart ${
             showExamples ? "text-ink" : "text-ink-soft hover:text-ink"
@@ -504,7 +307,7 @@ export default function Studio() {
           )}
         </button>
         <button
-          onClick={() => setShowLoadModal(true)}
+          onClick={() => setUI("showLoadModal", true)}
           className="text-xs text-ink-soft hover:text-ink transition-colors duration-fast ease-out-quart"
         >
           Load existing
@@ -548,7 +351,7 @@ export default function Studio() {
             onPresetChange={handlePresetChange}
             onCustomChange={handleCustomChange}
             activeTab={activeTab}
-            onTabChange={setActiveTab}
+            onTabChange={(tab) => setUI("activeTab", tab)}
             prepareStale={false}
             prepareConfigured={prepareConfigured}
             outputMode={outputMode}
@@ -573,12 +376,12 @@ export default function Studio() {
             onExportAll={handleExportAll}
             onSaveLayerGroup={handleSaveLayerGroup}
             onSaveToCloud={handleSaveToCloud}
-            onOpenCloudDesigns={() => setShowCloudModal(true)}
+            onOpenCloudDesigns={() => setUI("showCloudModal", true)}
             onOpenAIChat={handleOpenAIChat}
             examplesOpen={showExamples}
             examples={EXAMPLES}
             onSelectExample={handleSelectExample}
-            onCloseExamples={() => setShowExamples(false)}
+            onCloseExamples={() => setUI("showExamples", false)}
           />
         </div>
         {/* Canvas: DOM-second, ordered first on mobile (top). Mobile gets a
@@ -605,7 +408,7 @@ export default function Studio() {
       {showSaveDialog && (
         <div
           className="fixed inset-0 z-50 bg-ink/40 flex items-center justify-center"
-          onClick={() => setShowSaveDialog(false)}
+          onClick={() => setUI("showSaveDialog", false)}
         >
           <div
             className="bg-paper border border-hairline rounded-sm w-80 p-4 space-y-3"
@@ -618,7 +421,7 @@ export default function Studio() {
               className="w-full bg-paper-warm text-ink text-sm px-2.5 py-1.5 rounded-xs border border-hairline outline-none focus:border-violet transition-colors duration-fast ease-out-quart"
               placeholder="Untitled"
               value={saveName}
-              onChange={(e) => setSaveName(e.target.value)}
+              onChange={(e) => setUI("saveName", e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleConfirmSave()}
               autoFocus
             />
@@ -630,7 +433,7 @@ export default function Studio() {
                 Save
               </button>
               <button
-                onClick={() => setShowSaveDialog(false)}
+                onClick={() => setUI("showSaveDialog", false)}
                 className="flex-1 py-1.5 text-sm font-medium rounded-xs bg-paper-warm text-ink-soft hover:bg-muted hover:text-ink transition-colors duration-fast ease-out-quart"
               >
                 Cancel
@@ -647,7 +450,7 @@ export default function Studio() {
           onLoad={handleLoadGroup}
           onDelete={deleteGroup}
           onRename={renameGroup}
-          onClose={() => setShowLoadModal(false)}
+          onClose={() => setUI("showLoadModal", false)}
         />
       )}
 
@@ -657,21 +460,11 @@ export default function Studio() {
           onLoadConfig={(config) => {
             if (config.layers) loadLayerSet(config.layers);
             if (config.canvasW && config.canvasH) {
-              setCanvasW(config.canvasW);
-              setCanvasH(config.canvasH);
-              const matchIdx = PRESET_SIZES.findIndex(
-                (p) =>
-                  p.width !== null &&
-                  p.width * PPI === config.canvasW &&
-                  p.height * PPI === config.canvasH
-              );
-              setPresetIndex(
-                matchIdx >= 0 ? matchIdx : PRESET_SIZES.length - 1
-              );
+              applyCanvasSize(config.canvasW, config.canvasH);
             }
             markCleanFrom(config.layers || layers, bgColor);
           }}
-          onClose={() => setShowCloudModal(false)}
+          onClose={() => setUI("showCloudModal", false)}
         />
       )}
 
@@ -683,7 +476,7 @@ export default function Studio() {
           }
           existingName={aiChatLayer?.name}
           onPatternGenerated={handleAIPatternGenerated}
-          onClose={() => setAiChatOpen(false)}
+          onClose={() => setUI("aiChatOpen", false)}
         />
       )}
 
@@ -694,7 +487,7 @@ export default function Studio() {
         confirmLabel="Load example"
         cancelLabel="Cancel"
         onConfirm={() => applyExample(pendingExample)}
-        onCancel={() => setPendingExample(null)}
+        onCancel={() => setUI("pendingExample", null)}
       />
     </div>
   );

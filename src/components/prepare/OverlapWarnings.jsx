@@ -1,11 +1,12 @@
 import { useMemo } from 'react';
-import { extractRenderedPaths } from '../../lib/plotter/pipeline';
+import { buildPlottableLayers } from '../../lib/plotter/fabricationPipeline';
 import { countOverlaps } from '../../lib/plotter/overlapCheck';
 
-// Collects paths from all visible layers (post-applied-optimizations) and
-// reports how tangled the plot is. Intersections are summed across layers —
-// real plotter / laser output traverses each layer sequentially, so
-// within-layer overlaps are the ones worth flagging.
+// Collects paths from all visible layers via the canonical fabrication pipeline
+// (post-transform → post-symmetry; this component has no `optimizations` prop, so
+// it runs pre-optimize — overlaps are reported on the un-optimized geometry).
+// Intersections are summed per layer — real plotter / laser output traverses
+// each layer sequentially, so within-layer overlaps are the ones worth flagging.
 function useOverlapSummary(layers, patternInstances) {
   return useMemo(() => {
     if (!layers || !patternInstances) return null;
@@ -13,20 +14,9 @@ function useOverlapSummary(layers, patternInstances) {
     let totalSegments = 0;
     let truncated = false;
     const samples = [];
-    for (const layer of layers) {
-      if (!layer.visible) continue;
-      const instance = patternInstances[layer.id];
-      if (!instance || typeof instance.toSVGGroup !== 'function') continue;
-      let group;
-      try {
-        group = instance.toSVGGroup(layer.id, layer.color, layer.opacity);
-      } catch {
-        continue;
-      }
-      // Use transformed paths so overlap counts reflect what the plotter
-      // will actually draw — including radial-symmetry copies.
-      const paths = extractRenderedPaths(group);
-      const res = countOverlaps(paths);
+    const plottable = buildPlottableLayers(layers, patternInstances, {});
+    for (const layer of plottable) {
+      const res = countOverlaps(layer.paths);
       totalCount += res.count;
       totalSegments += res.segmentCount;
       if (res.truncated) truncated = true;

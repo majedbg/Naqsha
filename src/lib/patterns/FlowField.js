@@ -1,14 +1,11 @@
-import { applySymmetryDraw, wrapSVGSymmetry } from './symmetryUtils';
+import { applySymmetryDraw } from './symmetryUtils';
+import { Pattern } from './drawingContext';
 
-export default class FlowField {
-  constructor() {
+export default class FlowField extends Pattern {
+  generate(ctx, seed, params, canvasW, canvasH, color, opacity) {
     this.svgElements = [];
-  }
-
-  generate(p, seed, params, canvasW, canvasH, color, opacity) {
-    this.svgElements = [];
-    p.noiseSeed(seed);
-    p.randomSeed(seed);
+    ctx.noiseSeed(seed);
+    ctx.randomSeed(seed);
 
     const {
       particleCount = 800,
@@ -34,8 +31,8 @@ export default class FlowField {
 
     for (let i = 0; i < particleCount; i++) {
       // Positions relative to center (-halfW..halfW, -halfH..halfH)
-      let x = p.random(-halfW, halfW);
-      let y = p.random(-halfH, halfH);
+      let x = ctx.random(-halfW, halfW);
+      let y = ctx.random(-halfH, halfH);
 
       const points = [{ x, y }];
 
@@ -43,7 +40,7 @@ export default class FlowField {
         // Noise lookup uses absolute position (offset to positive range)
         const absX = x + cx;
         const absY = y + cy;
-        const angle = p.noise(absX * noiseScale, absY * noiseScale) * curlStrength * (Math.PI / 180) * 4;
+        const angle = ctx.noise(absX * noiseScale, absY * noiseScale) * curlStrength * (Math.PI / 180) * 4;
 
         x += Math.cos(angle) * stepLength;
         y += Math.sin(angle) * stepLength;
@@ -70,51 +67,32 @@ export default class FlowField {
       this.svgElements.push({ pathD, strokeWeight });
     }
 
-    // Draw on p5 canvas
+    // Draw on canvas
     const drawBase = () => {
-      p.noFill();
-      const c = p.color(color);
+      ctx.noFill();
+      const c = ctx.color(color);
       c.setAlpha(Math.round((opacity / 100) * 255));
-      p.stroke(c);
-      p.strokeWeight(strokeWeight);
+      ctx.stroke(c);
+      ctx.strokeWeight(strokeWeight);
 
       for (const trail of trails) {
-        p.beginShape();
+        ctx.beginShape();
         for (const pt of trail) {
-          p.vertex(pt.x, pt.y);
+          ctx.vertex(pt.x, pt.y);
         }
-        p.endShape();
+        ctx.endShape();
       }
     };
 
-    applySymmetryDraw(p, symmetry, cx, cy, drawBase, startAngle * Math.PI / 180, offsetX, offsetY);
+    applySymmetryDraw(ctx, symmetry, cx, cy, drawBase, startAngle * Math.PI / 180, offsetX, offsetY);
   }
 
-  toSVGGroup(layerId, color, opacity) {
-    const paths = this.svgElements
+  contentFor(color) {
+    return this.svgElements
       .map(
         (el) =>
           `    <path d="${el.pathD}" stroke="${color}" fill="none" stroke-width="${el.strokeWeight}" stroke-linecap="round"/>`
       )
       .join('\n');
-    return wrapSVGSymmetry(
-      layerId,
-      color,
-      opacity,
-      paths,
-      this._lastParams?.symmetry || 'none',
-      this._lastCx,
-      this._lastCy,
-      this._lastParams?.startAngle || 0,
-      this._lastParams?.offsetX || 0,
-      this._lastParams?.offsetY || 0
-    );
-  }
-
-  generateWithContext(p, seed, params, canvasW, canvasH, color, opacity) {
-    this._lastParams = params;
-    this._lastCx = canvasW / 2;
-    this._lastCy = canvasH / 2;
-    this.generate(p, seed, params, canvasW, canvasH, color, opacity);
   }
 }

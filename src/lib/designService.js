@@ -108,6 +108,29 @@ export async function loadSharedDesign(token) {
   return data;
 }
 
+export async function loadDesignHistory(designId) {
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from('design_history')
+    .select('id, thumbnail, created_at')
+    .eq('design_id', designId)
+    .order('created_at', { ascending: false })
+    .limit(50);
+  if (error) throw error;
+  return data || [];
+}
+
+export async function loadHistorySnapshot(snapshotId) {
+  if (!supabase) return null;
+  const { data, error } = await supabase
+    .from('design_history')
+    .select('config')
+    .eq('id', snapshotId)
+    .single();
+  if (error) throw error;
+  return data?.config ?? null;
+}
+
 export async function saveHistorySnapshot(designId, userId, config, thumbnail) {
   if (!supabase) return;
   // Insert snapshot

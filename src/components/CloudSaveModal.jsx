@@ -1,9 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../lib/AuthContext';
 import { useGate } from '../lib/useGate';
-import { loadUserDesigns, deleteDesign } from '../lib/designService';
+import { loadUserDesigns, deleteDesign, loadDesignHistory, loadHistorySnapshot as fetchHistorySnapshot } from '../lib/designService';
 import { loadCollections, createCollection, deleteCollection, loadCollectionDesigns } from '../lib/collectionService';
-import { supabase } from '../lib/supabase';
 
 export default function CloudSaveModal({ onLoad, onLoadConfig, onClose }) {
   const { user } = useAuth();
@@ -53,14 +52,8 @@ export default function CloudSaveModal({ onLoad, onLoadConfig, onClose }) {
     setHistoryDesignId(designId);
     setHistoryLoading(true);
     try {
-      if (!supabase) return;
-      const { data } = await supabase
-        .from('design_history')
-        .select('id, thumbnail, created_at')
-        .eq('design_id', designId)
-        .order('created_at', { ascending: false })
-        .limit(50);
-      setHistoryItems(data || []);
+      const items = await loadDesignHistory(designId);
+      setHistoryItems(items);
     } catch (err) {
       console.error('Failed to load history:', err);
       setHistoryItems([]);
@@ -68,16 +61,12 @@ export default function CloudSaveModal({ onLoad, onLoadConfig, onClose }) {
     setHistoryLoading(false);
   };
 
-  const loadHistorySnapshot = async (snapshotId) => {
-    if (!supabase || !onLoadConfig) return;
+  const handleLoadHistorySnapshot = async (snapshotId) => {
+    if (!onLoadConfig) return;
     try {
-      const { data } = await supabase
-        .from('design_history')
-        .select('config')
-        .eq('id', snapshotId)
-        .single();
-      if (data?.config) {
-        onLoadConfig(data.config);
+      const config = await fetchHistorySnapshot(snapshotId);
+      if (config) {
+        onLoadConfig(config);
         onClose();
       }
     } catch (err) {
@@ -106,7 +95,7 @@ export default function CloudSaveModal({ onLoad, onLoadConfig, onClose }) {
 
   const handleDeleteCollection = async (colId) => {
     try {
-      await deleteCollection(colId);
+      await deleteCollection(colId, user?.id);
       setCollections((prev) => prev.filter((c) => c.id !== colId));
       if (selectedCollection?.id === colId) {
         setSelectedCollection(null);
@@ -282,7 +271,7 @@ export default function CloudSaveModal({ onLoad, onLoadConfig, onClose }) {
                             {historyItems.map((snap) => (
                               <button
                                 key={snap.id}
-                                onClick={(e) => { e.stopPropagation(); loadHistorySnapshot(snap.id); }}
+                                onClick={(e) => { e.stopPropagation(); handleLoadHistorySnapshot(snap.id); }}
                                 className="w-full flex items-center gap-2 py-0.5 hover:bg-muted rounded px-1 transition-colors"
                               >
                                 {snap.thumbnail && (

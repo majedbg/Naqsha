@@ -30,7 +30,8 @@ function maybeOptimize(rawGroup, optimizations) {
   }
 }
 
-function downloadSVG(svgString, filename) {
+// DOM side-effect, isolated so the SVG-string builders stay pure/node-testable.
+export function downloadSVG(svgString, filename) {
   const blob = new Blob([svgString], { type: 'image/svg+xml' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -66,19 +67,23 @@ function buildMeta({ metadata, manifest }) {
   return parts.length ? `\n  ${parts.join('\n  ')}` : '';
 }
 
-export function exportLayerSVG(layer, patternInstance, canvasW, canvasH, { metadata = false, manifest, filename, optimizations } = {}) {
+// --- Pure SVG-string builders (no DOM, node-testable). ---------------------
+// The produced strings are byte-identical to what the exporters emitted before
+// this split; the only change is that the Blob/download side-effect now lives
+// in the separate `downloadSVG`.
+
+export function buildLayerSVG(layer, patternInstance, canvasW, canvasH, { metadata = false, manifest, optimizations } = {}) {
   const bgRect = layerBgRect(layer, canvasW, canvasH);
   const rawGroup = patternInstance.toSVGGroup(layer.id, layer.color, layer.opacity);
   const group = maybeOptimize(rawGroup, optimizations);
   const meta = buildMeta({ metadata, manifest });
-  const svg = `${svgOpen(canvasW, canvasH, meta)}
+  return `${svgOpen(canvasW, canvasH, meta)}
   <rect width="100%" height="100%" fill="white"/>
 ${bgRect ? `  ${bgRect}\n` : ''}  ${group}
 </svg>`;
-  downloadSVG(svg, filename || `${layer.name.replace(/\s+/g, '_')}.svg`);
 }
 
-export function exportAllLayersSVG(layers, patternInstances, canvasW, canvasH, includeHidden = false, { metadata = false, manifest, filename, optimizations } = {}) {
+export function buildAllLayersSVG(layers, patternInstances, canvasW, canvasH, includeHidden = false, { metadata = false, manifest, optimizations } = {}) {
   // Reverse so bottom layers come first in SVG (matching visual order)
   const ordered = [...layers].reverse();
   const groups = ordered
@@ -93,11 +98,22 @@ export function exportAllLayersSVG(layers, patternInstances, canvasW, canvasH, i
     })
     .join('\n  ');
   const meta = buildMeta({ metadata, manifest });
-  const svg = `${svgOpen(canvasW, canvasH, meta)}
+  return `${svgOpen(canvasW, canvasH, meta)}
   <rect width="100%" height="100%" fill="white"/>
   ${groups}
 </svg>`;
-  downloadSVG(svg, filename || 'generative-art-all-layers.svg');
+}
+
+// --- Export wrappers: build pure string, then download (DOM side-effect). ---
+
+export function exportLayerSVG(layer, patternInstance, canvasW, canvasH, opts = {}) {
+  const svg = buildLayerSVG(layer, patternInstance, canvasW, canvasH, opts);
+  downloadSVG(svg, opts.filename || `${layer.name.replace(/\s+/g, '_')}.svg`);
+}
+
+export function exportAllLayersSVG(layers, patternInstances, canvasW, canvasH, includeHidden = false, opts = {}) {
+  const svg = buildAllLayersSVG(layers, patternInstances, canvasW, canvasH, includeHidden, opts);
+  downloadSVG(svg, opts.filename || 'generative-art-all-layers.svg');
 }
 
 // Build a deterministic-ish manifest string for embedding in exported SVGs.

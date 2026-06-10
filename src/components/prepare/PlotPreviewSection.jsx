@@ -1,69 +1,37 @@
 import { useMemo, useState, useEffect, useRef } from 'react';
-import { extractRenderedPaths, optimizeGroup, formatSeconds } from '../../lib/plotter/pipeline';
+import { formatSeconds } from '../../lib/plotter/pipeline';
 import { pxToMm } from '../../lib/plotter/pathOps';
+import { DRAW_SPEED, TRAVEL_SPEED } from '../../lib/plotter/constants';
+import {
+  buildPlottableLayers,
+  buildRouteFromLayers,
+  aggregateStats,
+} from '../../lib/plotter/fabricationPipeline';
 
-// Pen speeds in mm/s — loosely match AxiDraw V3 factory tuning.
-const DRAW_SPEED = 200;
-const TRAVEL_SPEED = 500;
-
-// Given a layers-array and pattern instances, build a flat ordered route:
-//   [{ type: 'travel'|'draw', from: [x,y], to: [x,y], color }]
-// The order mirrors the export order (bottom-up reverse + optimizations).
-function buildRoute(layers, patternInstances, appliedOptimizations) {
-  const route = [];
-  if (!layers || !patternInstances) return route;
-  const ordered = [...layers].reverse().filter((l) => l.visible);
-  let cursor = [0, 0];
-  for (const layer of ordered) {
-    const instance = patternInstances[layer.id];
-    if (!instance || typeof instance.toSVGGroup !== 'function') continue;
-    let raw;
-    try {
-      raw = instance.toSVGGroup(layer.id, layer.color, layer.opacity);
-    } catch {
-      continue;
-    }
-    // Apply the same optimizations the export will run so the preview
-    // matches what the machine actually receives.
-    const groupSvg = appliedOptimizations
-      ? optimizeGroup(raw, appliedOptimizations).svg
-      : raw;
-    // extractRenderedPaths composes <g transform="..."> with each <path>,
-    // so the polylines come out in viewBox coordinates and symmetry copies
-    // are already materialized — exactly what the plotter will draw.
-    const paths = extractRenderedPaths(groupSvg);
-    for (const p of paths) {
-      if (!p.points || p.points.length < 2) continue;
-      // Travel to the first point (pen-up)
-      route.push({ type: 'travel', from: cursor, to: p.points[0], color: layer.color });
-      // Draw each segment (pen-down)
-      for (let i = 1; i < p.points.length; i++) {
-        route.push({
-          type: 'draw',
-          from: p.points[i - 1],
-          to: p.points[i],
-          color: layer.color,
-        });
-      }
-      cursor = p.points[p.points.length - 1];
-    }
-  }
-  return route;
-}
-
-function routeTiming(route) {
-  let drawPx = 0;
-  let travelPx = 0;
+// Walk the flat route once to compute cumulative distance for the scrubber.
+// The headline draw/travel/seconds figures come from the canonical per-layer
+// `aggregateStats` (the basis OptimizeSection shares) — passed in so they stay
+// consistent. NOTE the intentional basis split: `totalPx` is route-based (it
+// includes the origin→first-point hop and per-layer-boundary pen-ups the
+// scrubber actually animates), while drawMm/travelMm/seconds are the per-layer
+// canonical aggregate. They differ by those boundary hops — the scrubber's
+// distance readout is therefore slightly larger than drawMm+travelMm, by design,
+// so plot timing stays equal to the Optimize stats.
+function routeTiming(route, agg) {
   const cumulative = new Float64Array(route.length + 1);
   for (let i = 0; i < route.length; i++) {
     const seg = route[i];
     const d = Math.hypot(seg.to[0] - seg.from[0], seg.to[1] - seg.from[1]);
-    if (seg.type === 'draw') drawPx += d; else travelPx += d;
     cumulative[i + 1] = cumulative[i] + d;
   }
   const totalPx = cumulative[cumulative.length - 1];
-  const seconds = pxToMm(drawPx) / DRAW_SPEED + pxToMm(travelPx) / TRAVEL_SPEED;
-  return { cumulative, totalPx, drawMm: pxToMm(drawPx), travelMm: pxToMm(travelPx), seconds };
+  return {
+    cumulative,
+    totalPx,
+    drawMm: agg.drawMm,
+    travelMm: agg.travelMm,
+    seconds: agg.seconds,
+  };
 }
 
 const SPEEDS = [
@@ -86,11 +54,15 @@ export default function PlotPreviewSection({
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(16);
 
-  const route = useMemo(
-    () => buildRoute(layers, patternInstances, appliedOptimizations),
+  // One canonical extraction → route geometry + headline stats both derive from
+  // it, so the plot-preview timing agrees with the Optimize stats by construction.
+  const plottable = useMemo(
+    () => buildPlottableLayers(layers, patternInstances, { optimizations: appliedOptimizations }),
     [layers, patternInstances, appliedOptimizations]
   );
-  const timing = useMemo(() => routeTiming(route), [route]);
+  const route = useMemo(() => buildRouteFromLayers(plottable), [plottable]);
+  const agg = useMemo(() => aggregateStats(plottable), [plottable]);
+  const timing = useMemo(() => routeTiming(route, agg), [route, agg]);
 
   // RAF animation loop — only runs while playing
   const rafRef = useRef(0);

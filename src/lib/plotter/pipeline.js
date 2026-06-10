@@ -147,19 +147,6 @@ function emptyStats() {
   return { paths: 0, points: 0, drawMm: 0, travelMm: 0, seconds: 0 };
 }
 
-// Utility — does one optimization at a time, so the UI can show isolated
-// before/after stats per control. The `only` flag lets us pretend the other
-// optimizations aren't enabled, even if they are in the global opts.
-export function previewOne(svgGroup, only, opts) {
-  const isolated = {
-    simplify: { enabled: false },
-    merge:    { enabled: false },
-    reorder:  { enabled: false },
-  };
-  isolated[only] = { ...opts[only], enabled: true };
-  return optimizeGroup(svgGroup, isolated);
-}
-
 // Walk the inner structure of a layer `<g id="layer-...">` group and return
 // a flat list of polylines already transformed into the outer viewBox
 // coordinate space. For designs with radial symmetry the single inner path

@@ -1,13 +1,6 @@
-import { applySymmetryDraw, wrapSVGSymmetry } from './symmetryUtils';
-
-function mulberry32(seed) {
-  return function () {
-    seed |= 0; seed = seed + 0x6D2B79F5 | 0;
-    let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
-    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
-    return ((t ^ t >>> 14) >>> 0) / 4294967296;
-  };
-}
+import { applySymmetryDraw } from './symmetryUtils';
+import { Pattern } from './drawingContext';
+import { mulberry32 } from './rng';
 
 const TWO_PI = Math.PI * 2;
 
@@ -24,12 +17,8 @@ function angleInArc(theta, start, end) {
   return theta >= start || theta <= end;
 }
 
-export default class Duality {
-  constructor() {
-    this.svgElements = [];
-  }
-
-  generate(p, seed, params, canvasW, canvasH, color, opacity) {
+export default class Duality extends Pattern {
+  generate(ctx, seed, params, canvasW, canvasH, color, opacity) {
     const {
       innerRadius: innerR = 15, outerRadius: outerR = 450,
       spiralTurns = 8, spiralGrowth = 1.0,
@@ -291,43 +280,25 @@ export default class Duality {
     }
 
     // ============================================================
-    // p5 canvas drawing
+    // canvas drawing
     // ============================================================
     const drawBase = () => {
       const alpha = Math.round((opacity / 100) * 255);
-      p.noFill();
+      ctx.noFill();
 
-      const dc = p.color(color);
+      const dc = ctx.color(color);
       dc.setAlpha(alpha);
-      p.stroke(dc);
-      p.strokeWeight(dashStrokeWeight);
-      for (const l of dashLines) p.line(l.x1, l.y1, l.x2, l.y2);
+      ctx.stroke(dc);
+      ctx.strokeWeight(dashStrokeWeight);
+      for (const l of dashLines) ctx.line(l.x1, l.y1, l.x2, l.y2);
 
-      const ac = p.color(color);
+      const ac = ctx.color(color);
       ac.setAlpha(alpha);
-      p.stroke(ac);
-      p.strokeWeight(arcStrokeWeight);
-      for (const l of arcLines) p.line(l.x1, l.y1, l.x2, l.y2);
+      ctx.stroke(ac);
+      ctx.strokeWeight(arcStrokeWeight);
+      for (const l of arcLines) ctx.line(l.x1, l.y1, l.x2, l.y2);
     };
 
-    applySymmetryDraw(p, symmetry, cx, cy, drawBase, startAngle * Math.PI / 180, offsetX, offsetY);
-  }
-
-  toSVGGroup(layerId, color, opacity) {
-    const content = this.svgElements.map((el) => `    ${el}`).join('\n');
-    return wrapSVGSymmetry(
-      layerId, color, opacity, content,
-      this._lastParams?.symmetry || 1, this._lastCx, this._lastCy,
-      this._lastParams?.startAngle || 0,
-      this._lastParams?.offsetX || 0,
-      this._lastParams?.offsetY || 0
-    );
-  }
-
-  generateWithContext(p, seed, params, canvasW, canvasH, color, opacity) {
-    this._lastParams = params;
-    this._lastCx = canvasW / 2;
-    this._lastCy = canvasH / 2;
-    this.generate(p, seed, params, canvasW, canvasH, color, opacity);
+    applySymmetryDraw(ctx, symmetry, cx, cy, drawBase, startAngle * Math.PI / 180, offsetX, offsetY);
   }
 }

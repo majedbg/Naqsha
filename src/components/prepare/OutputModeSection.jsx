@@ -1,4 +1,4 @@
-import { OUTPUT_MODES, LASER_ROLES, MAX_PEN_SLOTS } from '../../lib/fabrication';
+import { OUTPUT_MODES, LASER_ROLES, MAX_PEN_SLOTS, roleColor } from '../../lib/fabrication';
 
 function RoleIcon({ icon }) {
   const size = 12;
@@ -96,7 +96,7 @@ export default function OutputModeSection({ outputMode, onOutputModeChange, laye
                 style={{
                   backgroundColor:
                     outputMode === 'laser'
-                      ? (LASER_ROLES.find((r) => r.value === layer.role)?.color ?? '#000')
+                      ? roleColor(layer.role)
                       : layer.color,
                 }}
                 aria-hidden="true"

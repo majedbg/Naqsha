@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
-import { previewOne, formatSeconds } from '../../lib/plotter/pipeline';
+import { formatSeconds } from '../../lib/plotter/pipeline';
+import { buildPlottableLayers, aggregateStats } from '../../lib/plotter/fabricationPipeline';
 import CommitSlider from '../ui/CommitSlider';
 
 // State chip shown per optimization control.
@@ -34,40 +35,26 @@ function StateChip({ state }) {
   );
 }
 
-// Aggregates stats by iterating visible layers and calling previewOne per layer.
-// Uses useMemo so it only recomputes when its inputs change.
+// Isolated before/after stats for ONE optimization control, derived from the
+// canonical fabrication pipeline (post-transform → post-symmetry). `before` is
+// the un-optimized canonical extraction; `after` applies only the `only`
+// optimization. Because both go through `buildPlottableLayers`, these numbers
+// share the exact coordinate space the overlap check and plot preview use.
 function usePreviewStats(layers, patternInstances, only, opts) {
   return useMemo(() => {
     if (!layers || !patternInstances) return null;
-    let before = { paths: 0, points: 0, drawMm: 0, travelMm: 0, seconds: 0 };
-    let after = before;
-    for (const layer of layers) {
-      if (!layer.visible) continue;
-      const instance = patternInstances[layer.id];
-      if (!instance || typeof instance.toSVGGroup !== 'function') continue;
-      let group;
-      try {
-        group = instance.toSVGGroup(layer.id, layer.color, layer.opacity);
-      } catch {
-        continue;
-      }
-      const { stats } = previewOne(group, only, opts);
-      before = addStats(before, stats.before);
-      after = addStats(after, stats.after);
-    }
+    const isolated = {
+      simplify: only === 'simplify' ? { ...opts.simplify, enabled: true } : { enabled: false },
+      merge:    only === 'merge'    ? { ...opts.merge,    enabled: true } : { enabled: false },
+      reorder:  only === 'reorder'  ? { enabled: true } : { enabled: false },
+    };
+    const before = aggregateStats(buildPlottableLayers(layers, patternInstances, {}));
+    const after = aggregateStats(
+      buildPlottableLayers(layers, patternInstances, { optimizations: isolated })
+    );
     return { before, after };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [layers, patternInstances, only, opts.simplify?.tolerance, opts.simplify?.enabled, opts.merge?.tolerance, opts.merge?.enabled, opts.reorder?.enabled]);
-}
-
-function addStats(a, b) {
-  return {
-    paths:    a.paths    + b.paths,
-    points:   a.points   + b.points,
-    drawMm:   a.drawMm   + b.drawMm,
-    travelMm: a.travelMm + b.travelMm,
-    seconds:  a.seconds  + b.seconds,
-  };
 }
 
 function StatRow({ before, after, unitBefore = '', unitAfter = '' }) {

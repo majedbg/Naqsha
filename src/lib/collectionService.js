@@ -22,21 +22,25 @@ export async function createCollection(userId, name, description = '') {
   return data;
 }
 
-export async function deleteCollection(collectionId) {
+export async function deleteCollection(collectionId, userId) {
   if (!supabase) return;
-  const { error } = await supabase
+  let query = supabase
     .from('collections')
     .delete()
     .eq('id', collectionId);
+  if (userId !== undefined) query = query.eq('user_id', userId);
+  const { error } = await query;
   if (error) throw error;
 }
 
-export async function renameCollection(collectionId, name) {
+export async function renameCollection(collectionId, name, userId) {
   if (!supabase) return;
-  const { error } = await supabase
+  let query = supabase
     .from('collections')
     .update({ name })
     .eq('id', collectionId);
+  if (userId !== undefined) query = query.eq('user_id', userId);
+  const { error } = await query;
   if (error) throw error;
 }
 

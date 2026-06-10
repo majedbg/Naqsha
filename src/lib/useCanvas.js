@@ -1,6 +1,7 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 import p5 from 'p5';
 import { getDynamicPatternClass } from './patternRegistry';
+import { P5Adapter } from './patterns/drawingContext';
 import Spirograph from './patterns/Spirograph';
 import FlowField from './patterns/FlowField';
 import Phyllotaxis from './patterns/Phyllotaxis';
@@ -47,6 +48,12 @@ export default function useCanvas(containerRef, layers, canvasW, canvasH, bgColo
     p.clear();
     p.background(bgColor);
 
+    // Adapters over the live p5 instance: draw-mode for visible layers,
+    // no-draw for hidden layers (RNG/color still delegate to p5, draw calls
+    // are no-ops). Replaces the old leaky createOffscreenProxy.
+    const drawCtx = new P5Adapter(p, { draw: true });
+    const noDrawCtx = new P5Adapter(p, { draw: false });
+
     const newInstances = {};
     // Render bottom-to-top: last layer in array is bottom, first is top (front)
     // We iterate in reverse so bottom layers paint first
@@ -58,9 +65,9 @@ export default function useCanvas(containerRef, layers, canvasW, canvasH, bgColo
       newInstances[layer.id] = instance;
 
       if (!layer.visible) {
-        // Still generate for SVG export, but don't draw
+        // Still generate for SVG export, but don't draw to canvas
         instance.generateWithContext(
-          { ...createOffscreenProxy(p) },
+          noDrawCtx,
           layer.seed,
           layer.params,
           canvasW,
@@ -81,7 +88,7 @@ export default function useCanvas(containerRef, layers, canvasW, canvasH, bgColo
         p.rect(0, 0, canvasW, canvasH);
       }
 
-      instance.generateWithContext(p, layer.seed, layer.params, canvasW, canvasH, layer.color, layer.opacity);
+      instance.generateWithContext(drawCtx, layer.seed, layer.params, canvasW, canvasH, layer.color, layer.opacity);
     }
     instancesRef.current = newInstances;
     setPatternInstances(newInstances);
@@ -136,35 +143,4 @@ export default function useCanvas(containerRef, layers, canvasW, canvasH, bgColo
   }, [layers, canvasW, canvasH, bgColor, renderAll]);
 
   return { patternInstances };
-}
-
-// Create a proxy that captures generate calls but doesn't draw to canvas
-function createOffscreenProxy(realP5) {
-  return {
-    randomSeed: (s) => realP5.randomSeed(s),
-    noiseSeed: (s) => realP5.noiseSeed(s),
-    random: (...args) => realP5.random(...args),
-    noise: (...args) => realP5.noise(...args),
-    TWO_PI: Math.PI * 2,
-    PI: Math.PI,
-    HALF_PI: Math.PI / 2,
-    push: () => {},
-    pop: () => {},
-    translate: () => {},
-    rotate: () => {},
-    scale: () => {},
-    stroke: () => {},
-    noStroke: () => {},
-    fill: () => {},
-    noFill: () => {},
-    strokeWeight: () => {},
-    beginShape: () => {},
-    endShape: () => {},
-    vertex: () => {},
-    line: () => {},
-    ellipse: () => {},
-    rect: () => {},
-    color: () => ({ setAlpha: () => {} }),
-    CLOSE: 'close',
-  };
 }

@@ -1,14 +1,11 @@
-import { applySymmetryDraw, wrapSVGSymmetry } from './symmetryUtils';
+import { applySymmetryDraw } from './symmetryUtils';
+import { Pattern } from './drawingContext';
 
-export default class Grid {
-  constructor() {
+export default class Grid extends Pattern {
+  generate(ctx, seed, params, canvasW, canvasH, color, opacity) {
     this.svgElements = [];
-  }
-
-  generate(p, seed, params, canvasW, canvasH, color, opacity) {
-    this.svgElements = [];
-    p.randomSeed(seed);
-    p.noiseSeed(seed);
+    ctx.randomSeed(seed);
+    ctx.noiseSeed(seed);
 
     const {
       cols = 12,
@@ -61,8 +58,8 @@ export default class Grid {
     const yPositions = distribute(rows, totalH);
 
     // Add jitter
-    const xJittered = xPositions.map((x) => x + (jitter > 0 ? p.random(-jitter, jitter) : 0));
-    const yJittered = yPositions.map((y) => y + (jitter > 0 ? p.random(-jitter, jitter) : 0));
+    const xJittered = xPositions.map((x) => x + (jitter > 0 ? ctx.random(-jitter, jitter) : 0));
+    const yJittered = yPositions.map((y) => y + (jitter > 0 ? ctx.random(-jitter, jitter) : 0));
 
     const halfW = totalW / 2 + margin;
     const halfH = totalH / 2 + margin;
@@ -90,34 +87,16 @@ export default class Grid {
 
     const drawBase = () => {
       const alpha = Math.round((opacity / 100) * 255);
-      const c = p.color(color);
+      const c = ctx.color(color);
       c.setAlpha(alpha);
-      p.stroke(c);
-      p.strokeWeight(strokeWeight);
-      p.noFill();
+      ctx.stroke(c);
+      ctx.strokeWeight(strokeWeight);
+      ctx.noFill();
       for (const l of lines) {
-        p.line(l.x1, l.y1, l.x2, l.y2);
+        ctx.line(l.x1, l.y1, l.x2, l.y2);
       }
     };
 
-    applySymmetryDraw(p, symmetry, cx, cy, drawBase, startAngle * Math.PI / 180, offsetX, offsetY);
-  }
-
-  toSVGGroup(layerId, color, opacity) {
-    const content = this.svgElements.map((el) => `    ${el}`).join('\n');
-    return wrapSVGSymmetry(
-      layerId, color, opacity, content,
-      this._lastParams?.symmetry || 1, this._lastCx, this._lastCy,
-      this._lastParams?.startAngle || 0,
-      this._lastParams?.offsetX || 0,
-      this._lastParams?.offsetY || 0
-    );
-  }
-
-  generateWithContext(p, seed, params, canvasW, canvasH, color, opacity) {
-    this._lastParams = params;
-    this._lastCx = canvasW / 2;
-    this._lastCy = canvasH / 2;
-    this.generate(p, seed, params, canvasW, canvasH, color, opacity);
+    applySymmetryDraw(ctx, symmetry, cx, cy, drawBase, startAngle * Math.PI / 180, offsetX, offsetY);
   }
 }

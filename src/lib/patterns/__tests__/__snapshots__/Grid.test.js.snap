@@ -1,0 +1,42 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`Grid (headless) > pins the wrapped SVG group output 1`] = `
+"  <g id="layer-L1" opacity="0.80">
+    <g transform="translate(405,295) rotate(15)">
+    <line x1="58.05" y1="-55.00" x2="58.05" y2="55.00" stroke="#112233" stroke-width="0.8" stroke-linecap="butt"/>
+    <line x1="10.86" y1="-55.00" x2="10.86" y2="55.00" stroke="#112233" stroke-width="0.8" stroke-linecap="butt"/>
+    <line x1="1.91" y1="-55.00" x2="1.91" y2="55.00" stroke="#112233" stroke-width="0.8" stroke-linecap="butt"/>
+    <line x1="13.41" y1="-55.00" x2="13.41" y2="55.00" stroke="#112233" stroke-width="0.8" stroke-linecap="butt"/>
+    <line x1="60.09" y1="-55.00" x2="60.09" y2="55.00" stroke="#112233" stroke-width="0.8" stroke-linecap="butt"/>
+    <line x1="-70.00" y1="44.62" x2="70.00" y2="44.62" stroke="#112233" stroke-width="0.8" stroke-linecap="butt"/>
+    <line x1="-70.00" y1="3.66" x2="70.00" y2="3.66" stroke="#112233" stroke-width="0.8" stroke-linecap="butt"/>
+    <line x1="-70.00" y1="2.76" x2="70.00" y2="2.76" stroke="#112233" stroke-width="0.8" stroke-linecap="butt"/>
+    <line x1="-70.00" y1="45.21" x2="70.00" y2="45.21" stroke="#112233" stroke-width="0.8" stroke-linecap="butt"/>
+    </g>
+    <g transform="translate(405,295) rotate(195)">
+    <line x1="58.05" y1="-55.00" x2="58.05" y2="55.00" stroke="#112233" stroke-width="0.8" stroke-linecap="butt"/>
+    <line x1="10.86" y1="-55.00" x2="10.86" y2="55.00" stroke="#112233" stroke-width="0.8" stroke-linecap="butt"/>
+    <line x1="1.91" y1="-55.00" x2="1.91" y2="55.00" stroke="#112233" stroke-width="0.8" stroke-linecap="butt"/>
+    <line x1="13.41" y1="-55.00" x2="13.41" y2="55.00" stroke="#112233" stroke-width="0.8" stroke-linecap="butt"/>
+    <line x1="60.09" y1="-55.00" x2="60.09" y2="55.00" stroke="#112233" stroke-width="0.8" stroke-linecap="butt"/>
+    <line x1="-70.00" y1="44.62" x2="70.00" y2="44.62" stroke="#112233" stroke-width="0.8" stroke-linecap="butt"/>
+    <line x1="-70.00" y1="3.66" x2="70.00" y2="3.66" stroke="#112233" stroke-width="0.8" stroke-linecap="butt"/>
+    <line x1="-70.00" y1="2.76" x2="70.00" y2="2.76" stroke="#112233" stroke-width="0.8" stroke-linecap="butt"/>
+    <line x1="-70.00" y1="45.21" x2="70.00" y2="45.21" stroke="#112233" stroke-width="0.8" stroke-linecap="butt"/>
+    </g>
+  </g>"
+`;
+
+exports[`Grid (headless) > renders headlessly and pins svgElements (golden master) 1`] = `
+[
+  "<line x1="58.05" y1="-55.00" x2="58.05" y2="55.00" stroke="#112233" stroke-width="0.8" stroke-linecap="butt"/>",
+  "<line x1="10.86" y1="-55.00" x2="10.86" y2="55.00" stroke="#112233" stroke-width="0.8" stroke-linecap="butt"/>",
+  "<line x1="1.91" y1="-55.00" x2="1.91" y2="55.00" stroke="#112233" stroke-width="0.8" stroke-linecap="butt"/>",
+  "<line x1="13.41" y1="-55.00" x2="13.41" y2="55.00" stroke="#112233" stroke-width="0.8" stroke-linecap="butt"/>",
+  "<line x1="60.09" y1="-55.00" x2="60.09" y2="55.00" stroke="#112233" stroke-width="0.8" stroke-linecap="butt"/>",
+  "<line x1="-70.00" y1="44.62" x2="70.00" y2="44.62" stroke="#112233" stroke-width="0.8" stroke-linecap="butt"/>",
+  "<line x1="-70.00" y1="3.66" x2="70.00" y2="3.66" stroke="#112233" stroke-width="0.8" stroke-linecap="butt"/>",
+  "<line x1="-70.00" y1="2.76" x2="70.00" y2="2.76" stroke="#112233" stroke-width="0.8" stroke-linecap="butt"/>",
+  "<line x1="-70.00" y1="45.21" x2="70.00" y2="45.21" stroke="#112233" stroke-width="0.8" stroke-linecap="butt"/>",
+]
+`;

@@ -1,80 +1,29 @@
 import {
-  DEFAULT_PARAMS,
-  PATTERN_PARAM_DEFS,
   PARAM_GROUPS,
   PARAM_GROUP_MAP,
   FEATURED_PARAMS,
 } from "../constants";
-import {
-  getDynamicParamDefs,
-  getDynamicDefaults,
-} from "../lib/patternRegistry";
 import { useGate } from "../lib/useGate";
 import { UNIVERSAL_PARAM_KEYS } from "../lib/tierLimits";
-import { randomPatchForDef, defaultPatchForDef } from "../lib/params/paramOps";
+import { useLayerParams } from "../lib/useLayerParams";
 import UpgradePrompt from "./UpgradePrompt";
 import ParamGroup from "./ParamGroup";
 import ParamRow from "./ui/ParamRow";
 
-export default function PatternParams({
-  patternType,
-  params,
-  onChange,
-  randomizeKeys,
-  onRandomizeKeysChange,
-}) {
-  const defs =
-    PATTERN_PARAM_DEFS[patternType] || getDynamicParamDefs(patternType);
+// PatternParams (AR-3B): reads live params + the toggle/randomize/reset handlers
+// from the LayerParams context (provided at LayerCard) instead of receiving them
+// as props. It owns ONLY the gate-counting loop + featured/grouping layout.
+//
+// CRITICAL — divergent gate loop preserved verbatim. The loop below increments
+// `nonUniversalIndex` for EVERY non-universal def (including RANDOMIZE_EXCLUDED
+// ones). usePatternCache's fresh-defaults loop increments only after skipping
+// RANDOMIZE_EXCLUDED_KEYS. AR-1A deliberately did NOT unify these; unifying would
+// shift which params are gated for guests. Do not touch this loop's counting.
+export default function PatternParams() {
+  const { patternType, defs, params, defaults, randomizeKeys } =
+    useLayerParams();
   const { check, tier } = useGate();
   if (!defs) return null;
-
-  const defaults =
-    DEFAULT_PARAMS[patternType] || getDynamicDefaults(patternType) || {};
-  const keys = randomizeKeys || [];
-
-  const toggleKey = (key) => {
-    const next = keys.includes(key)
-      ? keys.filter((k) => k !== key)
-      : [...keys, key];
-    onRandomizeKeysChange(next);
-  };
-
-  const toggleGroupKeys = (groupKeys, allChecked) => {
-    if (allChecked) {
-      onRandomizeKeysChange(keys.filter((k) => !groupKeys.includes(k)));
-    } else {
-      const toAdd = groupKeys.filter((k) => !keys.includes(k));
-      onRandomizeKeysChange([...keys, ...toAdd]);
-    }
-  };
-
-  const randomizeSingle = (def) => {
-    onChange({ ...params, ...randomPatchForDef(def) });
-  };
-
-  const randomizeGroup = (groupDefs) => {
-    const newParams = { ...params };
-    for (const def of groupDefs) {
-      // The randomize checkbox is keyed on the row's (synthetic) key; a checked
-      // composite row patches all of its real keys.
-      if (keys.includes(def.key)) {
-        Object.assign(newParams, randomPatchForDef(def));
-      }
-    }
-    onChange(newParams);
-  };
-
-  const resetSingle = (def) => {
-    onChange({ ...params, ...defaultPatchForDef(def, defaults) });
-  };
-
-  const resetGroup = (groupDefs) => {
-    const newParams = { ...params };
-    for (const def of groupDefs) {
-      Object.assign(newParams, defaultPatchForDef(def, defaults));
-    }
-    onChange(newParams);
-  };
 
   // Build param items with gate checks
   let nonUniversalIndex = 0;
@@ -112,16 +61,7 @@ export default function PatternParams({
       {/* Featured param — pinned above all groups, ungrouped, always visible */}
       {showFeatured && (
         <div className="pl-3 pb-0.5">
-          <ParamRow
-            def={featuredItem.def}
-            params={params}
-            defaults={defaults}
-            randomizeKeys={randomizeKeys}
-            onParamChange={onChange}
-            onToggleKey={toggleKey}
-            onRandomizeSingle={randomizeSingle}
-            onResetSingle={resetSingle}
-          />
+          <ParamRow def={featuredItem.def} />
         </div>
       )}
 
@@ -144,16 +84,9 @@ export default function PatternParams({
             key={group.id}
             group={group}
             items={visibleItems}
-            params={params}
-            defaults={defaults}
             randomizeKeys={randomizeKeys}
-            onParamChange={onChange}
-            onToggleKey={toggleKey}
-            onToggleGroupKeys={toggleGroupKeys}
-            onRandomizeSingle={randomizeSingle}
-            onRandomizeGroup={randomizeGroup}
-            onResetSingle={resetSingle}
-            onResetGroup={resetGroup}
+            defaults={defaults}
+            params={params}
             tier={tier}
           />
         );

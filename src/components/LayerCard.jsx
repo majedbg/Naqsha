@@ -4,17 +4,14 @@ import IconButton from "./ui/IconButton";
 import PatternTabs from "./PatternTabs";
 import PatternParams from "./PatternParams";
 import Slider from "./ui/Slider";
-import {
-  DEFAULT_PARAMS,
-  PATTERN_PARAM_DEFS,
-  RANDOMIZE_EXCLUDED_KEYS,
-} from "../constants";
-import {
-  getDynamicDefaults,
-  getDynamicParamDefs,
-} from "../lib/patternRegistry";
+import { DEFAULT_PARAMS } from "../constants";
+import { getDynamicDefaults } from "../lib/patternRegistry";
 import { useGate } from "../lib/useGate";
-import { UNIVERSAL_PARAM_KEYS } from "../lib/tierLimits";
+import usePatternCache from "../lib/usePatternCache";
+import {
+  buildLayerParamsValue,
+  LayerParamsProvider,
+} from "../lib/useLayerParams";
 import LayerBgFill from "./LayerBgFill";
 
 export default function LayerCard({
@@ -40,58 +37,20 @@ export default function LayerCard({
   const nameRef = useRef(null);
   const seedRef = useRef(null);
 
-  const handlePatternChange = (newPatternType) => {
-    // Save current pattern state to cache
-    const updatedCache = {
-      ...(layer.paramsCache || {}),
-      [layer.patternType]: {
-        params: { ...layer.params },
-        randomizeKeys: [...(layer.randomizeKeys || [])],
-      },
-    };
+  // Pattern-switch cache machine (save current pattern's params, restore a prior
+  // type's, or seed fresh defaults). Extracted verbatim to usePatternCache.
+  const { handlePatternChange } = usePatternCache(layer, onUpdate);
 
-    // Restore from cache if previously visited, otherwise use defaults
-    const cached = updatedCache[newPatternType];
-    let newParams, newRandomizeKeys;
-
-    if (cached) {
-      newParams = { ...cached.params };
-      newRandomizeKeys = [...cached.randomizeKeys];
-    } else {
-      const defaults =
-        DEFAULT_PARAMS[newPatternType] ||
-        getDynamicDefaults(newPatternType) ||
-        {};
-      newParams = { ...defaults };
-      const defs =
-        PATTERN_PARAM_DEFS[newPatternType] ||
-        getDynamicParamDefs(newPatternType) ||
-        [];
-      let nonUniversalIdx = 0;
-      newRandomizeKeys = defs
-        .filter((d) => {
-          if (RANDOMIZE_EXCLUDED_KEYS.includes(d.key)) return false;
-          const isUniversal = UNIVERSAL_PARAM_KEYS.includes(d.key);
-          const idx = isUniversal ? -1 : nonUniversalIdx++;
-          return check("param", {
-            paramKey: d.key,
-            paramIndex: idx,
-            isUniversal,
-          }).allowed;
-        })
-        .map((d) => d.key);
-    }
-
-    // Remove the now-active pattern from cache (it lives in params/randomizeKeys)
-    const { [newPatternType]: _, ...cleanedCache } = updatedCache;
-
-    onUpdate({
-      patternType: newPatternType,
-      params: newParams,
-      randomizeKeys: newRandomizeKeys,
-      paramsCache: cleanedCache,
-    });
-  };
+  // Param context value (params + toggle/randomize/reset handlers). Provided at
+  // this boundary so PatternParams/ParamGroup/ParamRow/ParamControl read it
+  // directly instead of threading callbacks through every level.
+  const layerParamsValue = buildLayerParamsValue({
+    patternType: layer.patternType,
+    params: layer.params,
+    onChange: (params) => onUpdate({ params }),
+    randomizeKeys: layer.randomizeKeys,
+    onRandomizeKeysChange: (keys) => onUpdate({ randomizeKeys: keys }),
+  });
 
   const hasCheckedKeys = layer.randomizeKeys && layer.randomizeKeys.length > 0;
 
@@ -423,13 +382,11 @@ export default function LayerCard({
             );
           })()}
 
-          <PatternParams
-            patternType={layer.patternType}
-            params={layer.params}
-            onChange={(params) => onUpdate({ params })}
-            randomizeKeys={layer.randomizeKeys}
-            onRandomizeKeysChange={(keys) => onUpdate({ randomizeKeys: keys })}
-          />
+          {layerParamsValue && (
+            <LayerParamsProvider value={layerParamsValue}>
+              <PatternParams />
+            </LayerParamsProvider>
+          )}
         </div>
       </div>
     </div>

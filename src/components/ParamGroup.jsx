@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { COLLAPSED_GROUPS } from "../constants";
 import { isRowDefault } from "../lib/params/paramOps";
+import { useLayerParams } from "../lib/useLayerParams";
 import ParamRow from "./ui/ParamRow";
 import UpgradePrompt from "./UpgradePrompt";
 
@@ -25,21 +26,19 @@ function ResetIcon({ size = 10 }) {
   );
 }
 
-export default function ParamGroup({
-  group,
-  items,
-  params,
-  defaults,
-  randomizeKeys,
-  onParamChange,
-  onToggleKey,
-  onToggleGroupKeys,
-  onRandomizeSingle,
-  onRandomizeGroup,
-  onResetSingle,
-  onResetGroup,
-  tier,
-}) {
+// ParamGroup (AR-3B): the toggle/randomize/reset handlers come from the
+// LayerParams context (provided at LayerCard) instead of being threaded as
+// props. `group`/`items`/`tier` remain props (per-group identity + layout);
+// `params`/`defaults`/`randomizeKeys` are read from context for display logic.
+export default function ParamGroup({ group, items, tier }) {
+  const {
+    params,
+    defaults,
+    randomizeKeys,
+    onToggleGroupKeys,
+    onRandomizeGroup,
+    onResetGroup,
+  } = useLayerParams();
   const [collapsed, setCollapsed] = useState(
     COLLAPSED_GROUPS.includes(group.id)
   );
@@ -168,17 +167,7 @@ export default function ParamGroup({
       {!collapsed && (
         <div className="pl-3 pt-1.5 space-y-2">
           {allowedItems.map((item) => (
-            <ParamRow
-              key={item.def.key}
-              def={item.def}
-              params={params}
-              defaults={defaults}
-              randomizeKeys={randomizeKeys}
-              onParamChange={onParamChange}
-              onToggleKey={onToggleKey}
-              onRandomizeSingle={onRandomizeSingle}
-              onResetSingle={onResetSingle}
-            />
+            <ParamRow key={item.def.key} def={item.def} />
           ))}
 
           {/* Free-tier locked params within this group */}

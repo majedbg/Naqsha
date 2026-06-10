@@ -1,5 +1,6 @@
 import ParamControl from "./ParamControl";
 import { isRowDefault } from "../../lib/params/paramOps";
+import { useLayerParams } from "../../lib/useLayerParams";
 
 // Reusable reset icon (circular refresh arrows)
 function ResetIcon({ size = 12 }) {
@@ -24,16 +25,20 @@ function ResetIcon({ size = 12 }) {
 
 // One parameter row: control + per-param reset + randomize checkbox + randomize
 // button. Shared by ParamGroup (inside a group) and the featured-param slot.
-export default function ParamRow({
-  def,
-  params,
-  defaults,
-  randomizeKeys,
-  onParamChange,
-  onToggleKey,
-  onRandomizeSingle,
-  onResetSingle,
-}) {
+//
+// AR-3B: only `def` is a prop now (per-row identity). params/defaults/keys + the
+// toggle/randomize/reset handlers are read from the LayerParams context provided
+// at LayerCard. `key={def.key}` upstream keeps each row stable across re-renders.
+export default function ParamRow({ def }) {
+  const {
+    params,
+    defaults,
+    randomizeKeys,
+    onChange,
+    toggleKey,
+    randomizeSingle,
+    resetSingle,
+  } = useLayerParams();
   const keys = randomizeKeys || [];
   const isDefault = isRowDefault(def, params, defaults);
 
@@ -41,12 +46,12 @@ export default function ParamRow({
     <div className="flex items-start gap-1.5">
       {/* Param control */}
       <div className="flex-1 min-w-0">
-        <ParamControl def={def} params={params} onChange={onParamChange} />
+        <ParamControl def={def} params={params} onChange={onChange} />
       </div>
 
       {/* Per-param reset */}
       <button
-        onClick={() => onResetSingle(def)}
+        onClick={() => resetSingle(def)}
         disabled={isDefault}
         className="mt-[3px] shrink-0 p-0.5 rounded text-ink-soft hover:text-tone-mild transition-colors disabled:opacity-20 disabled:cursor-not-allowed"
         title={
@@ -66,14 +71,14 @@ export default function ParamRow({
         <input
           type="checkbox"
           checked={keys.includes(def.key)}
-          onChange={() => onToggleKey(def.key)}
+          onChange={() => toggleKey(def.key)}
           className="accent-saffron w-3 h-3 cursor-pointer"
         />
       </label>
 
       {/* Per-param randomize */}
       <button
-        onClick={() => onRandomizeSingle(def)}
+        onClick={() => randomizeSingle(def)}
         className="mt-[3px] shrink-0 p-0.5 rounded text-ink-soft hover:text-saffron transition-colors"
         title={`Randomize ${def.label}`}
       >

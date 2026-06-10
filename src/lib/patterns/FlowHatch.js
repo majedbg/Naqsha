@@ -1,14 +1,16 @@
-import { applySymmetryDraw, wrapSVGSymmetry } from './symmetryUtils';
+import { applySymmetryDraw } from './symmetryUtils';
+import { Pattern } from './drawingContext';
 
-export default class FlowHatch {
-  constructor() {
-    this.svgElements = [];
+export default class FlowHatch extends Pattern {
+  // svgElements are pre-indented strings ("    <line .../>"); join with '\n' only.
+  contentFor() {
+    return this.svgElements.join('\n');
   }
 
-  generate(p, seed, params, canvasW, canvasH, color, opacity) {
+  generate(ctx, seed, params, canvasW, canvasH, color, opacity) {
     this.svgElements = [];
-    p.noiseSeed(seed);
-    p.randomSeed(seed);
+    ctx.noiseSeed(seed);
+    ctx.randomSeed(seed);
 
     const {
       particleCount = 200,
@@ -32,14 +34,14 @@ export default class FlowHatch {
 
     // Flow field angle lookup (coords relative to center, offset to positive for noise)
     const angle = (x, y) =>
-      p.noise((x + halfW) * noiseScale, (y + halfH) * noiseScale) * p.TWO_PI * 2;
+      ctx.noise((x + halfW) * noiseScale, (y + halfH) * noiseScale) * ctx.TWO_PI * 2;
 
     // Step 2 — Walk particles and collect anchor points
     const dashes = [];
 
     for (let i = 0; i < particleCount; i++) {
-      let x = p.random(-halfW, halfW);
-      let y = p.random(-halfH, halfH);
+      let x = ctx.random(-halfW, halfW);
+      let y = ctx.random(-halfH, halfH);
 
       for (let s = 0; s < stepsPerParticle; s++) {
         const a = angle(x, y);
@@ -58,8 +60,8 @@ export default class FlowHatch {
           const perpAngle = flowAngle + Math.PI / 2;
 
           // Second noise layer for length modulation
-          const lenNoise = p.noise(x * 0.01 + 300, y * 0.01 + 300);
-          const len = p.map(lenNoise, 0, 1, minDashLen, maxDashLen);
+          const lenNoise = ctx.noise(x * 0.01 + 300, y * 0.01 + 300);
+          const len = ctx.map(lenNoise, 0, 1, minDashLen, maxDashLen);
 
           const halfLen = len / 2;
           const dx = Math.cos(perpAngle) * halfLen;
@@ -82,42 +84,19 @@ export default class FlowHatch {
       );
     }
 
-    // Draw on p5 canvas
+    // Draw on canvas
     const drawBase = () => {
-      p.noFill();
-      const c = p.color(color);
+      ctx.noFill();
+      const c = ctx.color(color);
       c.setAlpha(Math.round((opacity / 100) * 255));
-      p.stroke(c);
-      p.strokeWeight(strokeWeight);
+      ctx.stroke(c);
+      ctx.strokeWeight(strokeWeight);
 
       for (const d of dashes) {
-        p.line(d.x1, d.y1, d.x2, d.y2);
+        ctx.line(d.x1, d.y1, d.x2, d.y2);
       }
     };
 
-    applySymmetryDraw(p, symmetry, cx, cy, drawBase, startAngle * Math.PI / 180, offsetX, offsetY);
-  }
-
-  toSVGGroup(layerId, color, opacity) {
-    const content = this.svgElements.join('\n');
-    return wrapSVGSymmetry(
-      layerId,
-      color,
-      opacity,
-      content,
-      this._lastParams?.symmetry || 1,
-      this._lastCx,
-      this._lastCy,
-      this._lastParams?.startAngle || 0,
-      this._lastParams?.offsetX || 0,
-      this._lastParams?.offsetY || 0
-    );
-  }
-
-  generateWithContext(p, seed, params, canvasW, canvasH, color, opacity) {
-    this._lastParams = params;
-    this._lastCx = canvasW / 2;
-    this._lastCy = canvasH / 2;
-    this.generate(p, seed, params, canvasW, canvasH, color, opacity);
+    applySymmetryDraw(ctx, symmetry, cx, cy, drawBase, startAngle * Math.PI / 180, offsetX, offsetY);
   }
 }

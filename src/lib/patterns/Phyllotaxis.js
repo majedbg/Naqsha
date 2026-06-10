@@ -1,15 +1,11 @@
-import { applySymmetryDraw, wrapSVGSymmetry } from './symmetryUtils';
+import { applySymmetryDraw } from './symmetryUtils';
+import { Pattern } from './drawingContext';
 
-export default class Phyllotaxis {
-  constructor() {
+export default class Phyllotaxis extends Pattern {
+  generate(ctx, seed, params, canvasW, canvasH, color, opacity) {
     this.svgElements = [];
     this._elements = [];
-  }
-
-  generate(p, seed, params, canvasW, canvasH, color, opacity) {
-    this.svgElements = [];
-    this._elements = [];
-    p.randomSeed(seed);
+    ctx.randomSeed(seed);
 
     const {
       count = 300,
@@ -46,8 +42,8 @@ export default class Phyllotaxis {
 
       // Jitter
       if (jitter > 0) {
-        x += p.random(-jitter, jitter);
-        y += p.random(-jitter, jitter);
+        x += ctx.random(-jitter, jitter);
+        y += ctx.random(-jitter, jitter);
       }
 
       // Size: interpolate from minSize to maxSize with growth curve
@@ -63,101 +59,78 @@ export default class Phyllotaxis {
       this.svgElements.push(svgEl);
     }
 
-    // Draw on p5 canvas
+    // Draw on canvas
     const drawBase = () => {
       const alpha = Math.round((opacity / 100) * 255);
-      const c = p.color(color);
+      const c = ctx.color(color);
       c.setAlpha(alpha);
 
       for (const el of this._elements) {
         if (el.isOutlined) {
-          p.stroke(c);
-          p.strokeWeight(el.strokeWeight);
+          ctx.stroke(c);
+          ctx.strokeWeight(el.strokeWeight);
         } else {
-          p.noStroke();
+          ctx.noStroke();
         }
 
         if (el.isFilled) {
-          const fc = p.color(color);
+          const fc = ctx.color(color);
           fc.setAlpha(alpha);
-          p.fill(fc);
+          ctx.fill(fc);
         } else {
-          p.noFill();
+          ctx.noFill();
         }
 
-        p.push();
-        p.translate(el.x, el.y);
-        p.rotate(el.elemRot);
-        drawShape(p, el.shape, el.size);
-        p.pop();
+        ctx.push();
+        ctx.translate(el.x, el.y);
+        ctx.rotate(el.elemRot);
+        drawShape(ctx, el.shape, el.size);
+        ctx.pop();
       }
     };
 
-    applySymmetryDraw(p, symmetry, cx, cy, drawBase, startAngle * Math.PI / 180, offsetX, offsetY);
-  }
-
-  toSVGGroup(layerId, color, opacity) {
-    const content = this.svgElements.map((el) => `    ${el}`).join('\n');
-    return wrapSVGSymmetry(
-      layerId,
-      color,
-      opacity,
-      content,
-      this._lastParams?.symmetry || 1,
-      this._lastCx,
-      this._lastCy,
-      this._lastParams?.startAngle || 0,
-      this._lastParams?.offsetX || 0,
-      this._lastParams?.offsetY || 0
-    );
-  }
-
-  generateWithContext(p, seed, params, canvasW, canvasH, color, opacity) {
-    this._lastParams = params;
-    this._lastCx = canvasW / 2;
-    this._lastCy = canvasH / 2;
-    this.generate(p, seed, params, canvasW, canvasH, color, opacity);
+    applySymmetryDraw(ctx, symmetry, cx, cy, drawBase, startAngle * Math.PI / 180, offsetX, offsetY);
   }
 }
 
-// --- p5 shape drawing ---
+// --- ctx shape drawing ---
 
-function drawShape(p, shape, size) {
+function drawShape(ctx, shape, size) {
   const half = size / 2;
   switch (shape) {
     case 'circle':
-      p.ellipse(0, 0, size, size);
+      ctx.ellipse(0, 0, size, size);
       break;
     case 'square':
-      p.rectMode(p.CENTER);
-      p.rect(0, 0, size, size);
+      ctx.rectMode(ctx.CENTER);
+      ctx.rect(0, 0, size, size);
       break;
     case 'triangle': {
       const h = half * Math.sqrt(3);
-      p.triangle(0, -h * 0.67, -half, h * 0.33, half, h * 0.33);
+      ctx.triangle(0, -h * 0.67, -half, h * 0.33, half, h * 0.33);
       break;
     }
     case 'hexagon': {
-      p.beginShape();
+      ctx.beginShape();
       for (let i = 0; i < 6; i++) {
         const a = (Math.PI / 3) * i - Math.PI / 6;
-        p.vertex(half * Math.cos(a), half * Math.sin(a));
+        ctx.vertex(half * Math.cos(a), half * Math.sin(a));
       }
-      p.endShape(p.CLOSE);
+      ctx.endShape(ctx.CLOSE);
       break;
     }
     case 'star': {
-      p.beginShape();
+      ctx.beginShape();
       for (let i = 0; i < 10; i++) {
         const a = (Math.PI / 5) * i - Math.PI / 2;
         const r = i % 2 === 0 ? half : half * 0.4;
-        p.vertex(r * Math.cos(a), r * Math.sin(a));
+        ctx.vertex(r * Math.cos(a), r * Math.sin(a));
       }
-      p.endShape(p.CLOSE);
+      ctx.endShape(ctx.CLOSE);
       break;
     }
     default:
-      p.ellipse(0, 0, size, size);
+      ctx.ellipse(0, 0, size, size);
   }
 }
 

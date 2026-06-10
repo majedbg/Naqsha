@@ -1,13 +1,10 @@
-import { applySymmetryDraw, wrapSVGSymmetry } from './symmetryUtils';
+import { applySymmetryDraw } from './symmetryUtils';
+import { Pattern } from './drawingContext';
 
-export default class FractalTree {
-  constructor() {
+export default class FractalTree extends Pattern {
+  generate(ctx, seed, params, canvasW, canvasH, color, opacity) {
     this.svgElements = [];
-  }
-
-  generate(p, seed, params, canvasW, canvasH, color, opacity) {
-    this.svgElements = [];
-    p.randomSeed(seed);
+    ctx.randomSeed(seed);
 
     const {
       iterations = 5,
@@ -41,8 +38,8 @@ export default class FractalTree {
 
       const nextLength = length * lengthDecay;
       const angleRad = (branchAngle * Math.PI) / 180;
-      const jitterL = (p.random(-5, 5) * Math.PI) / 180;
-      const jitterR = (p.random(-5, 5) * Math.PI) / 180;
+      const jitterL = (ctx.random(-5, 5) * Math.PI) / 180;
+      const jitterR = (ctx.random(-5, 5) * Math.PI) / 180;
 
       branch(x2, y2, angle - angleRad + jitterL, nextLength, depth - 1);
       branch(x2, y2, angle + angleRad + jitterR, nextLength, depth - 1);
@@ -60,48 +57,29 @@ export default class FractalTree {
       this.svgElements.push({ pathD, strokeWeight: seg.sw });
     }
 
-    // Draw on p5 canvas
+    // Draw on canvas
     const drawBase = () => {
-      p.noFill();
+      ctx.noFill();
       const alpha = Math.round((opacity / 100) * 255);
-      const c = p.color(color);
+      const c = ctx.color(color);
       c.setAlpha(alpha);
-      p.stroke(c);
+      ctx.stroke(c);
 
       for (const seg of segments) {
-        p.strokeWeight(seg.sw);
-        p.line(seg.x1, seg.y1, seg.x2, seg.y2);
+        ctx.strokeWeight(seg.sw);
+        ctx.line(seg.x1, seg.y1, seg.x2, seg.y2);
       }
     };
 
-    applySymmetryDraw(p, symmetry, cx, cy, drawBase, startAngle * Math.PI / 180, offsetX, offsetY);
+    applySymmetryDraw(ctx, symmetry, cx, cy, drawBase, startAngle * Math.PI / 180, offsetX, offsetY);
   }
 
-  toSVGGroup(layerId, color, opacity) {
-    const paths = this.svgElements
+  contentFor(color) {
+    return this.svgElements
       .map(
         (el) =>
           `    <path d="${el.pathD}" stroke="${color}" fill="none" stroke-width="${el.strokeWeight.toFixed(2)}" stroke-linecap="round"/>`
       )
       .join('\n');
-    return wrapSVGSymmetry(
-      layerId,
-      color,
-      opacity,
-      paths,
-      this._lastParams?.symmetry || 'single',
-      this._lastCx,
-      this._lastCy,
-      this._lastParams?.startAngle || 0,
-      this._lastParams?.offsetX || 0,
-      this._lastParams?.offsetY || 0
-    );
-  }
-
-  generateWithContext(p, seed, params, canvasW, canvasH, color, opacity) {
-    this._lastParams = params;
-    this._lastCx = canvasW / 2;
-    this._lastCy = canvasH / 2;
-    this.generate(p, seed, params, canvasW, canvasH, color, opacity);
   }
 }

@@ -1,11 +1,8 @@
-import { applySymmetryDraw, wrapSVGSymmetry } from './symmetryUtils';
+import { Pattern } from './drawingContext';
+import { applySymmetryDraw } from './symmetryUtils';
 
-export default class PhyllotaxisDash {
-  constructor() {
-    this.svgElements = [];
-  }
-
-  generate(p, seed, params, canvasW, canvasH, color, opacity) {
+export default class PhyllotaxisDash extends Pattern {
+  generate(ctx, seed, params, canvasW, canvasH, color, opacity) {
     const {
       seedCount = 2000,
       spacingC = 9,
@@ -22,8 +19,8 @@ export default class PhyllotaxisDash {
     const cx = canvasW / 2;
     const cy = canvasH / 2;
 
-    p.noiseSeed(seed);
-    p.randomSeed(seed);
+    ctx.noiseSeed(seed);
+    ctx.randomSeed(seed);
 
     this.svgElements = [];
     const GOLDEN_ANGLE = 2.399963;
@@ -36,8 +33,8 @@ export default class PhyllotaxisDash {
       const yi = radius * Math.sin(angle);
 
       const theta = Math.atan2(yi, xi);
-      const nInner = p.noise(xi * noiseScale, yi * noiseScale);
-      const nOuter = p.noise(xi * noiseScale + 500, yi * noiseScale + 500);
+      const nInner = ctx.noise(xi * noiseScale, yi * noiseScale);
+      const nOuter = ctx.noise(xi * noiseScale + 500, yi * noiseScale + 500);
       const dInner = -innerMax * nInner;
       const dOuter = outerMax * nOuter;
 
@@ -53,39 +50,23 @@ export default class PhyllotaxisDash {
     }
 
     const drawBase = () => {
-      const c = p.color(color);
+      const c = ctx.color(color);
       c.setAlpha(Math.round((opacity / 100) * 255));
-      p.stroke(c);
-      p.strokeWeight(strokeWeight);
-      p.noFill();
+      ctx.stroke(c);
+      ctx.strokeWeight(strokeWeight);
+      ctx.noFill();
       for (const d of dashes) {
-        p.line(d.x1, d.y1, d.x2, d.y2);
+        ctx.line(d.x1, d.y1, d.x2, d.y2);
       }
     };
 
-    applySymmetryDraw(p, symmetry, cx, cy, drawBase, startAngle * Math.PI / 180, offsetX, offsetY);
+    applySymmetryDraw(ctx, symmetry, cx, cy, drawBase, startAngle * Math.PI / 180, offsetX, offsetY);
   }
 
-  toSVGGroup(layerId, color, opacity) {
-    const content = this.svgElements.join('\n');
-    return wrapSVGSymmetry(
-      layerId,
-      color,
-      opacity,
-      content,
-      this._lastParams?.symmetry || 1,
-      this._lastCx,
-      this._lastCy,
-      this._lastParams?.startAngle || 0,
-      this._lastParams?.offsetX || 0,
-      this._lastParams?.offsetY || 0
-    );
-  }
-
-  generateWithContext(p, seed, params, canvasW, canvasH, color, opacity) {
-    this._lastParams = params;
-    this._lastCx = canvasW / 2;
-    this._lastCy = canvasH / 2;
-    this.generate(p, seed, params, canvasW, canvasH, color, opacity);
+  // Custom contentFor: original toSVGGroup joined svgElements with '\n' (no indent),
+  // which differs from the base default (4-space indent per element). Override to
+  // preserve byte-identical SVG output.
+  contentFor() {
+    return this.svgElements.join('\n');
   }
 }

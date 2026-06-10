@@ -1,13 +1,10 @@
-import { applySymmetryDraw, wrapSVGSymmetry } from './symmetryUtils';
+import { Pattern } from './drawingContext';
+import { applySymmetryDraw } from './symmetryUtils';
 
-export default class Spirograph {
-  constructor() {
+export default class Spirograph extends Pattern {
+  generate(ctx, seed, params, canvasW, canvasH, color, opacity) {
     this.svgElements = [];
-  }
-
-  generate(p, seed, params, canvasW, canvasH, color, opacity) {
-    this.svgElements = [];
-    p.randomSeed(seed);
+    ctx.randomSeed(seed);
     const { R, r, d, revolutions, strokeWeight, symmetry, startAngle = 0, offsetX = 0, offsetY = 0 } = params;
     const cx = canvasW / 2;
     const cy = canvasH / 2;
@@ -31,42 +28,33 @@ export default class Spirograph {
       this.svgElements.push({ pathD, strokeWeight });
     }
 
-    // Draw on p5 canvas
+    // Draw on canvas
     const drawBase = () => {
-      p.noFill();
-      p.stroke(color);
-      p.strokeWeight(strokeWeight);
+      ctx.noFill();
+      ctx.stroke(color);
+      ctx.strokeWeight(strokeWeight);
 
       const alpha = Math.round((opacity / 100) * 255);
-      const c = p.color(color);
+      const c = ctx.color(color);
       c.setAlpha(alpha);
-      p.stroke(c);
+      ctx.stroke(c);
 
-      p.beginShape();
+      ctx.beginShape();
       for (const pt of points) {
-        p.vertex(pt.x, pt.y);
+        ctx.vertex(pt.x, pt.y);
       }
-      p.endShape();
+      ctx.endShape();
     };
 
-    applySymmetryDraw(p, symmetry, cx, cy, drawBase, startAngle * Math.PI / 180, offsetX, offsetY);
+    applySymmetryDraw(ctx, symmetry, cx, cy, drawBase, startAngle * Math.PI / 180, offsetX, offsetY);
   }
 
-  toSVGGroup(layerId, color, opacity) {
-    const paths = this.svgElements
+  contentFor(color) {
+    return this.svgElements
       .map(
         (el) =>
           `    <path d="${el.pathD}" stroke="${color}" fill="none" stroke-width="${el.strokeWeight}" stroke-linecap="round"/>`
       )
       .join('\n');
-    return wrapSVGSymmetry(layerId, color, opacity, paths, this._lastParams?.symmetry || 'single', this._lastCx, this._lastCy, this._lastParams?.startAngle || 0, this._lastParams?.offsetX || 0, this._lastParams?.offsetY || 0);
-  }
-
-  // Store context for SVG export
-  generateWithContext(p, seed, params, canvasW, canvasH, color, opacity) {
-    this._lastParams = params;
-    this._lastCx = canvasW / 2;
-    this._lastCy = canvasH / 2;
-    this.generate(p, seed, params, canvasW, canvasH, color, opacity);
   }
 }

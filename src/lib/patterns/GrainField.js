@@ -1,11 +1,8 @@
-import { applySymmetryDraw, wrapSVGSymmetry } from './symmetryUtils';
+import { applySymmetryDraw } from './symmetryUtils';
+import { Pattern } from './drawingContext';
 
-export default class GrainField {
-  constructor() {
-    this.svgElements = [];
-  }
-
-  generate(p, seed, params, canvasW, canvasH, color, opacity) {
+export default class GrainField extends Pattern {
+  generate(ctx, seed, params, canvasW, canvasH, color, opacity) {
     const pointCount = params.pointCount ?? 150;
     const relaxPasses = params.relaxPasses ?? 4;
     const neighborK = params.neighborK ?? 3;
@@ -21,14 +18,14 @@ export default class GrainField {
     const halfH = canvasH / 2;
 
     // Step 1 — Lloyd's Relaxation
-    p.randomSeed(seed);
+    ctx.randomSeed(seed);
 
     // Place initial random points in [-halfW, halfW] x [-halfH, halfH]
     const points = [];
     for (let i = 0; i < pointCount; i++) {
       points.push({
-        x: p.random(-halfW, halfW),
-        y: p.random(-halfH, halfH),
+        x: ctx.random(-halfW, halfW),
+        y: ctx.random(-halfH, halfH),
       });
     }
 
@@ -127,18 +124,18 @@ export default class GrainField {
       });
     }
 
-    // p5 drawing
+    // ctx drawing
     const drawBase = () => {
-      p.stroke(p.red(p.color(color)), p.green(p.color(color)), p.blue(p.color(color)), (opacity / 100) * 255);
-      p.strokeWeight(strokeWeight);
-      p.strokeCap(p.ROUND);
-      p.noFill();
+      ctx.stroke(ctx.red(ctx.color(color)), ctx.green(ctx.color(color)), ctx.blue(ctx.color(color)), (opacity / 100) * 255);
+      ctx.strokeWeight(strokeWeight);
+      ctx.strokeCap(ctx.ROUND);
+      ctx.noFill();
       for (const d of dashes) {
-        p.line(d.x1, d.y1, d.x2, d.y2);
+        ctx.line(d.x1, d.y1, d.x2, d.y2);
       }
     };
 
-    applySymmetryDraw(p, symmetry, halfW, halfH, drawBase, startAngle * Math.PI / 180, offsetX, offsetY);
+    applySymmetryDraw(ctx, symmetry, halfW, halfH, drawBase, startAngle * Math.PI / 180, offsetX, offsetY);
 
     // SVG export — store elements
     this.svgElements = dashes.map(
@@ -147,19 +144,10 @@ export default class GrainField {
     );
   }
 
-  toSVGGroup(layerId, color, opacity) {
-    const params = this._lastParams || {};
-    const symmetry = params.symmetry ?? 1;
-    const cx = this._lastCx || 0;
-    const cy = this._lastCy || 0;
-    const pathsContent = this.svgElements.join('\n');
-    return wrapSVGSymmetry(layerId, color, opacity, pathsContent, symmetry, cx, cy, params.startAngle || 0, params.offsetX || 0, params.offsetY || 0);
-  }
-
-  generateWithContext(p, seed, params, canvasW, canvasH, color, opacity) {
-    this._lastParams = params;
-    this._lastCx = canvasW / 2;
-    this._lastCy = canvasH / 2;
-    this.generate(p, seed, params, canvasW, canvasH, color, opacity);
+  // svgElements already carry 6-space indentation; joining with '\n' preserves
+  // the exact pre-migration SVG output. The base contentFor would add 4 extra
+  // spaces per element (10 total), breaking byte-identity with the golden master.
+  contentFor() {
+    return this.svgElements.join('\n');
   }
 }

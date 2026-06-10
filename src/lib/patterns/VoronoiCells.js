@@ -1,13 +1,10 @@
-import { applySymmetryDraw, wrapSVGSymmetry } from './symmetryUtils';
+import { applySymmetryDraw } from './symmetryUtils';
+import { Pattern } from './drawingContext';
 
-export default class VoronoiCells {
-  constructor() {
+export default class VoronoiCells extends Pattern {
+  generate(ctx, seed, params, canvasW, canvasH, color, opacity) {
     this.svgElements = [];
-  }
-
-  generate(p, seed, params, canvasW, canvasH, color, opacity) {
-    this.svgElements = [];
-    p.randomSeed(seed);
+    ctx.randomSeed(seed);
 
     const {
       cellCount = 80,
@@ -34,8 +31,8 @@ export default class VoronoiCells {
       // Fully random placement
       for (let i = 0; i < cellCount; i++) {
         points.push({
-          x: p.random(-halfW, halfW),
-          y: p.random(-halfH, halfH),
+          x: ctx.random(-halfW, halfW),
+          y: ctx.random(-halfH, halfH),
         });
       }
     } else {
@@ -50,8 +47,8 @@ export default class VoronoiCells {
           const bx = -halfW + (c + 0.5) * spacingX;
           const by = -halfH + (r + 0.5) * spacingY;
           points.push({
-            x: bx + p.random(-spacingX * 0.5, spacingX * 0.5) * jitterFactor,
-            y: by + p.random(-spacingY * 0.5, spacingY * 0.5) * jitterFactor,
+            x: bx + ctx.random(-spacingX * 0.5, spacingX * 0.5) * jitterFactor,
+            y: by + ctx.random(-spacingY * 0.5, spacingY * 0.5) * jitterFactor,
           });
         }
       }
@@ -117,48 +114,29 @@ export default class VoronoiCells {
       this.svgElements.push({ pathD, strokeWeight });
     }
 
-    // Draw on p5 canvas
+    // Draw on canvas
     const drawBase = () => {
-      p.noFill();
-      const c = p.color(color);
+      ctx.noFill();
+      const c = ctx.color(color);
       c.setAlpha(Math.round((opacity / 100) * 255));
-      p.stroke(c);
-      p.strokeWeight(strokeWeight);
+      ctx.stroke(c);
+      ctx.strokeWeight(strokeWeight);
 
       for (const ln of lines) {
-        p.line(ln.x1, ln.y1, ln.x2, ln.y2);
+        ctx.line(ln.x1, ln.y1, ln.x2, ln.y2);
       }
     };
 
-    applySymmetryDraw(p, symmetry, cx, cy, drawBase, startAngle * Math.PI / 180, offsetX, offsetY);
+    applySymmetryDraw(ctx, symmetry, cx, cy, drawBase, startAngle * Math.PI / 180, offsetX, offsetY);
   }
 
-  toSVGGroup(layerId, color, opacity) {
-    const paths = this.svgElements
+  contentFor(color) {
+    return this.svgElements
       .map(
         (el) =>
           `    <path d="${el.pathD}" stroke="${color}" fill="none" stroke-width="${el.strokeWeight}" stroke-linecap="round"/>`
       )
       .join('\n');
-    return wrapSVGSymmetry(
-      layerId,
-      color,
-      opacity,
-      paths,
-      this._lastParams?.symmetry || 'none',
-      this._lastCx,
-      this._lastCy,
-      this._lastParams?.startAngle || 0,
-      this._lastParams?.offsetX || 0,
-      this._lastParams?.offsetY || 0
-    );
-  }
-
-  generateWithContext(p, seed, params, canvasW, canvasH, color, opacity) {
-    this._lastParams = params;
-    this._lastCx = canvasW / 2;
-    this._lastCy = canvasH / 2;
-    this.generate(p, seed, params, canvasW, canvasH, color, opacity);
   }
 }
 

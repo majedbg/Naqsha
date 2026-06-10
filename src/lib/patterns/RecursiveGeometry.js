@@ -1,15 +1,16 @@
 import { applySymmetryDraw, wrapSVGSymmetry } from './symmetryUtils';
+import { Pattern } from './drawingContext';
 
-export default class RecursiveGeometry {
+export default class RecursiveGeometry extends Pattern {
   constructor() {
-    this.svgElements = [];
+    super();
     this._polygons = [];
   }
 
-  generate(p, seed, params, canvasW, canvasH, color, opacity) {
+  generate(ctx, seed, params, canvasW, canvasH, color, opacity) {
     this.svgElements = [];
     this._polygons = [];
-    p.randomSeed(seed);
+    ctx.randomSeed(seed);
 
     const {
       shape = 'hexagon',
@@ -110,23 +111,23 @@ export default class RecursiveGeometry {
     recurse(0, 0, startRadius, 0, clampedDepth);
 
     const drawBase = () => {
-      p.noFill();
+      ctx.noFill();
       const alpha = Math.round((opacity / 100) * 255);
-      const c = p.color(color);
+      const c = ctx.color(color);
       c.setAlpha(alpha);
-      p.stroke(c);
+      ctx.stroke(c);
 
       for (const poly of this._polygons) {
-        p.strokeWeight(poly.sw);
-        p.beginShape();
+        ctx.strokeWeight(poly.sw);
+        ctx.beginShape();
         for (const v of poly.verts) {
-          p.vertex(v.x, v.y);
+          ctx.vertex(v.x, v.y);
         }
-        p.endShape(p.CLOSE);
+        ctx.endShape(ctx.CLOSE);
       }
     };
 
-    applySymmetryDraw(p, symmetry, cx, cy, drawBase, startAngle * Math.PI / 180, offsetX, offsetY);
+    applySymmetryDraw(ctx, symmetry, cx, cy, drawBase, startAngle * Math.PI / 180, offsetX, offsetY);
   }
 
   toSVGGroup(layerId, color, opacity) {
@@ -150,10 +151,4 @@ export default class RecursiveGeometry {
     );
   }
 
-  generateWithContext(p, seed, params, canvasW, canvasH, color, opacity) {
-    this._lastParams = params;
-    this._lastCx = canvasW / 2;
-    this._lastCy = canvasH / 2;
-    this.generate(p, seed, params, canvasW, canvasH, color, opacity);
-  }
 }

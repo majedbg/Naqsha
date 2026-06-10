@@ -1,13 +1,10 @@
-import { applySymmetryDraw, wrapSVGSymmetry } from './symmetryUtils';
+import { applySymmetryDraw } from './symmetryUtils';
+import { Pattern } from './drawingContext';
 
-export default class WaveInterference {
-  constructor() {
+export default class WaveInterference extends Pattern {
+  generate(ctx, seed, params, canvasW, canvasH, color, opacity) {
     this.svgElements = [];
-  }
-
-  generate(p, seed, params, canvasW, canvasH, color, opacity) {
-    this.svgElements = [];
-    p.randomSeed(seed);
+    ctx.randomSeed(seed);
 
     const {
       waveCount = 5,
@@ -30,8 +27,8 @@ export default class WaveInterference {
     const phases = [];
     const freqMults = [];
     for (let w = 0; w < waveCount; w++) {
-      phases.push(p.random(0, p.TWO_PI));
-      freqMults.push(0.7 + p.random(0, 0.6) + w * 0.15);
+      phases.push(ctx.random(0, ctx.TWO_PI));
+      freqMults.push(0.7 + ctx.random(0, 0.6) + w * 0.15);
     }
 
     // Generate horizontal lines from top to bottom
@@ -49,7 +46,7 @@ export default class WaveInterference {
           yDisplacement +=
             (amplitude / waveCount) *
             Math.sin(
-              frequency * freqMults[w] * (x / canvasW) * p.TWO_PI + phases[w]
+              frequency * freqMults[w] * (x / canvasW) * ctx.TWO_PI + phases[w]
             );
         }
 
@@ -68,51 +65,32 @@ export default class WaveInterference {
       this.svgElements.push({ pathD, strokeWeight });
     }
 
-    // Draw on p5 canvas
+    // Draw on canvas
     const drawBase = () => {
-      p.noFill();
-      const c = p.color(color);
+      ctx.noFill();
+      const c = ctx.color(color);
       c.setAlpha(Math.round((opacity / 100) * 255));
-      p.stroke(c);
-      p.strokeWeight(strokeWeight);
+      ctx.stroke(c);
+      ctx.strokeWeight(strokeWeight);
 
       for (const line of lines) {
-        p.beginShape();
+        ctx.beginShape();
         for (const pt of line) {
-          p.vertex(pt.x, pt.y);
+          ctx.vertex(pt.x, pt.y);
         }
-        p.endShape();
+        ctx.endShape();
       }
     };
 
-    applySymmetryDraw(p, symmetry, cx, cy, drawBase, startAngle * Math.PI / 180, offsetX, offsetY);
+    applySymmetryDraw(ctx, symmetry, cx, cy, drawBase, startAngle * Math.PI / 180, offsetX, offsetY);
   }
 
-  toSVGGroup(layerId, color, opacity) {
-    const paths = this.svgElements
+  contentFor(color) {
+    return this.svgElements
       .map(
         (el) =>
           `    <path d="${el.pathD}" stroke="${color}" fill="none" stroke-width="${el.strokeWeight}" stroke-linecap="round"/>`
       )
       .join('\n');
-    return wrapSVGSymmetry(
-      layerId,
-      color,
-      opacity,
-      paths,
-      this._lastParams?.symmetry || 'none',
-      this._lastCx,
-      this._lastCy,
-      this._lastParams?.startAngle || 0,
-      this._lastParams?.offsetX || 0,
-      this._lastParams?.offsetY || 0
-    );
-  }
-
-  generateWithContext(p, seed, params, canvasW, canvasH, color, opacity) {
-    this._lastParams = params;
-    this._lastCx = canvasW / 2;
-    this._lastCy = canvasH / 2;
-    this.generate(p, seed, params, canvasW, canvasH, color, opacity);
   }
 }

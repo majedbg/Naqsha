@@ -1,14 +1,11 @@
-import { applySymmetryDraw, wrapSVGSymmetry } from './symmetryUtils';
+import { applySymmetryDraw } from './symmetryUtils';
+import { Pattern } from './drawingContext';
 
-export default class RadialEtch {
-  constructor() {
+export default class RadialEtch extends Pattern {
+  generate(ctx, seed, params, canvasW, canvasH, color, opacity) {
     this.svgElements = [];
-  }
-
-  generate(p, seed, params, canvasW, canvasH, color, opacity) {
-    this.svgElements = [];
-    p.randomSeed(seed);
-    p.noiseSeed(seed);
+    ctx.randomSeed(seed);
+    ctx.noiseSeed(seed);
 
     const {
       lineCount = 120,
@@ -34,21 +31,21 @@ export default class RadialEtch {
       const baseAngle = t * Math.PI * 2;
 
       // Angle jitter
-      const aj = angleJitter * (p.random(-1, 1)) * (Math.PI / lineCount);
+      const aj = angleJitter * (ctx.random(-1, 1)) * (Math.PI / lineCount);
       const angle = baseAngle + aj;
 
       // Noise-based warp on the angle
       const nx = Math.cos(angle) * 0.5 + 0.5;
       const ny = Math.sin(angle) * 0.5 + 0.5;
       const warp = noiseWarp > 0
-        ? (p.noise(nx * noiseScale * 500, ny * noiseScale * 500) - 0.5) * 2 * noiseWarp * (Math.PI * 0.1)
+        ? (ctx.noise(nx * noiseScale * 500, ny * noiseScale * 500) - 0.5) * 2 * noiseWarp * (Math.PI * 0.1)
         : 0;
       const finalAngle = angle + warp;
 
       // Inner/outer with length jitter
-      const jitterMul = 1 + (p.random(-1, 1)) * lengthJitter;
+      const jitterMul = 1 + (ctx.random(-1, 1)) * lengthJitter;
       const rInner = Math.max(0, innerRadius * jitterMul);
-      const rOuter = outerRadius * (1 + (p.random(-1, 1)) * lengthJitter * 0.5);
+      const rOuter = outerRadius * (1 + (ctx.random(-1, 1)) * lengthJitter * 0.5);
 
       const x1 = rInner * Math.cos(finalAngle);
       const y1 = rInner * Math.sin(finalAngle);
@@ -64,34 +61,16 @@ export default class RadialEtch {
 
     const drawBase = () => {
       const alpha = Math.round((opacity / 100) * 255);
-      const c = p.color(color);
+      const c = ctx.color(color);
       c.setAlpha(alpha);
-      p.stroke(c);
-      p.strokeWeight(strokeWeight);
-      p.noFill();
+      ctx.stroke(c);
+      ctx.strokeWeight(strokeWeight);
+      ctx.noFill();
       for (const l of lines) {
-        p.line(l.x1, l.y1, l.x2, l.y2);
+        ctx.line(l.x1, l.y1, l.x2, l.y2);
       }
     };
 
-    applySymmetryDraw(p, symmetry, cx, cy, drawBase, startAngle * Math.PI / 180, offsetX, offsetY);
-  }
-
-  toSVGGroup(layerId, color, opacity) {
-    const content = this.svgElements.map((el) => `    ${el}`).join('\n');
-    return wrapSVGSymmetry(
-      layerId, color, opacity, content,
-      this._lastParams?.symmetry || 1, this._lastCx, this._lastCy,
-      this._lastParams?.startAngle || 0,
-      this._lastParams?.offsetX || 0,
-      this._lastParams?.offsetY || 0
-    );
-  }
-
-  generateWithContext(p, seed, params, canvasW, canvasH, color, opacity) {
-    this._lastParams = params;
-    this._lastCx = canvasW / 2;
-    this._lastCy = canvasH / 2;
-    this.generate(p, seed, params, canvasW, canvasH, color, opacity);
+    applySymmetryDraw(ctx, symmetry, cx, cy, drawBase, startAngle * Math.PI / 180, offsetX, offsetY);
   }
 }

@@ -1,11 +1,8 @@
-import { applySymmetryDraw, wrapSVGSymmetry } from './symmetryUtils';
+import { Pattern } from './drawingContext';
+import { applySymmetryDraw } from './symmetryUtils';
 
-export default class Feather {
-  constructor() {
-    this.svgElements = [];
-  }
-
-  generate(p, seed, params, canvasW, canvasH, color, opacity) {
+export default class Feather extends Pattern {
+  generate(ctx, seed, params, canvasW, canvasH, color, opacity) {
     const {
       curveType = 'hypotrochoid',
       R = 180,
@@ -29,7 +26,7 @@ export default class Feather {
     const cx = canvasW / 2;
     const cy = canvasH / 2;
 
-    p.randomSeed(seed);
+    ctx.randomSeed(seed);
 
     this.svgElements = [];
 
@@ -76,39 +73,23 @@ export default class Feather {
     }
 
     const drawBase = () => {
-      const c = p.color(color);
+      const c = ctx.color(color);
       c.setAlpha(Math.round((opacity / 100) * 255));
-      p.stroke(c);
-      p.strokeWeight(strokeWeight);
-      p.noFill();
+      ctx.stroke(c);
+      ctx.strokeWeight(strokeWeight);
+      ctx.noFill();
       for (const d of dashes) {
-        p.line(d.x1, d.y1, d.x2, d.y2);
+        ctx.line(d.x1, d.y1, d.x2, d.y2);
       }
     };
 
-    applySymmetryDraw(p, symmetry, cx, cy, drawBase, startAngle * Math.PI / 180, offsetX, offsetY);
+    applySymmetryDraw(ctx, symmetry, cx, cy, drawBase, startAngle * Math.PI / 180, offsetX, offsetY);
   }
 
-  toSVGGroup(layerId, color, opacity) {
-    const content = this.svgElements.join('\n');
-    return wrapSVGSymmetry(
-      layerId,
-      color,
-      opacity,
-      content,
-      this._lastParams?.symmetry || 1,
-      this._lastCx,
-      this._lastCy,
-      this._lastParams?.startAngle || 0,
-      this._lastParams?.offsetX || 0,
-      this._lastParams?.offsetY || 0
-    );
-  }
-
-  generateWithContext(p, seed, params, canvasW, canvasH, color, opacity) {
-    this._lastParams = params;
-    this._lastCx = canvasW / 2;
-    this._lastCy = canvasH / 2;
-    this.generate(p, seed, params, canvasW, canvasH, color, opacity);
+  // Custom contentFor: original toSVGGroup joined with '\n' (no indent).
+  // The base Pattern.contentFor() uses a 4-space indent, which would break
+  // byte-identity with the pre-migration SVG output.
+  contentFor() {
+    return this.svgElements.join('\n');
   }
 }

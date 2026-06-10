@@ -1,0 +1,258 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`VoronoiCells (headless) > contentFor override serializes objects into <path> elements with color 1`] = `
+"  <g id="layer-L1" opacity="0.80">
+    <g transform="translate(400,300) rotate(0)">
+    <path d="M-158.43,-300.00 L-158.23,-55.44" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M-78.24,-300.00 L-3.29,-70.44" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M-158.23,-55.44 L-400.00,-78.67" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M-158.23,-55.44 L-148.97,-45.30" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M-148.97,-45.30 L-175.81,117.99" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M-148.97,-45.30 L-11.30,-54.48" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M-3.29,-70.44 L-11.30,-54.48" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M-3.29,-70.44 L149.61,-144.70" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M-11.30,-54.48 L33.83,63.66" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M149.61,-144.70 L183.56,-54.38" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M183.56,-54.38 L161.52,40.36" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M183.56,-54.38 L400.00,-38.03" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M-400.00,75.78 L-181.78,125.15" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M-175.81,117.99 L-181.78,125.15" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M-175.81,117.99 L27.60,76.19" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M33.83,63.66 L27.60,76.19" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M33.83,63.66 L161.52,40.36" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M161.52,40.36 L197.84,74.08" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M400.00,17.73 L197.84,74.08" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    </g>
+    <g transform="translate(400,300) rotate(90)">
+    <path d="M-158.43,-300.00 L-158.23,-55.44" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M-78.24,-300.00 L-3.29,-70.44" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M-158.23,-55.44 L-400.00,-78.67" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M-158.23,-55.44 L-148.97,-45.30" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M-148.97,-45.30 L-175.81,117.99" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M-148.97,-45.30 L-11.30,-54.48" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M-3.29,-70.44 L-11.30,-54.48" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M-3.29,-70.44 L149.61,-144.70" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M-11.30,-54.48 L33.83,63.66" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M149.61,-144.70 L183.56,-54.38" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M183.56,-54.38 L161.52,40.36" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M183.56,-54.38 L400.00,-38.03" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M-400.00,75.78 L-181.78,125.15" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M-175.81,117.99 L-181.78,125.15" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M-175.81,117.99 L27.60,76.19" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M33.83,63.66 L27.60,76.19" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M33.83,63.66 L161.52,40.36" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M161.52,40.36 L197.84,74.08" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M400.00,17.73 L197.84,74.08" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    </g>
+    <g transform="translate(400,300) rotate(180)">
+    <path d="M-158.43,-300.00 L-158.23,-55.44" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M-78.24,-300.00 L-3.29,-70.44" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M-158.23,-55.44 L-400.00,-78.67" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M-158.23,-55.44 L-148.97,-45.30" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M-148.97,-45.30 L-175.81,117.99" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M-148.97,-45.30 L-11.30,-54.48" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M-3.29,-70.44 L-11.30,-54.48" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M-3.29,-70.44 L149.61,-144.70" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M-11.30,-54.48 L33.83,63.66" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M149.61,-144.70 L183.56,-54.38" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M183.56,-54.38 L161.52,40.36" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M183.56,-54.38 L400.00,-38.03" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M-400.00,75.78 L-181.78,125.15" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M-175.81,117.99 L-181.78,125.15" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M-175.81,117.99 L27.60,76.19" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M33.83,63.66 L27.60,76.19" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M33.83,63.66 L161.52,40.36" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M161.52,40.36 L197.84,74.08" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M400.00,17.73 L197.84,74.08" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    </g>
+    <g transform="translate(400,300) rotate(270)">
+    <path d="M-158.43,-300.00 L-158.23,-55.44" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M-78.24,-300.00 L-3.29,-70.44" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M-158.23,-55.44 L-400.00,-78.67" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M-158.23,-55.44 L-148.97,-45.30" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M-148.97,-45.30 L-175.81,117.99" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M-148.97,-45.30 L-11.30,-54.48" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M-3.29,-70.44 L-11.30,-54.48" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M-3.29,-70.44 L149.61,-144.70" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M-11.30,-54.48 L33.83,63.66" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M149.61,-144.70 L183.56,-54.38" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M183.56,-54.38 L161.52,40.36" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M183.56,-54.38 L400.00,-38.03" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M-400.00,75.78 L-181.78,125.15" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M-175.81,117.99 L-181.78,125.15" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M-175.81,117.99 L27.60,76.19" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M33.83,63.66 L27.60,76.19" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M33.83,63.66 L161.52,40.36" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M161.52,40.36 L197.84,74.08" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M400.00,17.73 L197.84,74.08" stroke="#3366aa" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    </g>
+  </g>"
+`;
+
+exports[`VoronoiCells (headless) > produces object svgElements with pathD + strokeWeight 1`] = `
+[
+  {
+    "pathD": "M-158.43,-300.00 L-158.23,-55.44",
+    "strokeWeight": 1.5,
+  },
+  {
+    "pathD": "M-78.24,-300.00 L-3.29,-70.44",
+    "strokeWeight": 1.5,
+  },
+  {
+    "pathD": "M-158.23,-55.44 L-400.00,-78.67",
+    "strokeWeight": 1.5,
+  },
+  {
+    "pathD": "M-158.23,-55.44 L-148.97,-45.30",
+    "strokeWeight": 1.5,
+  },
+  {
+    "pathD": "M-148.97,-45.30 L-175.81,117.99",
+    "strokeWeight": 1.5,
+  },
+  {
+    "pathD": "M-148.97,-45.30 L-11.30,-54.48",
+    "strokeWeight": 1.5,
+  },
+  {
+    "pathD": "M-3.29,-70.44 L-11.30,-54.48",
+    "strokeWeight": 1.5,
+  },
+  {
+    "pathD": "M-3.29,-70.44 L149.61,-144.70",
+    "strokeWeight": 1.5,
+  },
+  {
+    "pathD": "M-11.30,-54.48 L33.83,63.66",
+    "strokeWeight": 1.5,
+  },
+  {
+    "pathD": "M149.61,-144.70 L183.56,-54.38",
+    "strokeWeight": 1.5,
+  },
+  {
+    "pathD": "M183.56,-54.38 L161.52,40.36",
+    "strokeWeight": 1.5,
+  },
+  {
+    "pathD": "M183.56,-54.38 L400.00,-38.03",
+    "strokeWeight": 1.5,
+  },
+  {
+    "pathD": "M-400.00,75.78 L-181.78,125.15",
+    "strokeWeight": 1.5,
+  },
+  {
+    "pathD": "M-175.81,117.99 L-181.78,125.15",
+    "strokeWeight": 1.5,
+  },
+  {
+    "pathD": "M-175.81,117.99 L27.60,76.19",
+    "strokeWeight": 1.5,
+  },
+  {
+    "pathD": "M33.83,63.66 L27.60,76.19",
+    "strokeWeight": 1.5,
+  },
+  {
+    "pathD": "M33.83,63.66 L161.52,40.36",
+    "strokeWeight": 1.5,
+  },
+  {
+    "pathD": "M161.52,40.36 L197.84,74.08",
+    "strokeWeight": 1.5,
+  },
+  {
+    "pathD": "M400.00,17.73 L197.84,74.08",
+    "strokeWeight": 1.5,
+  },
+]
+`;
+
+exports[`VoronoiCells (headless) > snapshot — no-symmetry fallback path (symmetry omitted) 1`] = `
+[
+  {
+    "pathD": "M80.88,-31.03 L281.97,101.84",
+    "strokeWeight": 1,
+  },
+  {
+    "pathD": "M281.97,101.84 L292.38,-16.61",
+    "strokeWeight": 1,
+  },
+  {
+    "pathD": "M292.38,-16.61 L80.88,-31.03",
+    "strokeWeight": 1,
+  },
+  {
+    "pathD": "M-181.42,74.85 L-260.15,15.96",
+    "strokeWeight": 1,
+  },
+  {
+    "pathD": "M-260.15,15.96 L-200.06,229.24",
+    "strokeWeight": 1,
+  },
+  {
+    "pathD": "M-200.06,229.24 L-181.42,74.85",
+    "strokeWeight": 1,
+  },
+  {
+    "pathD": "M80.88,-31.03 L-200.06,229.24",
+    "strokeWeight": 1,
+  },
+  {
+    "pathD": "M-200.06,229.24 L281.97,101.84",
+    "strokeWeight": 1,
+  },
+  {
+    "pathD": "M80.88,-31.03 L-181.42,74.85",
+    "strokeWeight": 1,
+  },
+  {
+    "pathD": "M292.38,-16.61 L196.59,-115.80",
+    "strokeWeight": 1,
+  },
+  {
+    "pathD": "M196.59,-115.80 L80.88,-31.03",
+    "strokeWeight": 1,
+  },
+  {
+    "pathD": "M-181.42,74.85 L-242.20,0.44",
+    "strokeWeight": 1,
+  },
+  {
+    "pathD": "M-242.20,0.44 L-260.15,15.96",
+    "strokeWeight": 1,
+  },
+  {
+    "pathD": "M80.88,-31.03 L-242.20,0.44",
+    "strokeWeight": 1,
+  },
+  {
+    "pathD": "M196.59,-115.80 L-242.20,0.44",
+    "strokeWeight": 1,
+  },
+]
+`;
+
+exports[`VoronoiCells (headless) > snapshot — no-symmetry fallback path (symmetry omitted) 2`] = `
+"  <g id="layer-L2" opacity="0.80">
+    <g transform="translate(400,300)">
+    <path d="M80.88,-31.03 L281.97,101.84" stroke="#3366aa" fill="none" stroke-width="1" stroke-linecap="round"/>
+    <path d="M281.97,101.84 L292.38,-16.61" stroke="#3366aa" fill="none" stroke-width="1" stroke-linecap="round"/>
+    <path d="M292.38,-16.61 L80.88,-31.03" stroke="#3366aa" fill="none" stroke-width="1" stroke-linecap="round"/>
+    <path d="M-181.42,74.85 L-260.15,15.96" stroke="#3366aa" fill="none" stroke-width="1" stroke-linecap="round"/>
+    <path d="M-260.15,15.96 L-200.06,229.24" stroke="#3366aa" fill="none" stroke-width="1" stroke-linecap="round"/>
+    <path d="M-200.06,229.24 L-181.42,74.85" stroke="#3366aa" fill="none" stroke-width="1" stroke-linecap="round"/>
+    <path d="M80.88,-31.03 L-200.06,229.24" stroke="#3366aa" fill="none" stroke-width="1" stroke-linecap="round"/>
+    <path d="M-200.06,229.24 L281.97,101.84" stroke="#3366aa" fill="none" stroke-width="1" stroke-linecap="round"/>
+    <path d="M80.88,-31.03 L-181.42,74.85" stroke="#3366aa" fill="none" stroke-width="1" stroke-linecap="round"/>
+    <path d="M292.38,-16.61 L196.59,-115.80" stroke="#3366aa" fill="none" stroke-width="1" stroke-linecap="round"/>
+    <path d="M196.59,-115.80 L80.88,-31.03" stroke="#3366aa" fill="none" stroke-width="1" stroke-linecap="round"/>
+    <path d="M-181.42,74.85 L-242.20,0.44" stroke="#3366aa" fill="none" stroke-width="1" stroke-linecap="round"/>
+    <path d="M-242.20,0.44 L-260.15,15.96" stroke="#3366aa" fill="none" stroke-width="1" stroke-linecap="round"/>
+    <path d="M80.88,-31.03 L-242.20,0.44" stroke="#3366aa" fill="none" stroke-width="1" stroke-linecap="round"/>
+    <path d="M196.59,-115.80 L-242.20,0.44" stroke="#3366aa" fill="none" stroke-width="1" stroke-linecap="round"/>
+    </g>
+  </g>"
+`;

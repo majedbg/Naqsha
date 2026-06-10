@@ -3,22 +3,30 @@
 
 export const TIER_LIMITS = {
   guest: {
-    patterns: ['spirograph', 'flowfield', 'phyllotaxis', 'recursive'],
-    maxLayers: 1,
-    presetIndices: [0, 1, 2],       // 6x12, 12x12, 12x18
-    allowCustomSize: false,
-    maxParamsPerPattern: 3,          // first 3 non-universal params shown
+    patterns: ['spirograph', 'flowfield', 'phyllotaxis', 'wave', 'voronoi', 'recursive', 'radialetch', 'grid', 'spiral'],
+    maxLayers: 3,
+    presetIndices: null,             // all sizes
+    allowCustomSize: true,
+    maxParamsPerPattern: {
+      default: 7,            // first 7 non-universal params for any other pattern
+      recursive: Infinity,   // show all
+      radialetch: Infinity,  // show all
+      grid: Infinity,        // show all
+      phyllotaxis: Infinity, // show all
+      spiral: Infinity,      // show all
+    },
     lockedParamKeys: [],             // (guest uses maxParamsPerPattern instead)
-    seedVisible: false,
-    seedEditable: false,
-    svgMetadata: true,               // <!-- generativearts.studio -->
-    maxCloudSaves: 0,
-    canShare: false,
+    universalParams: true,           // transform params (symmetry/startAngle/offset) shown
+    seedVisible: true,
+    seedEditable: true,
+    svgMetadata: true,               // <!-- generativearts.studio --> (watermark kept for guests)
+    maxCloudSaves: 0,                // gated — cloud saving is the reason to sign in
+    canShare: true,                  // guests can share a design link
     canFork: false,
-    localStorage: false,
+    localStorage: true,
     collections: false,
-    historySnapshots: 0,
-    aiCredits: false,             // no AI access
+    historySnapshots: 25,
+    aiCredits: false,             // no AI access (gated — costs real money per use)
   },
   // Free tier = full creative product. The only scarce resource is the AI
   // credit balance (enforced by the deduct_ai_credits RPC). Pro / Studio
@@ -30,6 +38,7 @@ export const TIER_LIMITS = {
     allowCustomSize: true,
     maxParamsPerPattern: Infinity,
     lockedParamKeys: [],
+    universalParams: true,
     seedVisible: true,
     seedEditable: true,
     svgMetadata: false,
@@ -48,6 +57,7 @@ export const TIER_LIMITS = {
     allowCustomSize: true,
     maxParamsPerPattern: Infinity,
     lockedParamKeys: [],
+    universalParams: true,
     seedVisible: true,
     seedEditable: true,
     svgMetadata: false,
@@ -66,6 +76,7 @@ export const TIER_LIMITS = {
     allowCustomSize: true,
     maxParamsPerPattern: Infinity,
     lockedParamKeys: [],
+    universalParams: true,
     seedVisible: true,
     seedEditable: true,
     svgMetadata: false,
@@ -136,13 +147,19 @@ export function checkGate(tier, feature, value) {
     case 'param': {
       // value = { paramKey, paramIndex, isUniversal }
       if (!value) return { allowed: true };
-      // Universal params hidden for guests
-      if (tier === 'guest' && value.isUniversal) {
+      // Universal params hidden unless the tier allows them
+      if (!limits.universalParams && value.isUniversal) {
         return { allowed: false, reason: 'Sign in to unlock', upgradeTarget: 'free' };
       }
-      // Guest: first N non-universal params only
-      if (tier === 'guest' && value.paramIndex >= limits.maxParamsPerPattern) {
-        return { allowed: false, reason: 'Sign in to unlock all parameters', upgradeTarget: 'free' };
+      // Guest: first N non-universal params only (N may be a per-pattern override)
+      if (tier === 'guest') {
+        const cap = limits.maxParamsPerPattern;
+        const maxParams = (cap && typeof cap === 'object')
+          ? (cap[value.patternType] ?? cap.default)
+          : cap;
+        if (value.paramIndex >= maxParams) {
+          return { allowed: false, reason: 'Sign in to unlock all parameters', upgradeTarget: 'free' };
+        }
       }
       // Free/Pro: check locked param keys
       if (limits.lockedParamKeys.includes(value.paramKey)) {

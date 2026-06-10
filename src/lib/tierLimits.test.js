@@ -40,21 +40,24 @@ describe('TIER_LIMITS shape', () => {
     expect(Object.keys(TIER_LIMITS)).toEqual(['guest', 'free', 'pro', 'studio']);
   });
 
-  it('guest tier has expected shape', () => {
+  it('guest tier has expected shape (loosened 2026-06-10)', () => {
     const g = TIER_LIMITS.guest;
     expect(Array.isArray(g.patterns)).toBe(true);
-    expect(g.maxLayers).toBe(1);
-    expect(Array.isArray(g.presetIndices)).toBe(true);
-    expect(g.allowCustomSize).toBe(false);
-    expect(g.maxParamsPerPattern).toBe(3);
-    expect(g.seedVisible).toBe(false);
-    expect(g.seedEditable).toBe(false);
-    expect(g.maxCloudSaves).toBe(0);
-    expect(g.canShare).toBe(false);
-    expect(g.canFork).toBe(false);
-    expect(g.collections).toBe(false);
-    expect(g.historySnapshots).toBe(0);
-    expect(g.aiCredits).toBe(false);
+    expect(g.maxLayers).toBe(3);
+    expect(g.presetIndices).toBeNull();          // all sizes unlocked
+    expect(g.allowCustomSize).toBe(true);
+    // per-pattern object: default cap + Infinity overrides
+    expect(typeof g.maxParamsPerPattern).toBe('object');
+    expect(g.maxParamsPerPattern.default).toBe(7);
+    expect(g.universalParams).toBe(true);
+    expect(g.seedVisible).toBe(true);
+    expect(g.seedEditable).toBe(true);
+    expect(g.maxCloudSaves).toBe(0);             // still gated — the reason to sign in
+    expect(g.canShare).toBe(true);
+    expect(g.canFork).toBe(false);               // still gated
+    expect(g.collections).toBe(false);           // still gated
+    expect(g.historySnapshots).toBe(25);
+    expect(g.aiCredits).toBe(false);             // still gated — costs real money
   });
 
   it('free/pro/studio limits are byte-identical (all numeric/boolean fields)', () => {
@@ -98,7 +101,7 @@ describe('checkGate: unknown tier falls back to guest', () => {
 
   it('unknown tier behaves like guest for customSize', () => {
     const result = checkGate('enterprise', 'customSize');
-    expect(result.allowed).toBe(false);
+    expect(result.allowed).toBe(true);   // guest now allows custom sizes
   });
 });
 
@@ -152,15 +155,19 @@ describe('checkGate: layers', () => {
     expect(r).toMatchObject({ allowed: true });
   });
 
-  it('guest — 2 layers disallowed', () => {
-    const r = checkGate('guest', 'layers', 2);
+  it('guest — 3 layers allowed (max)', () => {
+    expect(checkGate('guest', 'layers', 3).allowed).toBe(true);
+  });
+
+  it('guest — 4 layers disallowed (max 3)', () => {
+    const r = checkGate('guest', 'layers', 4);
     expect(r.allowed).toBe(false);
     expect(r.reason).toBe('Sign in for up to 6 layers');
     expect(r.upgradeTarget).toBe('free');
   });
 
   it('guest — value=0 treated as 1 (falsy default)', () => {
-    // value || 1 → 1, which is <= guest maxLayers(1)
+    // value || 1 → 1, which is <= guest maxLayers(3)
     const r = checkGate('guest', 'layers', 0);
     expect(r.allowed).toBe(true);
   });
@@ -201,11 +208,9 @@ describe('checkGate: preset', () => {
     expect(checkGate('guest', 'preset', 2).allowed).toBe(true);
   });
 
-  it('guest — preset index 3 disallowed', () => {
-    const r = checkGate('guest', 'preset', 3);
-    expect(r.allowed).toBe(false);
-    expect(r.reason).toBe('Sign in to unlock all sizes');
-    expect(r.upgradeTarget).toBe('free');
+  it('guest — preset index 3+ allowed (all sizes unlocked)', () => {
+    expect(checkGate('guest', 'preset', 3).allowed).toBe(true);
+    expect(checkGate('guest', 'preset', 99).allowed).toBe(true);
   });
 
   it.each(SIGNED_IN_TIERS)('%s — all preset indices allowed (null = all)', (tier) => {
@@ -220,11 +225,8 @@ describe('checkGate: preset', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('checkGate: customSize', () => {
-  it('guest — disallowed', () => {
-    const r = checkGate('guest', 'customSize');
-    expect(r.allowed).toBe(false);
-    expect(r.reason).toBe('Sign in to use custom sizes');
-    expect(r.upgradeTarget).toBe('free');
+  it('guest — allowed (custom sizes unlocked)', () => {
+    expect(checkGate('guest', 'customSize')).toMatchObject({ allowed: true });
   });
 
   it.each(SIGNED_IN_TIERS)('%s — allowed', (tier) => {
@@ -246,27 +248,40 @@ describe('checkGate: param', () => {
     expect(checkGate('guest', 'param', undefined).allowed).toBe(true);
   });
 
-  it('guest — universal param blocked', () => {
+  it('guest — universal param allowed (transform params unlocked)', () => {
     const r = checkGate('guest', 'param', { paramKey: 'symmetry', paramIndex: 0, isUniversal: true });
-    expect(r.allowed).toBe(false);
-    expect(r.reason).toBe('Sign in to unlock');
-    expect(r.upgradeTarget).toBe('free');
-  });
-
-  it('guest — non-universal param at index < 3 allowed', () => {
-    const r = checkGate('guest', 'param', { paramKey: 'frequency', paramIndex: 2, isUniversal: false });
     expect(r).toMatchObject({ allowed: true });
   });
 
-  it('guest — non-universal param at index exactly 3 disallowed', () => {
-    const r = checkGate('guest', 'param', { paramKey: 'amplitude', paramIndex: 3, isUniversal: false });
+  it('guest — non-universal param below default cap (7) allowed', () => {
+    const r = checkGate('guest', 'param', { paramKey: 'frequency', paramIndex: 6, isUniversal: false });
+    expect(r).toMatchObject({ allowed: true });
+  });
+
+  it('guest — non-universal param at index exactly 7 disallowed (default cap)', () => {
+    const r = checkGate('guest', 'param', { paramKey: 'amplitude', paramIndex: 7, isUniversal: false });
     expect(r.allowed).toBe(false);
     expect(r.reason).toBe('Sign in to unlock all parameters');
     expect(r.upgradeTarget).toBe('free');
   });
 
-  it('guest — non-universal param at index > 3 disallowed', () => {
+  it('guest — non-universal param above default cap disallowed', () => {
     const r = checkGate('guest', 'param', { paramKey: 'phase', paramIndex: 10, isUniversal: false });
+    expect(r.allowed).toBe(false);
+  });
+
+  it('guest — per-pattern override (spiral) lifts the cap: index 10 allowed', () => {
+    const r = checkGate('guest', 'param', { paramKey: 'wobbleAmp', paramIndex: 10, isUniversal: false, patternType: 'spiral' });
+    expect(r).toMatchObject({ allowed: true });
+  });
+
+  it('guest — per-pattern override (phyllotaxis) lifts the cap: index 9 allowed', () => {
+    const r = checkGate('guest', 'param', { paramKey: 'jitter', paramIndex: 9, isUniversal: false, patternType: 'phyllotaxis' });
+    expect(r).toMatchObject({ allowed: true });
+  });
+
+  it('guest — pattern without override uses default cap of 7', () => {
+    const r = checkGate('guest', 'param', { paramKey: 'lineSpacing', paramIndex: 7, isUniversal: false, patternType: 'wave' });
     expect(r.allowed).toBe(false);
   });
 
@@ -278,7 +293,7 @@ describe('checkGate: param', () => {
   });
 
   it.each(SIGNED_IN_TIERS)('%s — universal param allowed (lockedParamKeys empty)', (tier) => {
-    // isUniversal check only fires for tier === 'guest'; other tiers go to lockedParamKeys check
+    // universal params gated by limits.universalParams (true for every tier today)
     const r = checkGate(tier, 'param', { paramKey: 'symmetry', paramIndex: 0, isUniversal: true });
     expect(r).toMatchObject({ allowed: true });
   });
@@ -297,11 +312,8 @@ describe('checkGate: param', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('checkGate: seed', () => {
-  it('guest — disallowed', () => {
-    const r = checkGate('guest', 'seed');
-    expect(r.allowed).toBe(false);
-    expect(r.reason).toBe('Sign in to control seeds');
-    expect(r.upgradeTarget).toBe('free');
+  it('guest — allowed (seed control unlocked)', () => {
+    expect(checkGate('guest', 'seed')).toMatchObject({ allowed: true });
   });
 
   it.each(SIGNED_IN_TIERS)('%s — allowed', (tier) => {
@@ -354,11 +366,8 @@ describe('checkGate: cloudSave', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('checkGate: share', () => {
-  it('guest — disallowed', () => {
-    const r = checkGate('guest', 'share');
-    expect(r.allowed).toBe(false);
-    expect(r.reason).toBe('Sign in to share designs');
-    expect(r.upgradeTarget).toBe('free');
+  it('guest — allowed (sharing unlocked)', () => {
+    expect(checkGate('guest', 'share')).toMatchObject({ allowed: true });
   });
 
   it.each(SIGNED_IN_TIERS)('%s — allowed', (tier) => {
@@ -405,11 +414,8 @@ describe('checkGate: collections', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('checkGate: history', () => {
-  it('guest — disallowed (historySnapshots=0)', () => {
-    const r = checkGate('guest', 'history');
-    expect(r.allowed).toBe(false);
-    expect(r.reason).toBe('Sign in for design history');
-    expect(r.upgradeTarget).toBe('free');
+  it('guest — allowed (historySnapshots=25)', () => {
+    expect(checkGate('guest', 'history')).toMatchObject({ allowed: true });
   });
 
   it.each(SIGNED_IN_TIERS)('%s — allowed (historySnapshots=50)', (tier) => {

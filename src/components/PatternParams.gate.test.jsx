@@ -47,32 +47,27 @@ describe("PatternParams gate behavior (guest tier)", () => {
     mockTier = "guest";
   });
 
-  it("flowfield: guest sees exactly the first 3 non-universal params", () => {
+  it("flowfield: guest sees all params (cap raised to 7; flowfield has 6)", () => {
     render(
       <Harness
         patternType="flowfield"
         initialParams={{ ...DEFAULT_PARAMS.flowfield }}
       />
     );
-    // Allowed (visible) sliders for guest — pinned set.
-    expect(
-      screen.getByRole("slider", { name: "Particle Count" })
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("slider", { name: "Step Length" })
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("slider", { name: "Noise Scale" })
-    ).toBeInTheDocument();
-    // Locked ones are NOT rendered as controls for guests.
-    expect(
-      screen.queryByRole("slider", { name: "Curl Strength" })
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("slider", { name: "Pattern Scale" })
-    ).not.toBeInTheDocument();
-    // Guest locked summary is shown.
-    expect(screen.getByText(/more parameters/)).toBeInTheDocument();
+    // Curl Strength + Pattern Scale were locked for guests before; now visible.
+    // (Stroke Weight lives in the 'stroke' group, collapsed by default, so it is
+    // intentionally not asserted here.)
+    for (const name of [
+      "Particle Count",
+      "Step Length",
+      "Noise Scale",
+      "Curl Strength",
+      "Pattern Scale",
+    ]) {
+      expect(screen.getByRole("slider", { name })).toBeInTheDocument();
+    }
+    // Nothing is left locked → no "more parameters" summary.
+    expect(screen.queryByText(/more parameters/)).not.toBeInTheDocument();
   });
 
   it("duality: guest sees exactly innerRadius/outerRadius/spiralTurns", () => {

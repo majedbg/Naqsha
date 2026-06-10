@@ -107,11 +107,12 @@ describe("usePatternCache", () => {
     expect(lastPatch.randomizeKeys.length).toBeGreaterThan(0);
   });
 
-  // Guest fresh-switch uses the LayerCard gate loop, which increments its param
-  // index only AFTER skipping RANDOMIZE_EXCLUDED_KEYS (so excluded keys do NOT
-  // consume an index). This deliberately differs from PatternParams' loop. Lock
-  // the produced randomizeKeys for the two named hazard patterns.
-  it("guest fresh-switch to flowfield pins the LayerCard-gated randomizeKeys", () => {
+  // Guest fresh-switch uses the gate loop, which increments its param index only
+  // AFTER skipping RANDOMIZE_EXCLUDED_KEYS (so excluded keys do NOT consume an
+  // index). This deliberately differs from PatternParams' loop. The guest default
+  // cap is now 7 non-universal params (raised from 3 on 2026-06-10), so more keys
+  // pass. Lock the produced randomizeKeys for the two named hazard patterns.
+  it("guest fresh-switch to flowfield pins the gate-loop randomizeKeys", () => {
     mockTier = "guest";
     // patternType differs from target + empty cache → forces the fresh branch.
     const layer = makeLayer({ patternType: "spirograph", paramsCache: {} });
@@ -120,14 +121,16 @@ describe("usePatternCache", () => {
       usePatternCache(layer, (p) => (patch = p))
     );
     act(() => result.current.handlePatternChange("flowfield"));
+    // flowfield has 4 non-excluded keys (idx 0–3), all under the cap of 7.
     expect(patch.randomizeKeys).toEqual([
       "particleCount",
       "stepLength",
       "noiseScale",
+      "curlStrength",
     ]);
   });
 
-  it("guest fresh-switch to duality pins the LayerCard-gated randomizeKeys", () => {
+  it("guest fresh-switch to duality pins the gate-loop randomizeKeys", () => {
     mockTier = "guest";
     const layer = makeLayer({ patternType: "spirograph", paramsCache: {} });
     let patch = null;
@@ -135,10 +138,15 @@ describe("usePatternCache", () => {
       usePatternCache(layer, (p) => (patch = p))
     );
     act(() => result.current.handlePatternChange("duality"));
+    // duality (no per-pattern override) → default cap 7: idx 0–6 pass.
     expect(patch.randomizeKeys).toEqual([
       "innerRadius",
       "outerRadius",
       "spiralTurns",
+      "spiralGrowth",
+      "dashCount",
+      "dashLength",
+      "dashLenJitter",
     ]);
   });
 });

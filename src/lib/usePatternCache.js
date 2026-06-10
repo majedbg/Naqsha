@@ -77,6 +77,7 @@ export default function usePatternCache(layer, onUpdate) {
             paramKey: d.key,
             paramIndex: idx,
             isUniversal,
+            patternType: newPatternType,
           }).allowed;
         })
         .map((d) => d.key);

@@ -30,7 +30,7 @@ export default function PatternParams() {
   const paramItems = defs.map((def) => {
     const isUniversal = UNIVERSAL_PARAM_KEYS.includes(def.key);
     const paramIndex = isUniversal ? -1 : nonUniversalIndex++;
-    const gate = check("param", { paramKey: def.key, paramIndex, isUniversal });
+    const gate = check("param", { paramKey: def.key, paramIndex, isUniversal, patternType });
     return { def, isUniversal, paramIndex, gate };
   });
 

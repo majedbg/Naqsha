@@ -235,6 +235,7 @@ export const DEFAULT_PARAMS = {
     rows: 12,
     spacing: 40,
     nonLinear: 0,
+    nonLinearGain: 0,
     jitter: 0,
     drawHorizontal: 1,
     drawVertical: 1,
@@ -298,6 +299,49 @@ const DENSITY_PLOT_PARAM = {
     { key: 'spacing', label: 'Spacing', short: 'Spacing', min: 0.5, max: 30, step: 0.5, default: 6 },
   ],
   tooltip: 'Number of elements × radial spacing on one plane — right is more elements, up is wider spacing. Together they set how densely the spiral fills the frame.',
+};
+
+// Grid columns × rows share one plane: both set line counts over the same 2..60
+// range, so plotting them together makes the lattice aspect legible (a point off
+// the diagonal is a non-square grid). `key: 'gridSize'` is the synthetic primary
+// key (grouping/gating/reset/randomize); `keys` is the real value set; `axes`
+// carries each axis's range + default. DEFAULT_PARAMS still carries cols / rows.
+const GRID_SIZE_PLOT_PARAM = {
+  key: 'gridSize', type: 'plot2d', label: 'Columns × Rows', keys: ['cols', 'rows'],
+  axes: [
+    { key: 'cols', label: 'Columns', short: 'Cols', min: 2, max: 60, step: 1, default: 12 },
+    { key: 'rows', label: 'Rows', short: 'Rows', min: 2, max: 60, step: 1, default: 12 },
+  ],
+  tooltip: 'Columns × rows on one plane — right is more vertical lines, up is more horizontal lines. Off the diagonal is a non-square lattice.',
+};
+
+// Grid horizontal × vertical line toggles share one plane. Each axis is a 0/1
+// switch, so the plane is a 4-corner selector (neither · V-only · H-only · both):
+// right enables vertical lines, up enables horizontal lines. `key: 'gridLines'`
+// is the synthetic primary key; DEFAULT_PARAMS still carries drawHorizontal /
+// drawVertical.
+const GRID_LINES_PLOT_PARAM = {
+  key: 'gridLines', type: 'plot2d', label: 'Horizontal × Vertical', keys: ['drawHorizontal', 'drawVertical'],
+  axes: [
+    { key: 'drawVertical', label: 'Vertical', short: 'Vert', min: 0, max: 1, step: 1, default: 1 },
+    { key: 'drawHorizontal', label: 'Horizontal', short: 'Horiz', min: 0, max: 1, step: 1, default: 1 },
+  ],
+  tooltip: 'Which line families draw, as a 4-corner toggle: right turns vertical lines on, up turns horizontal lines on. A corner can be neither, one, or both.',
+};
+
+// Grid non-linearity as a 2D plane: two INDEPENDENT ways to ease line spacing.
+// X = concentration (the gamma/power s^(1+n)) — center vs edge bunching, the
+// original control. Y = sharpness (an iq/Schlick gain composed on top, k = 3^g)
+// — how abrupt the dense->sparse transition is, independent of strength. Y = 0
+// is the identity, so existing grids render unchanged. `key: 'easing'` is the
+// synthetic primary key; DEFAULT_PARAMS carries nonLinear / nonLinearGain.
+const NONLINEAR_PLOT_PARAM = {
+  key: 'easing', type: 'plot2d', label: 'Non-Linear', keys: ['nonLinear', 'nonLinearGain'],
+  axes: [
+    { key: 'nonLinear', label: 'Concentration', short: 'Conc', min: -2, max: 2, step: 0.1, default: 0 },
+    { key: 'nonLinearGain', label: 'Sharpness', short: 'Sharp', min: -1, max: 1, step: 0.05, default: 0 },
+  ],
+  tooltip: 'Two independent eases for line spacing. Left/right = concentration (bunch toward edges or center). Down/up = sharpness of the falloff (how abrupt the dense-to-sparse transition is). Center = even spacing.',
 };
 
 export const PATTERN_PARAM_DEFS = {
@@ -508,13 +552,11 @@ export const PATTERN_PARAM_DEFS = {
     OFFSET_PAD_PARAM,
   ],
   grid: [
-    { key: 'cols', label: 'Columns', min: 2, max: 60, step: 1, tooltip: 'Number of vertical lines' },
-    { key: 'rows', label: 'Rows', min: 2, max: 60, step: 1, tooltip: 'Number of horizontal lines' },
+    GRID_SIZE_PLOT_PARAM,
     { key: 'spacing', label: 'Spacing', min: 5, max: 100, step: 1, tooltip: 'Base distance between lines' },
-    { key: 'nonLinear', label: 'Non-Linear', min: -2, max: 2, step: 0.1, tooltip: 'Curves line distribution — positive bunches toward center, negative toward edges' },
+    NONLINEAR_PLOT_PARAM,
     { key: 'jitter', label: 'Jitter', min: 0, max: 30, step: 0.5, tooltip: 'Random displacement of each line position' },
-    { key: 'drawHorizontal', label: 'Horizontal', min: 0, max: 1, step: 1, tooltip: '1 = draw horizontal lines, 0 = skip' },
-    { key: 'drawVertical', label: 'Vertical', min: 0, max: 1, step: 1, tooltip: '1 = draw vertical lines, 0 = skip' },
+    GRID_LINES_PLOT_PARAM,
     { key: 'margin', label: 'Margin', min: 0, max: 100, step: 1, tooltip: 'Extra line overshoot beyond grid bounds' },
     { key: 'strokeWeight', label: 'Stroke Weight', min: 0.3, max: 3, step: 0.1, tooltip: 'Line thickness' },
     SYMMETRY_PARAM,

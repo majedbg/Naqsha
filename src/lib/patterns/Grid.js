@@ -12,6 +12,7 @@ export default class Grid extends Pattern {
       rows = 12,
       spacing = 40,
       nonLinear = 0,
+      nonLinearGain = 0,
       jitter = 0,
       drawHorizontal = 1,
       drawVertical = 1,
@@ -26,28 +27,32 @@ export default class Grid extends Pattern {
     const cx = canvasW / 2;
     const cy = canvasH / 2;
 
-    // Compute positions with non-linear spacing
-    // nonLinear: 0 = even, >0 = lines bunch toward center, <0 = bunch toward edges
+    // Remap the normalized distance-from-center s in [0,1] using TWO independent
+    // eases, then mirror it about the center. Both keep the endpoints pinned
+    // (0->0, 1->1) and stay monotonic, so lines never reorder and the outer
+    // footprint (+/- totalSpan/2) is unchanged.
+    //
+    //   power (nonLinear): s^gamma, gamma = 1+n for n>=0, 1/(1+|n|) for n<0.
+    //     CONCENTRATION — gamma>1 bunches toward center, <1 toward edges, =1 even.
+    //   gain  (nonLinearGain): an Inigo-Quilez/Schlick gain composed ON TOP,
+    //     k = 3^g. SHARPNESS of the dense->sparse knee, independent of strength.
+    //     k=1 (g=0) is the identity, so g=0 reproduces the pure power exactly.
+    const gamma = nonLinear >= 0 ? 1 + nonLinear : 1 / (1 + Math.abs(nonLinear));
+    const gainK = Math.pow(3, nonLinearGain);
+    const gain = (x, k) => {
+      const a = 0.5 * Math.pow(2 * (x < 0.5 ? x : 1 - x), k);
+      return x < 0.5 ? a : 1 - a;
+    };
     function distribute(count, totalSpan) {
       const positions = [];
       for (let i = 0; i <= count; i++) {
-        let t = count > 0 ? i / count : 0.5; // 0..1
-        if (nonLinear > 0) {
-          // Bunch toward center: push t toward 0.5
-          t = 0.5 + (t - 0.5) * Math.pow(Math.abs(t - 0.5) * 2, nonLinear) * Math.sign(t - 0.5) / 1;
-          // Simpler: power curve from center
-          const centered = t - 0.5; // -0.5..0.5
-          const sign = centered >= 0 ? 1 : -1;
-          const mag = Math.abs(centered) * 2; // 0..1
-          t = 0.5 + sign * Math.pow(mag, 1 + nonLinear) * 0.5;
-        } else if (nonLinear < 0) {
-          // Bunch toward edges
-          const centered = t - 0.5;
-          const sign = centered >= 0 ? 1 : -1;
-          const mag = Math.abs(centered) * 2;
-          t = 0.5 + sign * Math.pow(mag, 1 / (1 + Math.abs(nonLinear))) * 0.5;
-        }
-        positions.push(-totalSpan / 2 + t * totalSpan);
+        const t = count > 0 ? i / count : 0.5; // 0..1
+        const centered = t - 0.5; // -0.5..0.5
+        const sign = centered >= 0 ? 1 : -1;
+        const mag = Math.abs(centered) * 2; // 0..1, distance from center
+        const eased = gain(Math.pow(mag, gamma), gainK); // power, then gain
+        const tt = 0.5 + sign * eased * 0.5;
+        positions.push(-totalSpan / 2 + tt * totalSpan);
       }
       return positions;
     }

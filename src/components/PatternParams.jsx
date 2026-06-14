@@ -37,23 +37,35 @@ export default function PatternParams() {
   // Featured param: one param pinned above all groups for this pattern type.
   // Only show it featured if its gate allows (else fall back to normal flow —
   // never render a locked slot at the very top).
+  // Conditional visibility (presentation-only): a def may carry
+  // showIf(params) => boolean. When it returns false the row is dropped at the
+  // render/grouping step ONLY — the gate loop above and lockedCount below still
+  // iterate the FULL def list, so guest gating is identical whether or not a
+  // param is hidden. Absent showIf = always shown.
+  const isVisible = (def) => def.showIf?.(params) !== false;
+
   const featuredKey = FEATURED_PARAMS[patternType];
   const featuredItem = featuredKey
     ? paramItems.find((item) => item.def.key === featuredKey)
     : null;
-  const showFeatured = Boolean(featuredItem && featuredItem.gate.allowed);
+  const showFeatured = Boolean(
+    featuredItem && featuredItem.gate.allowed && isVisible(featuredItem.def)
+  );
 
   // Group items by PARAM_GROUP_MAP. When a param is shown featured, exclude it
-  // from its normal group so it doesn't render twice.
+  // from its normal group so it doesn't render twice. Hidden (showIf=false)
+  // items are dropped here so empty groups simply don't render (lines below).
   const grouped = {};
   for (const item of paramItems) {
     if (showFeatured && item.def.key === featuredKey) continue;
+    if (!isVisible(item.def)) continue;
     const groupId = PARAM_GROUP_MAP[item.def.key] || "structure";
     if (!grouped[groupId]) grouped[groupId] = [];
     grouped[groupId].push(item);
   }
 
-  // Count total locked params for guest summary
+  // Count total locked params for guest summary — over the FULL list, so
+  // showIf (presentation-only) never changes the locked count.
   const lockedCount = paramItems.filter((item) => !item.gate.allowed).length;
 
   return (

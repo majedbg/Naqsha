@@ -15,7 +15,7 @@ function randomSeed() {
 }
 
 function createLayer(index) {
-  const types = ['spirograph', 'flowfield', 'phyllotaxis', 'wave', 'voronoi', 'recursive', 'phyllodash', 'grainfield', 'flowhatch', 'feather', 'turing', 'duality', 'radialetch', 'grid', 'spiral'];
+  const types = ['spirograph', 'flowfield', 'phyllotaxis', 'wave', 'voronoi', 'recursive', 'phyllodash', 'grainfield', 'flowhatch', 'feather', 'turing', 'duality', 'radialetch', 'grid', 'spiral', 'modulegrid'];
   const patternType = types[index % types.length];
   return {
     id: genId(),

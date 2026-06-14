@@ -17,6 +17,7 @@ import Duality from './patterns/Duality';
 import RadialEtch from './patterns/RadialEtch';
 import Grid from './patterns/Grid';
 import Spiral from './patterns/Spiral';
+import ModuleGrid from './patterns/ModuleGrid';
 
 const PATTERN_CLASSES = {
   spirograph: Spirograph,
@@ -34,6 +35,7 @@ const PATTERN_CLASSES = {
   radialetch: RadialEtch,
   grid: Grid,
   spiral: Spiral,
+  modulegrid: ModuleGrid,
 };
 
 export default function useCanvas(containerRef, layers, canvasW, canvasH, bgColor = '#ffffff') {

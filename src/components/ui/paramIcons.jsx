@@ -165,4 +165,46 @@ export const GLYPHS = {
       <circle cx={C} cy={C} r={ARM * 0.62} fill="currentColor" />
     </>,
   ),
+
+  // --- ModuleGrid cell-module glyphs (each evokes its per-cell motif) ---
+  // sweep = a few lines swept from one corner across to the far side.
+  sweep: outlineSvg(
+    <>
+      <line x1={C - ARM} y1={C + ARM} x2={C + ARM} y2={C - ARM} {...STROKE} strokeWidth="1.2" />
+      <line x1={C - ARM} y1={C + ARM} x2={C + ARM} y2={C} {...STROKE} strokeWidth="1.2" />
+      <line x1={C - ARM} y1={C + ARM} x2={C} y2={C - ARM} {...STROKE} strokeWidth="1.2" />
+    </>,
+  ),
+  // fan = lines fanning out from a single low apex to the top edge.
+  fan: outlineSvg(
+    <>
+      <line x1={C} y1={C + ARM} x2={C - ARM} y2={C - ARM} {...STROKE} strokeWidth="1.2" />
+      <line x1={C} y1={C + ARM} x2={C - ARM * 0.4} y2={C - ARM} {...STROKE} strokeWidth="1.2" />
+      <line x1={C} y1={C + ARM} x2={C + ARM * 0.4} y2={C - ARM} {...STROKE} strokeWidth="1.2" />
+      <line x1={C} y1={C + ARM} x2={C + ARM} y2={C - ARM} {...STROKE} strokeWidth="1.2" />
+    </>,
+  ),
+  // rings = three concentric circles (nested ring motif).
+  rings: outlineSvg(
+    <>
+      <circle cx={C} cy={C} r={ARM} {...STROKE} strokeWidth="1.2" />
+      <circle cx={C} cy={C} r={ARM * 0.62} {...STROKE} strokeWidth="1.2" />
+      <circle cx={C} cy={C} r={ARM * 0.26} {...STROKE} strokeWidth="1.2" />
+    </>,
+  ),
+  // chevron = three stacked V's pointing down.
+  chevron: outlineSvg(
+    <>
+      <polyline points={`${C - ARM},${C - ARM} ${C},${C - ARM * 0.4} ${C + ARM},${C - ARM}`} {...STROKE} strokeWidth="1.2" />
+      <polyline points={`${C - ARM},${C - ARM * 0.1} ${C},${C + ARM * 0.5} ${C + ARM},${C - ARM * 0.1}`} {...STROKE} strokeWidth="1.2" />
+      <polyline points={`${C - ARM},${C + ARM * 0.8} ${C},${C + ARM * 1.4} ${C + ARM},${C + ARM * 0.8}`} {...STROKE} strokeWidth="1.2" />
+    </>,
+  ),
+  // diamond = two concentric rhombi (nested-diamond motif — sibling of rings).
+  diamond: outlineSvg(
+    <>
+      <polygon points={`${C},${C - ARM} ${C + ARM},${C} ${C},${C + ARM} ${C - ARM},${C}`} {...STROKE} strokeWidth="1.2" />
+      <polygon points={`${C},${C - ARM * 0.5} ${C + ARM * 0.5},${C} ${C},${C + ARM * 0.5} ${C - ARM * 0.5},${C}`} {...STROKE} strokeWidth="1.2" />
+    </>,
+  ),
 };

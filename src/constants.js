@@ -49,6 +49,7 @@ export const PATTERN_TYPES = [
   { id: 'radialetch', label: 'Radial Etch' },
   { id: 'grid', label: 'Grid' },
   { id: 'spiral', label: 'Spiral' },
+  { id: 'modulegrid', label: 'Module Grid' },
 ];
 
 export const MAX_LAYERS = 6;
@@ -263,6 +264,29 @@ export const DEFAULT_PARAMS = {
     offsetX: 0,
     offsetY: 0,
   },
+  modulegrid: {
+    module: 'sideSweep',
+    tilesX: 10,
+    tilesY: 10,
+    lineCount: 10,
+    rotateMode: 'seeded',
+    jitter: 0,
+    scale: 1,
+    scaleMode: 'uniform',
+    sweepCurve: 0,
+    fanSpread: 180,
+    fanApex: 'center',
+    ringEccentricity: 0,
+    ringSpacing: 0,
+    chevronDepth: 1,
+    diamondAspect: 1,
+    diamondNesting: 0,
+    strokeCap: 'round',
+    strokeWeight: 0.6,
+    startAngle: 0,
+    offsetX: 0,
+    offsetY: 0,
+  },
 };
 
 const SYMMETRY_PARAM = { key: 'symmetry', label: 'Radial Symmetry', type: 'iconselect', glyph: 'symmetry', range: { min: 1, max: 11, step: 1 }, min: 1, max: 11, step: 1, randomMax: 10, tooltip: 'Radial copies — 1 = none, 2 = 180°, 3 = 120°, 4 = +, …' };
@@ -342,6 +366,20 @@ const NONLINEAR_PLOT_PARAM = {
     { key: 'nonLinearGain', label: 'Sharpness', short: 'Sharp', min: -1, max: 1, step: 0.05, default: 0 },
   ],
   tooltip: 'Two independent eases for line spacing. Left/right = concentration (bunch toward edges or center). Down/up = sharpness of the falloff (how abrupt the dense-to-sparse transition is). Center = even spacing.',
+};
+
+// ModuleGrid columns × rows share one plane (same idea as GRID_SIZE_PLOT_PARAM):
+// right is more columns, up is more rows; off the diagonal is a non-square grid.
+// `key: 'grid'` is the synthetic primary key (grouping/gating/reset/randomize);
+// `keys` is the real value set; `axes` carries each axis's range + default.
+// DEFAULT_PARAMS still carries tilesX / tilesY.
+const MODULE_GRID_TILES_PLOT_PARAM = {
+  key: 'grid', type: 'plot2d', label: 'Columns × Rows', keys: ['tilesX', 'tilesY'],
+  axes: [
+    { key: 'tilesX', label: 'Columns', short: 'Cols', min: 2, max: 40, step: 1, default: 10 },
+    { key: 'tilesY', label: 'Rows', short: 'Rows', min: 2, max: 40, step: 1, default: 10 },
+  ],
+  tooltip: 'Drag to set columns × rows',
 };
 
 export const PATTERN_PARAM_DEFS = {
@@ -579,6 +617,52 @@ export const PATTERN_PARAM_DEFS = {
     START_ANGLE_PARAM,
     OFFSET_PAD_PARAM,
   ],
+  modulegrid: [
+    { key: 'module', label: 'Module', type: 'iconselect', options: [
+      { value: 'sideSweep', label: 'Side Sweep', glyph: 'sweep' },
+      { value: 'fan', label: 'Converging Fan', glyph: 'fan' },
+      { value: 'rings', label: 'Nested Rings', glyph: 'rings' },
+      { value: 'chevron', label: 'Chevron', glyph: 'chevron' },
+      { value: 'diamond', label: 'Diamond', glyph: 'diamond' },
+    ], tooltip: 'Geometry drawn inside every grid cell' },
+    MODULE_GRID_TILES_PLOT_PARAM,
+    { key: 'lineCount', label: 'Line Count', min: 1, max: 40, step: 1, tooltip: 'Lines / arcs per cell' },
+    { key: 'rotateMode', label: 'Rotation', type: 'select', options: [
+      { value: 'seeded', label: 'Random (seed)' },
+      { value: 'gradient', label: 'Gradient' },
+      { value: 'aligned', label: 'Aligned' },
+    ], tooltip: 'Per-cell rotation' },
+    { key: 'jitter', label: 'Jitter', min: 0, max: 1, step: 0.05, tooltip: 'Per-cell positional scatter (seeded)' },
+    // Universal per-cell scale — multiplies module size around the cell center.
+    // >1 overflows into neighbors (not clipped). scaleMode picks how the factor
+    // varies across the grid.
+    { key: 'scale', label: 'Scale', min: 0.1, max: 3, step: 0.05, tooltip: 'Per-cell module size — over 1 overflows into neighboring cells' },
+    { key: 'scaleMode', label: 'Scale Mode', type: 'select', options: [
+      { value: 'uniform', label: 'Uniform' },
+      { value: 'gradient', label: 'Gradient' },
+      { value: 'seeded', label: 'Random (seed)' },
+    ], tooltip: 'How scale varies per cell — uniform, a smooth grid ramp, or a seeded random factor' },
+    // Per-module knobs — each only shown (and only read) for its module.
+    { key: 'sweepCurve', label: 'Sweep Curve', min: 0, max: 1, step: 0.05, showIf: (p) => p.module === 'sideSweep', tooltip: 'Bows the swept spokes — 0 = straight bundle, 1 = curved sweep' },
+    { key: 'fanSpread', label: 'Fan Spread', min: 30, max: 360, step: 5, showIf: (p) => p.module === 'fan', tooltip: 'Angle the fan subtends, in degrees' },
+    { key: 'fanApex', label: 'Fan Apex', type: 'select', options: [
+      { value: 'center', label: 'Center' },
+      { value: 'corner', label: 'Corner' },
+    ], showIf: (p) => p.module === 'fan', tooltip: 'Where the fan converges — cell center or corner' },
+    { key: 'ringEccentricity', label: 'Ring Eccentricity', min: 0, max: 1, step: 0.05, showIf: (p) => p.module === 'rings', tooltip: 'Squashes rings into ellipses — 0 = circles, 1 = flat ellipse' },
+    { key: 'ringSpacing', label: 'Ring Spacing', min: -1, max: 1, step: 0.05, showIf: (p) => p.module === 'rings', tooltip: 'Nesting curve — 0 = even, <0 = cluster inward, >0 = spread outward' },
+    { key: 'chevronDepth', label: 'Chevron Depth', min: 0.2, max: 2, step: 0.05, showIf: (p) => p.module === 'chevron', tooltip: 'V steepness — higher dips the chevrons deeper' },
+    { key: 'diamondAspect', label: 'Diamond Aspect', min: 0.4, max: 2.5, step: 0.05, showIf: (p) => p.module === 'diamond', tooltip: 'Width / height ratio — 1 = square diamond' },
+    { key: 'diamondNesting', label: 'Diamond Nesting', min: -1, max: 1, step: 0.05, showIf: (p) => p.module === 'diamond', tooltip: 'Nesting curve — 0 = even, <0 = cluster inward, >0 = spread outward' },
+    { key: 'strokeCap', label: 'Stroke Cap', type: 'select', options: [
+      { value: 'round', label: 'Round' },
+      { value: 'butt', label: 'Square' },
+      { value: 'square', label: 'Project' },
+    ], tooltip: 'Line end caps' },
+    { key: 'strokeWeight', label: 'Stroke Weight', min: 0.3, max: 3, step: 0.1, tooltip: 'Line thickness' },
+    START_ANGLE_PARAM,
+    OFFSET_PAD_PARAM,
+  ],
 };
 
 export const DEFAULT_COLORS = ['#00c9b1', '#ff6b6b', '#4ecdc4', '#45b7d1', '#f7dc6f', '#bb8fce'];
@@ -636,8 +720,15 @@ export const PARAM_GROUP_MAP = {
   cols: 'structure', rows: 'structure', margin: 'structure',
   drawHorizontal: 'structure', drawVertical: 'structure',
   armCount: 'structure', turns: 'structure', stepsPerTurn: 'structure',
+  module: 'structure', grid: 'structure', tilesX: 'structure', tilesY: 'structure',
+  // ModuleGrid per-module knobs share the geometry-ish 'structure' group with
+  // module/grid (only one set is visible at a time via showIf).
+  sweepCurve: 'structure', fanSpread: 'structure', fanApex: 'structure',
+  ringEccentricity: 'structure', ringSpacing: 'structure',
+  chevronDepth: 'structure', diamondAspect: 'structure', diamondNesting: 'structure',
 
   // Scale — size, extent, radii, lengths
+  scale: 'scale', scaleMode: 'scale',
   minSize: 'scale', maxSize: 'scale', sizeGrowth: 'scale',
   startScale: 'scale', scaleNonLinearity: 'scale',
   innerMax: 'scale', outerMax: 'scale',
@@ -653,7 +744,7 @@ export const PARAM_GROUP_MAP = {
 
   // Variation — noise, jitter, distortion
   noiseScale: 'variation', curlStrength: 'variation',
-  rotation: 'variation', jitter: 'variation',
+  rotation: 'variation', rotateMode: 'variation', jitter: 'variation',
   rotationPerLevel: 'variation', strokeDepthDecay: 'variation',
   spiralGrowth: 'variation',
   dashLenJitter: 'variation', dashSparsity: 'variation',
@@ -667,7 +758,7 @@ export const PARAM_GROUP_MAP = {
   wobbleAmp: 'variation', wobbleFreq: 'variation',
 
   // Stroke — line weight, rendering
-  strokeWeight: 'stroke',
+  strokeWeight: 'stroke', strokeCap: 'stroke',
   dashStrokeWeight: 'stroke', arcStrokeWeight: 'stroke',
 
   // Transform — position, rotation, symmetry

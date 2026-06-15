@@ -1,6 +1,32 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { DEFAULT_PARAMS, DEFAULT_COLORS, MAX_LAYERS, PATTERN_PARAM_DEFS, RANDOMIZE_EXCLUDED_KEYS } from '../constants';
 import { randomPatchForDef } from './params/paramOps';
+import { isMoireMember, findMoirePartnerA, findMoirePartnerB } from './moirePair';
+
+// Distinct group id for a Moiré pair (links role A + role B).
+let nextGroupNum = 1;
+function genMoireGroupId() {
+  return `moire-${nextGroupNum++}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+// Default field-param set for a Moiré layer (role A holds these; B reads A's).
+function moireDefaults() {
+  return { ...DEFAULT_PARAMS.moire };
+}
+
+function moireRandomizeKeys() {
+  return (PATTERN_PARAM_DEFS.moire || [])
+    .filter((d) => !RANDOMIZE_EXCLUDED_KEYS.includes(d.key))
+    .map((d) => d.key);
+}
+
+// Both members of a Moiré member's group, as { a, b } (either may be null).
+function moirePairOf(layer, allLayers) {
+  return {
+    a: findMoirePartnerA(layer, allLayers),
+    b: findMoirePartnerB(layer, allLayers),
+  };
+}
 
 const BG_STORAGE_KEY = 'sonoform-bg-color';
 const DEFAULT_BG_COLOR = '#0a1628';
@@ -15,7 +41,7 @@ function randomSeed() {
 }
 
 function createLayer(index) {
-  const types = ['spirograph', 'flowfield', 'phyllotaxis', 'wave', 'voronoi', 'recursive', 'phyllodash', 'grainfield', 'flowhatch', 'feather', 'turing', 'duality', 'radialetch', 'grid', 'spiral', 'modulegrid', 'topographic', 'diffgrowth', 'girih'];
+  const types = ['spirograph', 'flowfield', 'phyllotaxis', 'wave', 'voronoi', 'recursive', 'phyllodash', 'grainfield', 'flowhatch', 'feather', 'turing', 'duality', 'radialetch', 'grid', 'spiral', 'modulegrid', 'topographic', 'diffgrowth', 'girih', 'circlepacking'];
   const patternType = types[index % types.length];
   return {
     id: genId(),
@@ -70,7 +96,11 @@ function loadLayers() {
 // `def.type === 'select'` which missed `iconselect` defs (e.g. shape, fillMode)
 // and produced NaN. paramOps branches on `def.options` presence instead.
 
-export default function useLayers({ persistToLocal = true } = {}) {
+export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYERS } = {}) {
+  // Effective capacity = the tier cap (Guest 3, Free/Pro/Studio 6), never above
+  // the hard MAX_LAYERS. Existing call sites that don't pass maxLayers keep the
+  // old MAX_LAYERS behavior.
+  const cap = Math.min(maxLayers ?? MAX_LAYERS, MAX_LAYERS);
   const [layers, setLayers] = useState(() => {
     if (persistToLocal) {
       return loadLayers() ?? [createLayer(0), createLayer(1)];
@@ -102,33 +132,78 @@ export default function useLayers({ persistToLocal = true } = {}) {
 
   const addLayer = useCallback(() => {
     setLayers((prev) => {
-      if (prev.length >= MAX_LAYERS) return prev;
+      if (prev.length >= cap) return prev;
       return [...prev, createLayer(prev.length)];
     });
-  }, []);
+  }, [cap]);
 
   const duplicateLayer = useCallback((id) => {
     setLayers((prev) => {
-      if (prev.length >= MAX_LAYERS) return prev;
       const idx = prev.findIndex((l) => l.id === id);
       if (idx === -1) return prev;
       const source = prev[idx];
-      const copy = {
-        ...source,
+
+      const cloneLayer = (src) => ({
+        ...src,
         id: genId(),
-        name: `${source.name} copy`,
-        params: { ...source.params },
-        randomizeKeys: [...(source.randomizeKeys || [])],
-        paramsCache: JSON.parse(JSON.stringify(source.paramsCache || {})),
-      };
+        name: `${src.name} copy`,
+        params: { ...src.params },
+        randomizeKeys: [...(src.randomizeKeys || [])],
+        paramsCache: JSON.parse(JSON.stringify(src.paramsCache || {})),
+      });
+
+      // Moiré member → duplicate BOTH members as a NEW pair (new groupId),
+      // needs 2 free slots; block gracefully if unavailable.
+      if (isMoireMember(source)) {
+        const { a, b } = moirePairOf(source, prev);
+        if (!a || !b) {
+          // Degenerate pair (orphan) — fall through to single-layer clone so we
+          // never silently drop the duplicate; the clone clears its role below.
+          if (prev.length >= cap) return prev;
+          const copy = cloneLayer(source);
+          delete copy.moireRole;
+          delete copy.moireGroupId;
+          const next = [...prev];
+          next.splice(idx + 1, 0, copy);
+          return next;
+        }
+        if (prev.length + 2 > cap) return prev; // need 2 free slots
+        const newGroupId = genMoireGroupId();
+        const copyA = { ...cloneLayer(a), moireRole: 'A', moireGroupId: newGroupId };
+        const copyB = { ...cloneLayer(b), moireRole: 'B', moireGroupId: newGroupId };
+        // Insert the new pair right after B (the lower of the two in the array).
+        const bIdx = prev.findIndex((l) => l.id === b.id);
+        const insertAt = Math.max(idx, bIdx);
+        const next = [...prev];
+        next.splice(insertAt + 1, 0, copyA, copyB);
+        return next;
+      }
+
+      if (prev.length >= cap) return prev;
+      const copy = cloneLayer(source);
       const next = [...prev];
       next.splice(idx + 1, 0, copy);
       return next;
     });
-  }, []);
+  }, [cap]);
 
   const removeLayer = useCallback((id) => {
     setLayers((prev) => {
+      const target = prev.find((l) => l.id === id);
+      if (!target) return prev;
+
+      // Moiré member → remove BOTH members of the group as a unit.
+      if (isMoireMember(target)) {
+        const groupIds = new Set(
+          prev
+            .filter((l) => l.moireGroupId === target.moireGroupId)
+            .map((l) => l.id)
+        );
+        // Respect the min-1 rule on the POST-removal count.
+        if (prev.length - groupIds.size < 1) return prev;
+        return prev.filter((l) => !groupIds.has(l.id));
+      }
+
       if (prev.length <= 1) return prev;
       return prev.filter((l) => l.id !== id);
     });
@@ -140,11 +215,187 @@ export default function useLayers({ persistToLocal = true } = {}) {
     );
   }, []);
 
+  // Pair-aware pattern-switch ROUTER. Consumes the patch already computed by
+  // usePatternCache (`{patternType, params, randomizeKeys, paramsCache}`) and
+  // applies it as ONE atomic setLayers, handling the three Moiré cases:
+  //   1. patch→'moire' & active is ALREADY a moiré member  → no-op.
+  //   2. patch→'moire' & active is NOT a member            → SPAWN a pair
+  //      (active becomes Moiré A; a linked Moiré B is inserted right after).
+  //      Requires 1 free slot under `cap`; if none, NO-OP and return blocked.
+  //   3. active IS a moiré member & patch→NOT 'moire'      → DISSOLVE the pair
+  //      (remove the partner; the switched layer becomes a normal layer of the
+  //      new type with its role fields cleared).
+  // Otherwise: a plain `{...l, ...patch}` update (identical to updateLayer),
+  // so non-moiré pattern switches behave exactly as before.
+  //
+  // Returns { ok, blocked } so the caller can surface the capacity message.
+  // Because setLayers is async, capacity is decided synchronously off `layers`.
+  const changeLayerPattern = useCallback((id, patch) => {
+    const active = layers.find((l) => l.id === id);
+    if (!active) return { ok: false, blocked: false };
+    const toMoire = patch.patternType === 'moire';
+    const activeIsMember = isMoireMember(active);
+
+    // Case 1: already a moiré member and staying moiré → no-op (no 3rd surface).
+    if (toMoire && activeIsMember) {
+      return { ok: true, blocked: false };
+    }
+
+    // Case 2: spawn a new pair. Need exactly ONE free slot under the cap.
+    if (toMoire && !activeIsMember) {
+      if (layers.length + 1 > cap) {
+        return { ok: false, blocked: true };
+      }
+      const groupId = genMoireGroupId();
+      setLayers((prev) => {
+        const idx = prev.findIndex((l) => l.id === id);
+        if (idx === -1) return prev;
+        if (prev.length + 1 > cap) return prev; // re-check against live state
+        const src = prev[idx];
+        const layerA = {
+          ...src,
+          patternType: 'moire',
+          name: 'Moiré A',
+          params: moireDefaults(),
+          randomizeKeys: moireRandomizeKeys(),
+          paramsCache: patch.paramsCache ?? src.paramsCache ?? {},
+          moireRole: 'A',
+          moireGroupId: groupId,
+        };
+        // B is an INDEPENDENT surface: own id, color, role, penSlot. Its params
+        // are defaults but unused at render (B reads A) — kept so the layer is
+        // self-consistent if it's ever orphaned mid-edit.
+        const layerB = {
+          id: genId(),
+          name: 'Moiré B',
+          color: DEFAULT_COLORS[(idx + 1) % DEFAULT_COLORS.length],
+          opacity: 100,
+          visible: true,
+          bgColor: '#ffffff',
+          bgOpacity: 0,
+          patternType: 'moire',
+          params: moireDefaults(),
+          seed: randomSeed(),
+          randomizeKeys: moireRandomizeKeys(),
+          paramsCache: {},
+          role: 'cut',
+          penSlot: ((idx + 1) % 4) + 1,
+          moireRole: 'B',
+          moireGroupId: groupId,
+        };
+        const next = [...prev];
+        next.splice(idx, 1, layerA, layerB);
+        return next;
+      });
+      return { ok: true, blocked: false };
+    }
+
+    // Case 3: switch-away — active is a moiré member, new type is NOT moiré.
+    // Dissolve: remove the partner, switched layer becomes a normal layer with
+    // role fields cleared. Works whether active is role A or role B.
+    if (!toMoire && activeIsMember) {
+      setLayers((prev) => {
+        const partnerIds = new Set(
+          prev
+            .filter((l) => l.moireGroupId === active.moireGroupId && l.id !== id)
+            .map((l) => l.id)
+        );
+        return prev
+          .filter((l) => !partnerIds.has(l.id))
+          .map((l) => {
+            if (l.id !== id) return l;
+            // Apply the patch and strip the moiré role fields.
+            const { moireRole: _r, moireGroupId: _g, ...rest } = l;
+            return { ...rest, ...patch };
+          });
+      });
+      return { ok: true, blocked: false };
+    }
+
+    // Default: ordinary pattern switch (non-moiré → non-moiré).
+    setLayers((prev) =>
+      prev.map((l) => (l.id === id ? { ...l, ...patch } : l))
+    );
+    return { ok: true, blocked: false };
+  }, [layers, cap]);
+
   const reorderLayers = useCallback((fromIndex, toIndex) => {
     setLayers((prev) => {
+      const moved = prev[fromIndex];
+      if (!moved) return prev;
+
+      // Moiré pairs move as one ADJACENT block. The per-card up/down buttons
+      // call this with toIndex = fromIndex ± 1; a naive single-element splice
+      // would split the pair. So when the moved layer is a moiré member, treat
+      // the whole [A,B] block as the unit and step it past the NEXT non-member
+      // (or the next whole block).
+      if (isMoireMember(moved)) {
+        const groupId = moved.moireGroupId;
+        // Block bounds: contiguous run of same-group members around fromIndex.
+        let start = fromIndex;
+        while (start > 0 && prev[start - 1].moireGroupId === groupId) start--;
+        let end = fromIndex;
+        while (end < prev.length - 1 && prev[end + 1].moireGroupId === groupId) end++;
+        const blockSize = end - start + 1;
+        const dir = toIndex > fromIndex ? 1 : -1;
+
+        const next = [...prev];
+        const block = next.splice(start, blockSize); // pull the pair out
+        if (dir > 0) {
+          // Moving down (toward back): step over the next single layer/block.
+          // After removal, the element formerly after the block now sits at
+          // `start`. If it's itself a moiré block, hop the whole thing.
+          if (start >= next.length) {
+            next.splice(start, 0, ...block); // already at the bottom — no-op
+            return next;
+          }
+          let insertAt = start + 1;
+          const neighbor = next[start];
+          if (isMoireMember(neighbor)) {
+            const ng = neighbor.moireGroupId;
+            let nEnd = start;
+            while (nEnd < next.length - 1 && next[nEnd + 1].moireGroupId === ng) nEnd++;
+            insertAt = nEnd + 1;
+          }
+          next.splice(insertAt, 0, ...block);
+          return next;
+        } else {
+          // Moving up (toward front): step over the previous single layer/block.
+          if (start === 0) {
+            next.splice(0, 0, ...block); // already at the top — no-op
+            return next;
+          }
+          let insertAt = start - 1;
+          const neighbor = next[start - 1];
+          if (isMoireMember(neighbor)) {
+            const ng = neighbor.moireGroupId;
+            let nStart = start - 1;
+            while (nStart > 0 && next[nStart - 1].moireGroupId === ng) nStart--;
+            insertAt = nStart;
+          }
+          next.splice(insertAt, 0, ...block);
+          return next;
+        }
+      }
+
+      // Non-moiré move: if the destination lands INSIDE a moiré pair, nudge it
+      // to the far side so we never split a pair. Otherwise the original splice.
       const next = [...prev];
-      const [moved] = next.splice(fromIndex, 1);
-      next.splice(toIndex, 0, moved);
+      const [m] = next.splice(fromIndex, 1);
+      let dest = toIndex;
+      // After removal, check the neighbor we'd be splitting between.
+      const before = next[dest - 1];
+      const after = next[dest];
+      if (
+        before && after &&
+        before.moireGroupId && before.moireGroupId === after.moireGroupId
+      ) {
+        // Landing between A and B of the same pair — push past the pair in the
+        // direction of travel.
+        dest = toIndex > fromIndex ? dest + 1 : dest - 1;
+        dest = Math.max(0, Math.min(next.length, dest));
+      }
+      next.splice(dest, 0, m);
       return next;
     });
   }, []);
@@ -215,6 +466,7 @@ export default function useLayers({ persistToLocal = true } = {}) {
 
   return {
     layers, addLayer, duplicateLayer, removeLayer, updateLayer, reorderLayers,
+    changeLayerPattern,
     randomizeLayer, randomizeAll, randomizeLayerParams, randomizeAllParams,
     loadLayerSet, bgColor, setBgColor,
   };

@@ -1,16 +1,19 @@
+import { useState } from 'react';
 import LayerCard from './LayerCard';
 import { useGate } from '../lib/useGate';
 import UpgradePrompt from './UpgradePrompt';
+import { isMoireMember, findMoirePartnerA } from '../lib/moirePair';
 
 export default function LayersSection({
   layers,
   onUpdate,
+  onChangePattern,
   onRemove,
   onAdd,
   onRandomize,
-  onRandomizeAll,
   onRandomizeParams,
   onRandomizeAllParams,
+  onRandomizeAll,
   onReorder,
   onExportLayer,
   onDuplicate,
@@ -22,6 +25,23 @@ export default function LayersSection({
   const anyChecked = layers.some((l) => l.randomizeKeys && l.randomizeKeys.length > 0);
   const layerGate = check('layers', layers.length + 1);
   const atMax = layers.length >= limits.maxLayers;
+
+  // Inline "Moiré needs a free slot" message (mirrors the Add-Layer block — the
+  // app has no toast mechanism). Auto-clears on the next successful change.
+  const [moireBlockedMsg, setMoireBlockedMsg] = useState(null);
+
+  // Pair-aware adjacency helpers. A Moiré pair is two adjacent layers; the pair
+  // moves/deletes as a block, so the per-card buttons need block-aware bounds.
+  const pairBlockBounds = (i) => {
+    const l = layers[i];
+    if (!isMoireMember(l)) return { start: i, end: i };
+    const g = l.moireGroupId;
+    let start = i;
+    while (start > 0 && layers[start - 1].moireGroupId === g) start--;
+    let end = i;
+    while (end < layers.length - 1 && layers[end + 1].moireGroupId === g) end++;
+    return { start, end };
+  };
 
   return (
     <div className="space-y-3">
@@ -56,27 +76,69 @@ export default function LayersSection({
           : layers
         ).map((layer) => {
           const i = layers.indexOf(layer);
+          const { start, end } = pairBlockBounds(i);
+          const blockIsWholeList = start === 0 && end === layers.length - 1;
+
+          // Stage 5 — panel B→A resolution. When this card is a Moiré role-B
+          // layer, route its params/defs/onChange to its partner A (so "edit
+          // either layer" works and both reflect). If A is missing (orphan B),
+          // degrade gracefully: a normal card whose pattern defs simply have no
+          // resolvable source — the panel shows the (empty) B params without
+          // crashing.
+          let paramSourceLayer = layer;
+          let paramOnUpdate = (patch) => onUpdate(layer.id, patch);
+          if (isMoireMember(layer) && layer.moireRole === 'B') {
+            const partnerA = findMoirePartnerA(layer, layers);
+            if (partnerA) {
+              paramSourceLayer = partnerA;
+              paramOnUpdate = (patch) => onUpdate(partnerA.id, patch);
+            }
+          }
+
           return (
             <LayerCard
               key={layer.id}
               layer={layer}
               index={i}
-              canDelete={layers.length > 1}
-              isFirst={i === 0}
-              isLast={i === layers.length - 1}
+              paramSourceLayer={paramSourceLayer}
+              onParamUpdate={paramOnUpdate}
+              // Pair-aware: deleting a pair removes 2; block if that would empty
+              // the canvas. (A pair that IS the whole list can't be deleted.)
+              canDelete={!blockIsWholeList && layers.length > (end - start + 1)}
+              isFirst={start === 0}
+              isLast={end === layers.length - 1}
               onUpdate={(patch) => onUpdate(layer.id, patch)}
+              onChangePattern={(patch) => {
+                const res = onChangePattern(layer.id, patch);
+                if (res && res.blocked) {
+                  setMoireBlockedMsg(
+                    'Moiré needs a free layer slot for its second surface.'
+                  );
+                } else {
+                  setMoireBlockedMsg(null);
+                }
+              }}
               onRemove={() => onRemove(layer.id)}
               onRandomize={() => onRandomize(layer.id)}
-              onRandomizeParams={() => onRandomizeParams(layer.id)}
+              onRandomizeParams={() => onRandomizeParams(paramSourceLayer.id)}
               onDuplicate={() => onDuplicate(layer.id)}
               onExport={() => onExportLayer(layer.id)}
-              onMoveUp={() => i > 0 && onReorder(i, i - 1)}
-              onMoveDown={() => i < layers.length - 1 && onReorder(i, i + 1)}
+              // Move the whole pair block: step the block's top/bottom index.
+              onMoveUp={() => start > 0 && onReorder(start, start - 1)}
+              onMoveDown={() =>
+                end < layers.length - 1 && onReorder(end, end + 1)
+              }
               onOpenAIChat={onOpenAIChat}
             />
           );
         })}
       </div>
+
+      {moireBlockedMsg && (
+        <div className="w-full py-2 text-center rounded border border-dashed border-hairline bg-paper-warm">
+          <span className="text-[11px] text-ink-soft">{moireBlockedMsg}</span>
+        </div>
+      )}
 
       {atMax && !layerGate.allowed ? (
         <div className="w-full py-2 text-center rounded border border-dashed border-hairline bg-paper-warm">

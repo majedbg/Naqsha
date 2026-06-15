@@ -53,6 +53,8 @@ export const PATTERN_TYPES = [
   { id: 'topographic', label: 'Topographic Contours' },
   { id: 'diffgrowth', label: 'Differential Growth' },
   { id: 'girih', label: 'Islamic Star (Girih)' },
+  { id: 'moire', label: 'Moiré' },
+  { id: 'circlepacking', label: 'Circle Packing' },
 ];
 
 export const MAX_LAYERS = 6;
@@ -324,6 +326,31 @@ export const DEFAULT_PARAMS = {
     bandWidth: 4,
     irregularity: 0,
     strokeWeight: 0.8,
+    startAngle: 0,
+    offsetX: 0,
+    offsetY: 0,
+  },
+  moire: {
+    fieldType: 'parallelLines',
+    density: 120,
+    moireRotation: 5,
+    moireOffsetX: 0,
+    moireOffsetY: 0,
+    moireScale: 1,
+    strokeWeight: 0.5,
+    startAngle: 0,
+    offsetX: 0,
+    offsetY: 0,
+  },
+  circlepacking: {
+    boundary: 'rectangle',
+    render: 'outlines',
+    minRadius: 4,
+    maxRadius: 60,
+    attempts: 2000,
+    linkDistance: 40,
+    ringCount: 3,
+    strokeWeight: 0.6,
     startAngle: 0,
     offsetX: 0,
     offsetY: 0,
@@ -755,6 +782,42 @@ export const PATTERN_PARAM_DEFS = {
     START_ANGLE_PARAM,
     OFFSET_PAD_PARAM,
   ],
+  moire: [
+    // A Moiré pair = two layers (A + B). These params live on layer A; B reads
+    // them. The three transform knobs below (rotation/offset/scale) move the B
+    // surface RELATIVE to A — that relative offset is what produces the fringes.
+    { key: 'fieldType', label: 'Field', type: 'select', options: [
+      { value: 'parallelLines', label: 'Parallel Lines' },
+      { value: 'concentricRings', label: 'Concentric Rings' },
+      { value: 'radialLines', label: 'Radial Lines' },
+    ], tooltip: 'The base grating both surfaces draw' },
+    { key: 'density', label: 'Density', min: 20, max: 400, step: 1, tooltip: 'Number of lines / rings — finer fields give tighter fringes' },
+    { key: 'moireRotation', label: 'B Rotation', type: 'dial', wrap: true, min: 0, max: 360, step: 1, tooltip: 'Rotates the B surface relative to A — a few degrees produces fringe bands' },
+    { key: 'moireOffset', label: 'B Offset', type: 'pad2d', keys: ['moireOffsetX', 'moireOffsetY'], min: -200, max: 200, step: 1, tooltip: 'Shifts the B surface relative to A. Radial moiré needs an offset to show fringes.' },
+    { key: 'moireScale', label: 'B Scale', min: 0.8, max: 1.2, step: 0.005, tooltip: 'Scales the B surface relative to A — a slight mismatch gives concentric zone-plate fringes' },
+    { key: 'strokeWeight', label: 'Stroke Weight', min: 0.3, max: 3, step: 0.1, tooltip: 'Line thickness' },
+    START_ANGLE_PARAM,
+    OFFSET_PAD_PARAM,
+  ],
+  circlepacking: [
+    { key: 'boundary', label: 'Boundary', type: 'select', options: [
+      { value: 'rectangle', label: 'Rectangle' },
+      { value: 'circle', label: 'Circle' },
+    ], tooltip: 'Pack region — Circle = self-contained medallion' },
+    { key: 'render', label: 'Render', type: 'select', options: [
+      { value: 'outlines', label: 'Outlines' },
+      { value: 'links', label: '+ Neighbor Links' },
+      { value: 'nested', label: 'Nested Rings' },
+    ], tooltip: 'How each packed circle is drawn' },
+    { key: 'attempts', label: 'Density', min: 200, max: 8000, step: 100, tooltip: 'Placement attempts — higher = tighter pack, more circles' },
+    { key: 'minRadius', label: 'Min Radius', min: 1, max: 40, step: 1, tooltip: 'Smallest circle that may be placed' },
+    { key: 'maxRadius', label: 'Max Radius', min: 10, max: 200, step: 1, tooltip: 'Largest circle that may be placed' },
+    { key: 'linkDistance', label: 'Link Distance', min: 0, max: 120, step: 2, showIf: (p) => p.render === 'links', tooltip: 'Connect neighbors whose gap is within this distance of touching' },
+    { key: 'ringCount', label: 'Rings / Circle', min: 2, max: 10, step: 1, showIf: (p) => p.render === 'nested', tooltip: 'Concentric outlines drawn inside each packed circle' },
+    { key: 'strokeWeight', label: 'Stroke Weight', min: 0.3, max: 3, step: 0.1, tooltip: 'Line thickness' },
+    START_ANGLE_PARAM,
+    OFFSET_PAD_PARAM,
+  ],
 };
 
 export const DEFAULT_COLORS = ['#00c9b1', '#ff6b6b', '#4ecdc4', '#45b7d1', '#f7dc6f', '#bb8fce'];
@@ -829,6 +892,11 @@ export const PARAM_GROUP_MAP = {
   // knobs (repulsion radius/attraction/repulsion/smoothing/growth style) live in
   // the variation group.
   topology: 'structure', maxNodes: 'structure',
+  // Circle packing: boundary/render mode + density (attempts) are structural;
+  // the radii live in scale; link distance / ring count are variation.
+  boundary: 'structure', attempts: 'structure',
+  minRadius: 'scale', maxRadius: 'scale',
+  linkDistance: 'variation', ringCount: 'variation',
 
   // Scale — size, extent, radii, lengths
   scale: 'scale', scaleMode: 'scale',
@@ -871,4 +939,12 @@ export const PARAM_GROUP_MAP = {
   symmetry: 'transform', startAngle: 'transform',
   offsetX: 'transform', offsetY: 'transform', offset: 'transform',
   originX: 'transform', originY: 'transform',
+
+  // Moiré — fieldType is structural; the B-relative transform knobs live in the
+  // transform group; the B-relative scale lives in the scale group. (`density`
+  // is already mapped to 'structure' above.)
+  fieldType: 'structure',
+  moireRotation: 'transform',
+  moireOffset: 'transform', moireOffsetX: 'transform', moireOffsetY: 'transform',
+  moireScale: 'scale',
 };

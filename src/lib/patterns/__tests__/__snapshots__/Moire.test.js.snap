@@ -1,0 +1,48 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`Moire (headless) > pins the wrapped SVG group output 1`] = `
+"  <g id="layer-L1">
+    <g transform="translate(400,400)">
+<line x1="-565.69" y1="-551.54" x2="565.69" y2="-551.54" stroke="#1a1a2e" stroke-width="0.5"/>
+<line x1="-565.69" y1="-523.26" x2="565.69" y2="-523.26" stroke="#1a1a2e" stroke-width="0.5"/>
+<line x1="-565.69" y1="-494.97" x2="565.69" y2="-494.97" stroke="#1a1a2e" stroke-width="0.5"/>
+<line x1="-565.69" y1="-466.69" x2="565.69" y2="-466.69" stroke="#1a1a2e" stroke-width="0.5"/>
+<line x1="-565.69" y1="-438.41" x2="565.69" y2="-438.41" stroke="#1a1a2e" stroke-width="0.5"/>
+<line x1="-565.69" y1="-410.12" x2="565.69" y2="-410.12" stroke="#1a1a2e" stroke-width="0.5"/>
+<line x1="-565.69" y1="-381.84" x2="565.69" y2="-381.84" stroke="#1a1a2e" stroke-width="0.5"/>
+<line x1="-565.69" y1="-353.55" x2="565.69" y2="-353.55" stroke="#1a1a2e" stroke-width="0.5"/>
+<line x1="-565.69" y1="-325.27" x2="565.69" y2="-325.27" stroke="#1a1a2e" stroke-width="0.5"/>
+<line x1="-565.69" y1="-296.98" x2="565.69" y2="-296.98" stroke="#1a1a2e" stroke-width="0.5"/>
+<line x1="-565.69" y1="-268.70" x2="565.69" y2="-268.70" stroke="#1a1a2e" stroke-width="0.5"/>
+<line x1="-565.69" y1="-240.42" x2="565.69" y2="-240.42" stroke="#1a1a2e" stroke-width="0.5"/>
+<line x1="-565.69" y1="-212.13" x2="565.69" y2="-212.13" stroke="#1a1a2e" stroke-width="0.5"/>
+<line x1="-565.69" y1="-183.85" x2="565.69" y2="-183.85" stroke="#1a1a2e" stroke-width="0.5"/>
+<line x1="-565.69" y1="-155.56" x2="565.69" y2="-155.56" stroke="#1a1a2e" stroke-width="0.5"/>
+<line x1="-565.69" y1="-127.28" x2="565.69" y2="-127.28" stroke="#1a1a2e" stroke-width="0.5"/>
+<line x1="-565.69" y1="-98.99" x2="565.69" y2="-98.99" stroke="#1a1a2e" stroke-width="0.5"/>
+<line x1="-565.69" y1="-70.71" x2="565.69" y2="-70.71" stroke="#1a1a2e" stroke-width="0.5"/>
+<line x1="-565.69" y1="-42.43" x2="565.69" y2="-42.43" stroke="#1a1a2e" stroke-width="0.5"/>
+<line x1="-565.69" y1="-14.14" x2="565.69" y2="-14.14" stroke="#1a1a2e" stroke-width="0.5"/>
+<line x1="-565.69" y1="14.14" x2="565.69" y2="14.14" stroke="#1a1a2e" stroke-width="0.5"/>
+<line x1="-565.69" y1="42.43" x2="565.69" y2="42.43" stroke="#1a1a2e" stroke-width="0.5"/>
+<line x1="-565.69" y1="70.71" x2="565.69" y2="70.71" stroke="#1a1a2e" stroke-width="0.5"/>
+<line x1="-565.69" y1="98.99" x2="565.69" y2="98.99" stroke="#1a1a2e" stroke-width="0.5"/>
+<line x1="-565.69" y1="127.28" x2="565.69" y2="127.28" stroke="#1a1a2e" stroke-width="0.5"/>
+<line x1="-565.69" y1="155.56" x2="565.69" y2="155.56" stroke="#1a1a2e" stroke-width="0.5"/>
+<line x1="-565.69" y1="183.85" x2="565.69" y2="183.85" stroke="#1a1a2e" stroke-width="0.5"/>
+<line x1="-565.69" y1="212.13" x2="565.69" y2="212.13" stroke="#1a1a2e" stroke-width="0.5"/>
+<line x1="-565.69" y1="240.42" x2="565.69" y2="240.42" stroke="#1a1a2e" stroke-width="0.5"/>
+<line x1="-565.69" y1="268.70" x2="565.69" y2="268.70" stroke="#1a1a2e" stroke-width="0.5"/>
+<line x1="-565.69" y1="296.98" x2="565.69" y2="296.98" stroke="#1a1a2e" stroke-width="0.5"/>
+<line x1="-565.69" y1="325.27" x2="565.69" y2="325.27" stroke="#1a1a2e" stroke-width="0.5"/>
+<line x1="-565.69" y1="353.55" x2="565.69" y2="353.55" stroke="#1a1a2e" stroke-width="0.5"/>
+<line x1="-565.69" y1="381.84" x2="565.69" y2="381.84" stroke="#1a1a2e" stroke-width="0.5"/>
+<line x1="-565.69" y1="410.12" x2="565.69" y2="410.12" stroke="#1a1a2e" stroke-width="0.5"/>
+<line x1="-565.69" y1="438.41" x2="565.69" y2="438.41" stroke="#1a1a2e" stroke-width="0.5"/>
+<line x1="-565.69" y1="466.69" x2="565.69" y2="466.69" stroke="#1a1a2e" stroke-width="0.5"/>
+<line x1="-565.69" y1="494.97" x2="565.69" y2="494.97" stroke="#1a1a2e" stroke-width="0.5"/>
+<line x1="-565.69" y1="523.26" x2="565.69" y2="523.26" stroke="#1a1a2e" stroke-width="0.5"/>
+<line x1="-565.69" y1="551.54" x2="565.69" y2="551.54" stroke="#1a1a2e" stroke-width="0.5"/>
+    </g>
+  </g>"
+`;

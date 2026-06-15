@@ -21,6 +21,9 @@ import ModuleGrid from './patterns/ModuleGrid';
 import TopographicContours from './patterns/TopographicContours';
 import DifferentialGrowth from './patterns/DifferentialGrowth';
 import IslamicStar from './patterns/IslamicStar';
+import Moire from './patterns/Moire';
+import CirclePacking from './patterns/CirclePacking';
+import { resolveMoireSource } from './moirePair';
 
 const PATTERN_CLASSES = {
   spirograph: Spirograph,
@@ -42,6 +45,8 @@ const PATTERN_CLASSES = {
   topographic: TopographicContours,
   diffgrowth: DifferentialGrowth,
   girih: IslamicStar,
+  moire: Moire,
+  circlepacking: CirclePacking,
 };
 
 export default function useCanvas(containerRef, layers, canvasW, canvasH, bgColor = '#ffffff') {
@@ -69,6 +74,20 @@ export default function useCanvas(containerRef, layers, canvasW, canvasH, bgColo
     for (const layer of renderOrder) {
       const PatternClass = PATTERN_CLASSES[layer.patternType] || getDynamicPatternClass(layer.patternType);
       if (!PatternClass) continue;
+
+      // Moiré single-source-of-truth resolution. A non-moiré layer (no
+      // moireRole) keeps its own params verbatim — byte-identical to before.
+      // A moiré layer resolves its render params via the pair helper: role A
+      // uses its own params; role B reads partner A's. An ORPHAN B (no partner)
+      // resolves to null → render NOTHING and add NO instance (so the cached-
+      // instance export path skips it too). No crash.
+      let renderParams = layer.params;
+      if (layer.moireRole) {
+        const resolved = resolveMoireSource(layer, layers);
+        if (!resolved) continue; // orphan B — no instance cached, nothing drawn
+        renderParams = { ...resolved.params, moireRole: resolved.moireRole };
+      }
+
       const instance = new PatternClass();
       newInstances[layer.id] = instance;
 
@@ -77,7 +96,7 @@ export default function useCanvas(containerRef, layers, canvasW, canvasH, bgColo
         instance.generateWithContext(
           noDrawCtx,
           layer.seed,
-          layer.params,
+          renderParams,
           canvasW,
           canvasH,
           layer.color,
@@ -96,7 +115,7 @@ export default function useCanvas(containerRef, layers, canvasW, canvasH, bgColo
         p.rect(0, 0, canvasW, canvasH);
       }
 
-      instance.generateWithContext(drawCtx, layer.seed, layer.params, canvasW, canvasH, layer.color, layer.opacity);
+      instance.generateWithContext(drawCtx, layer.seed, renderParams, canvasW, canvasH, layer.color, layer.opacity);
     }
     instancesRef.current = newInstances;
     setPatternInstances(newInstances);

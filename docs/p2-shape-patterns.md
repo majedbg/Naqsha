@@ -10,8 +10,8 @@ The five (in build order):
 2. **Islamic Star Tessellation (Girih)** — Hankin PIC, 2 tilings (8★, 12★) ✅ built + visually verified
 3. **Topographic Contours** — nested iso-contour loops of a noise field ✅ built
 4. **Differential Growth** — self-avoiding curve folding into coral/meanders ✅ built
-5. **Moiré Fields** — interference of two line/ring layers (P_2_1_5_01)
-6. **Circle Packing** — largest-fit outline packing + neighbor links (P_2_2_5_01)
+5. **Moiré Fields** — paired-layer interference, separate-SVG export (P_2_1_5_01) ✅ built (SSOT)
+6. **Circle Packing** — largest-fit packing, 3 render modes, rect/circle boundary (P_2_2_5_01) ✅ built
 7. **Dendrite (DLA)** — aggregative branching skeleton (re-authored from P_2_2_4)
 
 Build order: easy-first → Topographic, Differential Growth, then Girih; then Moiré/Packing/Dendrite.
@@ -117,19 +117,49 @@ _(none yet — fill in after testing)_
 
 ---
 
-## 5. Moiré Fields
-_Spec TBD (grill before build)._
+## 5. Moiré Fields (paired-layer)
+**Status:** built (547 tests; Phase 1 fringe + Phase 2 SSOT-resolution both visually verified).
+Files: `Moire.js`, `moirePair.js` (resolveMoireSource), + `useLayers`/`useCanvas`/`constants`/`tierLimits`/
+`Studio`/`LeftPanel`/`LayersSection`/`LayerCard`. Pair-aware spawn/remove/reorder/duplicate/switch-away; panel B→A.
+
+### Locked spec (grill + advisor 2026-06-14)
+- Picking Moiré converts active layer → Moiré A + spawns linked Moiré B (net +1 layer; tier-aware block if no slot).
+- **Single source of truth (advisor):** A holds the field params; B holds only `{moireGroupId, moireRole:'B'}` and
+  reads A's params at render (B renders the field transformed; A untransformed). No two-copy sync → no re-entrancy,
+  no consistency invariant. One indirection point (panel/render resolves B→A) + partner-missing guard (no crash).
+- Each layer renders only its own field; moiré emerges from canvas overlay; export naturally separate (two SVGs via
+  existing per-layer export). Per-layer color / role (cut/score/engrave) / penSlot independent → two surfaces.
+- Controls (live on A; B resolves to A): fieldType (parallel lines / concentric rings / radial) · density ·
+  moireRotation · moireOffset (pad2d) · moireScale · strokeWeight. No symmetry; global Start Angle + Offset kept.
+- Lifecycle = unit: delete either→both; **switch-away dissolves pair**; reorder moves both; duplicate copies pair.
+  seed resolved by SSOT (B reads A's seed → identical field). randomize/reset operate on A. Guest-accessible.
+- Build order (advisor): prove the fringe FIRST (Phase 1), THEN rewrite useLayers (Phase 2).
+
+### Known items / deferred
+- Inline "needs a free slot" message persists until the next pattern change even after a slot is freed. Cosmetic.
+- Radial moiré needs an offset (shared-center equal-count rotation doesn't beat — it's just a denser fan).
+  Tooltip notes this; default field is parallelLines (fringes out of the box).
+- B's stored params are intentionally ignored (SSOT — B reads A). By design.
 
 ### Test feedback
-_(none yet)_
+_(none yet — fill in after testing)_
 
 ---
 
 ## 6. Circle Packing
-_Spec TBD (grill before build)._
+**Status:** built (561 tests green). Seeded largest-fit packing; non-overlap + in-boundary guaranteed by
+construction (verified across all O(n²) pairs). ~1.2ms / 359 circles at defaults (spatial-grid overlap query).
+
+### Locked spec (grill 2026-06-15)
+- Seeded (ctx.random): drop candidate, grow to largest clearing radius, place if ≥ min.
+- `boundary` select: Rectangle / Circle (self-contained medallion). `render` select: Outlines / + Neighbor Links /
+  Nested Rings.
+- Controls: minRadius · maxRadius · attempts (density/tightness) · linkDistance (showIf links) ·
+  ringCount (showIf nested) · strokeWeight.
+- No symmetry; Start Angle + Offset kept. Guest-accessible.
 
 ### Test feedback
-_(none yet)_
+_(none yet — fill in after testing)_
 
 ---
 

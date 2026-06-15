@@ -82,6 +82,7 @@ export default function Studio() {
     removeLayer,
     updateLayer,
     reorderLayers,
+    changeLayerPattern,
     randomizeLayer,
     randomizeAll,
     randomizeLayerParams,
@@ -89,7 +90,7 @@ export default function Studio() {
     loadLayerSet,
     bgColor,
     setBgColor,
-  } = useLayers({ persistToLocal: limits.localStorage });
+  } = useLayers({ persistToLocal: limits.localStorage, maxLayers: limits.maxLayers });
 
   const { groups, saveGroup, deleteGroup, renameGroup } = useLayerGroups();
   const patternInstancesRef = useRef({});
@@ -141,9 +142,13 @@ export default function Studio() {
   };
 
   const handleAIPatternGenerated = (patternId, defaultParams) => {
-    // If we have a target layer, switch it to the new pattern
+    // If we have a target layer, switch it to the new pattern. Route through the
+    // pair-aware router so that switching a Moiré member to an AI pattern
+    // DISSOLVES the pair (removes the partner, clears role fields) instead of
+    // leaving a dangling half-pair. For non-moiré layers this is identical to a
+    // plain updateLayer (default branch of changeLayerPattern).
     if (aiChatLayer) {
-      updateLayer(aiChatLayer.id, {
+      changeLayerPattern(aiChatLayer.id, {
         patternType: patternId,
         params: {
           ...(defaultParams || {}),
@@ -364,6 +369,7 @@ export default function Studio() {
             patternInstances={livePatternInstances}
             layers={layers}
             onUpdateLayer={updateLayer}
+            onChangeLayerPattern={changeLayerPattern}
             onRemoveLayer={removeLayer}
             onAddLayer={addLayer}
             onDuplicateLayer={duplicateLayer}

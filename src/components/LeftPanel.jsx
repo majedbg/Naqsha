@@ -63,6 +63,7 @@ export default function LeftPanel({
   patternInstances,
   layers,
   onUpdateLayer,
+  onChangeLayerPattern,
   onRemoveLayer,
   onAddLayer,
   onDuplicateLayer,
@@ -149,6 +150,7 @@ export default function LeftPanel({
               <LayersSection
                 layers={layers}
                 onUpdate={onUpdateLayer}
+                onChangePattern={onChangeLayerPattern}
                 onRemove={onRemoveLayer}
                 onAdd={onAddLayer}
                 onDuplicate={onDuplicateLayer}
@@ -344,6 +346,7 @@ export default function LeftPanel({
                   <LayersSection
                     layers={layers}
                     onUpdate={onUpdateLayer}
+                    onChangePattern={onChangeLayerPattern}
                     onRemove={onRemoveLayer}
                     onAdd={onAddLayer}
                     onDuplicate={onDuplicateLayer}

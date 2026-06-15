@@ -17,6 +17,9 @@ import LayerBgFill from "./LayerBgFill";
 export default function LayerCard({
   layer,
   onUpdate,
+  onChangePattern,
+  paramSourceLayer,
+  onParamUpdate,
   onRemove,
   onRandomize,
   onRandomizeParams,
@@ -38,21 +41,32 @@ export default function LayerCard({
   const seedRef = useRef(null);
 
   // Pattern-switch cache machine (save current pattern's params, restore a prior
-  // type's, or seed fresh defaults). Extracted verbatim to usePatternCache.
-  const { handlePatternChange } = usePatternCache(layer, onUpdate);
+  // type's, or seed fresh defaults). Extracted verbatim to usePatternCache. Its
+  // computed patch is APPLIED by the pair-aware router (onChangePattern) so that
+  // selecting "Moiré" spawns a linked pair and switching away dissolves it. When
+  // no router is wired (defensive), fall back to a plain self-update.
+  const applyPatternPatch = onChangePattern || ((patch) => onUpdate(patch));
+  const { handlePatternChange } = usePatternCache(layer, applyPatternPatch);
+
+  // Param SOURCE: for a Moiré role-B card this is the partner A layer (B reads
+  // A); for everything else it's this card's own layer. `onParamUpdate` is
+  // bound to the source layer's id by the parent. Defaults keep standalone use
+  // working (tests / non-paired callers).
+  const srcLayer = paramSourceLayer || layer;
+  const writeParams = onParamUpdate || ((patch) => onUpdate(patch));
 
   // Param context value (params + toggle/randomize/reset handlers). Provided at
   // this boundary so PatternParams/ParamGroup/ParamRow/ParamControl read it
   // directly instead of threading callbacks through every level.
   const layerParamsValue = buildLayerParamsValue({
-    patternType: layer.patternType,
-    params: layer.params,
-    onChange: (params) => onUpdate({ params }),
-    randomizeKeys: layer.randomizeKeys,
-    onRandomizeKeysChange: (keys) => onUpdate({ randomizeKeys: keys }),
+    patternType: srcLayer.patternType,
+    params: srcLayer.params,
+    onChange: (params) => writeParams({ params }),
+    randomizeKeys: srcLayer.randomizeKeys,
+    onRandomizeKeysChange: (keys) => writeParams({ randomizeKeys: keys }),
   });
 
-  const hasCheckedKeys = layer.randomizeKeys && layer.randomizeKeys.length > 0;
+  const hasCheckedKeys = srcLayer.randomizeKeys && srcLayer.randomizeKeys.length > 0;
 
   return (
     <div className="bg-card border border-card-border rounded-lg overflow-hidden">
@@ -301,20 +315,22 @@ export default function LayerCard({
             onOpenAIChat={() => onOpenAIChat && onOpenAIChat(layer)}
           />
 
-          {/* Layer-wide action buttons */}
+          {/* Layer-wide action buttons. Read/write the param SOURCE (= partner
+              A for a Moiré role-B card) so reset/randomize act on the surface
+              that actually holds the params. */}
           {(() => {
             const defaults =
-              DEFAULT_PARAMS[layer.patternType] ||
-              getDynamicDefaults(layer.patternType) ||
+              DEFAULT_PARAMS[srcLayer.patternType] ||
+              getDynamicDefaults(srcLayer.patternType) ||
               {};
             const changedCount = Object.keys(defaults).filter(
-              (k) => layer.params[k] !== defaults[k]
+              (k) => srcLayer.params[k] !== defaults[k]
             ).length;
-            const checkedCount = layer.randomizeKeys?.length || 0;
+            const checkedCount = srcLayer.randomizeKeys?.length || 0;
             return (
               <div className="flex items-center gap-2">
                 <button
-                  onClick={() => onUpdate({ params: { ...defaults } })}
+                  onClick={() => writeParams({ params: { ...defaults } })}
                   disabled={changedCount === 0}
                   className="ml-auto flex items-center gap-1 py-1 px-2 rounded border transition-colors
                     disabled:opacity-30 disabled:cursor-not-allowed

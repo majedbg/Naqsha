@@ -2,52 +2,8 @@ import { useEffect, useRef, useCallback, useState } from 'react';
 import p5 from 'p5';
 import { getDynamicPatternClass } from './patternRegistry';
 import { P5Adapter } from './patterns/drawingContext';
-import Spirograph from './patterns/Spirograph';
-import FlowField from './patterns/FlowField';
-import Phyllotaxis from './patterns/Phyllotaxis';
-import WaveInterference from './patterns/WaveInterference';
-import VoronoiCells from './patterns/VoronoiCells';
-import RecursiveGeometry from './patterns/RecursiveGeometry';
-import PhyllotaxisDash from './patterns/PhyllotaxisDash';
-import GrainField from './patterns/GrainField';
-import FlowHatch from './patterns/FlowHatch';
-import Feather from './patterns/Feather';
-import TuringDash from './patterns/TuringDash';
-import Duality from './patterns/Duality';
-import RadialEtch from './patterns/RadialEtch';
-import Grid from './patterns/Grid';
-import Spiral from './patterns/Spiral';
-import ModuleGrid from './patterns/ModuleGrid';
-import TopographicContours from './patterns/TopographicContours';
-import DifferentialGrowth from './patterns/DifferentialGrowth';
-import IslamicStar from './patterns/IslamicStar';
-import Moire from './patterns/Moire';
-import CirclePacking from './patterns/CirclePacking';
+import { PATTERN_CLASSES } from './patterns';
 import { resolveMoireSource } from './moirePair';
-
-const PATTERN_CLASSES = {
-  spirograph: Spirograph,
-  flowfield: FlowField,
-  phyllotaxis: Phyllotaxis,
-  wave: WaveInterference,
-  voronoi: VoronoiCells,
-  recursive: RecursiveGeometry,
-  phyllodash: PhyllotaxisDash,
-  grainfield: GrainField,
-  flowhatch: FlowHatch,
-  feather: Feather,
-  turing: TuringDash,
-  duality: Duality,
-  radialetch: RadialEtch,
-  grid: Grid,
-  spiral: Spiral,
-  modulegrid: ModuleGrid,
-  topographic: TopographicContours,
-  diffgrowth: DifferentialGrowth,
-  girih: IslamicStar,
-  moire: Moire,
-  circlepacking: CirclePacking,
-};
 
 export default function useCanvas(containerRef, layers, canvasW, canvasH, bgColor = '#ffffff') {
   const p5Ref = useRef(null);

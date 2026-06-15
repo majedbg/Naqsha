@@ -30,6 +30,8 @@ export default function useUIState({ savedTab } = {}) {
     showLoadModal: false,
     showCloudModal: false,
     showSaveDialog: false,
+    // New-layer pattern-picker modal (the "periodic table").
+    showPatternPicker: false,
     saveName: "",
     showExamples: false,
     // Example awaiting confirmation when the canvas has unsaved work.

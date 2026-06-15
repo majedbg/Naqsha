@@ -948,3 +948,110 @@ export const PARAM_GROUP_MAP = {
   moireOffset: 'transform', moireOffsetX: 'transform', moireOffsetY: 'transform',
   moireScale: 'scale',
 };
+
+// ============================================================================
+// PATTERN TAXONOMY — "Periodic Table of Patterns"
+// ----------------------------------------------------------------------------
+// Drives the new-layer pattern-picker modal (see docs/pattern-taxonomy.md).
+// Two real, independent axes + a family colour overlay:
+//   • X (columns) = geom 0..4  — geometric → organic  (order → emergence)
+//   • Y (rows)    = form        — spatial archetype (radial → packed)
+//   • colour      = family      — the generative mechanism ("chemistry")
+// Per-card badges refine a cell: determinism · mark type · radial symmetry.
+//
+// Kept as a PARALLEL map (not folded into PATTERN_TYPES) so the existing array
+// shape, tier gate, and PatternTabs are untouched. The picker reads a pattern's
+// label from PATTERN_TYPES (or `label` here for not-yet-built placeholders) and
+// everything else from this map.
+//
+// Placeholders (hilbert/chladni/lissajous/truchet) have NO `comingSoon` flag:
+// the picker derives "coming soon" from the ABSENCE of a registered pattern
+// class. The moment those patterns self-register (see registerPattern), their
+// cards light up — no edit here required. This lets a second session build the
+// pattern files without touching this file. See docs/pattern-taxonomy.md §7.
+// ============================================================================
+
+// Family colour legend (the "chemistry"). Ordered by geometric→organic.
+// `color` = accent (border/text/dot); `tint` = faint card wash on the paper panel.
+export const PATTERN_FAMILIES = {
+  H: { key: 'H', label: 'Harmonic Curves',        color: '#d9a441', tint: 'rgba(217,164,65,0.10)' },
+  W: { key: 'W', label: 'Waves & Interference',   color: '#2fa4a8', tint: 'rgba(47,164,168,0.10)' },
+  T: { key: 'T', label: 'Lattices & Tilings',     color: '#5b6ee1', tint: 'rgba(91,110,225,0.10)' },
+  R: { key: 'R', label: 'Recursion & Fractals',   color: '#9b6dd6', tint: 'rgba(155,109,214,0.10)' },
+  F: { key: 'F', label: 'Fields & Flow',          color: '#4fa86b', tint: 'rgba(79,168,107,0.10)' },
+  P: { key: 'P', label: 'Partition & Packing',    color: '#e08a4b', tint: 'rgba(224,138,75,0.10)' },
+  G: { key: 'G', label: 'Growth & Agents',        color: '#d65d7a', tint: 'rgba(214,93,122,0.10)' },
+  C: { key: 'C', label: 'Reaction-Diffusion',     color: '#6b7a99', tint: 'rgba(107,122,153,0.10)' },
+};
+
+// X axis (columns): geometric → organic. Index === a pattern's `geom`.
+export const GEOM_ORGANIC_BANDS = [
+  { level: 0, label: 'Crystalline', hint: 'pure equation' },
+  { level: 1, label: 'Parametric',  hint: 'rule-rich' },
+  { level: 2, label: 'Seeded',      hint: 'noise / relaxation' },
+  { level: 3, label: 'Flowing',     hint: 'fields / scatter' },
+  { level: 4, label: 'Emergent',    hint: 'grown / rules' },
+];
+
+// Y axis (rows): spatial archetype. `key` === a pattern's `form`.
+export const SPATIAL_FORM_ROWS = [
+  { key: 'radial',    label: 'Radial / Spiral' },
+  { key: 'wave',      label: 'Wave / Concentric' },
+  { key: 'grid',      label: 'Grid / Woven' },
+  { key: 'nested',    label: 'Nested / Fractal' },
+  { key: 'flowing',   label: 'Flowing / Directional' },
+  { key: 'cellular',  label: 'Cellular / Reticulate' },
+  { key: 'branching', label: 'Branching / Dendritic' },
+  { key: 'packed',    label: 'Packed / Scattered' },
+];
+
+// One entry per pattern. `family` keys PATTERN_FAMILIES; `geom` indexes
+// GEOM_ORGANIC_BANDS; `form` keys SPATIAL_FORM_ROWS. `det`: deterministic |
+// seeded | stochastic. `mark`: line | dash | fill. `sym`: supports radial copies.
+// `bridge`: a secondary family it straddles (drawn as a hint). `label` only on
+// placeholders not present in PATTERN_TYPES. `pickerHidden`: omitted from the
+// picker (Moiré — a two-surface pair pattern reached by switching a layer).
+export const PATTERN_TAXONOMY = {
+  // ── Harmonic Curves ──────────────────────────────────────────────────────
+  spirograph: { family: 'H', geom: 0, form: 'radial', det: 'deterministic', mark: 'line', sym: true, blurb: 'Hypotrochoid curves — symmetric looping lobes.' },
+  spiral:     { family: 'H', geom: 0, form: 'radial', det: 'deterministic', mark: 'line', sym: true, blurb: 'Multi-armed Archimedean / exponential spirals.' },
+  phyllotaxis:{ family: 'H', geom: 1, form: 'radial', det: 'deterministic', mark: 'fill', sym: true, bridge: 'P', blurb: 'Golden-angle spiral of elements — a packing, too.' },
+  feather:    { family: 'H', geom: 1, form: 'radial', det: 'deterministic', mark: 'dash', sym: true, blurb: 'Oscillating dashes around a rose / hypotrochoid skeleton.' },
+  phyllodash: { family: 'H', geom: 2, form: 'radial', det: 'deterministic', mark: 'dash', sym: true, blurb: 'Golden-spiral seeds with radiating dashes.' },
+  duality:    { family: 'H', geom: 1, form: 'radial', det: 'deterministic', mark: 'dash', sym: true, bridge: 'W', blurb: 'A spiral of dashes plus concentric wave arcs.' },
+
+  // ── Waves & Interference ─────────────────────────────────────────────────
+  wave:       { family: 'W', geom: 0, form: 'wave', det: 'deterministic', mark: 'line', sym: true, blurb: 'Stacked, interfering sine waves.' },
+  moire:      { family: 'W', geom: 0, form: 'wave', det: 'deterministic', mark: 'line', sym: false, pickerHidden: true, blurb: 'Two-surface interference fringes (added by switching a layer).' },
+
+  // ── Lattices & Tilings ───────────────────────────────────────────────────
+  grid:       { family: 'T', geom: 0, form: 'grid', det: 'deterministic', mark: 'line', sym: true, blurb: 'Lattice of eased horizontal / vertical lines.' },
+  modulegrid: { family: 'T', geom: 0, form: 'grid', det: 'deterministic', mark: 'line', sym: false, blurb: 'Grid of repeating, per-cell-rotated modules.' },
+  girih:      { family: 'T', geom: 0, form: 'grid', det: 'deterministic', mark: 'line', sym: true, blurb: 'Islamic star tiling (polygons-in-contact).' },
+
+  // ── Recursion & Fractals ─────────────────────────────────────────────────
+  recursive:  { family: 'R', geom: 0, form: 'nested', det: 'deterministic', mark: 'line', sym: true, blurb: 'Recursively nested, rotating polygons.' },
+
+  // ── Fields & Flow ────────────────────────────────────────────────────────
+  topographic:{ family: 'F', geom: 2, form: 'wave', det: 'seeded', mark: 'line', sym: false, blurb: 'Contour lines from an fBm noise field.' },
+  radialetch: { family: 'F', geom: 2, form: 'radial', det: 'seeded', mark: 'line', sym: true, bridge: 'H', blurb: 'Radial rays warped by Perlin noise.' },
+  flowfield:  { family: 'F', geom: 3, form: 'flowing', det: 'seeded', mark: 'line', sym: true, blurb: 'Particles tracing a Perlin flow field.' },
+  flowhatch:  { family: 'F', geom: 3, form: 'flowing', det: 'seeded', mark: 'dash', sym: true, blurb: 'Hatching dashes following a flow field.' },
+  grainfield: { family: 'F', geom: 3, form: 'flowing', det: 'stochastic', mark: 'dash', sym: true, bridge: 'G', blurb: 'Flow-aligned dashes like wood grain.' },
+
+  // ── Partition & Packing ──────────────────────────────────────────────────
+  voronoi:      { family: 'P', geom: 2, form: 'cellular', det: 'seeded', mark: 'line', sym: false, blurb: 'Voronoi cell partition of the plane.' },
+  circlepacking:{ family: 'P', geom: 2, form: 'packed', det: 'seeded', mark: 'line', sym: true, blurb: 'Non-overlapping circle packing.' },
+
+  // ── Growth & Agents ──────────────────────────────────────────────────────
+  diffgrowth: { family: 'G', geom: 4, form: 'branching', det: 'stochastic', mark: 'line', sym: true, blurb: 'Self-avoiding differential growth.' },
+
+  // ── Reaction-Diffusion & CA ──────────────────────────────────────────────
+  turing:     { family: 'C', geom: 4, form: 'cellular', det: 'stochastic', mark: 'dash', sym: true, blurb: 'Reaction-diffusion spots, stripes, labyrinths.' },
+
+  // ── PLACEHOLDERS (not yet built) ─ light up automatically once registered ──
+  lissajous:  { family: 'H', geom: 0, form: 'radial', det: 'deterministic', mark: 'line', sym: true,  label: 'Lissajous',     blurb: 'Two-axis harmonic oscillation — a harmonograph.' },
+  chladni:    { family: 'W', geom: 1, form: 'wave',   det: 'deterministic', mark: 'line', sym: true,  label: 'Chladni',       blurb: 'Standing-wave nodal figures — sound made visible.' },
+  truchet:    { family: 'T', geom: 2, form: 'grid',   det: 'seeded',        mark: 'line', sym: false, label: 'Truchet',       blurb: 'Grid of randomly rotated arc tiles.' },
+  hilbert:    { family: 'R', geom: 0, form: 'nested', det: 'deterministic', mark: 'line', sym: false, label: 'Hilbert Curve', blurb: 'One unbroken space-filling curve.' },
+};

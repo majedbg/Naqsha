@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { DEFAULT_PARAMS, DEFAULT_COLORS, MAX_LAYERS, PATTERN_PARAM_DEFS, RANDOMIZE_EXCLUDED_KEYS } from '../constants';
 import { randomPatchForDef } from './params/paramOps';
+import { getDynamicDefaults, getDynamicParamDefs } from './patternRegistry';
 import { isMoireMember, findMoirePartnerA, findMoirePartnerB } from './moirePair';
 
 // Distinct group id for a Moiré pair (links role A + role B).
@@ -40,9 +41,17 @@ function randomSeed() {
   return Math.floor(Math.random() * 100000);
 }
 
-function createLayer(index) {
+// `requestedType` (optional) lets the pattern-picker create a layer of a chosen
+// type. Moiré is NOT acceptable here — it's a two-surface pair spawned via
+// changeLayerPattern; a lone moiré layer would be a broken orphan. Unknown/blank
+// requests fall back to the index-cycled default. Defaults/param-defs resolve
+// from the static tables first, then the dynamic registry (AI / built-in extras).
+function createLayer(index, requestedType) {
   const types = ['spirograph', 'flowfield', 'phyllotaxis', 'wave', 'voronoi', 'recursive', 'phyllodash', 'grainfield', 'flowhatch', 'feather', 'turing', 'duality', 'radialetch', 'grid', 'spiral', 'modulegrid', 'topographic', 'diffgrowth', 'girih', 'circlepacking'];
-  const patternType = types[index % types.length];
+  const valid = typeof requestedType === 'string' && requestedType && requestedType !== 'moire';
+  const patternType = valid ? requestedType : types[index % types.length];
+  const defaults = DEFAULT_PARAMS[patternType] || getDynamicDefaults(patternType) || {};
+  const defs = PATTERN_PARAM_DEFS[patternType] || getDynamicParamDefs(patternType) || [];
   return {
     id: genId(),
     name: `Layer ${index + 1}`,
@@ -52,9 +61,9 @@ function createLayer(index) {
     bgColor: '#ffffff',
     bgOpacity: 0,
     patternType,
-    params: { ...DEFAULT_PARAMS[patternType] },
+    params: { ...defaults },
     seed: randomSeed(),
-    randomizeKeys: (PATTERN_PARAM_DEFS[patternType] || [])
+    randomizeKeys: defs
       .filter((d) => !RANDOMIZE_EXCLUDED_KEYS.includes(d.key))
       .map((d) => d.key),
     paramsCache: {},
@@ -130,10 +139,14 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
     return () => clearTimeout(saveTimer.current);
   }, [layers, bgColor]);
 
-  const addLayer = useCallback(() => {
+  // `patternType` optional (from the pattern picker). The `typeof === 'string'`
+  // guard means a bare `onClick={addLayer}` (which would pass an event) still
+  // creates a default-cycled layer, unchanged.
+  const addLayer = useCallback((patternType) => {
+    const requested = typeof patternType === 'string' ? patternType : undefined;
     setLayers((prev) => {
       if (prev.length >= cap) return prev;
-      return [...prev, createLayer(prev.length)];
+      return [...prev, createLayer(prev.length, requested)];
     });
   }, [cap]);
 

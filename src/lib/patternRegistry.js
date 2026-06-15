@@ -8,10 +8,14 @@ const dynamicDefaults = {};      // { patternId: { ...params } }
 const dynamicParamDefs = {};     // { patternId: [...paramDefs] }
 let listeners = [];
 
-export function registerPattern(id, PatternClass, label, defaults, paramDefs) {
+export function registerPattern(id, PatternClass, label, defaults, paramDefs, opts = {}) {
+  // isAI defaults to true so existing AI-generation callers (5-arg form) keep
+  // the violet dot + guest-bypass behaviour. Self-registering BUILT-IN extras
+  // pass { isAI: false } so they read as first-class patterns, not AI ones.
+  const { isAI = true } = opts;
   dynamicPatterns[id] = PatternClass;
   if (!dynamicTypes.find((t) => t.id === id)) {
-    dynamicTypes.push({ id, label, isAI: true });
+    dynamicTypes.push({ id, label, isAI });
   }
   dynamicDefaults[id] = defaults;
   dynamicParamDefs[id] = paramDefs;

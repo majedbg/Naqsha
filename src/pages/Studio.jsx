@@ -5,6 +5,7 @@ import { EXAMPLES, EXAMPLE_COUNT } from "../examples";
 import RightPanel from "../components/RightPanel";
 import LayerGroupModal from "../components/LayerGroupModal";
 import CloudSaveModal from "../components/CloudSaveModal";
+import PatternPickerModal from "../components/PatternPickerModal";
 import AIPatternChat from "../components/AIPatternChat";
 import useLayers from "../lib/useLayers";
 import { getDynamicDefaults } from "../lib/patternRegistry";
@@ -371,7 +372,7 @@ export default function Studio() {
             onUpdateLayer={updateLayer}
             onChangeLayerPattern={changeLayerPattern}
             onRemoveLayer={removeLayer}
-            onAddLayer={addLayer}
+            onAddLayer={() => setUI("showPatternPicker", true)}
             onDuplicateLayer={duplicateLayer}
             onRandomizeLayer={randomizeLayer}
             onRandomizeAll={randomizeAll}
@@ -448,6 +449,16 @@ export default function Studio() {
           </div>
         </div>
       )}
+
+      {/* New-layer pattern picker (the "periodic table") */}
+      <PatternPickerModal
+        open={ui.showPatternPicker}
+        onClose={() => setUI("showPatternPicker", false)}
+        onPick={(id) => {
+          addLayer(id);
+          setUI("showPatternPicker", false);
+        }}
+      />
 
       {/* Load modal */}
       {showLoadModal && (

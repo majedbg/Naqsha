@@ -12,7 +12,9 @@ The five (in build order):
 4. **Differential Growth** — self-avoiding curve folding into coral/meanders ✅ built
 5. **Moiré Fields** — paired-layer interference, separate-SVG export (P_2_1_5_01) ✅ built (SSOT)
 6. **Circle Packing** — largest-fit packing, 3 render modes, rect/circle boundary (P_2_2_5_01) ✅ built
-7. **Dendrite (DLA)** — aggregative branching skeleton (re-authored from P_2_2_4)
+7. **Dendrite (DLA)** — branch skeleton, 3 seed modes, snowflake symmetry (re-authored from P_2_2_4) ✅ built
+
+All 7 built + registered (PATTERN_TYPES/PARAM_DEFS/DEFAULTS/GROUP_MAP/TAXONOMY/SYMBOLS + useCanvas/useLayers/tierLimits). 594 tests green.
 
 Build order: easy-first → Topographic, Differential Growth, then Girih; then Moiré/Packing/Dendrite.
 (Truchet dropped — too grid-similar to #1.)
@@ -164,7 +166,15 @@ _(none yet — fill in after testing)_
 ---
 
 ## 7. Dendrite (DLA)
-_Spec TBD (grill before build)._
+**Status:** built (594 tests green; **visually verified** — center.png branches cleanly with open fjords,
+snowflake.png is a clean 6-fold crystal). Re-authored from P_2_2_4 (branch skeleton, not the filled mass).
+
+### Locked spec (grill 2026-06-15)
+- DLA: walkers spawn near the cluster boundary, random-walk until they stick (spatial-hash proximity), record
+  parent → branch line. Deterministic (seeded), bounded; mean-value-jump optimization → ~39ms default, ~332ms at maxNodes=4000.
+- `render` select: Branches (bonds) / Branches + Nodes. `seedMode` select: Center (snowflake) / Ground (frost) / Ring.
+- Controls: maxNodes (size) · stickiness (low=denser, high=feathery) · nodeSpacing (branch spacing) · strokeWeight.
+- KEEPS symmetry (Center + symmetry 6 = snowflake) + Start Angle + Offset. Guest-accessible.
 
 ### Test feedback
-_(none yet)_
+_(none yet — fill in after testing)_

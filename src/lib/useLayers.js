@@ -47,7 +47,7 @@ function randomSeed() {
 // requests fall back to the index-cycled default. Defaults/param-defs resolve
 // from the static tables first, then the dynamic registry (AI / built-in extras).
 function createLayer(index, requestedType) {
-  const types = ['spirograph', 'flowfield', 'phyllotaxis', 'wave', 'voronoi', 'recursive', 'phyllodash', 'grainfield', 'flowhatch', 'feather', 'turing', 'duality', 'radialetch', 'grid', 'spiral', 'modulegrid', 'topographic', 'diffgrowth', 'girih', 'circlepacking'];
+  const types = ['spirograph', 'flowfield', 'phyllotaxis', 'wave', 'voronoi', 'recursive', 'phyllodash', 'grainfield', 'flowhatch', 'feather', 'turing', 'duality', 'radialetch', 'grid', 'spiral', 'modulegrid', 'topographic', 'diffgrowth', 'girih', 'circlepacking', 'dendrite'];
   const valid = typeof requestedType === 'string' && requestedType && requestedType !== 'moire';
   const patternType = valid ? requestedType : types[index % types.length];
   const defaults = DEFAULT_PARAMS[patternType] || getDynamicDefaults(patternType) || {};

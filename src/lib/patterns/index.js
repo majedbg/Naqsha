@@ -31,6 +31,7 @@ import DifferentialGrowth from './DifferentialGrowth';
 import IslamicStar from './IslamicStar';
 import Moire from './Moire';
 import CirclePacking from './CirclePacking';
+import Dendrite from './Dendrite';
 
 export const PATTERN_CLASSES = {
   spirograph: Spirograph,
@@ -54,6 +55,7 @@ export const PATTERN_CLASSES = {
   girih: IslamicStar,
   moire: Moire,
   circlepacking: CirclePacking,
+  dendrite: Dendrite,
 };
 
 /** Resolve a pattern class by id: static built-ins first, then the dynamic registry. */

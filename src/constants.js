@@ -55,6 +55,7 @@ export const PATTERN_TYPES = [
   { id: 'girih', label: 'Islamic Star (Girih)' },
   { id: 'moire', label: 'Moiré' },
   { id: 'circlepacking', label: 'Circle Packing' },
+  { id: 'dendrite', label: 'Dendrite' },
 ];
 
 export const MAX_LAYERS = 6;
@@ -351,6 +352,18 @@ export const DEFAULT_PARAMS = {
     linkDistance: 40,
     ringCount: 3,
     strokeWeight: 0.6,
+    startAngle: 0,
+    offsetX: 0,
+    offsetY: 0,
+  },
+  dendrite: {
+    seedMode: 'center',
+    render: 'bonds',
+    maxNodes: 1200,
+    stickiness: 0.8,
+    nodeSpacing: 6,
+    strokeWeight: 0.7,
+    symmetry: 1,
     startAngle: 0,
     offsetX: 0,
     offsetY: 0,
@@ -818,6 +831,24 @@ export const PATTERN_PARAM_DEFS = {
     START_ANGLE_PARAM,
     OFFSET_PAD_PARAM,
   ],
+  dendrite: [
+    { key: 'seedMode', label: 'Seed', type: 'select', options: [
+      { value: 'center', label: 'Center' },
+      { value: 'ground', label: 'Ground' },
+      { value: 'ring', label: 'Ring' },
+    ], tooltip: 'Nucleation — Center=snowflake, Ground=frost, Ring=band' },
+    { key: 'render', label: 'Render', type: 'select', options: [
+      { value: 'bonds', label: 'Branches' },
+      { value: 'nodesBonds', label: 'Branches + Nodes' },
+    ], tooltip: 'Branch skeleton, optionally with a dot at each particle' },
+    { key: 'maxNodes', label: 'Size', min: 200, max: 4000, step: 50, tooltip: 'Particle count — bigger + more compute' },
+    { key: 'stickiness', label: 'Stickiness', min: 0.05, max: 1, step: 0.05, tooltip: 'Capture probability — low = denser/smoother, high = feathery/branchy' },
+    { key: 'nodeSpacing', label: 'Branch Spacing', min: 2, max: 20, step: 1, tooltip: 'Distance between particles — branch thickness' },
+    { key: 'strokeWeight', label: 'Stroke Weight', min: 0.3, max: 3, step: 0.1, tooltip: 'Line thickness' },
+    SYMMETRY_PARAM,
+    START_ANGLE_PARAM,
+    OFFSET_PAD_PARAM,
+  ],
 };
 
 export const DEFAULT_COLORS = ['#00c9b1', '#ff6b6b', '#4ecdc4', '#45b7d1', '#f7dc6f', '#bb8fce'];
@@ -897,6 +928,10 @@ export const PARAM_GROUP_MAP = {
   boundary: 'structure', attempts: 'structure',
   minRadius: 'scale', maxRadius: 'scale',
   linkDistance: 'variation', ringCount: 'variation',
+  // Dendrite (DLA): nucleation mode + particle count are structural; the look
+  // knobs (render mode / capture probability / branch spacing) are variation.
+  seedMode: 'structure',
+  stickiness: 'variation', nodeSpacing: 'variation',
 
   // Scale — size, extent, radii, lengths
   scale: 'scale', scaleMode: 'scale',
@@ -1045,6 +1080,7 @@ export const PATTERN_TAXONOMY = {
 
   // ── Growth & Agents ──────────────────────────────────────────────────────
   diffgrowth: { family: 'G', geom: 4, form: 'branching', det: 'stochastic', mark: 'line', sym: true, blurb: 'Self-avoiding differential growth.' },
+  dendrite:   { family: 'G', geom: 4, form: 'branching', det: 'stochastic', mark: 'line', sym: true, blurb: 'Diffusion-limited aggregation — frost / coral branches.' },
 
   // ── Reaction-Diffusion & CA ──────────────────────────────────────────────
   turing:     { family: 'C', geom: 4, form: 'cellular', det: 'stochastic', mark: 'dash', sym: true, blurb: 'Reaction-diffusion spots, stripes, labyrinths.' },
@@ -1054,4 +1090,16 @@ export const PATTERN_TAXONOMY = {
   chladni:    { family: 'W', geom: 1, form: 'wave',   det: 'deterministic', mark: 'line', sym: true,  label: 'Chladni',       blurb: 'Standing-wave nodal figures — sound made visible.' },
   truchet:    { family: 'T', geom: 2, form: 'grid',   det: 'seeded',        mark: 'line', sym: false, label: 'Truchet',       blurb: 'Grid of randomly rotated arc tiles.' },
   hilbert:    { family: 'R', geom: 0, form: 'nested', det: 'deterministic', mark: 'line', sym: false, label: 'Hilbert Curve', blurb: 'One unbroken space-filling curve.' },
+};
+
+// Two-letter element symbols (periodic-table style) shown on each picker card.
+// Hand-lettered captions on the naqsheh cell. Kept unique across all patterns.
+export const PATTERN_SYMBOLS = {
+  spirograph: 'Sg', spiral: 'Sl', phyllotaxis: 'Ph', feather: 'Fe',
+  phyllodash: 'Pd', duality: 'Du', wave: 'Wv', moire: 'Mo',
+  grid: 'Gr', modulegrid: 'Mg', girih: 'Gi', recursive: 'Re',
+  topographic: 'To', radialetch: 'Ra', flowfield: 'Ff', flowhatch: 'Fh',
+  grainfield: 'Gn', voronoi: 'Vo', circlepacking: 'Cp', diffgrowth: 'Dg',
+  dendrite: 'De',
+  turing: 'Tu', lissajous: 'Ls', chladni: 'Ch', truchet: 'Tr', hilbert: 'Hi',
 };

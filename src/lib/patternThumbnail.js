@@ -24,6 +24,12 @@ import { RecordingContext } from './patterns/drawingContext';
 // scales the whole thing to the card. 1000 reads well for radius/spacing tunings.
 const THUMB_GEN = 1000;
 
+// Crop the viewBox inward by this fraction so the art fills the card instead of
+// floating in slack margin. Patterns centre on (500,500), so a symmetric inset
+// zooms in without shifting; edge-bleeding patterns just crop slightly (fine —
+// that reads as a "painted cell" filled to its border).
+const THUMB_INSET = 0.08;
+
 // Fixed seed → thumbnails are stable across modal opens.
 const THUMB_SEED = 1337;
 
@@ -37,9 +43,14 @@ const THUMBNAIL_PARAM_OVERRIDES = {
   grainfield: { pointCount: 220 },
   turing: { targetPoints: 600, simIterations: 40, gridRes: 80 },
   diffgrowth: { maxNodes: 400 },
-  phyllotaxis: { count: 500 },
+  dendrite: { maxNodes: 400 },
+  // Show the spiral of elements as outlines, not a solid fill-mode blob.
+  phyllotaxis: { count: 400, fillMode: 'outline' },
   phyllodash: { seedCount: 500 },
-  topographic: { resolution: 90 },
+  // These read as solid colour at default density — open them up so the
+  // structure (contour bands / wave lines) is visible at thumbnail size.
+  topographic: { resolution: 90, levels: 10 },
+  wave: { lineSpacing: 26, waveCount: 5 },
 };
 
 /**
@@ -61,9 +72,29 @@ export function makePatternThumbnailSVG(id, opts = {}) {
     const ctx = new RecordingContext({ seed: THUMB_SEED });
     const inst = new PatternClass();
     inst.generateWithContext(ctx, THUMB_SEED, params, THUMB_GEN, THUMB_GEN, color, 100);
-    const group = inst.toSVGGroup(`thumb-${id}`, color, 100);
+    let group = inst.toSVGGroup(`thumb-${id}`, color, 100);
     if (!group || typeof group !== 'string') return null;
-    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${THUMB_GEN} ${THUMB_GEN}" width="100%" height="100%" preserveAspectRatio="xMidYMid meet">${group}</svg>`;
+
+    // Drop any element with a NaN coordinate. RecordingContext's RNG is a stand-in
+    // (mulberry32, not p5's Perlin), so numerically-sensitive sims (e.g. Turing
+    // reaction-diffusion) can diverge to NaN here while rendering fine on the live
+    // p5 canvas. Strip the bad shapes rather than inject NaN into the DOM. If
+    // nothing drawable survives, fall back to the family glyph.
+    if (group.includes('NaN')) group = group.replace(/<[^>]*\bNaN\b[^>]*?\/?>/g, '');
+    if (!/<(path|line|polyline|polygon|circle|ellipse|rect)\b/.test(group)) return null;
+
+    // Strokes live in the 1000px generation space but render at ~92px, so a 0.8px
+    // line would scale to ~0.08px — invisible. non-scaling-stroke pins width to
+    // screen pixels; clamp keeps every pattern legible while preserving relative
+    // weight ordering.
+    group = group.replace(/stroke-width="([\d.]+)"/g, (_m, w) => {
+      const px = Math.min(1.8, Math.max(0.85, parseFloat(w) || 1));
+      return `stroke-width="${px}" vector-effect="non-scaling-stroke"`;
+    });
+
+    const pad = THUMB_GEN * THUMB_INSET;
+    const vb = `${pad} ${pad} ${THUMB_GEN - 2 * pad} ${THUMB_GEN - 2 * pad}`;
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vb}" width="100%" height="100%" preserveAspectRatio="xMidYMid meet">${group}</svg>`;
   } catch {
     // A pattern that isn't fully RecordingContext-safe just falls back to the
     // family glyph in the card — never breaks the modal.

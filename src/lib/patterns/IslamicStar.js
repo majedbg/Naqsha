@@ -603,20 +603,38 @@ function tileHex12(cell, W, H) {
   const vy = (s * Math.sqrt(3)) / 2;
   const tiles = [];
   const { ni, nj } = latticeRange(W, H, ux, uy, vx, vy);
-  const triR = a / Math.sqrt(3); // circumradius of filler triangle (side a)
+  const triH = (a * Math.sqrt(3)) / 2; // height of a side-`a` equilateral filler
+  const triSeen = new Set();            // dedup fillers by quantised centroid key
   for (let j = -nj; j <= nj; j++) {
     for (let i = -ni; i <= ni; i++) {
       const cxp = i * ux + j * vx;
       const cyp = i * uy + j * vy;
-      tiles.push(regPoly(cxp, cyp, 12, r, a0));
-      // Two triangles per cell fill the rhombic gap (up + down triangles)
-      // centred between dodecagons. Their centroids sit at the lattice cell's
-      // upper interior; place them at offsets toward the v-up gaps.
-      const gx = cxp + ux / 2 + vx / 2;
-      const gy = cyp + uy / 2 + vy / 2;
-      // distance from gap centre to triangle centroid is small; two opposed tris
-      tiles.push(regPoly(gx, gy, 3, triR, Math.PI / 2));
-      tiles.push(regPoly(gx, gy, 3, triR, -Math.PI / 2));
+      const dod = regPoly(cxp, cyp, 12, r, a0);
+      tiles.push(dod);
+      // 3.12.12 is the truncated hexagonal tiling: each dodecagon edge-shares
+      // ALTERNATELY with a dodecagon and a triangle. The 6 EVEN-index edges
+      // (midpoints at 30°,90°,…,330° from a0) face the triangle gaps; the 6 odd
+      // edges butt against neighbouring dodecagons. Build the equilateral filler
+      // OUTWARD on each triangle-facing edge — its base midpoint is exactly that
+      // edge's contact point, so straps join head-on across the boundary. Each
+      // gap triangle is shared by 3 dodecagons, so de-dup by centroid.
+      for (let e = 0; e < 12; e += 2) {
+        const A = dod[e];
+        const B = dod[(e + 1) % 12];
+        const ex = (A.x + B.x) / 2; // edge midpoint
+        const ey = (A.y + B.y) / 2;
+        let nx = ex - cxp;          // outward normal (midpoint points away from centre)
+        let ny = ey - cyp;
+        const nl = Math.hypot(nx, ny) || 1;
+        nx /= nl; ny /= nl;
+        const apex = { x: ex + nx * triH, y: ey + ny * triH };
+        const gx = (A.x + B.x + apex.x) / 3; // filler centroid
+        const gy = (A.y + B.y + apex.y) / 3;
+        const key = vkey(gx, gy);
+        if (triSeen.has(key)) continue;
+        triSeen.add(key);
+        tiles.push([{ x: A.x, y: A.y }, { x: B.x, y: B.y }, apex]);
+      }
     }
   }
   return tiles;

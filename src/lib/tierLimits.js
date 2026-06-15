@@ -3,7 +3,7 @@
 
 export const TIER_LIMITS = {
   guest: {
-    patterns: ['spirograph', 'flowfield', 'phyllotaxis', 'wave', 'voronoi', 'recursive', 'radialetch', 'grid', 'spiral', 'modulegrid', 'topographic', 'diffgrowth'],
+    patterns: ['spirograph', 'flowfield', 'phyllotaxis', 'wave', 'voronoi', 'recursive', 'radialetch', 'grid', 'spiral', 'modulegrid', 'topographic', 'diffgrowth', 'girih'],
     maxLayers: 3,
     presetIndices: null,             // all sizes
     allowCustomSize: true,

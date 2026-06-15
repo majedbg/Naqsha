@@ -20,6 +20,7 @@ import Spiral from './patterns/Spiral';
 import ModuleGrid from './patterns/ModuleGrid';
 import TopographicContours from './patterns/TopographicContours';
 import DifferentialGrowth from './patterns/DifferentialGrowth';
+import IslamicStar from './patterns/IslamicStar';
 
 const PATTERN_CLASSES = {
   spirograph: Spirograph,
@@ -40,6 +41,7 @@ const PATTERN_CLASSES = {
   modulegrid: ModuleGrid,
   topographic: TopographicContours,
   diffgrowth: DifferentialGrowth,
+  girih: IslamicStar,
 };
 
 export default function useCanvas(containerRef, layers, canvasW, canvasH, bgColor = '#ffffff') {

@@ -7,7 +7,7 @@ before revisiting feedback.
 
 The five (in build order):
 1. **Module Grid** — grid of parametric line-modules incl. Diamond, with scale/overflow ✅ built+enhanced
-2. **Islamic Star Tessellation (Girih)** — Persian star-and-polygon strapwork (NEW)
+2. **Islamic Star Tessellation (Girih)** — Hankin PIC, 2 tilings (8★, 12★) ✅ built + visually verified
 3. **Topographic Contours** — nested iso-contour loops of a noise field ✅ built
 4. **Differential Growth** — self-avoiding curve folding into coral/meanders ✅ built
 5. **Moiré Fields** — interference of two line/ring layers (P_2_1_5_01)
@@ -63,10 +63,26 @@ _(none yet — fill in after testing)_
 ---
 
 ## 2. Islamic Star Tessellation (Girih)
-_NEW. Persian star-and-polygon strapwork. Build last of the three new ones. Spec TBD (grill before build)._
+**Status:** built (514 tests green; **visually verified via rendered PNGs** — the required gate for this one,
+per advisor: green tests ≠ correct geometry). Hankin polygons-in-contact (Kaplan 2005).
+
+### Locked spec (grill 2026-06-14)
+- Method: Hankin PIC. Per tile, rays leave edge-midpoints at ±contactAngle, truncated where they meet → stars+polygons.
+- Tilings SHIPPED: Square→8★ (khatim), Hex→12★. Render select: Skeleton / Interlaced (default Interlaced —
+  per-strand over/under weave via BFS 2-coloring).
+- Controls: tiling · contactAngle (default **60**; 50 was too shallow — square8 stars didn't read) · density ·
+  render · bandWidth (showIf interlaced) · irregularity (seeded hand-wobble, default 0) · strokeWeight.
+- No symmetry control (intrinsically symmetric); Start Angle + Offset kept. Seed drives only irregularity. Guest.
+
+### Known issues / deferred (test feedback)
+- **Deferred tilings:** Hex 4.6.12 (filler placement gaps) + Decagonal 10★ (overlapping tiling) — both attempted,
+  honestly dropped to avoid shipping broken geometry. Revisit if wanted.
+- hex12 junctions have minor cosmetic "tangles" at the 6★ triangle-filler knots (stars correct; weave messy there).
+  Slightly more visible at the new default angle 60 than at 50. Candidate fix: drop strapwork on triangle fillers.
+- Single global contactAngle default is a compromise; per-tiling default angles would be cleaner. DEFERRED.
 
 ### Test feedback
-_(none yet)_
+_(none yet — fill in after testing)_
 
 ---
 

@@ -52,6 +52,7 @@ export const PATTERN_TYPES = [
   { id: 'modulegrid', label: 'Module Grid' },
   { id: 'topographic', label: 'Topographic Contours' },
   { id: 'diffgrowth', label: 'Differential Growth' },
+  { id: 'girih', label: 'Islamic Star (Girih)' },
 ];
 
 export const MAX_LAYERS = 6;
@@ -311,6 +312,18 @@ export const DEFAULT_PARAMS = {
     growthStyle: 'curvature',
     strokeWeight: 0.8,
     symmetry: 1,
+    startAngle: 0,
+    offsetX: 0,
+    offsetY: 0,
+  },
+  girih: {
+    tiling: 'square8',
+    contactAngle: 60,
+    density: 4,
+    render: 'interlaced',
+    bandWidth: 4,
+    irregularity: 0,
+    strokeWeight: 0.8,
     startAngle: 0,
     offsetX: 0,
     offsetY: 0,
@@ -722,6 +735,26 @@ export const PATTERN_PARAM_DEFS = {
     START_ANGLE_PARAM,
     OFFSET_PAD_PARAM,
   ],
+  girih: [
+    // Hankin polygons-in-contact star patterns. NOTE: only the two correct
+    // tilings ship — square8 (4.8.8 → 8★) and hex12 (3.12.12 → 12★). The
+    // decagonal (10★) and 4.6.12 variants were excluded (broken filler tiling).
+    { key: 'tiling', label: 'Tiling', type: 'select', options: [
+      { value: 'square8', label: 'Square (8★)' },
+      { value: 'hex12', label: 'Hex (12★)' },
+    ], tooltip: 'Underlying polygon tiling — sets the star symmetry' },
+    { key: 'density', label: 'Repeats', min: 2, max: 12, step: 1, tooltip: 'Tiling repeats across the canvas' },
+    { key: 'contactAngle', label: 'Contact Angle', min: 15, max: 75, step: 1, tooltip: 'Star sharpness — low = acute/spiky, high = obtuse/soft' },
+    { key: 'render', label: 'Render', type: 'select', options: [
+      { value: 'skeleton', label: 'Skeleton' },
+      { value: 'interlaced', label: 'Interlaced' },
+    ], tooltip: 'Skeleton strapwork lines, or woven interlaced bands' },
+    { key: 'bandWidth', label: 'Band Width', min: 1, max: 12, step: 0.5, showIf: (p) => p.render === 'interlaced', tooltip: 'Width of the woven strapwork bands' },
+    { key: 'irregularity', label: 'Hand Irregularity', min: 0, max: 1, step: 0.05, tooltip: 'Seeded wobble — 0 = perfect, higher = hand-cut feel' },
+    { key: 'strokeWeight', label: 'Stroke Weight', min: 0.3, max: 3, step: 0.1, tooltip: 'Line thickness' },
+    START_ANGLE_PARAM,
+    OFFSET_PAD_PARAM,
+  ],
 };
 
 export const DEFAULT_COLORS = ['#00c9b1', '#ff6b6b', '#4ecdc4', '#45b7d1', '#f7dc6f', '#bb8fce'];
@@ -787,6 +820,11 @@ export const PARAM_GROUP_MAP = {
   chevronDepth: 'structure', diamondAspect: 'structure', diamondNesting: 'structure',
   // Topographic contours: line count + marching-squares density are structural.
   levels: 'structure', resolution: 'structure',
+  // Girih (Islamic star): tiling + repeat count are structural; the look knobs
+  // (contact angle / render mode / band width / irregularity) are variation.
+  tiling: 'structure', density: 'structure',
+  contactAngle: 'variation', render: 'variation',
+  bandWidth: 'variation', irregularity: 'variation',
   // Differential growth: topology + growth budget are structural; the force
   // knobs (repulsion radius/attraction/repulsion/smoothing/growth style) live in
   // the variation group.

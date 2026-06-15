@@ -50,6 +50,7 @@ export const PATTERN_TYPES = [
   { id: 'grid', label: 'Grid' },
   { id: 'spiral', label: 'Spiral' },
   { id: 'modulegrid', label: 'Module Grid' },
+  { id: 'topographic', label: 'Topographic Contours' },
 ];
 
 export const MAX_LAYERS = 6;
@@ -282,6 +283,18 @@ export const DEFAULT_PARAMS = {
     diamondAspect: 1,
     diamondNesting: 0,
     strokeCap: 'round',
+    strokeWeight: 0.6,
+    startAngle: 0,
+    offsetX: 0,
+    offsetY: 0,
+  },
+  topographic: {
+    levels: 16,
+    noiseScale: 2.5,
+    octaves: 3,
+    warp: 0,
+    levelBias: 0,
+    resolution: 160,
     strokeWeight: 0.6,
     startAngle: 0,
     offsetX: 0,
@@ -663,6 +676,17 @@ export const PATTERN_PARAM_DEFS = {
     START_ANGLE_PARAM,
     OFFSET_PAD_PARAM,
   ],
+  topographic: [
+    { key: 'levels', label: 'Levels', min: 2, max: 60, step: 1, tooltip: 'Number of contour lines' },
+    { key: 'noiseScale', label: 'Zoom / Feature Size', min: 0.5, max: 8, step: 0.1, tooltip: 'Noise frequency — higher = more, smaller features across the canvas' },
+    { key: 'octaves', label: 'Detail', min: 1, max: 6, step: 1, tooltip: 'fBm octaves — more = finer fractal detail' },
+    { key: 'warp', label: 'Domain Warp', min: 0, max: 1, step: 0.05, tooltip: 'Distorts the field with a second noise lookup — 0 = none' },
+    { key: 'levelBias', label: 'Level Bias', min: -1, max: 1, step: 0.05, tooltip: '−1 concentrate toward peaks, +1 toward valleys, 0 even' },
+    { key: 'resolution', label: 'Resolution', min: 60, max: 300, step: 10, tooltip: 'Marching-squares density — smoothness vs compute' },
+    { key: 'strokeWeight', label: 'Stroke Weight', min: 0.3, max: 3, step: 0.1, tooltip: 'Line thickness' },
+    START_ANGLE_PARAM,
+    OFFSET_PAD_PARAM,
+  ],
 };
 
 export const DEFAULT_COLORS = ['#00c9b1', '#ff6b6b', '#4ecdc4', '#45b7d1', '#f7dc6f', '#bb8fce'];
@@ -726,6 +750,8 @@ export const PARAM_GROUP_MAP = {
   sweepCurve: 'structure', fanSpread: 'structure', fanApex: 'structure',
   ringEccentricity: 'structure', ringSpacing: 'structure',
   chevronDepth: 'structure', diamondAspect: 'structure', diamondNesting: 'structure',
+  // Topographic contours: line count + marching-squares density are structural.
+  levels: 'structure', resolution: 'structure',
 
   // Scale — size, extent, radii, lengths
   scale: 'scale', scaleMode: 'scale',
@@ -744,6 +770,7 @@ export const PARAM_GROUP_MAP = {
 
   // Variation — noise, jitter, distortion
   noiseScale: 'variation', curlStrength: 'variation',
+  octaves: 'variation', warp: 'variation', levelBias: 'variation',
   rotation: 'variation', rotateMode: 'variation', jitter: 'variation',
   rotationPerLevel: 'variation', strokeDepthDecay: 'variation',
   spiralGrowth: 'variation',

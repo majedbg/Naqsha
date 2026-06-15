@@ -6,11 +6,16 @@ new tab. Test feedback is captured here per-pattern and **deferred** — we fini
 before revisiting feedback.
 
 The five (in build order):
-1. **Module Grid** — grid of parametric line-modules incl. Diamond, with scale/overflow (P.2.1.x family)
-2. **(NEW non-grid pattern)** — replaces Truchet (dropped: too grid-similar to #1). Identity TBD.
-3. **Moiré Fields** — interference of two line/ring layers (P_2_1_5_01)
-4. **Circle Packing** — largest-fit outline packing + neighbor links (P_2_2_5_01)
-5. **Dendrite (DLA)** — aggregative branching skeleton (re-authored from P_2_2_4)
+1. **Module Grid** — grid of parametric line-modules incl. Diamond, with scale/overflow ✅ built+enhanced
+2. **Islamic Star Tessellation (Girih)** — Persian star-and-polygon strapwork (NEW)
+3. **Topographic Contours** — nested iso-contour loops of a noise field ✅ built
+4. **Differential Growth** — one self-avoiding line folding to fill space (NEW)
+5. **Moiré Fields** — interference of two line/ring layers (P_2_1_5_01)
+6. **Circle Packing** — largest-fit outline packing + neighbor links (P_2_2_5_01)
+7. **Dendrite (DLA)** — aggregative branching skeleton (re-authored from P_2_2_4)
+
+Build order: easy-first → Topographic, Differential Growth, then Girih; then Moiré/Packing/Dendrite.
+(Truchet dropped — too grid-similar to #1.)
 
 Hard constraints for every port: autonomous (no mouse-drawing), seed-deterministic via
 `mulberry32`/`ctx.randomSeed`, output is strokeable vector (lines/arcs/outlines) in mm for
@@ -57,16 +62,38 @@ _(none yet — fill in after testing)_
 
 ---
 
-## 2. New non-grid pattern (replaces Truchet)
-_Truchet dropped — too similar to Module Grid (both tile-grids). Needs a mechanically distinct,
-non-grid pattern. Identity TBD (grill before build)._
+## 2. Islamic Star Tessellation (Girih)
+_NEW. Persian star-and-polygon strapwork. Build last of the three new ones. Spec TBD (grill before build)._
 
 ### Test feedback
 _(none yet)_
 
 ---
 
-## 3. Moiré Fields
+## 3. Topographic Contours
+**Status:** built (489 tests green). Marching-squares iso-contours of an fBm noise field.
+
+### Locked spec (grill 2026-06-14)
+- Field: fBm Perlin noise (`noiseSeed`) — controls Zoom/Feature Size, Detail (octaves), Domain Warp.
+- Contours: marching squares, segment-linked into polylines (~1 stroke/level). Levels (count) +
+  Level Bias (+1 → toward valleys/low, −1 → toward peaks/high, 0 even).
+- Resolution slider (smoothness vs compute); Stroke Weight.
+- No symmetry (kept organic, parity w/ Module Grid); Start Angle + Offset kept. Guest-accessible.
+
+### Test feedback
+_(none yet — fill in after testing)_
+
+---
+
+## 4. Differential Growth
+_NEW. One self-avoiding line that grows + folds to fill space. Build second. Spec TBD (grill before build)._
+
+### Test feedback
+_(none yet)_
+
+---
+
+## 5. Moiré Fields
 _Spec TBD (grill before build)._
 
 ### Test feedback
@@ -74,7 +101,7 @@ _(none yet)_
 
 ---
 
-## 4. Circle Packing
+## 6. Circle Packing
 _Spec TBD (grill before build)._
 
 ### Test feedback
@@ -82,7 +109,7 @@ _(none yet)_
 
 ---
 
-## 5. Dendrite (DLA)
+## 7. Dendrite (DLA)
 _Spec TBD (grill before build)._
 
 ### Test feedback

@@ -18,6 +18,7 @@ import RadialEtch from './patterns/RadialEtch';
 import Grid from './patterns/Grid';
 import Spiral from './patterns/Spiral';
 import ModuleGrid from './patterns/ModuleGrid';
+import TopographicContours from './patterns/TopographicContours';
 
 const PATTERN_CLASSES = {
   spirograph: Spirograph,
@@ -36,6 +37,7 @@ const PATTERN_CLASSES = {
   grid: Grid,
   spiral: Spiral,
   modulegrid: ModuleGrid,
+  topographic: TopographicContours,
 };
 
 export default function useCanvas(containerRef, layers, canvasW, canvasH, bgColor = '#ffffff') {

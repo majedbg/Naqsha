@@ -51,6 +51,7 @@ export const PATTERN_TYPES = [
   { id: 'spiral', label: 'Spiral' },
   { id: 'modulegrid', label: 'Module Grid' },
   { id: 'topographic', label: 'Topographic Contours' },
+  { id: 'diffgrowth', label: 'Differential Growth' },
 ];
 
 export const MAX_LAYERS = 6;
@@ -296,6 +297,20 @@ export const DEFAULT_PARAMS = {
     levelBias: 0,
     resolution: 160,
     strokeWeight: 0.6,
+    startAngle: 0,
+    offsetX: 0,
+    offsetY: 0,
+  },
+  diffgrowth: {
+    topology: 'closed',
+    maxNodes: 1200,
+    repulsionRadius: 12,
+    attraction: 0.5,
+    repulsion: 0.5,
+    smoothing: 0.45,
+    growthStyle: 'curvature',
+    strokeWeight: 0.8,
+    symmetry: 1,
     startAngle: 0,
     offsetX: 0,
     offsetY: 0,
@@ -687,6 +702,26 @@ export const PATTERN_PARAM_DEFS = {
     START_ANGLE_PARAM,
     OFFSET_PAD_PARAM,
   ],
+  diffgrowth: [
+    { key: 'topology', label: 'Topology', type: 'select', options: [
+      { value: 'closed', label: 'Closed Loop' },
+      { value: 'open', label: 'Open Line' },
+    ], tooltip: 'Brain-coral loop vs fingerprint meander' },
+    { key: 'maxNodes', label: 'Growth Budget', min: 200, max: 3000, step: 50, tooltip: 'More = more folded + more compute' },
+    { key: 'repulsionRadius', label: 'Spacing', min: 4, max: 40, step: 1, tooltip: 'Self-avoidance distance — meander thickness' },
+    { key: 'attraction', label: 'Attraction', min: 0, max: 1, step: 0.05, tooltip: 'Pull toward neighbors — keeps the curve connected' },
+    { key: 'repulsion', label: 'Repulsion', min: 0, max: 1, step: 0.05, tooltip: 'Push apart from nearby nodes — self-avoidance strength' },
+    { key: 'smoothing', label: 'Smoothing', min: 0, max: 1, step: 0.05, tooltip: 'Blend toward neighbor midpoint — curve regularity' },
+    { key: 'growthStyle', label: 'Growth Style', type: 'select', options: [
+      { value: 'uniform', label: 'Uniform' },
+      { value: 'curvature', label: 'Curvature' },
+      { value: 'scattered', label: 'Scattered' },
+    ], tooltip: 'Where new nodes are injected' },
+    { key: 'strokeWeight', label: 'Stroke Weight', min: 0.3, max: 3, step: 0.1, tooltip: 'Line thickness' },
+    SYMMETRY_PARAM,
+    START_ANGLE_PARAM,
+    OFFSET_PAD_PARAM,
+  ],
 };
 
 export const DEFAULT_COLORS = ['#00c9b1', '#ff6b6b', '#4ecdc4', '#45b7d1', '#f7dc6f', '#bb8fce'];
@@ -752,6 +787,10 @@ export const PARAM_GROUP_MAP = {
   chevronDepth: 'structure', diamondAspect: 'structure', diamondNesting: 'structure',
   // Topographic contours: line count + marching-squares density are structural.
   levels: 'structure', resolution: 'structure',
+  // Differential growth: topology + growth budget are structural; the force
+  // knobs (repulsion radius/attraction/repulsion/smoothing/growth style) live in
+  // the variation group.
+  topology: 'structure', maxNodes: 'structure',
 
   // Scale — size, extent, radii, lengths
   scale: 'scale', scaleMode: 'scale',
@@ -783,6 +822,8 @@ export const PARAM_GROUP_MAP = {
   growth: 'variation',
   distortAmount: 'variation', distortScale: 'variation',
   wobbleAmp: 'variation', wobbleFreq: 'variation',
+  repulsionRadius: 'variation', attraction: 'variation', repulsion: 'variation',
+  smoothing: 'variation', growthStyle: 'variation',
 
   // Stroke — line weight, rendering
   strokeWeight: 'stroke', strokeCap: 'stroke',

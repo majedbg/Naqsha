@@ -9,7 +9,7 @@ The five (in build order):
 1. **Module Grid** — grid of parametric line-modules incl. Diamond, with scale/overflow ✅ built+enhanced
 2. **Islamic Star Tessellation (Girih)** — Persian star-and-polygon strapwork (NEW)
 3. **Topographic Contours** — nested iso-contour loops of a noise field ✅ built
-4. **Differential Growth** — one self-avoiding line folding to fill space (NEW)
+4. **Differential Growth** — self-avoiding curve folding into coral/meanders ✅ built
 5. **Moiré Fields** — interference of two line/ring layers (P_2_1_5_01)
 6. **Circle Packing** — largest-fit outline packing + neighbor links (P_2_2_5_01)
 7. **Dendrite (DLA)** — aggregative branching skeleton (re-authored from P_2_2_4)
@@ -86,10 +86,18 @@ _(none yet — fill in after testing)_
 ---
 
 ## 4. Differential Growth
-_NEW. One self-avoiding line that grows + folds to fill space. Build second. Spec TBD (grill before build)._
+**Status:** built (500 tests green). Self-avoiding curve sim → brain-coral / fingerprint meanders.
+
+### Locked spec (grill 2026-06-14)
+- Topology select: Closed Loop (coral) / Open Line (meander), default Closed.
+- Sim: attraction + repulsion (self-avoidance, spatial-hash O(n)) + smoothing; edges split on stretch.
+  Deterministic, bounded (~260 rounds). Perf ~119ms default, ~300ms at maxNodes=3000.
+- Controls: maxNodes (convolution) · repulsionRadius (spacing) · attraction · repulsion · smoothing ·
+  growthStyle (uniform/curvature/scattered) · strokeWeight.
+- KEEPS full symmetry tail (like Spiral/Phyllotaxis) → symmetry≥2 = radial-coral bloom. Guest-accessible.
 
 ### Test feedback
-_(none yet)_
+_(none yet — fill in after testing)_
 
 ---
 

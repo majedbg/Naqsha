@@ -10,8 +10,9 @@
 
 const TOOLS = [
   { id: 'select', label: 'Select', key: 'v', cursor: 'default' },
-  // P2 placeholder — registered (keymap + toolbar slot) but not yet usable.
-  { id: 'text', label: 'Text', key: 't', cursor: 'text', enabled: false },
+  // Live text tool: pointer-drag creates a text box (or click → point text) and
+  // enters edit mode. The `T` keybinding + toolbar slot drive it.
+  { id: 'text', label: 'Text', key: 't', cursor: 'text' },
 ];
 
 const BY_ID = new Map(TOOLS.map((t) => [t.id, t]));

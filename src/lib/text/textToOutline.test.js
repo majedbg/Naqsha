@@ -37,4 +37,21 @@ describe('textToOutline (tracer)', () => {
     const subpaths = (pathData.match(/M/g) || []).length;
     expect(subpaths).toBeGreaterThanOrEqual(2);
   });
+
+  it('emits NO NaN coordinates — incl. quadratic (Q) glyph segments', () => {
+    // Regression: opentype 2.0.0 path.toPathData() emits NaN for Q segments in
+    // TrueType glyphs (e.g. the 't' in Work Sans). We serialize from the clean
+    // commands instead, so the export must be NaN-free. 'Text' has Q curves.
+    for (const s of ['Text', 'oeaQg', 'Sara']) {
+      const { pathData } = textToOutline(s, { font, fontSize: 120, x: 100, y: 100 });
+      expect(pathData).not.toContain('NaN');
+    }
+  });
+
+  it('uses only M/L/C/Q/Z command letters', () => {
+    const { pathData } = textToOutline('Text', { font, fontSize: 120, x: 0, y: 0 });
+    // Strip numbers, spaces, signs, dots → only command letters remain.
+    const letters = pathData.replace(/[-0-9.\s]/g, '');
+    expect(/^[MLCQZ]+$/.test(letters)).toBe(true);
+  });
 });

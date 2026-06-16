@@ -14,8 +14,9 @@ import { useAuth } from "../lib/AuthContext";
 import { useGate } from "../lib/useGate";
 import AuthButton from "../components/AuthButton";
 import ThemeToggle from "../components/ui/ThemeToggle";
-import { exportLayerSVG, buildSceneSVG, downloadSVG, buildManifest } from "../lib/svgExport";
+import { exportLayerSVG, buildCombinedSceneSVG, downloadSVG, buildManifest } from "../lib/svgExport";
 import { SceneGraph } from "../lib/scene/sceneGraph";
+import { useFont, DEFAULT_FONT_ID } from "../lib/text/fontRegistry";
 import useActiveTool from "../lib/tools/useActiveTool";
 import { useHistory } from "../lib/history/useHistory";
 import ShareLinkButton from "../components/ShareLinkButton";
@@ -106,36 +107,172 @@ export default function Studio() {
   const [selectedNodeId, setSelectedNodeId] = useState(null);
   // Live transform map for rendering: { [layerId]: {x,y,rotation,scale} }.
   const [transforms, setTransforms] = useState({});
-  const history = useHistory(transforms);
-  // Drive transforms from history.present (undo/redo). Reading history.present
-  // directly after dispatch would be stale; this effect stays a no-op during a
-  // drag (we setTransforms live WITHOUT committing, so present doesn't change),
-  // and only fires on commit/undo/redo when present is a new reference.
+  // === Text nodes (render + export slice) ===
+  // Plain serializable data objects (NOT TextNode instances). The default font
+  // is resolved ONCE here and passed down to the canvas + export; TextNode
+  // instances are constructed on demand from this data (canvas/export only).
+  const [textNodes, setTextNodes] = useState([]);
+  const { font: textFont } = useFont(DEFAULT_FONT_ID);
+
+  // COMPOSITE history present: undo/redo must cover BOTH node transforms AND
+  // node existence/content (creating a text node, deleting an emptied one).
+  // Those live in two states (`transforms` + `textNodes`), so the history
+  // snapshot is the pair { transforms, textNodes }. Initialized with literals
+  // to avoid a declaration-order dependency.
+  const history = useHistory({ transforms: {}, textNodes: [] });
+  // Drive both render states from history.present (commit/undo/redo). Stays a
+  // no-op during a drag or live typing (we setState live WITHOUT committing, so
+  // present doesn't change), and only fires when present is a new reference.
   useEffect(() => {
-    // Syncing render state from the history store (an external-ish source of
-    // truth owned by useHistory's reducer). No-op during drags since present
-    // only changes on commit/undo/redo.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setTransforms(history.present);
+    setTransforms(history.present.transforms);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setTextNodes(history.present.textNodes);
   }, [history.present]);
 
-  // Mirror the live transforms in a ref so the pointer-up commit reads the
-  // freshest value without a stale closure (and without side-effects in a
+  // Mirror the live states in refs so the pointer-up / exit-edit commit reads
+  // the freshest values without a stale closure (and without side-effects in a
   // setState updater, which can double-fire under StrictMode).
   const transformsRef = useRef(transforms);
   useEffect(() => {
     transformsRef.current = transforms;
   }, [transforms]);
+  const textNodesRef = useRef(textNodes);
+  useEffect(() => {
+    textNodesRef.current = textNodes;
+  }, [textNodes]);
+
+  // === Live text editing (create-by-drag / type / commit / re-edit) ===
+  // The id of the node currently being edited (its textarea owns keystrokes),
+  // or null. `editCreatedRef` records whether THIS edit session created the
+  // node — so abandoning a brand-new empty node drops it with NO history entry,
+  // while emptying a PRE-EXISTING node deletes it as one undoable action.
+  const [editingNodeId, setEditingNodeId] = useState(null);
+  const editCreatedRef = useRef(false);
+  // Guards the self-driven setActiveTool('select') in handleExitEdit so the
+  // tool-watch effect below doesn't treat it as a user tool-switch. Only armed
+  // when the tool ACTUALLY changes (prevToolRef holds the live tool), else a
+  // no-op setActiveTool('select') would leave it stale-true and swallow the
+  // NEXT genuine tool-switch-exit.
+  const exitingRef = useRef(false);
+  const prevToolRef = useRef(activeTool);
+
+  // Commit one composite snapshot { transforms, textNodes } as a single
+  // undoable action. Callers pass the freshest textNodes explicitly (the ref is
+  // effect-synced and may lag a same-tick create→exit path).
+  const commitSnapshot = useCallback(
+    (nextTextNodes) => {
+      history.commit({
+        transforms: transformsRef.current,
+        textNodes: nextTextNodes ?? textNodesRef.current,
+      });
+    },
+    [history]
+  );
 
   const handleSelectNode = useCallback((id) => setSelectedNodeId(id), []);
   // Live drag update: mutate the rendering map only, NO history commit per move.
   const handleMoveNode = useCallback((id, nextTransform) => {
     setTransforms((prev) => ({ ...prev, [id]: nextTransform }));
   }, []);
-  // Pointer-up: commit the settled transform map as ONE undoable action.
+  // Pointer-up: commit the settled transform map + current text nodes as ONE
+  // undoable action (composite present — must include textNodes or an undo
+  // after a move would clobber text state).
   const handleCommitTransform = useCallback(() => {
-    history.commit(transformsRef.current);
-  }, [history]);
+    commitSnapshot();
+  }, [commitSnapshot]);
+
+  // Live typing: update the editing node's text in place (no history commit per
+  // keystroke — the textarea's native undo covers intra-edit; the single
+  // exit-edit commit snapshots the final state).
+  const handleEditText = useCallback((id, nextText) => {
+    setTextNodes((prev) =>
+      prev.map((n) => (n.id === id ? { ...n, text: nextText } : n))
+    );
+  }, []);
+
+  // Enter edit mode on an existing node (re-edit via double-click).
+  const handleBeginEdit = useCallback((id) => {
+    editCreatedRef.current = false;
+    setSelectedNodeId(id);
+    setEditingNodeId(id);
+  }, []);
+
+  // Create a new text node from a finished drag (or a click → point text) and
+  // immediately enter edit mode on it. `fit` is fitDraggedBox's output.
+  const handleCreateText = useCallback(
+    ({ x, y, box, fit }) => {
+      const id = `text-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      const node = {
+        id,
+        type: "text",
+        text: "",
+        fontId: DEFAULT_FONT_ID,
+        fontSize: fit.fontSize,
+        align: "left",
+        lineHeight: 1.2,
+        box,
+        lineMode: fit.lineMode,
+        renderMode: "fill",
+        color: "#000000",
+        x,
+        y,
+      };
+      setTextNodes((prev) => [...prev, node]);
+      editCreatedRef.current = true;
+      setSelectedNodeId(id);
+      setEditingNodeId(id);
+    },
+    []
+  );
+
+  // Exit edit mode. If the text is empty/whitespace: drop the node — and only
+  // push a history entry if the node PRE-EXISTED this session (deleting an
+  // emptied node is one undo step; abandoning a fresh empty node is a no-op so
+  // Cmd+Z doesn't appear dead). Otherwise keep the node and commit once. Always
+  // revert to the select tool.
+  const handleExitEdit = useCallback(() => {
+    const id = editingNodeId;
+    if (!id) return;
+    const wasCreated = editCreatedRef.current;
+    const nodes = textNodesRef.current;
+    const node = nodes.find((n) => n.id === id);
+    const isEmpty = !node || node.text.trim() === "";
+
+    if (isEmpty) {
+      const next = nodes.filter((n) => n.id !== id);
+      setTextNodes(next);
+      // Pre-existing node emptied → undoable delete; fresh abandoned node → no
+      // history entry (its creation was never committed).
+      if (!wasCreated) commitSnapshot(next);
+    } else {
+      // Keep node; snapshot the final state as one undoable action.
+      commitSnapshot(nodes);
+    }
+
+    editCreatedRef.current = false;
+    // Only arm the guard if setActiveTool('select') will actually change the
+    // tool — otherwise the reducer bails, the tool-watch effect never runs, and
+    // a stale-true flag would swallow the next real tool-switch-exit.
+    exitingRef.current = prevToolRef.current !== "select";
+    setEditingNodeId(null);
+    setActiveTool("select");
+  }, [editingNodeId, commitSnapshot, setActiveTool]);
+
+  // Switching tools while editing commits + exits the current edit. We watch
+  // `activeTool`: any change away while a node is being edited triggers exit —
+  // EXCEPT the `setActiveTool('select')` that handleExitEdit itself fires (the
+  // exitingRef flag swallows that one re-entrant change).
+  useEffect(() => {
+    const prev = prevToolRef.current;
+    prevToolRef.current = activeTool;
+    if (prev === activeTool) return;
+    if (exitingRef.current) {
+      exitingRef.current = false;
+      return;
+    }
+    if (editingNodeId) handleExitEdit();
+  }, [activeTool, editingNodeId, handleExitEdit]);
 
   // Single keyboard handler (decision #1: tool + history state live in Studio):
   //   Cmd/Ctrl+Z = undo, Cmd/Ctrl+Shift+Z = redo, Escape = clear selection,
@@ -258,7 +395,18 @@ export default function Studio() {
     // SVG honors moves. Identity transforms emit byte-identical output to the
     // old exportAllLayersSVG path (transformToSVG returns '' for identity).
     const graph = SceneGraph.fromLayers(mapped, patternInstancesRef.current || {}, transforms);
-    const svg = buildSceneSVG(graph, canvasW, canvasH, includeHidden, {
+    // Text-node transforms live in the authoritative `transforms` map (keyed by
+    // id), not on the node datum — so inject each node's live transform (identity
+    // fallback) before export, mirroring how patterns thread transforms through
+    // the scene graph. Keeps undo/move and export consistent.
+    const textNodesForExport = textNodes.map((tn) => ({
+      ...tn,
+      transform: transforms[tn.id] || { x: 0, y: 0, rotation: 0, scale: 1 },
+    }));
+    // Combined export: pattern groups + each text node's glyph <path> on top.
+    // With no text nodes (or no resolved font) this is byte-identical to the
+    // pattern-only buildSceneSVG output.
+    const svg = buildCombinedSceneSVG(graph, textNodesForExport, textFont, canvasW, canvasH, includeHidden, {
       metadata: limits.svgMetadata,
       manifest: buildExportManifest(),
       optimizations: appliedOptimizations,
@@ -481,6 +629,13 @@ export default function Studio() {
             onSelect={handleSelectNode}
             onMove={handleMoveNode}
             onCommit={handleCommitTransform}
+            textNodes={textNodes}
+            font={textFont}
+            editingNodeId={editingNodeId}
+            onCreateText={handleCreateText}
+            onEditText={handleEditText}
+            onBeginEdit={handleBeginEdit}
+            onExitEdit={handleExitEdit}
           />
         </div>
       </div>

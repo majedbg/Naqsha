@@ -25,36 +25,48 @@ export function layoutText(text, { font, fontSize, align = 'left', lineHeight = 
   const wrapping = typeof wrapWidth === 'number' && wrapWidth > 0;
 
   // 1. Split on explicit newlines, then word-wrap each paragraph if asked.
+  //    We track each output line's `start` = the absolute index into the ORIGINAL
+  //    `text` string where that line's first character sits. This lets caret
+  //    placement (caret.js) map an absolute selection index → (line, column)
+  //    without re-deriving the wrap rule. A line break consumes exactly one
+  //    character: the '\n' at a paragraph break, or the ' ' at a wrap point.
   const paragraphs = text.split('\n');
-  const lineTexts = [];
+  const lineTexts = []; // { text, start }
+  let paraStart = 0; // absolute index of the current paragraph's first char
   for (const para of paragraphs) {
-    if (!wrapping) {
-      lineTexts.push(para);
-      continue;
-    }
-    // Greedy word-wrap. An empty paragraph stays one empty line.
-    if (para === '') {
-      lineTexts.push('');
-      continue;
-    }
-    const words = para.split(' ');
-    let current = '';
-    for (const word of words) {
-      const candidate = current === '' ? word : `${current} ${word}`;
-      if (current !== '' && font.getAdvanceWidth(candidate, fontSize) > wrapWidth) {
-        lineTexts.push(current);
-        current = word;
-      } else {
-        current = candidate;
+    if (!wrapping || para === '') {
+      // Whole (possibly empty) paragraph on one line.
+      lineTexts.push({ text: para, start: paraStart });
+    } else {
+      // Greedy word-wrap. `wordStart` tracks each word's absolute index so the
+      // line `start` is the absolute index of its first word.
+      const words = para.split(' ');
+      let current = '';
+      let lineStart = paraStart;
+      let wordStart = paraStart;
+      for (const word of words) {
+        const candidate = current === '' ? word : `${current} ${word}`;
+        if (current !== '' && font.getAdvanceWidth(candidate, fontSize) > wrapWidth) {
+          lineTexts.push({ text: current, start: lineStart });
+          current = word;
+          lineStart = wordStart;
+        } else {
+          current = candidate;
+        }
+        // Advance past this word + the following space.
+        wordStart += word.length + 1;
       }
+      lineTexts.push({ text: current, start: lineStart });
     }
-    lineTexts.push(current);
+    // Advance past this paragraph + the following '\n'.
+    paraStart += para.length + 1;
   }
 
   // 2. Measure each line.
-  const measured = lineTexts.map((t) => ({
-    text: t,
-    width: font.getAdvanceWidth(t, fontSize),
+  const measured = lineTexts.map((l) => ({
+    text: l.text,
+    start: l.start,
+    width: font.getAdvanceWidth(l.text, fontSize),
   }));
   const maxLineWidth = measured.reduce((m, l) => Math.max(m, l.width), 0);
 
@@ -65,7 +77,7 @@ export function layoutText(text, { font, fontSize, align = 'left', lineHeight = 
     let x = 0;
     if (align === 'center') x = (blockWidth - l.width) / 2;
     else if (align === 'right') x = blockWidth - l.width;
-    return { text: l.text, x, baseline: (i + 1) * step, width: l.width };
+    return { text: l.text, x, baseline: (i + 1) * step, width: l.width, start: l.start };
   });
 
   return { lines, width: maxLineWidth, height: lines.length * step };

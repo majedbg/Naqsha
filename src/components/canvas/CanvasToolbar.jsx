@@ -1,9 +1,9 @@
 import { listTools } from "../../lib/tools/toolRegistry";
 
-// Small overlay listing the canvas tools (plan §7). Select is active; Text is
-// registered-but-disabled (greyed, "Coming soon") until the text core lands.
-// Sits absolute top-left of the canvas wrapper. Style matches the background
-// button (bg-paper-warm / border-hairline / rounded-lg / shadow-lg).
+// Small overlay listing the canvas tools (plan §7). Select + Text are both
+// active: Text drives create-by-drag / point-text + live editing. Sits absolute
+// top-left of the canvas wrapper. Style matches the background button
+// (bg-paper-warm / border-hairline / rounded-lg / shadow-lg).
 export default function CanvasToolbar({ activeTool, setActiveTool }) {
   const tools = listTools();
   return (

@@ -6,6 +6,7 @@
 
 import { optimizeGroup } from './plotter/pipeline';
 import { PPI, MM_PER_IN } from './plotter/constants.js';
+import { TextNode } from './scene/TextNode.js';
 
 const pxToMm = (px) => (px / PPI) * MM_PER_IN;
 
@@ -137,6 +138,52 @@ export function buildSceneSVG(sceneGraph, canvasW, canvasH, includeHidden = fals
   <rect width="100%" height="100%" fill="white"/>
   ${groups}
 </svg>`;
+}
+
+// Build the `<g>` SVG strings for a list of plain text-node data objects.
+// Each text node is reified into a real TextNode (with the resolved `font`) and
+// emitted with the SAME local-bbox-center pivot the canvas uses, so on-screen
+// text matches the export. Returns '' when there's nothing to emit.
+function textGroups(textNodes, font, opts) {
+  if (!font || !textNodes || textNodes.length === 0) return '';
+  return textNodes
+    .map((data) => {
+      const tn = new TextNode({ ...data, font });
+      const local = tn.localBBox();
+      // WORLD bbox center pivot (offset by node x/y) — identical to drawTextNode
+      // and the selectables/chrome pivot, so canvas == SVG for rotated/scaled
+      // text. localBBox() is origin-based, hence the explicit + tn.x / + tn.y.
+      const pivot = {
+        x: local.x + (tn.x || 0) + local.w / 2,
+        y: local.y + (tn.y || 0) + local.h / 2,
+      };
+      const rawGroup = tn.toSVGGroup(pivot);
+      return maybeOptimize(rawGroup, opts.optimizations);
+    })
+    .join('\n  ');
+}
+
+// Combined scene export: pattern groups (via the untouched `buildSceneSVG`)
+// PLUS each TextNode's group appended AFTER them, so text sits on TOP of the
+// patterns — matching the canvas, which draws text after the pattern loop.
+//
+// INVARIANT: with no text nodes (or no font), the output is byte-identical to
+// `buildSceneSVG` — we return its string unchanged.
+export function buildCombinedSceneSVG(
+  sceneGraph,
+  textNodes,
+  font,
+  canvasW,
+  canvasH,
+  includeHidden = false,
+  opts = {},
+) {
+  const patternSVG = buildSceneSVG(sceneGraph, canvasW, canvasH, includeHidden, opts);
+  const text = textGroups(textNodes, font, opts);
+  if (!text) return patternSVG;
+  // Splice the text groups in just before the closing tag, preserving the
+  // existing `\n  ` group indentation and `\n</svg>` close.
+  return patternSVG.replace(/\n<\/svg>$/, `\n  ${text}\n</svg>`);
 }
 
 // --- Export wrappers: build pure string, then download (DOM side-effect). ---

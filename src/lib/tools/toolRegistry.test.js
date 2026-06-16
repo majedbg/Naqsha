@@ -14,9 +14,11 @@ describe('toolRegistry', () => {
     expect(select.enabled).not.toBe(false);
   });
 
-  it('registers the text tool as a P2 placeholder (enabled:false)', () => {
+  it('registers the live text tool (enabled — create-by-drag + edit)', () => {
     const text = getTool('text');
-    expect(text).toMatchObject({ id: 'text', key: 't', enabled: false });
+    expect(text).toMatchObject({ id: 'text', key: 't' });
+    // The text tool is now live; it must NOT carry the old disabled flag.
+    expect(text.enabled).not.toBe(false);
   });
 
   it('getTool returns undefined for an unknown id', () => {

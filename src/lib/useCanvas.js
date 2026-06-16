@@ -5,6 +5,9 @@ import { P5Adapter } from './patterns/drawingContext';
 import { PATTERN_CLASSES } from './patterns';
 import { resolveMoireSource } from './moirePair';
 import { handlesFor } from './transform/handles.js';
+import { drawTextNode } from './text/drawTextNode.js';
+import { TextNode } from './scene/TextNode.js';
+import { caretXY } from './text/caret.js';
 
 export default function useCanvas(
   containerRef,
@@ -13,7 +16,10 @@ export default function useCanvas(
   canvasH,
   bgColor = '#ffffff',
   nodeTransforms = {},
-  selectedNodeId = null
+  selectedNodeId = null,
+  textNodes = [],
+  font = null,
+  editingNodeId = null
 ) {
   const p5Ref = useRef(null);
   const debounceRef = useRef(null);
@@ -26,10 +32,32 @@ export default function useCanvas(
   // immediate re-renders when these change.
   const transformsRef = useRef(nodeTransforms);
   const selectedRef = useRef(selectedNodeId);
+  // Text nodes + resolved font are read live inside renderAll (like transforms/
+  // selection) so the immediate rAF re-render below repaints added/changed text
+  // without re-entering renderAll's identity (which would bypass the debounce).
+  const textNodesRef = useRef(textNodes);
+  const fontRef = useRef(font);
+  // Editing node + caret index (selectionStart) read live inside renderAll so
+  // the caret draws/moves without re-entering renderAll's identity. The caret
+  // index arrives via a window 'text-caret' CustomEvent from TextEditOverlay.
+  const editingRef = useRef(editingNodeId);
+  const caretIndexRef = useRef(0);
   useEffect(() => {
     transformsRef.current = nodeTransforms;
     selectedRef.current = selectedNodeId;
-  }, [nodeTransforms, selectedNodeId]);
+    textNodesRef.current = textNodes;
+    fontRef.current = font;
+    editingRef.current = editingNodeId;
+  }, [nodeTransforms, selectedNodeId, textNodes, font, editingNodeId]);
+
+  // Listen for caret-index updates from the editing textarea.
+  useEffect(() => {
+    const onCaret = (e) => {
+      caretIndexRef.current = e.detail?.index ?? 0;
+    };
+    window.addEventListener('text-caret', onCaret);
+    return () => window.removeEventListener('text-caret', onCaret);
+  }, []);
 
   const renderAll = useCallback(() => {
     if (!p5Ref.current) return;
@@ -113,6 +141,62 @@ export default function useCanvas(
       p.pop();
     }
 
+    // Text layer: drawn AFTER the pattern loop (so text is on top of patterns)
+    // and BEFORE the selection chrome. Each plain text-node datum is reified +
+    // laid out + drawn by drawTextNode, wrapped in the SAME center-pivot
+    // transform patterns use, so canvas matches the exported SVG. Only when the
+    // font has resolved (drawTextNode also guards font internally).
+    const textNodesNow = textNodesRef.current || [];
+    const fontNow = fontRef.current;
+    if (fontNow) {
+      // Transform is read from the authoritative transforms map (keyed by node
+      // id), NOT from the node datum — so undo (which snapshots the map) covers
+      // text moves. Identity fallback for an untouched node.
+      for (const tn of textNodesNow) drawTextNode(p, tn, fontNow, transforms[tn.id]);
+    }
+
+    // Blinking caret for the node being edited. Drawn INSIDE that node's
+    // center-pivot transform (same form as the glyphs) so it tracks moves/
+    // rotation/scale. caretXY returns the bar's LOCAL top-left + height; we draw
+    // it offset by (node.x, node.y) since layoutText is origin-based but glyphs
+    // are baked at world coords. Blink: visible during the first half of each
+    // 1060ms period (≈ standard caret cadence).
+    const editId = editingRef.current;
+    if (editId && fontNow) {
+      const editNode = textNodesNow.find((tn) => tn.id === editId);
+      if (editNode) {
+        const blinkOn = (Date.now() % 1060) < 530;
+        if (blinkOn) {
+          const tnode = new TextNode({ ...editNode, font: fontNow });
+          const local = tnode.localBBox();
+          const pivot = {
+            x: (editNode.x || 0) + local.w / 2,
+            y: (editNode.y || 0) + local.h / 2,
+          };
+          const car = caretXY(editNode.text, caretIndexRef.current, {
+            font: fontNow,
+            fontSize: editNode.fontSize,
+            align: editNode.align || 'left',
+            lineHeight: editNode.lineHeight || 1.2,
+            wrapWidth: editNode.lineMode === 'multi' ? editNode.box?.w : null,
+          });
+          const t = transforms[editId] || { x: 0, y: 0, rotation: 0, scale: 1 };
+          p.push();
+          p.translate(t.x || 0, t.y || 0);
+          p.translate(pivot.x, pivot.y);
+          if (t.rotation) p.rotate(p.radians(t.rotation));
+          if (t.scale != null && t.scale !== 1) p.scale(t.scale);
+          p.translate(-pivot.x, -pivot.y);
+          const caretX = (editNode.x || 0) + car.x;
+          const caretY = (editNode.y || 0) + car.y;
+          p.stroke(editNode.color || '#000000');
+          p.strokeWeight(Math.max(1, editNode.fontSize * 0.04));
+          p.line(caretX, caretY, caretX, caretY + car.height);
+          p.pop();
+        }
+      }
+    }
+
     // Selection chrome (canvas-drawn, plan §5): bbox outline + 8 resize handles
     // + 1 rotate handle, drawn INSIDE the node's center-pivot transform so they
     // rotate/scale WITH the node. Handles are placed at LOCAL bbox coords (full
@@ -122,11 +206,31 @@ export default function useCanvas(
     // selected, untransformed node still shows its handles.
     const selId = selectedRef.current;
     if (selId) {
+      // Resolve the selected node's WORLD (untransformed) bbox + pivot. Patterns
+      // use the full canvas with the canvas-center pivot (as before). Text uses
+      // its TIGHT glyph box offset by (x,y), pivot = that box's center — the SAME
+      // bbox/pivot the gestures + hit-test use, so chrome tracks the node.
       const selLayer = layers.find((l) => l.id === selId);
+      let selBBox = null;
+      let pivot = null;
       if (selLayer) {
+        selBBox = { x: 0, y: 0, w: canvasW, h: canvasH };
+        pivot = { x: canvasW / 2, y: canvasH / 2 };
+      } else if (fontNow) {
+        const selText = textNodesNow.find((tn) => tn.id === selId);
+        if (selText) {
+          const node = new TextNode({ ...selText, font: fontNow });
+          const local = node.localBBox();
+          const nx = selText.x || 0;
+          const ny = selText.y || 0;
+          selBBox = { x: nx, y: ny, w: local.w, h: local.h };
+          pivot = { x: nx + local.w / 2, y: ny + local.h / 2 };
+        }
+      }
+      if (selBBox) {
         const t = transforms[selId] || { x: 0, y: 0, rotation: 0, scale: 1 };
-        const cx = canvasW / 2;
-        const cy = canvasH / 2;
+        const cx = pivot.x;
+        const cy = pivot.y;
         p.push();
         // Same center-pivot transform used for the node render.
         p.translate(t.x || 0, t.y || 0);
@@ -135,13 +239,13 @@ export default function useCanvas(
         if (t.scale != null && t.scale !== 1) p.scale(t.scale);
         p.translate(-cx, -cy);
 
-        // Bbox outline (local full-canvas coords).
+        // Bbox outline (node's world bbox).
         p.noFill();
         p.stroke(124, 92, 246); // violet accent
         p.strokeWeight(1);
-        p.rect(0.5, 0.5, canvasW - 1, canvasH - 1);
+        p.rect(selBBox.x + 0.5, selBBox.y + 0.5, selBBox.w - 1, selBBox.h - 1);
 
-        const handles = handlesFor({ x: 0, y: 0, w: canvasW, h: canvasH });
+        const handles = handlesFor(selBBox);
         const rotate = handles.find((h) => h.id === 'rotate');
         const topCenter = handles.find((h) => h.id === 'n');
 
@@ -242,9 +346,25 @@ export default function useCanvas(
     // change, which would make param edits re-fire this IMMEDIATE path and
     // bypass the 150ms debounce (decision #3). During a drag `layers` is
     // unchanged so the captured renderAll reads correct layers; transform
-    // values are read live from transformsRef inside renderAll.
+    // values are read live from transformsRef inside renderAll. textNodes/font
+    // join this immediate path so adding/changing text repaints right away
+    // (also read live from refs inside renderAll, same pattern as transforms).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nodeTransforms, selectedNodeId]);
+  }, [nodeTransforms, selectedNodeId, textNodes, font, editingNodeId]);
+
+  // While a node is being edited, drive a steady repaint so the caret blinks
+  // and follows arrow-key/click caret moves (read live from caretIndexRef). The
+  // interval is cheap relative to typing and stops the moment editing ends.
+  useEffect(() => {
+    if (!editingNodeId || !p5Ref.current) return;
+    const timer = setInterval(() => {
+      if (p5Ref.current) renderAll();
+    }, 60);
+    return () => clearInterval(timer);
+    // renderAll omitted deliberately (same rationale as the immediate effect):
+    // it re-identifies on `layers` changes; the captured closure reads live refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editingNodeId]);
 
   return { patternInstances };
 }

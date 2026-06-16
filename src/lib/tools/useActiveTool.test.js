@@ -40,9 +40,9 @@ describe('resolveKey (keymap → reducer action)', () => {
     expect(resolveKey('V')).toEqual({ type: 'setActiveTool', id: 'select' });
   });
 
-  it('allows selecting the disabled text tool via t/T but flags it', () => {
-    expect(resolveKey('t')).toEqual({ type: 'setActiveTool', id: 'text', disabled: true });
-    expect(resolveKey('T')).toEqual({ type: 'setActiveTool', id: 'text', disabled: true });
+  it('maps t/T to the live text tool (no disabled flag)', () => {
+    expect(resolveKey('t')).toEqual({ type: 'setActiveTool', id: 'text' });
+    expect(resolveKey('T')).toEqual({ type: 'setActiveTool', id: 'text' });
   });
 
   it('maps Escape to return-to-select (deselect)', () => {

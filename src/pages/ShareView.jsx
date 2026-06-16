@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { loadSharedDesign } from '../lib/designService';
 import useCanvas from '../lib/useCanvas';
+import { useFont, DEFAULT_FONT_ID } from '../lib/text/fontRegistry';
 
 export default function ShareView() {
   const { token } = useParams();
@@ -27,9 +28,32 @@ export default function ShareView() {
   const layers = config?.layers || [];
   const canvasW = config?.canvasW || 1152;
   const canvasH = config?.canvasH || 1152;
+  const bgColor = typeof config?.bgColor === 'string' ? config.bgColor : '#ffffff';
+  const textNodes = Array.isArray(config?.textNodes) ? config.textNodes : [];
+  const transforms = config?.transforms && typeof config.transforms === 'object' ? config.transforms : {};
 
-  // Render patterns via useCanvas (only when design is loaded)
-  useCanvas(containerRef, design ? layers : [], canvasW, canvasH);
+  // The bundled font for read-only text rendering. No external font dependency:
+  // text is re-rendered from the stored fontId + the bundled outline (same
+  // single-geometry source as the editor), NOT baked glyph paths.
+  // TODO(multi-font): like Studio, this resolves ONE font for all nodes; switch
+  // to per-node `fontId` resolution once more fonts are bundled.
+  const { font } = useFont(DEFAULT_FONT_ID);
+
+  // Render patterns + read-only text via useCanvas (only when design is loaded).
+  // Text nodes carry their transforms in the shared map; no tools/selection are
+  // wired here, so the canvas is display-only (selectedNodeId/editingNodeId null).
+  useCanvas(
+    containerRef,
+    design ? layers : [],
+    canvasW,
+    canvasH,
+    bgColor,
+    transforms,
+    null,
+    design ? textNodes : [],
+    font,
+    null
+  );
 
   // Scale to fit
   useEffect(() => {

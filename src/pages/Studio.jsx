@@ -16,6 +16,8 @@ import AuthButton from "../components/AuthButton";
 import ThemeToggle from "../components/ui/ThemeToggle";
 import { exportLayerSVG, buildCombinedSceneSVG, downloadSVG, buildManifest } from "../lib/svgExport";
 import { SceneGraph } from "../lib/scene/sceneGraph";
+import { collectLiveIds, filterTransforms } from "../lib/scene/designState";
+import { TEXT_STORAGE_KEY, loadInitialTextState } from "../lib/hooks/useDesignPersistence";
 import { useFont, DEFAULT_FONT_ID } from "../lib/text/fontRegistry";
 import useActiveTool from "../lib/tools/useActiveTool";
 import { useHistory } from "../lib/history/useHistory";
@@ -112,6 +114,9 @@ export default function Studio() {
   // is resolved ONCE here and passed down to the canvas + export; TextNode
   // instances are constructed on demand from this data (canvas/export only).
   const [textNodes, setTextNodes] = useState([]);
+  // TODO(multi-font): renders/exports ALL text nodes in the default font,
+  // ignoring per-node `fontId`. Harmless while only Work Sans is bundled; resolve
+  // a font PER node once the catalog grows (font picker is already wired).
   const { font: textFont } = useFont(DEFAULT_FONT_ID);
 
   // COMPOSITE history present: undo/redo must cover BOTH node transforms AND
@@ -119,14 +124,20 @@ export default function Studio() {
   // Those live in two states (`transforms` + `textNodes`), so the history
   // snapshot is the pair { transforms, textNodes }. Initialized with literals
   // to avoid a declaration-order dependency.
-  const history = useHistory({ transforms: {}, textNodes: [] });
+  // Initial present is restored from the local text backup (lazy initializer →
+  // runs once). This makes a reload keep editable text with NO restore-effect
+  // race; a pending share token / guest starts empty (share-hydration applies
+  // its own text). See loadInitialTextState.
+  const [initialTextState] = useState(() =>
+    loadInitialTextState({ persistToLocal: limits.localStorage })
+  );
+  const history = useHistory(initialTextState);
   // Drive both render states from history.present (commit/undo/redo). Stays a
   // no-op during a drag or live typing (we setState live WITHOUT committing, so
   // present doesn't change), and only fires when present is a new reference.
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setTransforms(history.present.transforms);
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setTextNodes(history.present.textNodes);
   }, [history.present]);
 
@@ -141,6 +152,42 @@ export default function Studio() {
   useEffect(() => {
     textNodesRef.current = textNodes;
   }, [textNodes]);
+
+  // Install a freshly-loaded design's text + transforms as the new history
+  // baseline (the [history.present] effect above cascades it into both render
+  // states and the undo/redo stacks clear). Every design-load path routes
+  // through this so a load can't forget the interactive text/transform state.
+  // A text-less load passes ([], {}) → resets to an empty, clean baseline.
+  const applyTextState = useCallback(
+    (nextTextNodes, nextTransforms) => {
+      history.reset({
+        textNodes: Array.isArray(nextTextNodes) ? nextTextNodes : [],
+        transforms:
+          nextTransforms && typeof nextTransforms === "object" ? nextTransforms : {},
+      });
+    },
+    [history]
+  );
+
+  // Back the interactive text/transform state to localStorage on each COMMITTED
+  // change (history.present only advances on commit/undo/redo/reset, never mid-
+  // gesture), mirroring how useLayers persists layers. Guests don't write local
+  // storage. Transforms are filtered to live ids so deleted-node entries don't
+  // accumulate. The initial run re-persists the restored present (idempotent),
+  // so there's no clobber — the present already carries the restored text.
+  useEffect(() => {
+    if (!limits.localStorage) return;
+    try {
+      const { textNodes: tn, transforms: tf } = history.present;
+      const liveIds = collectLiveIds(layers, tn);
+      localStorage.setItem(
+        TEXT_STORAGE_KEY,
+        JSON.stringify({ textNodes: tn, transforms: filterTransforms(tf, liveIds) })
+      );
+    } catch {
+      /* storage unavailable / quota */
+    }
+  }, [history.present, layers, limits.localStorage]);
 
   // === Live text editing (create-by-drag / type / commit / re-edit) ===
   // The id of the node currently being edited (its textarea owns keystrokes),
@@ -190,6 +237,27 @@ export default function Studio() {
       prev.map((n) => (n.id === id ? { ...n, text: nextText } : n))
     );
   }, []);
+
+  // Properties-panel edits (font/size/align/style/color). Apply the patch LIVE
+  // (immediate re-layout + render), and coalesce the history commit on a short
+  // trailing debounce so rapid input — typing a size, dragging the color swatch
+  // — collapses to ONE undoable action instead of one-per-keystroke.
+  const textPropCommitRef = useRef(null);
+  const handleUpdateTextNode = useCallback(
+    (id, patch) => {
+      const next = textNodesRef.current.map((n) =>
+        n.id === id ? { ...n, ...patch } : n
+      );
+      textNodesRef.current = next; // keep fresh for the trailing commit
+      setTextNodes(next);
+      if (textPropCommitRef.current) clearTimeout(textPropCommitRef.current);
+      textPropCommitRef.current = setTimeout(() => {
+        textPropCommitRef.current = null;
+        commitSnapshot(textNodesRef.current);
+      }, 350);
+    },
+    [commitSnapshot]
+  );
 
   // Enter edit mode on an existing node (re-edit via double-click).
   const handleBeginEdit = useCallback((id) => {
@@ -309,6 +377,8 @@ export default function Studio() {
   const { markCleanFrom, isDirty } = useDesignPersistence({
     layers,
     bgColor,
+    textNodes,
+    transforms,
     loadLayerSet,
     setBgColor,
     setCanvasW,
@@ -316,6 +386,7 @@ export default function Studio() {
     setPresetIndex,
     setUnit,
     setMargin,
+    applyTextState,
     persistToLocal: limits.localStorage,
   });
 
@@ -332,8 +403,11 @@ export default function Studio() {
     canvasH,
     presetIndex,
     bgColor,
+    textNodes,
+    transforms,
     loadLayerSet,
     applyCanvasSize,
+    applyTextState,
     markCleanFrom,
     canvasContainerRef,
   });
@@ -440,7 +514,9 @@ export default function Studio() {
     if (group.canvasW && group.canvasH) {
       applyCanvasSize(group.canvasW, group.canvasH);
     }
-    markCleanFrom(group.layers, bgColor);
+    // Layer groups don't carry text — clear interactive state on load.
+    applyTextState([], {});
+    markCleanFrom(group.layers, bgColor, { textNodes: [], transforms: {} });
   };
 
   // === Examples ===
@@ -457,8 +533,11 @@ export default function Studio() {
       if (cfg.canvasW && cfg.canvasH) {
         applyCanvasSize(cfg.canvasW, cfg.canvasH);
       }
+      // Examples are layer-only presets: clear any interactive text/transform
+      // state so loading one doesn't leave the prior design's text behind.
+      applyTextState([], {});
       setCurrentDesignId(null);
-      markCleanFrom(cfg.layers, cfg.bgColor ?? bgColor);
+      markCleanFrom(cfg.layers, cfg.bgColor ?? bgColor, { textNodes: [], transforms: {} });
       setUI("activeTab", "design");
       setUI("showExamples", false);
       setUI("pendingExample", null);
@@ -467,6 +546,7 @@ export default function Studio() {
       loadLayerSet,
       setBgColor,
       applyCanvasSize,
+      applyTextState,
       setCurrentDesignId,
       markCleanFrom,
       bgColor,
@@ -545,6 +625,8 @@ export default function Studio() {
             margin,
             bgColor,
             layers,
+            textNodes,
+            transforms: filterTransforms(transforms, collectLiveIds(layers, textNodes)),
           })}
         />
         <div className="ml-auto flex items-center gap-xs">
@@ -584,6 +666,10 @@ export default function Studio() {
             onOptimizationRevert={revertOptimization}
             patternInstances={livePatternInstances}
             layers={layers}
+            selectedNodeId={selectedNodeId}
+            textNodes={textNodes}
+            textFont={textFont}
+            onUpdateTextNode={handleUpdateTextNode}
             onUpdateLayer={updateLayer}
             onChangeLayerPattern={changeLayerPattern}
             onRemoveLayer={removeLayer}
@@ -708,7 +794,13 @@ export default function Studio() {
             if (config.canvasW && config.canvasH) {
               applyCanvasSize(config.canvasW, config.canvasH);
             }
-            markCleanFrom(config.layers || layers, bgColor);
+            const loadedText = {
+              textNodes: Array.isArray(config.textNodes) ? config.textNodes : [],
+              transforms:
+                config.transforms && typeof config.transforms === "object" ? config.transforms : {},
+            };
+            applyTextState(loadedText.textNodes, loadedText.transforms);
+            markCleanFrom(config.layers || layers, bgColor, loadedText);
           }}
           onClose={() => setUI("showCloudModal", false)}
         />

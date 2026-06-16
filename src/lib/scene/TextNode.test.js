@@ -62,6 +62,23 @@ describe('TextNode', () => {
     expect(/d="M[^"]+"/.test(svg)).toBe(true);
   });
 
+  it('toSVGGroup exports at the EFFECTIVE (width-capped) size, not the stored size', () => {
+    const text = 'WIDEWIDEWIDE';
+    const dOf = (n) => (n.toSVGGroup().match(/<path d="([^"]+)"/) || [])[1];
+    // A: single-line AREA box wide enough to trip the §5 width-fit cap.
+    const capped = new TextNode({ id: 'a', text, font, fontSize: 300, lineMode: 'single', box: { w: 120, h: 300 } });
+    const effSize = capped.effectiveFontSize();
+    expect(effSize).toBeLessThan(300); // sanity: the cap actually engaged
+    // B: point text rendered at exactly that effective size (no width cap).
+    const atEff = new TextNode({ id: 'b', text, font, fontSize: effSize, lineMode: 'single', box: { w: 0, h: 0 } });
+    // C: a node at the STORED size (what a naive export would emit).
+    const atStored = new TextNode({ id: 'c', text, font, fontSize: 300, lineMode: 'single', box: { w: 0, h: 0 } });
+    // The exported geometry must match the capped size, NOT the stored size —
+    // so the engraved SVG == the on-canvas glyphs (canvas==SVG under the cap).
+    expect(dOf(capped)).toBe(dOf(atEff));
+    expect(dOf(capped)).not.toBe(dOf(atStored));
+  });
+
   it('multi-line node concatenates lines into a single <path>', () => {
     const n = new TextNode({
       id: 'm',

@@ -78,15 +78,19 @@ export default function TextEditOverlay({ node, font, onEditText, onExitEdit }) 
   let top = node.y || 0;
   let width = 0;
   let height = 0;
+  // Effective size matches the width-fit cap the canvas glyphs render at (§5),
+  // so the invisible textarea's box/caret track the visible glyphs.
+  let effSize = node.fontSize || 48;
   if (font) {
     const tn = new TextNode({ ...node, font });
     const bb = tn.localBBox();
     width = bb.w;
     height = bb.h;
+    effSize = tn.effectiveFontSize();
   }
   // Fallback footprint for an empty node so the textarea exists + is focusable.
-  width = Math.max(width, node.fontSize || 48);
-  height = Math.max(height, (node.fontSize || 48) * (node.lineHeight || 1.2));
+  width = Math.max(width, effSize);
+  height = Math.max(height, effSize * (node.lineHeight || 1.2));
 
   return (
     <textarea
@@ -119,8 +123,8 @@ export default function TextEditOverlay({ node, font, onEditText, onExitEdit }) 
         // Keep it above the canvas but below the pointer overlay is fine — it is
         // auto-focused and retains focus for keystrokes.
         zIndex: 5,
-        lineHeight: `${node.fontSize * (node.lineHeight || 1.2)}px`,
-        fontSize: `${node.fontSize}px`,
+        lineHeight: `${effSize * (node.lineHeight || 1.2)}px`,
+        fontSize: `${effSize}px`,
         whiteSpace: "pre",
       }}
     />

@@ -61,6 +61,19 @@ describe("historyReducer", () => {
     expect(historyReducer(fresh, { type: "undo" })).toBe(fresh);
     expect(historyReducer(fresh, { type: "redo" })).toBe(fresh);
   });
+
+  it("reset replaces the present and CLEARS past+future (loaded design = fresh baseline)", () => {
+    let state = initHistory("a");
+    state = historyReducer(state, { type: "commit", present: "b" });
+    state = historyReducer(state, { type: "commit", present: "c" });
+    expect(canUndo(state)).toBe(true);
+    const reset = historyReducer(state, { type: "reset", present: "loaded" });
+    expect(reset.present).toBe("loaded");
+    expect(reset.past).toEqual([]);
+    expect(reset.future).toEqual([]);
+    expect(canUndo(reset)).toBe(false);
+    expect(canRedo(reset)).toBe(false);
+  });
 });
 
 describe("useHistory hook", () => {
@@ -84,6 +97,17 @@ describe("useHistory hook", () => {
     act(() => result.current.redo());
     expect(result.current.present).toBe("b");
     expect(result.current.canUndo).toBe(true);
+    expect(result.current.canRedo).toBe(false);
+  });
+
+  it("reset() installs a loaded baseline and clears the undo/redo stacks", () => {
+    const { result } = renderHook(() => useHistory("a"));
+    act(() => result.current.commit("b"));
+    expect(result.current.canUndo).toBe(true);
+
+    act(() => result.current.reset("loaded"));
+    expect(result.current.present).toBe("loaded");
+    expect(result.current.canUndo).toBe(false);
     expect(result.current.canRedo).toBe(false);
   });
 });

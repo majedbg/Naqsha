@@ -12,6 +12,7 @@ import { SceneNode } from './SceneNode.js';
 import { transformToSVG } from '../transform/transformOps.js';
 import { layoutText } from '../text/textLayout.js';
 import { textToOutline } from '../text/textToOutline.js';
+import { effectiveFontSize } from '../text/fitText.js';
 
 export class TextNode extends SceneNode {
   /**
@@ -55,11 +56,21 @@ export class TextNode extends SceneNode {
     this.y = y;
   }
 
+  /**
+   * The size text is actually rendered/exported/measured at. For a single-line
+   * area box this is the width-fit cap (plan §5) so a long line never bursts
+   * past the box; otherwise it is the stored `fontSize`. ALL geometry consumers
+   * (layout, SVG, canvas draw, caret) route through this so they stay consistent.
+   */
+  effectiveFontSize() {
+    return effectiveFontSize(this, this.font);
+  }
+
   /** Lay out the text. Multi-line mode wraps to the dragged box width. */
   layout() {
     return layoutText(this.text, {
       font: this.font,
-      fontSize: this.fontSize,
+      fontSize: this.effectiveFontSize(),
       align: this.align,
       lineHeight: this.lineHeight,
       wrapWidth: this.lineMode === 'multi' ? this.box.w : null,
@@ -85,11 +96,12 @@ export class TextNode extends SceneNode {
    */
   toSVGGroup(pivot) {
     const { lines } = this.layout();
+    const fontSize = this.effectiveFontSize();
     const d = lines
       .map((line) =>
         textToOutline(line.text, {
           font: this.font,
-          fontSize: this.fontSize,
+          fontSize,
           x: line.x + this.x,
           y: line.baseline + this.y,
         }).pathData,

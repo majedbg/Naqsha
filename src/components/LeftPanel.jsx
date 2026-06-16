@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
 import LayersSection from "./LayersSection";
+import TextPropertiesPanel from "./TextPropertiesPanel";
 import ExportSection from "./ExportSection";
 import SidebarTabs from "./sidebar/SidebarTabs";
 import ExamplesGallery from "./sidebar/ExamplesGallery";
@@ -62,6 +63,10 @@ export default function LeftPanel({
   onOptimizationRevert,
   patternInstances,
   layers,
+  selectedNodeId = null,
+  textNodes = [],
+  textFont = null,
+  onUpdateTextNode,
   onUpdateLayer,
   onChangeLayerPattern,
   onRemoveLayer,
@@ -88,6 +93,16 @@ export default function LeftPanel({
   const [collapsed, setCollapsed] = useState(false);
   const [activeLayerIndex, setActiveLayerIndex] = useState(0);
   const preset = PRESET_SIZES[presetIndex];
+  // The text node (if any) currently selected — drives the properties panel.
+  const selectedTextNode =
+    selectedNodeId != null ? textNodes.find((n) => n.id === selectedNodeId) : null;
+  const textProps = selectedTextNode ? (
+    <TextPropertiesPanel
+      node={selectedTextNode}
+      font={textFont}
+      onUpdate={(patch) => onUpdateTextNode?.(selectedTextNode.id, patch)}
+    />
+  ) : null;
 
   // Clamp active index when layers change
   const clampedIndex = activeLayerIndex >= layers.length
@@ -147,6 +162,7 @@ export default function LeftPanel({
               aria-labelledby="tab-design"
               className="space-y-6"
             >
+              {textProps}
               <LayersSection
                 layers={layers}
                 onUpdate={onUpdateLayer}
@@ -272,6 +288,7 @@ export default function LeftPanel({
           <div className="p-3 space-y-4">
             {activeTab === 'design' && (
               <>
+                {textProps}
                 <div className="flex items-center justify-between">
                   <p className="text-[10px] text-ink-soft">Design</p>
                   <SizeChip

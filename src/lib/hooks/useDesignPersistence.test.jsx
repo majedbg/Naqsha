@@ -1,7 +1,10 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { renderHook, act } from "@testing-library/react";
-import useDesignPersistence from "./useDesignPersistence";
+import useDesignPersistence, {
+  loadInitialTextState,
+  TEXT_STORAGE_KEY,
+} from "./useDesignPersistence";
 import { encodeShare } from "../shareLink";
 
 // Characterization tests (AR-3A) pinning dirty-tracking + share hydration.
@@ -21,10 +24,15 @@ function baseProps(overrides = {}) {
     setPresetIndex: vi.fn(),
     setUnit: vi.fn(),
     setMargin: vi.fn(),
+    applyTextState: vi.fn(),
     persistToLocal: true,
     ...overrides,
   };
 }
+
+const sampleText = () => [
+  { id: "text-1", type: "text", text: "Hi", fontId: "work-sans", box: { w: 0, h: 0 } },
+];
 
 describe("useDesignPersistence", () => {
   beforeEach(() => {
@@ -101,5 +109,58 @@ describe("useDesignPersistence", () => {
     expect(props.setBgColor).toHaveBeenCalledWith("#123456");
     // Token stripped from the URL after hydration.
     expect(window.location.search).toBe("");
+  });
+
+  it("share hydration restores text nodes + transforms via applyTextState", () => {
+    const textNodes = sampleText();
+    const transforms = { "text-1": { x: 0, y: 5, rotation: 0, scale: 1 } };
+    const token = encodeShare({ layers: makeLayers(), textNodes, transforms });
+    window.history.replaceState({}, "", `/?s=${token}`);
+
+    const props = baseProps();
+    renderHook(() => useDesignPersistence(props));
+
+    expect(props.applyTextState).toHaveBeenCalledWith(textNodes, transforms);
+  });
+
+  it("text edits register as dirty (serializeState includes textNodes + transforms)", () => {
+    let props = baseProps({ textNodes: [], transforms: {} });
+    const { result, rerender } = renderHook((p) => useDesignPersistence(p), {
+      initialProps: props,
+    });
+    expect(result.current.isDirty()).toBe(false);
+
+    props = baseProps({ textNodes: sampleText(), transforms: {} });
+    rerender(props);
+    expect(result.current.isDirty()).toBe(true);
+  });
+});
+
+describe("loadInitialTextState", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    window.history.replaceState({}, "", "/");
+  });
+
+  it("restores the locally-backed text/transform state for a persisting user", () => {
+    const textNodes = sampleText();
+    const transforms = { "text-1": { x: 1, y: 2, rotation: 0, scale: 1 } };
+    localStorage.setItem(TEXT_STORAGE_KEY, JSON.stringify({ textNodes, transforms }));
+    expect(loadInitialTextState({ persistToLocal: true })).toEqual({ textNodes, transforms });
+  });
+
+  it("starts empty for a guest (no local persistence)", () => {
+    localStorage.setItem(TEXT_STORAGE_KEY, JSON.stringify({ textNodes: sampleText(), transforms: {} }));
+    expect(loadInitialTextState({ persistToLocal: false })).toEqual({ textNodes: [], transforms: {} });
+  });
+
+  it("starts empty when a share token is present (share hydration wins)", () => {
+    localStorage.setItem(TEXT_STORAGE_KEY, JSON.stringify({ textNodes: sampleText(), transforms: {} }));
+    window.history.replaceState({}, "", "/?s=sometoken");
+    expect(loadInitialTextState({ persistToLocal: true })).toEqual({ textNodes: [], transforms: {} });
+  });
+
+  it("starts empty when nothing is stored", () => {
+    expect(loadInitialTextState({ persistToLocal: true })).toEqual({ textNodes: [], transforms: {} });
   });
 });

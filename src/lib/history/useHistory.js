@@ -26,6 +26,11 @@ export function historyReducer(state, action) {
         future: restFuture,
       };
     }
+    case "reset":
+      // Install a freshly-loaded design as the new baseline: present becomes the
+      // loaded state and BOTH stacks clear, so undo can't walk back into the
+      // previous design's edits.
+      return { past: [], present: action.present, future: [] };
     default:
       return state;
   }
@@ -59,6 +64,10 @@ export function useHistory(initialPresent) {
   }, []);
   const undo = useCallback(() => dispatch({ type: "undo" }), []);
   const redo = useCallback(() => dispatch({ type: "redo" }), []);
+  // Replace the present with a loaded design and clear the undo/redo stacks.
+  const reset = useCallback((present) => {
+    dispatch({ type: "reset", present });
+  }, []);
 
   return useMemo(
     () => ({
@@ -66,9 +75,10 @@ export function useHistory(initialPresent) {
       commit,
       undo,
       redo,
+      reset,
       canUndo: canUndo(state),
       canRedo: canRedo(state),
     }),
-    [state, commit, undo, redo]
+    [state, commit, undo, redo, reset]
   );
 }

@@ -62,6 +62,12 @@ export default function useCanvas(
   const renderAll = useCallback(() => {
     if (!p5Ref.current) return;
     const p = p5Ref.current;
+    // Bail until p5 setup() has built the renderer. A renderAll can be scheduled
+    // (rAF/debounce) right after the instance is recreated — e.g. when canvas
+    // dims change post-mount (ShareView loading a design async) — and run before
+    // setup completes; p.clear() would then deref an undefined renderer. The
+    // creation effect's post-setup render (or the next data change) covers it.
+    if (!p._renderer) return;
     const transforms = transformsRef.current || {};
     p.clear();
     p.background(bgColor);
@@ -169,13 +175,14 @@ export default function useCanvas(
         if (blinkOn) {
           const tnode = new TextNode({ ...editNode, font: fontNow });
           const local = tnode.localBBox();
+          const caretFontSize = tnode.effectiveFontSize();
           const pivot = {
             x: (editNode.x || 0) + local.w / 2,
             y: (editNode.y || 0) + local.h / 2,
           };
           const car = caretXY(editNode.text, caretIndexRef.current, {
             font: fontNow,
-            fontSize: editNode.fontSize,
+            fontSize: caretFontSize,
             align: editNode.align || 'left',
             lineHeight: editNode.lineHeight || 1.2,
             wrapWidth: editNode.lineMode === 'multi' ? editNode.box?.w : null,
@@ -190,7 +197,7 @@ export default function useCanvas(
           const caretX = (editNode.x || 0) + car.x;
           const caretY = (editNode.y || 0) + car.y;
           p.stroke(editNode.color || '#000000');
-          p.strokeWeight(Math.max(1, editNode.fontSize * 0.04));
+          p.strokeWeight(Math.max(1, caretFontSize * 0.04));
           p.line(caretX, caretY, caretX, caretY + car.height);
           p.pop();
         }

@@ -1,5 +1,6 @@
 import { useState, useCallback } from "react";
 import { saveDesign, loadDesign, saveHistorySnapshot } from "../designService";
+import { collectLiveIds, filterTransforms, parseTextNodes } from "../scene/designState";
 
 // Cloud save/load concern extracted from Studio (AR-3A).
 //
@@ -15,8 +16,11 @@ export default function useCloudPersistence({
   canvasH,
   presetIndex,
   bgColor,
+  textNodes,
+  transforms,
   loadLayerSet,
   applyCanvasSize,
+  applyTextState,
   markCleanFrom,
   canvasContainerRef,
 }) {
@@ -37,7 +41,16 @@ export default function useCloudPersistence({
   const handleSaveToCloud = useCallback(async () => {
     if (!user) return;
     const thumbnail = captureThumbnail();
-    const config = { layers, canvasW, canvasH, presetIndex };
+    const tn = parseTextNodes(textNodes);
+    const config = {
+      layers,
+      canvasW,
+      canvasH,
+      presetIndex,
+      bgColor,
+      textNodes: tn,
+      transforms: filterTransforms(transforms, collectLiveIds(layers, tn)),
+    };
     try {
       const design = await saveDesign(
         user.id,
@@ -48,7 +61,7 @@ export default function useCloudPersistence({
       );
       if (design) {
         setCurrentDesignId(design.id);
-        markCleanFrom(layers, bgColor);
+        markCleanFrom(layers, bgColor, { textNodes: tn, transforms: config.transforms });
         // Pro: auto-save history snapshot
         if (limits.historySnapshots > 0) {
           saveHistorySnapshot(design.id, user.id, config, thumbnail).catch(
@@ -69,6 +82,8 @@ export default function useCloudPersistence({
     currentDesignId,
     markCleanFrom,
     bgColor,
+    textNodes,
+    transforms,
     limits.historySnapshots,
   ]);
 
@@ -81,13 +96,22 @@ export default function useCloudPersistence({
         const { layers: savedLayers, canvasW: cw, canvasH: ch } = design.config;
         if (savedLayers) loadLayerSet(savedLayers);
         if (cw && ch) applyCanvasSize(cw, ch);
+        // Restore the interactive text/transform state as the fresh baseline.
+        const loadedText = {
+          textNodes: parseTextNodes(design.config.textNodes),
+          transforms:
+            design.config.transforms && typeof design.config.transforms === "object"
+              ? design.config.transforms
+              : {},
+        };
+        applyTextState?.(loadedText.textNodes, loadedText.transforms);
         setCurrentDesignId(design.id);
-        markCleanFrom(savedLayers || layers, bgColor);
+        markCleanFrom(savedLayers || layers, bgColor, loadedText);
       } catch (err) {
         console.error("Cloud load failed:", err);
       }
     },
-    [user, loadLayerSet, applyCanvasSize, markCleanFrom, layers, bgColor]
+    [user, loadLayerSet, applyCanvasSize, applyTextState, markCleanFrom, layers, bgColor]
   );
 
   return {

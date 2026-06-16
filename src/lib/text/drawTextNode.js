@@ -32,13 +32,16 @@ export function textNodeCommands(node, font) {
     y: local.y + (tn.y || 0) + local.h / 2,
   };
 
+  // Width-fit cap (plan §5): a single-line area box renders at the SAME
+  // effective size layout() used, so the on-canvas glyphs match the box + SVG.
+  const fontSize = tn.effectiveFontSize();
   const commands = [];
   for (const line of lines) {
     const path = font.getPath(
       line.text,
       line.x + tn.x,
       line.baseline + tn.y,
-      tn.fontSize,
+      fontSize,
     );
     for (const cmd of path.commands) commands.push(cmd);
   }

@@ -1,6 +1,9 @@
 import { useRef, useState, useEffect, useCallback } from "react";
 import useCanvas from "../lib/useCanvas";
 import BedOverlay from "./canvas/BedOverlay";
+import CanvasToolbar from "./canvas/CanvasToolbar";
+import { screenToCanvas } from "../lib/canvas/coords";
+import { applyMoveDelta, pickTopmostHit } from "../lib/tools/moveTransform";
 
 const BG_PRESETS = [
   { color: "#0a1628", label: "Dark Blue" },
@@ -23,6 +26,14 @@ export default function RightPanel({
   displayMode = 'design',
   unit = 'mm',
   marginPx = 0,
+  // Select/Move tool wiring (move slice).
+  activeTool = 'select',
+  setActiveTool = () => {},
+  transforms = {},
+  selectedNodeId = null,
+  onSelect = () => {},
+  onMove = () => {},
+  onCommit = () => {},
 }) {
   const containerRef = useRef(null);
   const wrapperRef = useRef(null);
@@ -30,12 +41,22 @@ export default function RightPanel({
   const [zoom, setZoom] = useState(1);
   const [bgPickerOpen, setBgPickerOpen] = useState(false);
 
+  // Drag session state (refs so handlers don't re-bind / re-render per move).
+  const dragRef = useRef(null); // { id, startPoint, startTransform, moved }
+  // Latest transforms readable inside pointer handlers without stale closures.
+  const transformsLiveRef = useRef(transforms);
+  useEffect(() => {
+    transformsLiveRef.current = transforms;
+  }, [transforms]);
+
   const { patternInstances } = useCanvas(
     containerRef,
     layers,
     canvasW,
     canvasH,
-    bgColor
+    bgColor,
+    transforms,
+    selectedNodeId
   );
 
   // Expose pattern instances to parent for SVG export and optimization stats.
@@ -95,6 +116,72 @@ export default function RightPanel({
   const zoomPercent = Math.round(zoom * 100);
 
   const isPrepare = displayMode === 'prepare';
+  const selectActive = activeTool === 'select' && !isPrepare;
+
+  // --- Select/Move pointer handlers (only active for the select tool) ---
+  const toCanvasPoint = useCallback(
+    (clientX, clientY) => {
+      const rect = containerRef.current?.getBoundingClientRect();
+      if (!rect) return null;
+      return screenToCanvas(clientX, clientY, rect, finalScale);
+    },
+    [finalScale]
+  );
+
+  const handlePointerDown = useCallback(
+    (e) => {
+      if (!selectActive || e.button !== 0) return;
+      const pt = toCanvasPoint(e.clientX, e.clientY);
+      if (!pt) return;
+      const id = pickTopmostHit(pt, layers, patternInstances, transformsLiveRef.current, canvasW, canvasH);
+      if (!id) {
+        // Empty-space click → clear selection, no history commit.
+        onSelect(null);
+        return;
+      }
+      onSelect(id);
+      const startTransform = transformsLiveRef.current[id] || { x: 0, y: 0, rotation: 0, scale: 1 };
+      dragRef.current = { id, startPoint: pt, startTransform, moved: false };
+      try {
+        e.currentTarget.setPointerCapture?.(e.pointerId);
+      } catch {
+        /* setPointerCapture can throw if pointer already released */
+      }
+    },
+    [selectActive, toCanvasPoint, layers, patternInstances, canvasW, canvasH, onSelect]
+  );
+
+  const handlePointerMove = useCallback(
+    (e) => {
+      const drag = dragRef.current;
+      if (!drag) return;
+      const pt = toCanvasPoint(e.clientX, e.clientY);
+      if (!pt) return;
+      const dx = pt.x - drag.startPoint.x;
+      const dy = pt.y - drag.startPoint.y;
+      if (!drag.moved && (dx !== 0 || dy !== 0)) drag.moved = true;
+      const next = applyMoveDelta(drag.startTransform, dx, dy);
+      onMove(drag.id, next);
+    },
+    [toCanvasPoint, onMove]
+  );
+
+  const endDrag = useCallback(
+    (e) => {
+      const drag = dragRef.current;
+      if (!drag) return;
+      dragRef.current = null;
+      try {
+        e.currentTarget.releasePointerCapture?.(e.pointerId);
+      } catch {
+        /* no-op */
+      }
+      // Only commit a history entry if the layer actually moved — a plain
+      // selecting click must not push a no-op undo state.
+      if (drag.moved) onCommit();
+    },
+    [onCommit]
+  );
 
   return (
     <div
@@ -120,6 +207,20 @@ export default function RightPanel({
         }}
       >
         <div ref={containerRef} />
+        {/* Pointer overlay for the select tool — sits over the canvas inside
+            the scaled wrapper. Only intercepts events while select is active;
+            otherwise pointer-events:none lets wheel-zoom / picker pass through. */}
+        <div
+          className="absolute inset-0"
+          style={{
+            pointerEvents: selectActive ? "auto" : "none",
+            cursor: selectActive ? "default" : "auto",
+          }}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={endDrag}
+          onPointerCancel={endDrag}
+        />
         {isPrepare && (
           <BedOverlay
             canvasW={canvasW}
@@ -129,6 +230,11 @@ export default function RightPanel({
           />
         )}
       </div>
+
+      {/* Canvas tool toolbar (Select active, Text disabled). Hidden in Prepare. */}
+      {!isPrepare && (
+        <CanvasToolbar activeTool={activeTool} setActiveTool={setActiveTool} />
+      )}
 
       {/* Background color button — bottom left, aligned with zoom controls */}
       <div className="absolute bottom-4 left-4">

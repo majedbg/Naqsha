@@ -104,6 +104,31 @@ export function buildAllLayersSVG(layers, patternInstances, canvasW, canvasH, in
 </svg>`;
 }
 
+// Scene-graph export entry. Mirrors `buildAllLayersSVG` exactly, but sources each
+// group from `node.toSVGGroup()` (which already applies the layer id/color/opacity
+// AND its node transform identity-safe) instead of `instance.toSVGGroup(...)`. With
+// identity transforms this is byte-identical to `buildAllLayersSVG`.
+export function buildSceneSVG(sceneGraph, canvasW, canvasH, includeHidden = false, { metadata = false, manifest, optimizations } = {}) {
+  // Reverse so bottom layers come first in SVG (matching visual order), exactly
+  // as buildAllLayersSVG does — fromLayers preserves the original layers[] order.
+  const ordered = [...sceneGraph.nodes].reverse();
+  const groups = ordered
+    .filter((n) => includeHidden || n.visible)
+    .map((n) => {
+      if (!n.instance) return '';
+      const bgRect = layerBgRect(n.layer, canvasW, canvasH);
+      const rawGroup = n.toSVGGroup();
+      const group = maybeOptimize(rawGroup, optimizations);
+      return (bgRect ? bgRect + '\n  ' : '') + group;
+    })
+    .join('\n  ');
+  const meta = buildMeta({ metadata, manifest });
+  return `${svgOpen(canvasW, canvasH, meta)}
+  <rect width="100%" height="100%" fill="white"/>
+  ${groups}
+</svg>`;
+}
+
 // --- Export wrappers: build pure string, then download (DOM side-effect). ---
 
 export function exportLayerSVG(layer, patternInstance, canvasW, canvasH, opts = {}) {

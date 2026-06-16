@@ -5,15 +5,35 @@ import { P5Adapter } from './patterns/drawingContext';
 import { PATTERN_CLASSES } from './patterns';
 import { resolveMoireSource } from './moirePair';
 
-export default function useCanvas(containerRef, layers, canvasW, canvasH, bgColor = '#ffffff') {
+export default function useCanvas(
+  containerRef,
+  layers,
+  canvasW,
+  canvasH,
+  bgColor = '#ffffff',
+  nodeTransforms = {},
+  selectedNodeId = null
+) {
   const p5Ref = useRef(null);
   const debounceRef = useRef(null);
+  const rafRef = useRef(null);
   const [patternInstances, setPatternInstances] = useState({});
   const instancesRef = useRef({});
+  // Live transform/selection read inside renderAll WITHOUT entering its dep
+  // array — keeps renderAll's identity stable so the 150ms param-debounce
+  // effect doesn't re-fire on every drag frame. The rAF effect below drives
+  // immediate re-renders when these change.
+  const transformsRef = useRef(nodeTransforms);
+  const selectedRef = useRef(selectedNodeId);
+  useEffect(() => {
+    transformsRef.current = nodeTransforms;
+    selectedRef.current = selectedNodeId;
+  }, [nodeTransforms, selectedNodeId]);
 
   const renderAll = useCallback(() => {
     if (!p5Ref.current) return;
     const p = p5Ref.current;
+    const transforms = transformsRef.current || {};
     p.clear();
     p.background(bgColor);
 
@@ -61,6 +81,13 @@ export default function useCanvas(containerRef, layers, canvasW, canvasH, bgColo
         continue;
       }
 
+      // Move slice: translate-only. Matches transformToSVG('translate(x y)') so
+      // canvas and exported SVG stay byte-consistent (rotate/scale deferred to
+      // the next slice). Wrap the layer's draw in push/translate/pop.
+      const t = transforms[layer.id];
+      p.push();
+      if (t && (t.x || t.y)) p.translate(t.x, t.y);
+
       // Draw layer background fill if bgOpacity > 0
       if (layer.bgOpacity > 0) {
         const bgAlpha = Math.round((layer.bgOpacity / 100) * 255);
@@ -72,7 +99,43 @@ export default function useCanvas(containerRef, layers, canvasW, canvasH, bgColo
       }
 
       instance.generateWithContext(drawCtx, layer.seed, renderParams, canvasW, canvasH, layer.color, layer.opacity);
+      p.pop();
     }
+
+    // Selection bounding box (canvas-drawn, plan §4): thin accent rect + corner
+    // ticks at the selected layer's full-canvas bbox, offset by its translate.
+    // Guarded by layers.find so a stale id (deleted layer) can't throw.
+    const selId = selectedRef.current;
+    if (selId) {
+      const selLayer = layers.find((l) => l.id === selId);
+      if (selLayer) {
+        const t = transforms[selId] || { x: 0, y: 0 };
+        const bx = t.x || 0;
+        const by = t.y || 0;
+        const bw = canvasW;
+        const bh = canvasH;
+        p.push();
+        p.noFill();
+        p.stroke(124, 92, 246); // violet accent
+        p.strokeWeight(1);
+        p.rect(bx + 0.5, by + 0.5, bw - 1, bh - 1);
+        // Corner ticks (no resize handles yet)
+        const tick = Math.min(14, bw / 8, bh / 8);
+        p.strokeWeight(2);
+        const corners = [
+          [bx, by, 1, 1],
+          [bx + bw, by, -1, 1],
+          [bx, by + bh, 1, -1],
+          [bx + bw, by + bh, -1, -1],
+        ];
+        for (const [cx, cy, sx, sy] of corners) {
+          p.line(cx, cy, cx + sx * tick, cy);
+          p.line(cx, cy, cx, cy + sy * tick);
+        }
+        p.pop();
+      }
+    }
+
     instancesRef.current = newInstances;
     setPatternInstances(newInstances);
   }, [layers, canvasW, canvasH, bgColor]);
@@ -124,6 +187,31 @@ export default function useCanvas(containerRef, layers, canvasW, canvasH, bgColo
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
   }, [layers, canvasW, canvasH, bgColor, renderAll]);
+
+  // Immediate (un-debounced) re-render when transforms or selection change —
+  // throttled to one frame via rAF. Patterns are deterministic by seed, so
+  // re-running generate during a drag is visually stable (CPU cost is a known
+  // perf follow-up). Param edits still go through the 150ms debounce above.
+  useEffect(() => {
+    if (!p5Ref.current) return;
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    rafRef.current = requestAnimationFrame(() => {
+      rafRef.current = null;
+      renderAll();
+    });
+    return () => {
+      if (rafRef.current) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+    };
+    // renderAll deliberately omitted: it changes identity whenever `layers`
+    // change, which would make param edits re-fire this IMMEDIATE path and
+    // bypass the 150ms debounce (decision #3). During a drag `layers` is
+    // unchanged so the captured renderAll reads correct layers; transform
+    // values are read live from transformsRef inside renderAll.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nodeTransforms, selectedNodeId]);
 
   return { patternInstances };
 }

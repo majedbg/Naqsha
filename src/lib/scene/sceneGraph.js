@@ -16,8 +16,10 @@ export class SceneGraph {
 
   /** Adapter IN: build a graph from today's layers[] + instances{} (order preserved,
    *  every layer kept — even instance-less ones — so the round-trip is exact). */
-  static fromLayers(layers, instances = {}) {
-    return new SceneGraph(layers.map((l) => new PatternNode(l, instances[l.id])));
+  static fromLayers(layers, instances = {}, transformsById = {}) {
+    return new SceneGraph(
+      layers.map((l) => new PatternNode(l, instances[l.id], transformsById[l.id]))
+    );
   }
 
   /** Adapter OUT: the exact inputs the existing export functions consume. */

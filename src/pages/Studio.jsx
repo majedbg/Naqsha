@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import LeftPanel from "../components/LeftPanel";
 import ConfirmDialog from "../components/ui/ConfirmDialog";
 import { EXAMPLES, EXAMPLE_COUNT } from "../examples";
@@ -14,7 +14,10 @@ import { useAuth } from "../lib/AuthContext";
 import { useGate } from "../lib/useGate";
 import AuthButton from "../components/AuthButton";
 import ThemeToggle from "../components/ui/ThemeToggle";
-import { exportLayerSVG, exportAllLayersSVG, buildManifest } from "../lib/svgExport";
+import { exportLayerSVG, buildSceneSVG, downloadSVG, buildManifest } from "../lib/svgExport";
+import { SceneGraph } from "../lib/scene/sceneGraph";
+import useActiveTool from "../lib/tools/useActiveTool";
+import { useHistory } from "../lib/history/useHistory";
 import ShareLinkButton from "../components/ShareLinkButton";
 import { applyOutputMode } from "../lib/fabrication";
 import useCanvasSize, { loadCanvasState } from "../lib/hooks/useCanvasSize";
@@ -97,6 +100,73 @@ export default function Studio() {
   const patternInstancesRef = useRef({});
   const canvasContainerRef = useRef(null);
   const [livePatternInstances, setLivePatternInstances] = useState({});
+
+  // === Select/Move tool + per-layer transforms + undo history (move slice) ===
+  const { activeTool, setActiveTool } = useActiveTool();
+  const [selectedNodeId, setSelectedNodeId] = useState(null);
+  // Live transform map for rendering: { [layerId]: {x,y,rotation,scale} }.
+  const [transforms, setTransforms] = useState({});
+  const history = useHistory(transforms);
+  // Drive transforms from history.present (undo/redo). Reading history.present
+  // directly after dispatch would be stale; this effect stays a no-op during a
+  // drag (we setTransforms live WITHOUT committing, so present doesn't change),
+  // and only fires on commit/undo/redo when present is a new reference.
+  useEffect(() => {
+    // Syncing render state from the history store (an external-ish source of
+    // truth owned by useHistory's reducer). No-op during drags since present
+    // only changes on commit/undo/redo.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setTransforms(history.present);
+  }, [history.present]);
+
+  // Mirror the live transforms in a ref so the pointer-up commit reads the
+  // freshest value without a stale closure (and without side-effects in a
+  // setState updater, which can double-fire under StrictMode).
+  const transformsRef = useRef(transforms);
+  useEffect(() => {
+    transformsRef.current = transforms;
+  }, [transforms]);
+
+  const handleSelectNode = useCallback((id) => setSelectedNodeId(id), []);
+  // Live drag update: mutate the rendering map only, NO history commit per move.
+  const handleMoveNode = useCallback((id, nextTransform) => {
+    setTransforms((prev) => ({ ...prev, [id]: nextTransform }));
+  }, []);
+  // Pointer-up: commit the settled transform map as ONE undoable action.
+  const handleCommitTransform = useCallback(() => {
+    history.commit(transformsRef.current);
+  }, [history]);
+
+  // Single keyboard handler (decision #1: tool + history state live in Studio):
+  //   Cmd/Ctrl+Z = undo, Cmd/Ctrl+Shift+Z = redo, Escape = clear selection,
+  //   v = select tool, t = text tool (placeholder). Ignored while typing in an
+  //   input/textarea/contenteditable.
+  useEffect(() => {
+    const onKeyDown = (e) => {
+      const el = e.target;
+      const tag = el?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || el?.isContentEditable) return;
+
+      const meta = e.metaKey || e.ctrlKey;
+      if (meta && (e.key === "z" || e.key === "Z")) {
+        e.preventDefault();
+        if (e.shiftKey) history.redo();
+        else history.undo();
+        return;
+      }
+      if (e.key === "Escape") {
+        setSelectedNodeId(null);
+        return;
+      }
+      if (!meta && (e.key === "v" || e.key === "V")) {
+        setActiveTool("select");
+      } else if (!meta && (e.key === "t" || e.key === "T")) {
+        setActiveTool("text");
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [history, setActiveTool]);
 
   // === Dirty-tracking + share-link hydration ===
   const { markCleanFrom, isDirty } = useDesignPersistence({
@@ -184,19 +254,16 @@ export default function Studio() {
 
   const handleExportAll = (includeHidden, opts = {}) => {
     const mapped = layers.map((l) => applyOutputMode(l, outputMode));
-    exportAllLayersSVG(
-      mapped,
-      patternInstancesRef.current || {},
-      canvasW,
-      canvasH,
-      includeHidden,
-      {
-        metadata: limits.svgMetadata,
-        manifest: buildExportManifest(),
-        filename: opts.filename,
-        optimizations: appliedOptimizations,
-      }
-    );
+    // Build a scene graph carrying each layer's live transform so the exported
+    // SVG honors moves. Identity transforms emit byte-identical output to the
+    // old exportAllLayersSVG path (transformToSVG returns '' for identity).
+    const graph = SceneGraph.fromLayers(mapped, patternInstancesRef.current || {}, transforms);
+    const svg = buildSceneSVG(graph, canvasW, canvasH, includeHidden, {
+      metadata: limits.svgMetadata,
+      manifest: buildExportManifest(),
+      optimizations: appliedOptimizations,
+    });
+    downloadSVG(svg, opts.filename || "generative-art-all-layers.svg");
   };
 
   const handleSaveLayerGroup = () => {
@@ -407,6 +474,13 @@ export default function Studio() {
             displayMode={activeTab}
             unit={unit}
             marginPx={margin}
+            activeTool={activeTool}
+            setActiveTool={setActiveTool}
+            transforms={transforms}
+            selectedNodeId={selectedNodeId}
+            onSelect={handleSelectNode}
+            onMove={handleMoveNode}
+            onCommit={handleCommitTransform}
           />
         </div>
       </div>

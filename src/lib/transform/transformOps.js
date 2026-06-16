@@ -82,12 +82,26 @@ function num(n) {
  *   translate(x y) rotate(deg) scale(s)
  * which SVG applies right-to-left, matching `applyTransform`.
  */
-export function transformToSVG(transform) {
+export function transformToSVG(transform, pivot) {
   const { x = 0, y = 0, rotation = 0, scale = 1 } = transform || {};
+  const hasRot = num(rotation) !== 0;
+  const hasScale = num(scale) !== 1;
+  // Center-pivot form: only when a pivot is supplied AND there's actual
+  // rotation/scale to pivot. Pure translate (no rot/scale) falls through to the
+  // origin path below, where the pivot is irrelevant.
+  if (pivot && (hasRot || hasScale)) {
+    const parts = [];
+    if (num(x) !== 0 || num(y) !== 0) parts.push(`translate(${num(x)} ${num(y)})`);
+    parts.push(`translate(${num(pivot.x)} ${num(pivot.y)})`);
+    if (hasRot) parts.push(`rotate(${num(rotation)})`);
+    if (hasScale) parts.push(`scale(${num(scale)})`);
+    parts.push(`translate(${num(-pivot.x)} ${num(-pivot.y)})`);
+    return parts.join(' ');
+  }
   const parts = [];
   if (num(x) !== 0 || num(y) !== 0) parts.push(`translate(${num(x)} ${num(y)})`);
-  if (num(rotation) !== 0) parts.push(`rotate(${num(rotation)})`);
-  if (num(scale) !== 1) parts.push(`scale(${num(scale)})`);
+  if (hasRot) parts.push(`rotate(${num(rotation)})`);
+  if (hasScale) parts.push(`scale(${num(scale)})`);
   return parts.join(' ');
 }
 

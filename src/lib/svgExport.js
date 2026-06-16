@@ -117,7 +117,17 @@ export function buildSceneSVG(sceneGraph, canvasW, canvasH, includeHidden = fals
     .map((n) => {
       if (!n.instance) return '';
       const bgRect = layerBgRect(n.layer, canvasW, canvasH);
-      const rawGroup = n.toSVGGroup();
+      // Pivot = center of the node's LOCAL bbox so rotation/scale pivot about
+      // the node center, exactly matching the canvas render's (cx,cy)=
+      // (canvasW/2, canvasH/2). It must be the LOCAL (untransformed) center, not
+      // the world AABB center: the world center includes the node's translation,
+      // which would shift the SVG rotation center away from the canvas one and
+      // break the canvas==SVG invariant. For a PatternNode the local bbox is the
+      // full canvas; a node exposing localBBox uses that. Identity transform →
+      // toSVGGroup still emits no wrapper, so export stays byte-identical.
+      const local = n.localBBox || { x: 0, y: 0, w: canvasW, h: canvasH };
+      const pivot = { x: local.x + local.w / 2, y: local.y + local.h / 2 };
+      const rawGroup = n.toSVGGroup(pivot);
       const group = maybeOptimize(rawGroup, optimizations);
       return (bgRect ? bgRect + '\n  ' : '') + group;
     })

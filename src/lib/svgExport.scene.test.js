@@ -50,6 +50,31 @@ describe('buildSceneSVG applies node transforms', () => {
     const svg = buildSceneSVG(SceneGraph.fromLayers(layers, instances, transformsById), 384, 384, true, {});
     expect(svg).toContain('<g transform="translate(5 0)"><g id="a">');
   });
+
+  it('a rotation wraps the group in the center-pivot transform', () => {
+    const layers = [{ id: 'a', name: 'A', color: '#f00', opacity: 100, visible: true, bgOpacity: 0 }];
+    const instances = { a: mk() };
+    const transformsById = { a: { x: 0, y: 0, rotation: 30, scale: 1 } };
+    const svg = buildSceneSVG(SceneGraph.fromLayers(layers, instances, transformsById), 384, 384, true, {});
+    // pivot = center of the full-canvas bbox = (192, 192).
+    expect(svg).toContain(
+      '<g transform="translate(192 192) rotate(30) translate(-192 -192)"><g id="a">'
+    );
+  });
+
+  it('pivots about the LOCAL center even when the node is also translated', () => {
+    // Canvas-vs-SVG invariant: the rotation center must be the local bbox center
+    // (192,192), NOT the world AABB center (which would include the (10,20)
+    // translate and be (202,212)). The translate(10 20) leads, then the pivot.
+    const layers = [{ id: 'a', name: 'A', color: '#f00', opacity: 100, visible: true, bgOpacity: 0 }];
+    const instances = { a: mk() };
+    const transformsById = { a: { x: 10, y: 20, rotation: 30, scale: 1 } };
+    const svg = buildSceneSVG(SceneGraph.fromLayers(layers, instances, transformsById), 384, 384, true, {});
+    expect(svg).toContain(
+      '<g transform="translate(10 20) translate(192 192) rotate(30) translate(-192 -192)"><g id="a">'
+    );
+    expect(svg).not.toContain('translate(202 212)');
+  });
 });
 
 describe('buildSceneSVG respects the includeHidden filter', () => {

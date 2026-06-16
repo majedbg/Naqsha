@@ -33,6 +33,34 @@ describe('transformToSVG', () => {
     expect(transformToSVG({ x: 0, y: 0, rotation: 0, scale: 0.5 })).toBe('scale(0.5)');
   });
 
+  it('ignores pivot for the identity transform (still empty)', () => {
+    expect(transformToSVG({ x: 0, y: 0, rotation: 0, scale: 1 }, { x: 50, y: 50 })).toBe('');
+  });
+
+  it('ignores pivot for a pure-translate transform', () => {
+    expect(transformToSVG({ x: 5, y: 7, rotation: 0, scale: 1 }, { x: 50, y: 50 })).toBe(
+      'translate(5 7)'
+    );
+  });
+
+  it('emits the center-pivot form for rotation with a pivot', () => {
+    expect(transformToSVG({ x: 0, y: 0, rotation: 30, scale: 1 }, { x: 50, y: 60 })).toBe(
+      'translate(50 60) rotate(30) translate(-50 -60)'
+    );
+  });
+
+  it('emits the center-pivot form for scale with a pivot (and translate)', () => {
+    expect(transformToSVG({ x: 10, y: 20, rotation: 0, scale: 2 }, { x: 50, y: 60 })).toBe(
+      'translate(10 20) translate(50 60) scale(2) translate(-50 -60)'
+    );
+  });
+
+  it('emits the full center-pivot form for rotation+scale+translate with a pivot', () => {
+    expect(transformToSVG({ x: 10, y: 20, rotation: 30, scale: 2 }, { x: 50, y: 60 })).toBe(
+      'translate(10 20) translate(50 60) rotate(30) scale(2) translate(-50 -60)'
+    );
+  });
+
   it('agrees with applyTransform: the SVG matrix and applyTransform map points identically', () => {
     // SVG `translate(x,y) rotate(r) scale(s)` applies scale first, then rotate,
     // then translate (right-to-left). applyTransform must produce the same point.

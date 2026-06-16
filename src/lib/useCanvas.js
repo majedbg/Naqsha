@@ -4,6 +4,7 @@ import { getDynamicPatternClass } from './patternRegistry';
 import { P5Adapter } from './patterns/drawingContext';
 import { PATTERN_CLASSES } from './patterns';
 import { resolveMoireSource } from './moirePair';
+import { handlesFor } from './transform/handles.js';
 
 export default function useCanvas(
   containerRef,
@@ -81,12 +82,22 @@ export default function useCanvas(
         continue;
       }
 
-      // Move slice: translate-only. Matches transformToSVG('translate(x y)') so
-      // canvas and exported SVG stay byte-consistent (rotate/scale deferred to
-      // the next slice). Wrap the layer's draw in push/translate/pop.
+      // Center-pivot transform: rotate/scale about the node's bbox center
+      // (cx,cy) = canvas center, then translate by (x,y). Matches the SVG
+      // `translate(x y) translate(cx cy) rotate scale translate(-cx -cy)` form
+      // emitted by transformToSVG, so canvas and exported SVG stay consistent.
+      // Identity transform → no-op (guarded) so untouched layers are unchanged.
       const t = transforms[layer.id];
       p.push();
-      if (t && (t.x || t.y)) p.translate(t.x, t.y);
+      if (t && (t.x || t.y || (t.rotation && t.rotation !== 0) || (t.scale != null && t.scale !== 1))) {
+        const cx = canvasW / 2;
+        const cy = canvasH / 2;
+        p.translate(t.x || 0, t.y || 0);
+        p.translate(cx, cy);
+        if (t.rotation) p.rotate(p.radians(t.rotation));
+        if (t.scale != null && t.scale !== 1) p.scale(t.scale);
+        p.translate(-cx, -cy);
+      }
 
       // Draw layer background fill if bgOpacity > 0
       if (layer.bgOpacity > 0) {
@@ -102,35 +113,57 @@ export default function useCanvas(
       p.pop();
     }
 
-    // Selection bounding box (canvas-drawn, plan §4): thin accent rect + corner
-    // ticks at the selected layer's full-canvas bbox, offset by its translate.
-    // Guarded by layers.find so a stale id (deleted layer) can't throw.
+    // Selection chrome (canvas-drawn, plan §5): bbox outline + 8 resize handles
+    // + 1 rotate handle, drawn INSIDE the node's center-pivot transform so they
+    // rotate/scale WITH the node. Handles are placed at LOCAL bbox coords (full
+    // canvas), so the same transform maps them to where the node is.
+    // Guarded by layers.find so a stale id (deleted layer) can't throw. The
+    // transform is applied UNCONDITIONALLY (identity → no-op) so a freshly
+    // selected, untransformed node still shows its handles.
     const selId = selectedRef.current;
     if (selId) {
       const selLayer = layers.find((l) => l.id === selId);
       if (selLayer) {
-        const t = transforms[selId] || { x: 0, y: 0 };
-        const bx = t.x || 0;
-        const by = t.y || 0;
-        const bw = canvasW;
-        const bh = canvasH;
+        const t = transforms[selId] || { x: 0, y: 0, rotation: 0, scale: 1 };
+        const cx = canvasW / 2;
+        const cy = canvasH / 2;
         p.push();
+        // Same center-pivot transform used for the node render.
+        p.translate(t.x || 0, t.y || 0);
+        p.translate(cx, cy);
+        if (t.rotation) p.rotate(p.radians(t.rotation));
+        if (t.scale != null && t.scale !== 1) p.scale(t.scale);
+        p.translate(-cx, -cy);
+
+        // Bbox outline (local full-canvas coords).
         p.noFill();
         p.stroke(124, 92, 246); // violet accent
         p.strokeWeight(1);
-        p.rect(bx + 0.5, by + 0.5, bw - 1, bh - 1);
-        // Corner ticks (no resize handles yet)
-        const tick = Math.min(14, bw / 8, bh / 8);
-        p.strokeWeight(2);
-        const corners = [
-          [bx, by, 1, 1],
-          [bx + bw, by, -1, 1],
-          [bx, by + bh, 1, -1],
-          [bx + bw, by + bh, -1, -1],
-        ];
-        for (const [cx, cy, sx, sy] of corners) {
-          p.line(cx, cy, cx + sx * tick, cy);
-          p.line(cx, cy, cx, cy + sy * tick);
+        p.rect(0.5, 0.5, canvasW - 1, canvasH - 1);
+
+        const handles = handlesFor({ x: 0, y: 0, w: canvasW, h: canvasH });
+        const rotate = handles.find((h) => h.id === 'rotate');
+        const topCenter = handles.find((h) => h.id === 'n');
+
+        // Line from top-edge center up to the rotate handle.
+        if (rotate && topCenter) {
+          p.stroke(124, 92, 246);
+          p.strokeWeight(1);
+          p.line(topCenter.x, topCenter.y, rotate.x, rotate.y);
+        }
+
+        const HS = 8; // handle square size (px, local units)
+        p.stroke(124, 92, 246);
+        p.strokeWeight(1);
+        p.fill(255);
+        for (const h of handles) {
+          if (h.type === 'rotate') {
+            p.circle(h.x, h.y, HS);
+          } else {
+            p.rectMode(p.CENTER);
+            p.rect(h.x, h.y, HS, HS);
+            p.rectMode(p.CORNER);
+          }
         }
         p.pop();
       }

@@ -4,6 +4,10 @@ import BedOverlay from "./canvas/BedOverlay";
 import CanvasToolbar from "./canvas/CanvasToolbar";
 import { screenToCanvas } from "../lib/canvas/coords";
 import { applyMoveDelta, pickTopmostHit } from "../lib/tools/moveTransform";
+import { classifyPointer, rotateTransform, scaleTransform } from "../lib/tools/transformGestures";
+import { ROTATE_OFFSET } from "../lib/transform/handles";
+
+const IDENTITY = { x: 0, y: 0, rotation: 0, scale: 1 };
 
 const BG_PRESETS = [
   { color: "#0a1628", label: "Dark Blue" },
@@ -133,6 +137,40 @@ export default function RightPanel({
       if (!selectActive || e.button !== 0) return;
       const pt = toCanvasPoint(e.clientX, e.clientY);
       if (!pt) return;
+
+      const capture = () => {
+        try {
+          e.currentTarget.setPointerCapture?.(e.pointerId);
+        } catch {
+          /* setPointerCapture can throw if pointer already released */
+        }
+      };
+
+      // 1) If a node is already selected, give its rotate/resize handles
+      //    priority over re-selecting/moving. Handles are hit-tested in the
+      //    node's LOCAL space (classifyPointer inverse-maps the pointer about
+      //    the canvas center pivot). A handle hit starts a rotate/resize drag
+      //    WITHOUT changing selection.
+      if (selectedNodeId) {
+        const startTransform = transformsLiveRef.current[selectedNodeId] || IDENTITY;
+        const selected = { transform: startTransform, localBBox: { x: 0, y: 0, w: canvasW, h: canvasH } };
+        const hit = classifyPointer(pt, selected, canvasW, canvasH);
+        if (hit.kind === "rotate" || hit.kind === "resize") {
+          dragRef.current = {
+            id: selectedNodeId,
+            kind: hit.kind,
+            handleId: hit.handleId,
+            startPoint: pt,
+            startTransform,
+            center: { x: canvasW / 2, y: canvasH / 2 },
+            moved: false,
+          };
+          capture();
+          return;
+        }
+      }
+
+      // 2) Otherwise fall through to select/move.
       const id = pickTopmostHit(pt, layers, patternInstances, transformsLiveRef.current, canvasW, canvasH);
       if (!id) {
         // Empty-space click → clear selection, no history commit.
@@ -140,15 +178,18 @@ export default function RightPanel({
         return;
       }
       onSelect(id);
-      const startTransform = transformsLiveRef.current[id] || { x: 0, y: 0, rotation: 0, scale: 1 };
-      dragRef.current = { id, startPoint: pt, startTransform, moved: false };
-      try {
-        e.currentTarget.setPointerCapture?.(e.pointerId);
-      } catch {
-        /* setPointerCapture can throw if pointer already released */
-      }
+      const startTransform = transformsLiveRef.current[id] || IDENTITY;
+      dragRef.current = {
+        id,
+        kind: "move",
+        startPoint: pt,
+        startTransform,
+        center: { x: canvasW / 2, y: canvasH / 2 },
+        moved: false,
+      };
+      capture();
     },
-    [selectActive, toCanvasPoint, layers, patternInstances, canvasW, canvasH, onSelect]
+    [selectActive, toCanvasPoint, layers, patternInstances, canvasW, canvasH, onSelect, selectedNodeId]
   );
 
   const handlePointerMove = useCallback(
@@ -160,7 +201,15 @@ export default function RightPanel({
       const dx = pt.x - drag.startPoint.x;
       const dy = pt.y - drag.startPoint.y;
       if (!drag.moved && (dx !== 0 || dy !== 0)) drag.moved = true;
-      const next = applyMoveDelta(drag.startTransform, dx, dy);
+
+      let next;
+      if (drag.kind === "rotate") {
+        next = rotateTransform(drag.startTransform, drag.center, drag.startPoint, pt, e.shiftKey);
+      } else if (drag.kind === "resize") {
+        next = scaleTransform(drag.startTransform, drag.center, drag.startPoint, pt);
+      } else {
+        next = applyMoveDelta(drag.startTransform, dx, dy);
+      }
       onMove(drag.id, next);
     },
     [toCanvasPoint, onMove]
@@ -211,8 +260,16 @@ export default function RightPanel({
             the scaled wrapper. Only intercepts events while select is active;
             otherwise pointer-events:none lets wheel-zoom / picker pass through. */}
         <div
-          className="absolute inset-0"
+          className="absolute"
           style={{
+            // Extend ABOVE the canvas top so the rotate handle (which floats at
+            // local y = -ROTATE_OFFSET, i.e. above the top edge) is inside the
+            // overlay box and can receive its initiating pointerdown. Resize
+            // handles already sit within [0, canvasH].
+            top: -(ROTATE_OFFSET + 8),
+            right: 0,
+            bottom: 0,
+            left: 0,
             pointerEvents: selectActive ? "auto" : "none",
             cursor: selectActive ? "default" : "auto",
           }}

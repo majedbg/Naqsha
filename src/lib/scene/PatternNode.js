@@ -12,12 +12,15 @@ export class PatternNode extends SceneNode {
     this.instance = instance;
   }
 
-  toSVGGroup() {
+  toSVGGroup(pivot) {
     const inner = this.instance.toSVGGroup(this.layer.id, this.layer.color, this.layer.opacity);
     // Identity-safe: only wrap in a transform group when the transform is
     // non-identity. `transformToSVG` returns '' for identity, so an untouched
     // pattern emits exactly what it does today (byte-identical export).
-    const svgTransform = transformToSVG(this.transform);
+    // An optional `pivot` ({x,y}) selects the center-pivot form for rotation/
+    // scale; with no pivot (or pure translate) the origin form is emitted, so
+    // calling toSVGGroup() with no arg is identical to before.
+    const svgTransform = transformToSVG(this.transform, pivot);
     return svgTransform ? `<g transform="${svgTransform}">${inner}</g>` : inner;
   }
 

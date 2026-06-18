@@ -2,6 +2,7 @@ import { useRef, useState, useEffect, useCallback } from "react";
 import useCanvas from "../lib/useCanvas";
 import BedOverlay from "./canvas/BedOverlay";
 import CanvasChrome from "./canvas/CanvasChrome";
+import PlotOverlay from "./canvas/PlotOverlay";
 import { cursorToUnit } from "../lib/canvasChrome";
 
 const BG_PRESETS = [
@@ -40,6 +41,15 @@ export default function RightPanel({
   // byte-identical no-op (no chrome, no cursor tracking).
   bedSize,
   onCursorMove,
+  // Plot preview + overlap overlay (pro shell only — C7 / #15). When
+  // `showPlotOverlay` is true the panel renders <PlotOverlay/> as a sibling of
+  // the p5 surface INSIDE the scaled wrapper, so it auto-aligns with the live
+  // design and scales with the canvas transform. OFF by default (the parent
+  // simply doesn't pass it / passes false) → a true no-op clean canvas, matching
+  // the legacy/flag-OFF path byte-for-byte. `appliedOptimizations` selects the
+  // route-preview basis (post-optimize, like the legacy PlotPreviewSection).
+  showPlotOverlay = false,
+  appliedOptimizations = null,
 }) {
   const containerRef = useRef(null);
   const wrapperRef = useRef(null);
@@ -208,6 +218,19 @@ export default function RightPanel({
             canvasH={canvasH}
             marginPx={marginPx}
             unit={unit}
+          />
+        )}
+        {/* Plot preview + overlap overlay (C7 / #15). Sibling of the p5 surface
+            inside the scaled wrapper, so it shares the artwork's coordinate
+            space and the canvas transform. Gated by the shell's Overlays toggle;
+            null when off → clean canvas. */}
+        {showPlotOverlay && (
+          <PlotOverlay
+            layers={layers}
+            patternInstances={patternInstances}
+            canvasW={canvasW}
+            canvasH={canvasH}
+            appliedOptimizations={appliedOptimizations}
           />
         )}
       </div>

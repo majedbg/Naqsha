@@ -350,6 +350,13 @@ export default function Studio() {
   const statusBarSlot = useStatusBarSlot();
   const [cursorPos, setCursorPos] = useState(null);
 
+  // Plot preview + overlap overlay toggle (C7 / #15). OFF by default → clean
+  // canvas. Driven from the View > Overlays menu item and surfaced as the
+  // PlotOverlay on the canvas. Only meaningful on the pro-shell path (the legacy
+  // layout keeps its Prepare-tab preview/overlap UI untouched — that's #16), so
+  // the RightPanel wiring below is gated by `inProShell` and stays a no-op off.
+  const [showOverlays, setShowOverlays] = useState(false);
+
   // Pro-shell operations panel slot (C1 / #10). Null in the legacy layout (no
   // provider) → the panel portal below is a no-op. The same slot presence gates
   // the undo/redo keyboard shortcut so ⌘Z never hijacks the legacy layout.
@@ -805,6 +812,8 @@ export default function Studio() {
             externalPan={inProShell ? canvasView.pan : undefined}
             bedSize={inProShell ? bedSize : undefined}
             onCursorMove={inProShell ? setCursorPos : undefined}
+            showPlotOverlay={inProShell && showOverlays}
+            appliedOptimizations={appliedOptimizations}
           />
         </div>
       </div>
@@ -912,6 +921,8 @@ export default function Studio() {
             onDocumentSetup={() => setDocumentSetupOpen(true)}
             onUndo={canUndo ? undo : undefined}
             onRedo={canRedo ? redo : undefined}
+            onToggleOverlays={() => setShowOverlays((v) => !v)}
+            overlaysOn={showOverlays}
             buildShareState={buildShareState}
           />,
           menuSlot

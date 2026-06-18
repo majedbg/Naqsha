@@ -72,7 +72,8 @@ function Menu({ label, items, openId, setOpenId }) {
               <button
                 key={item.label}
                 type="button"
-                role="menuitem"
+                role={item.checkable ? "menuitemcheckbox" : "menuitem"}
+                aria-checked={item.checkable ? !!item.checked : undefined}
                 disabled={item.disabled || !item.onSelect}
                 onClick={() => {
                   setOpenId(null);
@@ -80,7 +81,14 @@ function Menu({ label, items, openId, setOpenId }) {
                 }}
                 className="w-full text-left px-3 py-1.5 text-xs text-ink-soft hover:text-ink hover:bg-paper-warm disabled:opacity-40 disabled:cursor-default disabled:hover:bg-transparent disabled:hover:text-ink-soft transition-colors duration-fast ease-out-quart flex items-center justify-between gap-4"
               >
-                <span>{item.label}</span>
+                <span className="flex items-center gap-2">
+                  {item.checkable && (
+                    <span className="w-3 text-accent" aria-hidden="true">
+                      {item.checked ? "✓" : ""}
+                    </span>
+                  )}
+                  <span>{item.label}</span>
+                </span>
                 {item.shortcut && (
                   <span className="text-[10px] text-ink-soft/50 num">
                     {item.shortcut}
@@ -107,6 +115,8 @@ export default function MenuBar({
   onDocumentSetup,
   onUndo,
   onRedo,
+  onToggleOverlays,
+  overlaysOn = false,
   buildShareState,
 }) {
   // A single "which menu is open" id keeps only one dropdown open at a time and
@@ -155,7 +165,16 @@ export default function MenuBar({
         { label: "Rulers", disabled: true },
         { label: "Zoom in", disabled: true },
         { label: "Zoom out", disabled: true },
-        { label: "Overlays", disabled: true },
+        // Overlays (C7 / #15) — plot preview + overlap highlights over the canvas.
+        // Live the moment Studio supplies a toggle handler; renders as a checkbox
+        // item reflecting the current on/off state.
+        {
+          label: "Overlays",
+          checkable: true,
+          checked: overlaysOn,
+          onSelect: onToggleOverlays,
+          disabled: !onToggleOverlays,
+        },
       ],
     },
     {

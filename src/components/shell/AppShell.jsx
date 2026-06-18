@@ -13,6 +13,9 @@
 // The canonical, ordered region-label list lives in `./regions.js` (a non-
 // component module) so this file only exports components.
 
+import { useState } from 'react';
+import { InspectorSlotProvider } from './shellSlots';
+
 // Shared frame for every region: a labeled landmark with a dashed placeholder
 // affordance so the empty skeleton reads as "intentionally empty" in the UI.
 // `children` lets the Canvas region host the live Studio.
@@ -77,10 +80,13 @@ export function CanvasRegion({ children, className = '' }) {
   );
 }
 
-export function InspectorRegion({ children, className = '' }) {
+export function InspectorRegion({ children, contentRef, className = '' }) {
+  // `contentRef` (a callback ref) exposes the region's inner mount node so the
+  // hosted Studio can portal the selection-driven Inspector into it (B3 / #6).
+  // When omitted, the region renders its empty labeled placeholder as before.
   return (
     <Region label="Inspector" className={`flex-1 overflow-auto ${className}`}>
-      {children}
+      {contentRef ? <div ref={contentRef} className="h-full" /> : children}
     </Region>
   );
 }
@@ -105,6 +111,12 @@ export function StatusBarRegion({ children, className = '' }) {
 // bar), a three-column body (tool strip + object tree | canvas | inspector +
 // operations panel), and a bottom status bar.
 export default function AppShell({ children }) {
+  // The Inspector region's inner mount node, captured via a callback ref and
+  // published through InspectorSlotProvider so the hosted Studio (a sibling in
+  // the Canvas region) can portal its selection-driven Inspector into it (B3 /
+  // #6). State (not a bare ref) so publishing the node re-renders the provider.
+  const [inspectorNode, setInspectorNode] = useState(null);
+
   return (
     <div className="flex flex-col h-dvh bg-paper">
       <MenuBarRegion />
@@ -114,11 +126,16 @@ export default function AppShell({ children }) {
         <ToolStripRegion />
         <ObjectTreeRegion />
 
-        {/* The live Studio is hosted here, unchanged, during B1. */}
-        <CanvasRegion>{children}</CanvasRegion>
+        {/* The live Studio is hosted here. It reads the Inspector slot from
+            context and portals the param inspector into the region below. */}
+        <CanvasRegion>
+          <InspectorSlotProvider value={inspectorNode}>
+            {children}
+          </InspectorSlotProvider>
+        </CanvasRegion>
 
         <div className="flex flex-col w-72 shrink-0 min-h-0">
-          <InspectorRegion />
+          <InspectorRegion contentRef={setInspectorNode} />
           <OperationsPanelRegion />
         </div>
       </div>

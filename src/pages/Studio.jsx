@@ -1,5 +1,8 @@
 import { useState, useRef, useCallback } from "react";
+import { createPortal } from "react-dom";
 import LeftPanel from "../components/LeftPanel";
+import Inspector from "../components/shell/Inspector";
+import { useInspectorSlot } from "../components/shell/shellSlots";
 import ConfirmDialog from "../components/ui/ConfirmDialog";
 import { EXAMPLES, EXAMPLE_COUNT } from "../examples";
 import RightPanel from "../components/RightPanel";
@@ -99,6 +102,13 @@ export default function Studio() {
     bgColor,
     setBgColor,
   } = useLayers({ persistToLocal: limits.localStorage, maxLayers: limits.maxLayers });
+
+  // Pro-shell Inspector slot (B3 / #6). Null in the legacy layout (no provider),
+  // so the portal below is a true no-op when the pro shell is off. Until the
+  // object tree (#5) owns selection, the inspector defaults to the top layer
+  // (index 0 = front) so it is populated and editable in the shell.
+  const inspectorSlot = useInspectorSlot();
+  const selectedLayerId = layers[0]?.id ?? null;
 
   const { groups, saveGroup, deleteGroup, renameGroup } = useLayerGroups();
   const patternInstancesRef = useRef({});
@@ -517,6 +527,20 @@ export default function Studio() {
           onClose={() => setUI("aiChatOpen", false)}
         />
       )}
+
+      {/* Pro-shell param inspector (B3 / #6). Portaled into the shell's right
+          Inspector region when the slot is present; renders nothing in the
+          legacy layout (slot is null → no-op). */}
+      {inspectorSlot &&
+        createPortal(
+          <Inspector
+            layers={layers}
+            selectedLayerId={selectedLayerId}
+            onUpdateLayer={updateLayer}
+            onChangeLayerPattern={changeLayerPattern}
+          />,
+          inspectorSlot
+        )}
 
       <ConfirmDialog
         open={pendingExample !== null}

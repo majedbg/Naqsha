@@ -16,8 +16,15 @@ import AuthButton from "../components/AuthButton";
 import ThemeToggle from "../components/ui/ThemeToggle";
 import { exportLayerSVG, exportAllLayersSVG, buildManifest } from "../lib/svgExport";
 import ShareLinkButton from "../components/ShareLinkButton";
-import { applyOutputMode } from "../lib/fabrication";
+import { resolveExportColor } from "../lib/fabrication";
+import { seedOperations } from "../lib/operations";
 import useCanvasSize, { loadCanvasState } from "../lib/hooks/useCanvasSize";
+
+// Document operation library. Stable seed ids (op-cut/op-score/op-engrave) match
+// the ids on bundled examples and the migration shim, so any layer's
+// `operationId` resolves here. No CRUD UI yet (Operations panel is a later
+// issue); the library is a constant for now.
+const DOCUMENT_OPERATIONS = seedOperations();
 import useUIState from "../lib/hooks/useUIState";
 import useOptimizations from "../lib/hooks/useOptimizations";
 import useDesignPersistence from "../lib/hooks/useDesignPersistence";
@@ -159,10 +166,24 @@ export default function Studio() {
     }
   };
 
+  // The active machine profile is the migrated `outputMode` (laser | plotter).
+  const machineProfile = outputMode;
+
+  // Resolve a layer's export color through its operation (A4). Laser → the
+  // operation's locked-convention color; plotter → the layer's own color.
+  const exportLayer = (layer) => ({
+    ...layer,
+    color: resolveExportColor(layer, {
+      operations: DOCUMENT_OPERATIONS,
+      outputMode: machineProfile,
+    }),
+  });
+
   const buildExportManifest = () =>
     buildManifest({
       version: "1",
-      outputMode,
+      machineProfile,
+      operations: DOCUMENT_OPERATIONS,
       bedW: bedWmm,
       bedH: bedHmm,
       bedUnit: "mm",
@@ -174,7 +195,7 @@ export default function Studio() {
     const layer = layers.find((l) => l.id === layerId);
     const instance = patternInstancesRef.current?.[layerId];
     if (layer && instance) {
-      exportLayerSVG(applyOutputMode(layer, outputMode), instance, canvasW, canvasH, {
+      exportLayerSVG(exportLayer(layer), instance, canvasW, canvasH, {
         metadata: limits.svgMetadata,
         manifest: buildExportManifest(),
         optimizations: appliedOptimizations,
@@ -183,7 +204,7 @@ export default function Studio() {
   };
 
   const handleExportAll = (includeHidden, opts = {}) => {
-    const mapped = layers.map((l) => applyOutputMode(l, outputMode));
+    const mapped = layers.map(exportLayer);
     exportAllLayersSVG(
       mapped,
       patternInstancesRef.current || {},

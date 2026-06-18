@@ -1,5 +1,7 @@
 // Fabrication helpers — output modes and role→color mapping.
 
+import { resolveLayerColor } from './operations.js';
+
 export const OUTPUT_MODES = [
   {
     value: 'plotter',
@@ -31,6 +33,25 @@ export function applyOutputMode(layer, outputMode) {
     return { ...layer, color: roleColor(layer.role) };
   }
   return layer;
+}
+
+// Operation-library export-color resolution (issue #1, A4) — replaces
+// `applyOutputMode(layer, outputMode)` in the export path.
+//
+//   laser profile   → the assigned operation's color (locked convention);
+//                     falls back to #000000 when the layer has no resolvable
+//                     operationId (matches roleColor()'s legacy default).
+//   other profiles  → the layer's own color is preserved (no override), exactly
+//                     as plotter mode behaved before.
+//
+// `operations` is the document's operation library. Resolution goes THROUGH the
+// operation rather than through layer.role, but the emitted colors are
+// byte-identical to the legacy applyOutputMode for migrated identity cases.
+export function resolveExportColor(layer, { operations, outputMode } = {}) {
+  if (outputMode === 'laser') {
+    return resolveLayerColor(layer, operations);
+  }
+  return layer.color;
 }
 
 export const MAX_PEN_SLOTS = 6;

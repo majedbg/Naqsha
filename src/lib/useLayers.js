@@ -3,6 +3,8 @@ import { DEFAULT_PARAMS, DEFAULT_COLORS, MAX_LAYERS, PATTERN_PARAM_DEFS, RANDOMI
 import { randomPatchForDef } from './params/paramOps';
 import { getDynamicDefaults, getDynamicParamDefs } from './patternRegistry';
 import { isMoireMember, findMoirePartnerA, findMoirePartnerB } from './moirePair';
+import { migrateLayer } from './migration';
+import { operationIdForRole } from './operations';
 
 // Distinct group id for a Moiré pair (links role A + role B).
 let nextGroupNum = 1;
@@ -69,7 +71,8 @@ function createLayer(index, requestedType) {
     paramsCache: {},
     // Fabrication metadata — consumed only when Prepare's output mode
     // applies. Safe to exist in plotter/design modes; just ignored.
-    role: 'cut',          // 'cut' | 'score' | 'engrave' — used in laser output mode
+    role: 'cut',          // 'cut' | 'score' | 'engrave' — legacy assignment surface
+    operationId: operationIdForRole('cut'), // operation-library reference (issue #1)
     penSlot: (index % 4) + 1, // 1..4 — used in plotter output mode
   };
 }
@@ -94,7 +97,10 @@ function loadLayers() {
       }
     }
     nextId = maxNum + 1;
-    return parsed;
+    // Migration boundary (local): legacy layers carry `role` but no
+    // `operationId`. Map them forward so export/canvas resolve through an
+    // operation. Never reset-to-default.
+    return parsed.map((l) => migrateLayer(l));
   } catch {
     return null;
   }
@@ -223,8 +229,16 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
   }, []);
 
   const updateLayer = useCallback((id, patch) => {
+    // The role toggle (OutputModeSection) is the temporary assignment surface
+    // until the Operations panel ships. Export + plot-preview now resolve through
+    // `operationId`, so keep it in sync whenever a `role` is assigned — otherwise
+    // a role edit would silently no-op the export and diverge from the preview.
+    const synced =
+      patch && Object.prototype.hasOwnProperty.call(patch, 'role')
+        ? { ...patch, operationId: operationIdForRole(patch.role) }
+        : patch;
     setLayers((prev) =>
-      prev.map((l) => (l.id === id ? { ...l, ...patch } : l))
+      prev.map((l) => (l.id === id ? { ...l, ...synced } : l))
     );
   }, []);
 
@@ -292,6 +306,7 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
           randomizeKeys: moireRandomizeKeys(),
           paramsCache: {},
           role: 'cut',
+          operationId: operationIdForRole('cut'),
           penSlot: ((idx + 1) % 4) + 1,
           moireRole: 'B',
           moireGroupId: groupId,
@@ -474,7 +489,10 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
       if (match) maxNum = Math.max(maxNum, Number(match[1]));
     }
     nextId = maxNum + 1;
-    setLayers(newLayers);
+    // Migration funnel: every load boundary that applies a layer set (examples,
+    // cloud, share, saved groups) flows through here, so each layer ends up with
+    // a resolvable `operationId` (derived from legacy `role` when absent).
+    setLayers(newLayers.map((l) => migrateLayer(l)));
   }, []);
 
   return {

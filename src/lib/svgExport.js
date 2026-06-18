@@ -6,6 +6,7 @@
 
 import { optimizeGroup } from './plotter/pipeline';
 import { PPI, MM_PER_IN } from './plotter/constants.js';
+import { resolveOperation } from './operations.js';
 
 const pxToMm = (px) => (px / PPI) * MM_PER_IN;
 
@@ -122,20 +123,30 @@ export function exportAllLayersSVG(layers, patternInstances, canvasW, canvasH, i
 export function buildManifest({
   appName = 'Naqsha',
   version = '1',
-  outputMode = 'plotter',
+  // `machineProfile` is the new field (replaces the old `outputMode` toggle);
+  // `outputMode` is still accepted as a fallback for any legacy caller.
+  machineProfile,
+  outputMode,
+  operations,
   bedW, bedH, bedUnit = 'mm',
   layers = [],
   optimizations = [],
 } = {}) {
   const ts = new Date().toISOString();
-  const layerLines = layers.map((l) =>
-    `  layer: ${l.name || l.id} | pattern: ${l.patternType} | seed: ${l.seed} | role: ${l.role ?? '-'} | pen: ${l.penSlot ?? '-'}`
-  );
+  const profile = machineProfile ?? outputMode ?? 'plotter';
+  // Per-layer line reflects the assigned operation (name + process) when an
+  // operation library is supplied, falling back to the legacy `role` otherwise.
+  const layerLines = layers.map((l) => {
+    const op = operations ? resolveOperation(operations, l.operationId) : undefined;
+    const opName = op ? op.name : '-';
+    const process = op ? op.process : (l.role ?? '-');
+    return `  layer: ${l.name || l.id} | pattern: ${l.patternType} | seed: ${l.seed} | operation: ${opName} | process: ${process} | pen: ${l.penSlot ?? '-'}`;
+  });
   return [
     `${appName} export v${version}`,
     `timestamp: ${ts}`,
     `bed: ${bedW} x ${bedH} ${bedUnit}`,
-    `output: ${outputMode}`,
+    `output: ${profile}`,
     `optimizations: ${optimizations.length ? optimizations.join(', ') : 'none'}`,
     ...layerLines,
   ].join('\n');

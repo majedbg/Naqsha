@@ -1,0 +1,129 @@
+// Pro app-shell scaffold — Lane B / B1 (GitHub issue #2).
+//
+// Eight empty, labeled region frames per PRD §7.1 region map. This is the
+// strangler skeleton: subsequent slices (#5–#10) fill exactly one region each
+// with behavior moved out of the legacy LeftPanel/RightPanel. No behavior lives
+// here yet — every region but Canvas is an empty placeholder, and the existing
+// Studio is hosted, unchanged, inside the Canvas region (passed as `children`).
+//
+// AppShell is pure/presentational: no feature flag, no breakpoint logic. The
+// flag + breakpoint gate lives in `pages/StudioRoute.jsx` so this component is
+// trivially testable and each region is independently mountable.
+//
+// The canonical, ordered region-label list lives in `./regions.js` (a non-
+// component module) so this file only exports components.
+
+// Shared frame for every region: a labeled landmark with a dashed placeholder
+// affordance so the empty skeleton reads as "intentionally empty" in the UI.
+// `children` lets the Canvas region host the live Studio.
+function Region({ label, className = '', children }) {
+  return (
+    <section
+      role="region"
+      aria-label={label}
+      data-region={label}
+      className={`relative min-w-0 min-h-0 border border-dashed border-hairline ${className}`}
+    >
+      {children ?? (
+        <span className="pointer-events-none absolute left-2 top-1 text-[10px] uppercase tracking-wide text-ink-soft/60 select-none">
+          {label}
+        </span>
+      )}
+    </section>
+  );
+}
+
+// === Independently mountable region components (one export each) ===
+// Each renders on its own so a later slice can target exactly one region
+// without touching the others.
+
+export function MenuBarRegion({ children, className = '' }) {
+  return (
+    <Region label="Menu bar" className={`h-9 shrink-0 ${className}`}>
+      {children}
+    </Region>
+  );
+}
+
+export function ControlBarRegion({ children, className = '' }) {
+  return (
+    <Region label="Contextual control bar" className={`h-9 shrink-0 ${className}`}>
+      {children}
+    </Region>
+  );
+}
+
+export function ToolStripRegion({ children, className = '' }) {
+  return (
+    <Region label="Tool strip" className={`w-12 shrink-0 ${className}`}>
+      {children}
+    </Region>
+  );
+}
+
+export function ObjectTreeRegion({ children, className = '' }) {
+  return (
+    <Region label="Object tree" className={`w-56 shrink-0 overflow-auto ${className}`}>
+      {children}
+    </Region>
+  );
+}
+
+export function CanvasRegion({ children, className = '' }) {
+  return (
+    <Region label="Canvas" className={`flex-1 overflow-hidden ${className}`}>
+      {children}
+    </Region>
+  );
+}
+
+export function InspectorRegion({ children, className = '' }) {
+  return (
+    <Region label="Inspector" className={`flex-1 overflow-auto ${className}`}>
+      {children}
+    </Region>
+  );
+}
+
+export function OperationsPanelRegion({ children, className = '' }) {
+  return (
+    <Region label="Operations panel" className={`h-48 shrink-0 overflow-auto ${className}`}>
+      {children}
+    </Region>
+  );
+}
+
+export function StatusBarRegion({ children, className = '' }) {
+  return (
+    <Region label="Status bar" className={`h-7 shrink-0 ${className}`}>
+      {children}
+    </Region>
+  );
+}
+
+// Pro shell layout. Two top rows (decision 9: menu bar + contextual control
+// bar), a three-column body (tool strip + object tree | canvas | inspector +
+// operations panel), and a bottom status bar.
+export default function AppShell({ children }) {
+  return (
+    <div className="flex flex-col h-dvh bg-paper">
+      <MenuBarRegion />
+      <ControlBarRegion />
+
+      <div className="flex flex-1 min-h-0">
+        <ToolStripRegion />
+        <ObjectTreeRegion />
+
+        {/* The live Studio is hosted here, unchanged, during B1. */}
+        <CanvasRegion>{children}</CanvasRegion>
+
+        <div className="flex flex-col w-72 shrink-0 min-h-0">
+          <InspectorRegion />
+          <OperationsPanelRegion />
+        </div>
+      </div>
+
+      <StatusBarRegion />
+    </div>
+  );
+}

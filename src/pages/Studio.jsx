@@ -7,6 +7,7 @@ import MenuBar from "../components/shell/MenuBar";
 import ToolStrip from "../components/shell/ToolStrip";
 import ControlBar from "../components/shell/ControlBar";
 import StatusBar from "../components/shell/StatusBar";
+import OperationsPanel from "../components/shell/OperationsPanel";
 import {
   useInspectorSlot,
   useMenuSlot,
@@ -14,6 +15,7 @@ import {
   useControlBarSlot,
   useObjectTreeSlot,
   useStatusBarSlot,
+  useOperationsPanelSlot,
 } from "../components/shell/shellSlots";
 import useActiveTool from "../lib/hooks/useActiveTool";
 import useCanvasView from "../lib/hooks/useCanvasView";
@@ -35,8 +37,9 @@ import ThemeToggle from "../components/ui/ThemeToggle";
 import { exportLayerSVG, exportAllLayersSVG, buildManifest } from "../lib/svgExport";
 import ShareLinkButton from "../components/ShareLinkButton";
 import { resolveExportColor } from "../lib/fabrication";
-import { seedOperations } from "../lib/operations";
-import { remapOperationsToProfile, defaultBedSize } from "../lib/machineProfiles";
+import { seedOperations, addOperation } from "../lib/operations";
+import { remapOperationsToProfile, defaultBedSize, profileProcesses, defaultMachineParams } from "../lib/machineProfiles";
+import useOperationsHistory from "../lib/hooks/useOperationsHistory";
 import { findMoirePartnerA } from "../lib/moirePair";
 import useCanvasSize, { loadCanvasState } from "../lib/hooks/useCanvasSize";
 import useUIState from "../lib/hooks/useUIState";
@@ -128,8 +131,52 @@ export default function Studio() {
   // the active profile is seeded FROM the migrated `outputMode` (not the laser
   // default) — so on load `activeProfileId === outputMode` and the export path
   // resolves identical colors. A remap only fires when the user switches.
-  const [operations, setOperations] = useState(() => seedOperations());
   const [activeProfileId, setActiveProfileId] = useState(outputMode);
+
+  // === Operation library + assignment undo/redo (C1 / #10) ===
+  // The operation library is owned by a FOCUSED history hook (not a bare
+  // useState) so library edits AND operation assignment (a layer's operationId)
+  // are undoable/redoable. Assignment stays owned by useLayers; the hook only
+  // snapshots a cheap {layerId: operationId} map captured from the CURRENT
+  // layers — never whole layer objects — so undo can't disturb other layer
+  // fields. `layersRef` lets the (stable) capture/restore callbacks read the
+  // live layers without re-creating the hook each render. Seeded EXACTLY as
+  // before (seedOperations(), same ids/colors) so export stays byte-stable.
+  const layersRef = useRef(layers);
+  useEffect(() => {
+    layersRef.current = layers;
+  }, [layers]);
+  const captureAssignments = useCallback(() => {
+    const map = {};
+    for (const l of layersRef.current) map[l.id] = l.operationId;
+    return map;
+  }, []);
+  const restoreAssignments = useCallback(
+    (assignments) => {
+      for (const l of layersRef.current) {
+        const want = assignments[l.id];
+        // Only reassign layers present in the snapshot whose operationId differs
+        // — layers added after the snapshot keep their current assignment.
+        if (want !== undefined && want !== l.operationId) {
+          updateLayer(l.id, { operationId: want });
+        }
+      }
+    },
+    [updateLayer]
+  );
+  const {
+    operations,
+    commitOperations,
+    undo,
+    redo,
+    resetHistory,
+    canUndo,
+    canRedo,
+  } = useOperationsHistory({
+    initialOperations: seedOperations(),
+    captureAssignments,
+    restoreAssignments,
+  });
 
   // Keep the active profile tracking the legacy `outputMode` so the legacy
   // OutputModeSection toggle (flag-OFF path) still drives export colors exactly
@@ -160,16 +207,36 @@ export default function Studio() {
   // (laser locks cut/score/engrave colors; plotter/drag leave them editable).
   // Keep the legacy `outputMode` in sync for the laser/plotter pair so the
   // export path (which still reads it) follows the selector.
+  // Switching the machine profile is NOT undoable (out of #10's scope, and a
+  // pre-remap snapshot's colors/params no longer fit the new profile — so
+  // cross-profile undo is semantically broken). Route the remap through the
+  // history hook's non-recording `resetHistory`, which replaces the library and
+  // CLEARS the undo/redo stacks.
   const handleProfileChange = useCallback(
     (nextProfileId) => {
       setActiveProfileId(nextProfileId);
-      setOperations((ops) => remapOperationsToProfile(ops, nextProfileId));
+      resetHistory(remapOperationsToProfile(operations, nextProfileId));
       if (nextProfileId === "laser" || nextProfileId === "plotter") {
         setOutputMode(nextProfileId);
       }
     },
-    [setOutputMode]
+    [setOutputMode, resetHistory, operations]
   );
+
+  // === Operations-panel edit handlers (C1 / #10) — all routed through history.
+  // Library edits (reorder / recolor / param-edit / remove) flow through
+  // `commitOperations(mapper)`; "Add" appends a fresh operation under the active
+  // profile's first process with that process's default machineParams.
+  const handleAddOperation = useCallback(() => {
+    const process = profileProcesses(activeProfileId)[0];
+    commitOperations((ops) =>
+      addOperation(ops, {
+        name: `Operation ${ops.length + 1}`,
+        process,
+        machineParams: defaultMachineParams(activeProfileId, process),
+      })
+    );
+  }, [activeProfileId, commitOperations]);
 
   // The inspector edits the selected layer — EXCEPT for a Moiré role-B layer,
   // whose params live on its partner A (B reads A). Redirect edits to A so
@@ -212,6 +279,39 @@ export default function Studio() {
   const statusBarSlot = useStatusBarSlot();
   const bedSize = defaultBedSize(activeProfileId);
   const [cursorPos, setCursorPos] = useState(null);
+
+  // Pro-shell operations panel slot (C1 / #10). Null in the legacy layout (no
+  // provider) → the panel portal below is a no-op. The same slot presence gates
+  // the undo/redo keyboard shortcut so ⌘Z never hijacks the legacy layout.
+  const operationsPanelSlot = useOperationsPanelSlot();
+
+  // ⌘Z / ⇧⌘Z (Ctrl on non-mac) drive the operation-library + assignment history,
+  // bound only on the pro-shell path and ignored while typing into a text field
+  // (the operations panel's number inputs) so editing a param never triggers an
+  // undo. Mirrors the useActiveTool({enabled}) gate.
+  useEffect(() => {
+    if (!operationsPanelSlot) return undefined;
+    const isTextEntry = (t) => {
+      if (!t) return false;
+      const tag = t.tagName;
+      return (
+        tag === "INPUT" ||
+        tag === "TEXTAREA" ||
+        tag === "SELECT" ||
+        t.isContentEditable
+      );
+    };
+    const onKeyDown = (e) => {
+      if (e.key !== "z" && e.key !== "Z") return;
+      if (!(e.metaKey || e.ctrlKey)) return;
+      if (isTextEntry(e.target)) return;
+      e.preventDefault();
+      if (e.shiftKey) redo();
+      else undo();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [operationsPanelSlot, undo, redo]);
 
   const { groups, saveGroup, deleteGroup, renameGroup } = useLayerGroups();
   const patternInstancesRef = useRef({});
@@ -723,6 +823,8 @@ export default function Studio() {
             onSave={handleSaveLayerGroup}
             onSaveToCloud={handleSaveToCloud}
             onOpenCloudDesigns={() => setUI("showCloudModal", true)}
+            onUndo={canUndo ? undo : undefined}
+            onRedo={canRedo ? redo : undefined}
             buildShareState={buildShareState}
           />,
           menuSlot
@@ -811,6 +913,23 @@ export default function Studio() {
             bedSize={bedSize}
           />,
           statusBarSlot
+        )}
+
+      {/* Pro-shell operations / cut-settings panel (C1 / #10). Portaled into the
+          shell's right-bottom Operations-panel region when the slot is present;
+          renders nothing in the legacy layout (slot null → no-op). Lists the
+          operation library as rows with the active profile's param fields, and
+          routes every edit (add / reorder / recolor / param-edit) through the
+          undo/redo history so library + assignment changes are reversible. */}
+      {operationsPanelSlot &&
+        createPortal(
+          <OperationsPanel
+            operations={operations}
+            profileId={activeProfileId}
+            onCommitOperations={commitOperations}
+            onAddOperation={handleAddOperation}
+          />,
+          operationsPanelSlot
         )}
 
       <ConfirmDialog

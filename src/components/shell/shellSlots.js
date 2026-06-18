@@ -110,3 +110,20 @@ export function StatusBarSlotProvider({ value, children }) {
 export function useStatusBarSlot() {
   return useContext(StatusBarSlotContext);
 }
+
+// Operations panel slot (Lane C / C1, issue #10). Same bridge mechanism as
+// above: AppShell publishes the right-bottom Operations-panel region's DOM node;
+// the hosted Studio reads it and React-portals its <OperationsPanel/> (the
+// LightBurn-style operation/cut-settings rows) into it. Defaults to null so the
+// legacy layout (no provider) renders no operations panel — a true flag-OFF
+// no-op.
+const OperationsPanelSlotContext = createContext(null);
+
+export function OperationsPanelSlotProvider({ value, children }) {
+  return createElement(OperationsPanelSlotContext.Provider, { value }, children);
+}
+
+// Returns the Operations panel region's DOM node inside the pro shell, else null.
+export function useOperationsPanelSlot() {
+  return useContext(OperationsPanelSlotContext);
+}

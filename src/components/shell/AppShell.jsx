@@ -21,6 +21,7 @@ import {
   ControlBarSlotProvider,
   ObjectTreeSlotProvider,
   StatusBarSlotProvider,
+  OperationsPanelSlotProvider,
 } from './shellSlots';
 
 // Shared frame for every region: a labeled landmark with a dashed placeholder
@@ -111,10 +112,14 @@ export function InspectorRegion({ children, contentRef, className = '' }) {
   );
 }
 
-export function OperationsPanelRegion({ children, className = '' }) {
+export function OperationsPanelRegion({ children, contentRef, className = '' }) {
+  // `contentRef` (a callback ref) exposes the region's inner mount node so the
+  // hosted Studio can portal its LightBurn-style operations / cut-settings panel
+  // into it (C1 / #10). When omitted, the region renders its placeholder /
+  // passed children as before.
   return (
     <Region label="Operations panel" className={`h-48 shrink-0 overflow-auto ${className}`}>
-      {children}
+      {contentRef ? <div ref={contentRef} className="h-full" /> : children}
     </Region>
   );
 }
@@ -154,6 +159,9 @@ export default function AppShell({ children }) {
   // The Status bar region's inner mount node (B4 / #7), published so the hosted
   // Studio can portal its status bar into it.
   const [statusBarNode, setStatusBarNode] = useState(null);
+  // The Operations panel region's inner mount node (C1 / #10), published so the
+  // hosted Studio can portal its operations / cut-settings panel into it.
+  const [operationsNode, setOperationsNode] = useState(null);
 
   return (
     <div className="flex flex-col h-dvh bg-paper">
@@ -173,9 +181,11 @@ export default function AppShell({ children }) {
               <ControlBarSlotProvider value={controlBarNode}>
                 <ObjectTreeSlotProvider value={objectTreeNode}>
                   <StatusBarSlotProvider value={statusBarNode}>
-                    <InspectorSlotProvider value={inspectorNode}>
-                      {children}
-                    </InspectorSlotProvider>
+                    <OperationsPanelSlotProvider value={operationsNode}>
+                      <InspectorSlotProvider value={inspectorNode}>
+                        {children}
+                      </InspectorSlotProvider>
+                    </OperationsPanelSlotProvider>
                   </StatusBarSlotProvider>
                 </ObjectTreeSlotProvider>
               </ControlBarSlotProvider>
@@ -185,7 +195,7 @@ export default function AppShell({ children }) {
 
         <div className="flex flex-col w-72 shrink-0 min-h-0">
           <InspectorRegion contentRef={setInspectorNode} />
-          <OperationsPanelRegion />
+          <OperationsPanelRegion contentRef={setOperationsNode} />
         </div>
       </div>
 

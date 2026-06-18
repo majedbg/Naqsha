@@ -157,6 +157,27 @@ export function generateWeightBand({ layerId, profileId, n = DEFAULT_BAND_COUNT,
   });
 }
 
+/** Is this operation a variable-weight band op (carries the band link markers)? */
+export function isBandOperation(op) {
+  return !!(op && op.bandLayerId != null && op.bandId != null);
+}
+
+/**
+ * Live operations-library band sync (issue #17, C8). The pure mapper Studio
+ * commits through useOperationsHistory when a layer's variable-weight toggle / N
+ * control changes: it STRIPS that layer's previous band ops and (when enabled on
+ * a supported profile) appends a freshly generated band. Re-running it with a new
+ * N re-buckets the band live (old rows replaced by N new rows). Other layers'
+ * bands and the non-band library are untouched.
+ */
+export function syncWeightBand(operations, { layerId, profileId, enabled, n = DEFAULT_BAND_COUNT } = {}) {
+  const list = Array.isArray(operations) ? operations : [];
+  const stripped = list.filter((op) => op.bandLayerId !== layerId);
+  if (!enabled) return stripped;
+  const band = generateWeightBand({ layerId, profileId, n });
+  return [...stripped, ...band];
+}
+
 /**
  * Per-element export realization (A5-F3). ADDITIVE — used ONLY for layers with
  * variable-weight enabled; the normal single-color contentFor/toSVGGroup path is

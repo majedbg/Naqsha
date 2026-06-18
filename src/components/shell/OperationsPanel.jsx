@@ -26,6 +26,7 @@ import {
   PROCESSES,
 } from "../../lib/operations";
 import { paramSchemaFor, lockedColorFor } from "../../lib/machineProfiles";
+import { isBandOperation } from "../../lib/variableWeight";
 
 // Update one operation's machineParams[key] immutably.
 function setParam(ops, id, key, value) {
@@ -69,7 +70,11 @@ function OperationRow({
   onCommitOperations,
 }) {
   const schema = paramSchemaFor(profileId, op.process);
-  const locked = lockedColorFor(profileId, op.process) !== null;
+  // Variable-weight band ops keep their RESERVED spectrum colors — they are
+  // exempt from the laser color-lock (#17 / #4 follow-up), so the swatch stays
+  // editable and the "Locked" hint is suppressed for them.
+  const locked =
+    !isBandOperation(op) && lockedColorFor(profileId, op.process) !== null;
 
   const move = (to) => {
     if (to < 0 || to >= total) return;

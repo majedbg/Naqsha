@@ -27,11 +27,87 @@ import {
   buildLayerParamsValue,
   LayerParamsProvider,
 } from "../../lib/useLayerParams";
+import {
+  DEFAULT_BAND_COUNT,
+  hasVariableWeight,
+  supportsVariableWeight,
+} from "../../lib/variableWeight";
+
+// Variable line-weight UI (issue #17, C8). A per-layer "advanced" toggle + bucket
+// count (N) control, shown ONLY for weight-varying patterns on a profile that
+// supports banding (laser/plotter — drag-cutter has no line weight, so the whole
+// block is hidden). OFF by default; enabling surfaces the manual-setup warning
+// and (via onVariableWeightChange) generates the N-row operation band (#10).
+//
+// State lives on `layer.variableWeight = { enabled, n }` (owned by Studio via
+// updateLayer / the band sync), NOT in local component state — the Inspector
+// remounts per selection, so deriving from props keeps it correct across layers.
+function VariableWeightControls({ layer, profileId, onVariableWeightChange }) {
+  // Capability gate: the PATTERN must emit weight variation AND the active
+  // machine profile must support banding. Drag-cutter fails the second check.
+  if (!hasVariableWeight(layer.patternType) || !supportsVariableWeight(profileId)) {
+    return null;
+  }
+  const vw = layer.variableWeight || {};
+  const enabled = vw.enabled === true;
+  const n = vw.n ?? DEFAULT_BAND_COUNT;
+  const emit = (next) => onVariableWeightChange?.(layer.id, next);
+
+  return (
+    <div className="space-y-1.5 border-t border-hairline pt-3">
+      <h3 className="text-xs font-semibold text-ink-soft uppercase tracking-wider">
+        Variable line weight
+      </h3>
+      <label className="flex items-center gap-2 text-xs text-ink">
+        <input
+          type="checkbox"
+          data-testid="variable-weight-toggle"
+          checked={enabled}
+          onChange={(e) =>
+            emit({ enabled: e.target.checked, n })
+          }
+        />
+        <span>Vary line weight by band</span>
+      </label>
+
+      {enabled && (
+        <>
+          <label className="flex items-center gap-2 text-[11px] text-ink-soft">
+            <span className="whitespace-nowrap">Bands (N)</span>
+            <input
+              type="number"
+              data-testid="variable-weight-n"
+              aria-label="Bands (N)"
+              min={1}
+              max={12}
+              step={1}
+              value={n}
+              onChange={(e) => {
+                const raw = Number(e.target.value);
+                const next = Number.isFinite(raw) && raw >= 1 ? Math.round(raw) : 1;
+                emit({ enabled: true, n: next });
+              }}
+              className="w-14 rounded-xs border border-hairline bg-paper-warm px-1 py-0.5 text-[11px] text-ink outline-none focus:border-violet num"
+            />
+          </label>
+          <p
+            data-testid="variable-weight-warning"
+            className="rounded-xs border border-amber-400/50 bg-amber-50 px-2 py-1 text-[11px] text-amber-800"
+          >
+            Advanced — manual machine setup required. Each band is a separate
+            operation; step through them by hand while cutting (laser: read
+            &quot;orange = speed&quot;; plotter: swap to the band&apos;s pen slot).
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
 
 // The param-editing body for one selected layer. Split into its own component so
 // usePatternCache (a hook) is only called when a layer is actually selected —
 // hooks can't be called conditionally inside Inspector itself.
-function SelectedLayerInspector({ layer, unit, onUpdateLayer, onChangeLayerPattern }) {
+function SelectedLayerInspector({ layer, unit, profileId, onUpdateLayer, onChangeLayerPattern, onVariableWeightChange }) {
   // Pattern swap: route through the same cache machine LayerCard uses, applied via
   // the pair-aware onChangeLayerPattern when present (falls back to a plain param
   // update so the component works standalone / in tests without a router).
@@ -70,6 +146,13 @@ function SelectedLayerInspector({ layer, unit, onUpdateLayer, onChangeLayerPatte
           <PatternParams />
         </LayerParamsProvider>
       )}
+
+      {/* Variable line-weight UI (#17, C8) — capability-gated, OFF by default. */}
+      <VariableWeightControls
+        layer={layer}
+        profileId={profileId}
+        onVariableWeightChange={onVariableWeightChange}
+      />
     </div>
   );
 }
@@ -81,8 +164,14 @@ export default function Inspector({
   // param context so length-tagged params display/convert in it (#13). Undefined
   // = raw px display (back-compat with callers that don't pass it).
   unit,
+  // Active machine profile id (#17, C8) — capability-gates the variable-weight
+  // UI (drag-cutter hides it). Optional; undefined hides the feature.
+  profileId,
   onUpdateLayer,
   onChangeLayerPattern,
+  // Per-layer variable-weight change handler (#17, C8). Optional no-op default so
+  // the Inspector renders standalone / in tests without a Studio router.
+  onVariableWeightChange,
 }) {
   const layer =
     selectedLayerId != null
@@ -113,8 +202,10 @@ export default function Inspector({
       key={layer.id}
       layer={layer}
       unit={unit}
+      profileId={profileId}
       onUpdateLayer={onUpdateLayer}
       onChangeLayerPattern={onChangeLayerPattern}
+      onVariableWeightChange={onVariableWeightChange}
     />
   );
 }

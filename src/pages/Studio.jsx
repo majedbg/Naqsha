@@ -41,6 +41,7 @@ import { resolveExportColor } from "../lib/fabrication";
 import { seedOperations, addOperation, resolveOperation } from "../lib/operations";
 import { remapOperationsToProfile, defaultBedSize, profileProcesses, defaultMachineParams } from "../lib/machineProfiles";
 import useOperationsHistory from "../lib/hooks/useOperationsHistory";
+import { syncWeightBand, supportsVariableWeight, isBandOperation } from "../lib/variableWeight";
 import { findMoirePartnerA } from "../lib/moirePair";
 import useCanvasSize, { loadCanvasState } from "../lib/hooks/useCanvasSize";
 import useUIState from "../lib/hooks/useUIState";
@@ -250,7 +251,17 @@ export default function Studio() {
     (nextProfileId) => {
       setActiveProfileId(nextProfileId);
       setBedSize(defaultBedSize(nextProfileId));
-      resetHistory(remapOperationsToProfile(operations, nextProfileId));
+      // Remap the library to the target profile. Variable-weight band ops keep
+      // their reserved spectrum colors under laser/plotter (band exemption), but
+      // a profile that does NOT support banding (drag cutter — a blade has no
+      // line weight) must DROP any band rows entirely, so switching to it hides
+      // the feature instead of leaking orphan band rows into the panel (#17).
+      const remapped = remapOperationsToProfile(operations, nextProfileId);
+      resetHistory(
+        supportsVariableWeight(nextProfileId)
+          ? remapped
+          : remapped.filter((o) => !isBandOperation(o))
+      );
       if (nextProfileId === "laser" || nextProfileId === "plotter") {
         setOutputMode(nextProfileId);
       }
@@ -272,6 +283,28 @@ export default function Studio() {
       })
     );
   }, [activeProfileId, commitOperations]);
+
+  // Variable line-weight toggle / N control (C8 / #17). Stores the per-layer
+  // `variableWeight = { enabled, n }` AND syncs the operation library's band rows
+  // in ONE handler (the only place that owns both updateLayer and
+  // commitOperations) — never in an effect, matching useOperationsHistory's
+  // "recording is imperative" contract. Enable/disable/N-change all route here:
+  // syncWeightBand strips this layer's old band and (when enabled on a supported
+  // profile) appends a fresh N-row band, so changing N re-buckets live.
+  const handleVariableWeightChange = useCallback(
+    (layerId, { enabled, n }) => {
+      updateLayer(layerId, { variableWeight: { enabled, n } });
+      commitOperations((ops) =>
+        syncWeightBand(ops, {
+          layerId,
+          profileId: activeProfileId,
+          enabled,
+          n,
+        })
+      );
+    },
+    [updateLayer, commitOperations, activeProfileId]
+  );
 
   // The inspector edits the selected layer — EXCEPT for a Moiré role-B layer,
   // whose params live on its partner A (B reads A). Redirect edits to A so
@@ -569,6 +602,10 @@ export default function Studio() {
         manifest: buildExportManifest(),
         filename: opts.filename,
         optimizations: appliedOptimizations,
+        // Active profile drives the per-element variable-weight realization for
+        // enabled layers (#17 / #4 follow-up). Additive: non-enabled layers are
+        // unaffected and export byte-identically.
+        profileId: machineProfile,
       }
     );
   };
@@ -981,8 +1018,12 @@ export default function Studio() {
             // Active document unit (#13) — length-tagged params display/convert
             // in this unit; values stay px in layer state.
             unit={unit}
+            // Active machine profile (#17, C8) — capability-gates the
+            // variable-weight UI (drag-cutter hides it).
+            profileId={activeProfileId}
             onUpdateLayer={updateLayer}
             onChangeLayerPattern={changeLayerPattern}
+            onVariableWeightChange={handleVariableWeightChange}
           />,
           inspectorSlot
         )}

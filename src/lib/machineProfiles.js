@@ -176,6 +176,23 @@ export function remapOperationsToProfile(operations, targetProfileId) {
   const profile = getProfile(targetProfileId);
   const list = Array.isArray(operations) ? operations : [];
   return list.map((op, i) => {
+    // Variable-weight band ops (issue #17 / #4 follow-up) carry RESERVED spectrum
+    // colors (orange→yellow) and band link markers. They are EXEMPT from the
+    // laser color-lock: keep their color AND their bandId/bandLayerId/bandIndex
+    // markers (which createOperation would otherwise strip) so the band stays
+    // identifiable and re-bucketable after a profile remap.
+    if (op && op.bandLayerId != null && op.bandId != null) {
+      const process = remapProcess(op.process, profile);
+      const base = createOperation({
+        id: op.id,
+        name: op.name,
+        color: op.color,
+        process,
+        machineParams: defaultMachineParams(profile.id, process),
+        order: typeof op.order === 'number' ? op.order : i,
+      });
+      return { ...base, bandId: op.bandId, bandLayerId: op.bandLayerId, bandIndex: op.bandIndex };
+    }
     const process = remapProcess(op.process, profile);
     const locked = lockedColorFor(profile.id, process);
     return createOperation({

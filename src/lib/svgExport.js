@@ -7,6 +7,7 @@
 import { optimizeGroup } from './plotter/pipeline';
 import { PPI, MM_PER_IN } from './plotter/constants.js';
 import { resolveOperation } from './operations.js';
+import { realizeVariableWeightElements } from './variableWeight.js';
 
 const pxToMm = (px) => (px / PPI) * MM_PER_IN;
 
@@ -84,7 +85,25 @@ ${bgRect ? `  ${bgRect}\n` : ''}  ${group}
 </svg>`;
 }
 
-export function buildAllLayersSVG(layers, patternInstances, canvasW, canvasH, includeHidden = false, { metadata = false, manifest, optimizations } = {}) {
+// ADDITIVE variable-weight branch (issue #17 / #4 follow-up). For a layer whose
+// `variableWeight.enabled` is true on a supported profile, emit per-element band
+// COLORS via realizeVariableWeightElements (one `<g>` of per-bucket-colored
+// `<path>`s) instead of the single-color group. Returns null when the layer is
+// not variable-weight-enabled or the profile/instance doesn't support it, so the
+// caller falls back to the normal byte-stable single-color path.
+function variableWeightGroup(layer, instance, profileId) {
+  if (!layer?.variableWeight?.enabled) return null;
+  const elements = instance?.svgElements;
+  if (!Array.isArray(elements)) return null;
+  const inner = realizeVariableWeightElements(elements, {
+    profileId,
+    n: layer.variableWeight.n,
+  });
+  if (inner == null) return null; // unsupported profile (e.g. dragCutter)
+  return `<g id="${layer.id}" opacity="${(layer.opacity ?? 100) / 100}">\n${inner}\n  </g>`;
+}
+
+export function buildAllLayersSVG(layers, patternInstances, canvasW, canvasH, includeHidden = false, { metadata = false, manifest, optimizations, profileId } = {}) {
   // Reverse so bottom layers come first in SVG (matching visual order)
   const ordered = [...layers].reverse();
   const groups = ordered
@@ -93,8 +112,11 @@ export function buildAllLayersSVG(layers, patternInstances, canvasW, canvasH, in
       const instance = patternInstances[l.id];
       if (!instance) return '';
       const bgRect = layerBgRect(l, canvasW, canvasH);
-      const rawGroup = instance.toSVGGroup(l.id, l.color, l.opacity);
-      const group = maybeOptimize(rawGroup, optimizations);
+      // Variable-weight layers export per-element band colors (additive); every
+      // other layer keeps the byte-stable single-color group path.
+      const vwGroup = variableWeightGroup(l, instance, profileId);
+      const rawGroup = vwGroup ?? instance.toSVGGroup(l.id, l.color, l.opacity);
+      const group = vwGroup ? rawGroup : maybeOptimize(rawGroup, optimizations);
       return (bgRect ? bgRect + '\n  ' : '') + group;
     })
     .join('\n  ');

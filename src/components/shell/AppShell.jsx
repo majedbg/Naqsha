@@ -14,7 +14,7 @@
 // component module) so this file only exports components.
 
 import { useState } from 'react';
-import { InspectorSlotProvider } from './shellSlots';
+import { InspectorSlotProvider, MenuSlotProvider } from './shellSlots';
 
 // Shared frame for every region: a labeled landmark with a dashed placeholder
 // affordance so the empty skeleton reads as "intentionally empty" in the UI.
@@ -40,10 +40,13 @@ function Region({ label, className = '', children }) {
 // Each renders on its own so a later slice can target exactly one region
 // without touching the others.
 
-export function MenuBarRegion({ children, className = '' }) {
+export function MenuBarRegion({ children, contentRef, className = '' }) {
+  // `contentRef` (a callback ref) exposes the region's inner mount node so the
+  // hosted Studio can portal its top menu bar into it (B5 / #8). When omitted,
+  // the region renders its empty labeled placeholder / passed children as before.
   return (
     <Region label="Menu bar" className={`h-9 shrink-0 ${className}`}>
-      {children}
+      {contentRef ? <div ref={contentRef} className="h-full" /> : children}
     </Region>
   );
 }
@@ -116,22 +119,28 @@ export default function AppShell({ children }) {
   // the Canvas region) can portal its selection-driven Inspector into it (B3 /
   // #6). State (not a bare ref) so publishing the node re-renders the provider.
   const [inspectorNode, setInspectorNode] = useState(null);
+  // The Menu bar region's inner mount node, published the same way so the hosted
+  // Studio can portal its top menu bar into it (B5 / #8).
+  const [menuNode, setMenuNode] = useState(null);
 
   return (
     <div className="flex flex-col h-dvh bg-paper">
-      <MenuBarRegion />
+      <MenuBarRegion contentRef={setMenuNode} />
       <ControlBarRegion />
 
       <div className="flex flex-1 min-h-0">
         <ToolStripRegion />
         <ObjectTreeRegion />
 
-        {/* The live Studio is hosted here. It reads the Inspector slot from
-            context and portals the param inspector into the region below. */}
+        {/* The live Studio is hosted here. It reads the Inspector + Menu slots
+            from context and portals the param inspector and the top menu bar
+            into their regions. */}
         <CanvasRegion>
-          <InspectorSlotProvider value={inspectorNode}>
-            {children}
-          </InspectorSlotProvider>
+          <MenuSlotProvider value={menuNode}>
+            <InspectorSlotProvider value={inspectorNode}>
+              {children}
+            </InspectorSlotProvider>
+          </MenuSlotProvider>
         </CanvasRegion>
 
         <div className="flex flex-col w-72 shrink-0 min-h-0">

@@ -2,7 +2,8 @@ import { useState, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import LeftPanel from "../components/LeftPanel";
 import Inspector from "../components/shell/Inspector";
-import { useInspectorSlot } from "../components/shell/shellSlots";
+import MenuBar from "../components/shell/MenuBar";
+import { useInspectorSlot, useMenuSlot } from "../components/shell/shellSlots";
 import ConfirmDialog from "../components/ui/ConfirmDialog";
 import { EXAMPLES, EXAMPLE_COUNT } from "../examples";
 import RightPanel from "../components/RightPanel";
@@ -109,6 +110,12 @@ export default function Studio() {
   // (index 0 = front) so it is populated and editable in the shell.
   const inspectorSlot = useInspectorSlot();
   const selectedLayerId = layers[0]?.id ?? null;
+
+  // Pro-shell menu-bar slot (B5 / #8). Null in the legacy layout (no provider),
+  // so the menu-bar portal below is a no-op AND the legacy loose top bar keeps
+  // rendering unchanged. When present, the menu bar is portaled into the shell's
+  // Menu bar region and the legacy loose top bar is suppressed (no orphans).
+  const menuSlot = useMenuSlot();
 
   const { groups, saveGroup, deleteGroup, renameGroup } = useLayerGroups();
   const patternInstancesRef = useRef({});
@@ -235,6 +242,18 @@ export default function Studio() {
     setUI("showSaveDialog", true);
   };
 
+  // Share-link state snapshot, shared by the legacy top bar's ShareLinkButton
+  // and the pro menu bar's account cluster so both reproduce the same design.
+  const buildShareState = () => ({
+    canvasW,
+    canvasH,
+    presetIndex,
+    unit,
+    margin,
+    bgColor,
+    layers,
+  });
+
   const handleConfirmSave = () => {
     const container = canvasContainerRef.current;
     const canvas = container?.querySelector("canvas");
@@ -328,46 +347,41 @@ export default function Studio() {
         </div>
       </div>
 
-      {/* Top bar */}
-      <div className="shrink-0 h-9 bg-paper border-b border-hairline flex items-center px-4 gap-4">
-        <span className="text-xs text-ink-soft select-none">Naqsha</span>
-        <button
-          onClick={() => setUI("showExamples", !showExamples)}
-          aria-pressed={showExamples}
-          className={`text-xs transition-colors duration-fast ease-out-quart ${
-            showExamples ? "text-ink" : "text-ink-soft hover:text-ink"
-          }`}
-        >
-          Examples
-          {EXAMPLE_COUNT > 0 && (
-            <span className="ml-1 text-ink-soft/70 num">({EXAMPLE_COUNT})</span>
-          )}
-        </button>
-        <button
-          onClick={() => setUI("showLoadModal", true)}
-          className="text-xs text-ink-soft hover:text-ink transition-colors duration-fast ease-out-quart"
-        >
-          Load existing
-          {groups.length > 0 && (
-            <span className="ml-1 text-ink-soft/70 num">({groups.length})</span>
-          )}
-        </button>
-        <ShareLinkButton
-          buildState={() => ({
-            canvasW,
-            canvasH,
-            presetIndex,
-            unit,
-            margin,
-            bgColor,
-            layers,
-          })}
-        />
-        <div className="ml-auto flex items-center gap-xs">
-          <ThemeToggle />
-          <AuthButton />
+      {/* Legacy loose top bar. Suppressed when hosted in the pro shell (menuSlot
+          present) — those actions are folded into the portaled <MenuBar/> below,
+          so no orphaned buttons remain. Rendered unchanged in the legacy layout
+          (menuSlot null) → flag-OFF is a true no-op. */}
+      {!menuSlot && (
+        <div className="shrink-0 h-9 bg-paper border-b border-hairline flex items-center px-4 gap-4">
+          <span className="text-xs text-ink-soft select-none">Naqsha</span>
+          <button
+            onClick={() => setUI("showExamples", !showExamples)}
+            aria-pressed={showExamples}
+            className={`text-xs transition-colors duration-fast ease-out-quart ${
+              showExamples ? "text-ink" : "text-ink-soft hover:text-ink"
+            }`}
+          >
+            Examples
+            {EXAMPLE_COUNT > 0 && (
+              <span className="ml-1 text-ink-soft/70 num">({EXAMPLE_COUNT})</span>
+            )}
+          </button>
+          <button
+            onClick={() => setUI("showLoadModal", true)}
+            className="text-xs text-ink-soft hover:text-ink transition-colors duration-fast ease-out-quart"
+          >
+            Load existing
+            {groups.length > 0 && (
+              <span className="ml-1 text-ink-soft/70 num">({groups.length})</span>
+            )}
+          </button>
+          <ShareLinkButton buildState={buildShareState} />
+          <div className="ml-auto flex items-center gap-xs">
+            <ThemeToggle />
+            <AuthButton />
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Main content — column on mobile (canvas on top), row on desktop.
           Mobile: canvas gets a fixed 45vh, LeftPanel gets the remaining space
@@ -527,6 +541,24 @@ export default function Studio() {
           onClose={() => setUI("aiChatOpen", false)}
         />
       )}
+
+      {/* Pro-shell top menu bar (B5 / #8). Portaled into the shell's Menu bar
+          region when the slot is present; renders nothing in the legacy layout
+          (slot is null → no-op). Its items wire to the existing Studio handlers
+          (Examples/Load/Cloud/Export/Save/Share), so behavior is unchanged. */}
+      {menuSlot &&
+        createPortal(
+          <MenuBar
+            onOpen={() => setUI("showLoadModal", true)}
+            onExamples={() => setUI("showExamples", !showExamples)}
+            onExport={() => handleExportAll(true)}
+            onSave={handleSaveLayerGroup}
+            onSaveToCloud={handleSaveToCloud}
+            onOpenCloudDesigns={() => setUI("showCloudModal", true)}
+            buildShareState={buildShareState}
+          />,
+          menuSlot
+        )}
 
       {/* Pro-shell param inspector (B3 / #6). Portaled into the shell's right
           Inspector region when the slot is present; renders nothing in the

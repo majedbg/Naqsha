@@ -27,3 +27,23 @@ export function InspectorSlotProvider({ value, children }) {
 export function useInspectorSlot() {
   return useContext(InspectorSlotContext);
 }
+
+// Menu bar slot (Lane B / B5, issue #8). Same bridge mechanism as the Inspector
+// slot above, in the same direction: AppShell publishes the Menu bar region's
+// DOM node, the hosted Studio reads it and React-portals its <MenuBar/> into it
+// — wiring the menu items to Studio's existing handlers for free.
+//
+// CRITICAL — flag-OFF no-op: defaults to `null`; the provider is mounted ONLY by
+// AppShell (flag-ON desktop). With no provider `useMenuSlot()` returns null, so
+// Studio renders its legacy loose top bar unchanged and no menu-bar portal.
+const MenuSlotContext = createContext(null);
+
+export function MenuSlotProvider({ value, children }) {
+  return createElement(MenuSlotContext.Provider, { value }, children);
+}
+
+// Returns the Menu bar region's DOM node when rendered inside the pro shell, or
+// null in the legacy layout (no provider).
+export function useMenuSlot() {
+  return useContext(MenuSlotContext);
+}

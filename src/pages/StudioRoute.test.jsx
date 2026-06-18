@@ -58,8 +58,11 @@ describe('StudioRoute flag gate (B1)', () => {
     );
     expect(screen.getAllByRole('region')).toHaveLength(8);
     const canvas = screen.getByRole('region', { name: 'Canvas' });
-    // The existing Studio (its real Examples control) lives inside the canvas region.
-    const examples = screen.getByRole('button', { name: /Examples/ });
-    expect(canvas).toContainElement(examples);
+    // The existing Studio renders inside the Canvas region. (Originally this
+    // probed Studio's loose Examples button; #8 folds that button into the File
+    // menu and suppresses the legacy loose top bar in the shell, so we assert
+    // the invariant — Studio-in-canvas — via its canvas surface instead.)
+    const surface = screen.getByTestId('canvas-surface');
+    expect(canvas).toContainElement(surface);
   });
 });

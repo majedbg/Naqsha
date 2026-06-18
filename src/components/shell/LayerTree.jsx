@@ -17,9 +17,11 @@
 // documented NO-OP stub here — the reassign picker is issue #11/C2; this slice
 // only RENDERS the chip and updates it when `operationId` changes.
 
+import { useState } from "react";
 import { PATTERN_TYPES } from "../../constants";
 import { resolveOperation } from "../../lib/operations";
 import { PROFILE_IDS, getProfile } from "../../lib/machineProfiles";
+import OperationPicker from "./OperationPicker";
 
 // Human label for a pattern type (falls back to the raw id for AI / extras /
 // import layers not in the static table).
@@ -71,31 +73,63 @@ function PatternIcon() {
 // The operation chip: a color swatch + name, resolved from the layer's
 // operationId through the document operation library. Reflects the assigned
 // operation and updates when `operationId` (or the library) changes. Clicking it
-// is a documented no-op stub (the reassign picker is #11/C2).
-function OperationChip({ layer, operations }) {
+// opens the OperationPicker and reassigns THIS row's layer (#11/C2). The click is
+// kept from bubbling so opening the picker never also selects the row.
+function OperationChip({ layer, operations, onAssignOperation }) {
   const op = resolveOperation(operations, layer.operationId);
   const color = op?.color ?? "#000000";
   const name = op?.name ?? "—";
+  const [open, setOpen] = useState(false);
+  const canPick = Array.isArray(operations) && operations.length > 0 && !!onAssignOperation;
+
   return (
-    <button
-      type="button"
-      data-testid="operation-chip"
-      title={`Operation: ${name}`}
-      // Reassign picker is issue #11/C2 — render only, click is a no-op here.
-      onClick={(e) => e.stopPropagation()}
-      className="flex items-center gap-1 rounded-xs border border-hairline bg-paper-warm px-1 py-0.5 text-[10px] text-ink-soft"
-    >
-      <span
-        data-chip-swatch
-        className="inline-block h-2.5 w-2.5 shrink-0 rounded-[2px] border border-hairline"
-        style={{ backgroundColor: color }}
-      />
-      <span className="truncate">{name}</span>
-    </button>
+    <div className="relative shrink-0">
+      <button
+        type="button"
+        data-testid="operation-chip"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        title={`Operation: ${name}`}
+        onClick={(e) => {
+          e.stopPropagation();
+          if (canPick) setOpen((v) => !v);
+        }}
+        className="flex items-center gap-1 rounded-xs border border-hairline bg-paper-warm px-1 py-0.5 text-[10px] text-ink-soft"
+      >
+        <span
+          data-chip-swatch
+          className="inline-block h-2.5 w-2.5 shrink-0 rounded-[2px] border border-hairline"
+          style={{ backgroundColor: color }}
+        />
+        <span className="truncate">{name}</span>
+      </button>
+      {open && canPick && (
+        <>
+          {/* Click-away; stop propagation so dismissing never selects the row. */}
+          <div
+            className="fixed inset-0 z-40"
+            aria-hidden="true"
+            onClick={(e) => { e.stopPropagation(); setOpen(false); }}
+          />
+          <div className="absolute right-0 top-full" onClick={(e) => e.stopPropagation()}>
+            <OperationPicker
+              operations={operations}
+              open
+              activeOperationId={layer.operationId}
+              onSelect={(operationId) => {
+                onAssignOperation(layer.id, operationId);
+                setOpen(false);
+              }}
+              onClose={() => setOpen(false)}
+            />
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 
-function LayerRow({ layer, index, total, selected, operations, onSelect, onUpdateLayer, onReorderLayers }) {
+function LayerRow({ layer, index, total, selected, operations, onSelect, onUpdateLayer, onReorderLayers, onAssignOperation }) {
   const move = (to) => {
     if (to < 0 || to >= total) return;
     onReorderLayers(index, to);
@@ -150,7 +184,7 @@ function LayerRow({ layer, index, total, selected, operations, onSelect, onUpdat
       <span className="flex-1 min-w-0 truncate text-xs text-ink">{layer.name}</span>
 
       {/* Operation chip */}
-      <OperationChip layer={layer} operations={operations} />
+      <OperationChip layer={layer} operations={operations} onAssignOperation={onAssignOperation} />
 
       {/* Visibility toggle */}
       <button
@@ -186,6 +220,7 @@ export default function LayerTree({
   onUpdateLayer,
   onReorderLayers,
   onProfileChange,
+  onAssignOperation,
 }) {
   return (
     <div className="flex h-full flex-col" data-testid="layer-tree">
@@ -221,6 +256,7 @@ export default function LayerTree({
             onSelect={onSelectLayer}
             onUpdateLayer={onUpdateLayer}
             onReorderLayers={onReorderLayers}
+            onAssignOperation={onAssignOperation}
           />
         ))}
       </div>

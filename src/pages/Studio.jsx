@@ -37,7 +37,7 @@ import ThemeToggle from "../components/ui/ThemeToggle";
 import { exportLayerSVG, exportAllLayersSVG, buildManifest } from "../lib/svgExport";
 import ShareLinkButton from "../components/ShareLinkButton";
 import { resolveExportColor } from "../lib/fabrication";
-import { seedOperations, addOperation } from "../lib/operations";
+import { seedOperations, addOperation, resolveOperation } from "../lib/operations";
 import { remapOperationsToProfile, defaultBedSize, profileProcesses, defaultMachineParams } from "../lib/machineProfiles";
 import useOperationsHistory from "../lib/hooks/useOperationsHistory";
 import { findMoirePartnerA } from "../lib/moirePair";
@@ -99,6 +99,19 @@ export default function Studio() {
     appliedOpsList,
   } = useOptimizations();
 
+  // === Document default operation (C2 / #11) ===
+  // The stroke/operation swatch with NOTHING selected sets the default operation
+  // assigned to the NEXT added layer. Held in state (so the control-bar swatch
+  // reflects it) AND mirrored to a ref so the (stable) useLayers getter reads the
+  // live value at add-time without re-creating addLayer. Seeded to 'op-cut' so the
+  // legacy add behavior is unchanged (byte-stable).
+  const [defaultOperationId, setDefaultOperationId] = useState("op-cut");
+  const defaultOperationIdRef = useRef(defaultOperationId);
+  useEffect(() => {
+    defaultOperationIdRef.current = defaultOperationId;
+  }, [defaultOperationId]);
+  const getDefaultOperationId = useCallback(() => defaultOperationIdRef.current, []);
+
   // === Layers ===
   const {
     layers,
@@ -116,7 +129,7 @@ export default function Studio() {
     loadLayerSet,
     bgColor,
     setBgColor,
-  } = useLayers({ persistToLocal: limits.localStorage, maxLayers: limits.maxLayers });
+  } = useLayers({ persistToLocal: limits.localStorage, maxLayers: limits.maxLayers, getDefaultOperationId });
 
   // Pro-shell Inspector + Object-tree slots (B3 / #6, B2 / #5). Null in the
   // legacy layout (no provider), so the portals below are true no-ops when the
@@ -167,6 +180,7 @@ export default function Studio() {
   const {
     operations,
     commitOperations,
+    commitAssignment,
     undo,
     redo,
     resetHistory,
@@ -248,6 +262,42 @@ export default function Studio() {
       layers.find((l) => l.id === selectedLayerId),
       layers
     )?.id ?? selectedLayerId;
+
+  // === Operation assignment (C2 / #11) — the stroke/operation picker ===
+  // Assigning a layer's operationId is routed through #10's `commitAssignment`
+  // so it is genuinely undoable/redoable (the snapshot captures the prior
+  // {layerId: operationId} map; undo restores it via updateLayer). The LayerTree
+  // row chip assigns its OWN row's layer.
+  const assignOperationToLayer = useCallback(
+    (layerId, operationId) => {
+      if (!layerId) return;
+      commitAssignment(() => updateLayer(layerId, { operationId }));
+    },
+    [commitAssignment, updateLayer]
+  );
+
+  // The control-bar swatch + tool-strip base chip share one handler. With a layer
+  // actually selected (raw selection — NOT the layers[0] fallback that
+  // `selectedLayerId` uses for the inspector) the pick ASSIGNS that layer. With
+  // nothing selected, it sets the DOCUMENT DEFAULT operation for the next added
+  // layer — which is plain setState, NOT an assignment (there's no layer to
+  // reassign), so it does not go through the undo history.
+  const handleSwatchAssign = useCallback(
+    (operationId) => {
+      if (selectionExists) {
+        assignOperationToLayer(inspectorTargetId, operationId);
+      } else {
+        setDefaultOperationId(operationId);
+      }
+    },
+    [selectionExists, inspectorTargetId, assignOperationToLayer]
+  );
+
+  // The swatch/chip color: the selected layer's operation when a layer is
+  // selected, else the document default operation (for the next added layer).
+  const swatchOperation = selectionExists
+    ? resolveOperation(operations, layers.find((l) => l.id === inspectorTargetId)?.operationId)
+    : resolveOperation(operations, defaultOperationId);
 
   // Pro-shell menu-bar slot (B5 / #8). Null in the legacy layout (no provider),
   // so the menu-bar portal below is a no-op AND the legacy loose top bar keeps
@@ -836,7 +886,13 @@ export default function Studio() {
           drives the contextual control bar below. */}
       {toolStripSlot &&
         createPortal(
-          <ToolStrip activeTool={activeTool} onToolChange={setActiveTool} />,
+          <ToolStrip
+            activeTool={activeTool}
+            onToolChange={setActiveTool}
+            operation={swatchOperation}
+            operations={operations}
+            onAssignOperation={handleSwatchAssign}
+          />,
           toolStripSlot
         )}
 
@@ -856,6 +912,9 @@ export default function Studio() {
               unit,
               layerCount: layers.length,
             }}
+            operation={swatchOperation}
+            operations={operations}
+            onAssignOperation={handleSwatchAssign}
             view={canvasView}
           />,
           controlBarSlot
@@ -893,6 +952,7 @@ export default function Studio() {
             onUpdateLayer={updateLayer}
             onReorderLayers={reorderLayers}
             onProfileChange={handleProfileChange}
+            onAssignOperation={assignOperationToLayer}
           />,
           objectTreeSlot
         )}

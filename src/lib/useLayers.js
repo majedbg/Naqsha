@@ -112,7 +112,7 @@ function loadLayers() {
 // `def.type === 'select'` which missed `iconselect` defs (e.g. shape, fillMode)
 // and produced NaN. paramOps branches on `def.options` presence instead.
 
-export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYERS } = {}) {
+export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYERS, getDefaultOperationId } = {}) {
   // Effective capacity = the tier cap (Guest 3, Free/Pro/Studio 6), never above
   // the hard MAX_LAYERS. Existing call sites that don't pass maxLayers keep the
   // old MAX_LAYERS behavior.
@@ -149,13 +149,20 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
   // `patternType` optional (from the pattern picker). The `typeof === 'string'`
   // guard means a bare `onClick={addLayer}` (which would pass an event) still
   // creates a default-cycled layer, unchanged.
+  // `getDefaultOperationId` (issue #11/C2) supplies the document DEFAULT operation
+  // for newly added layers — set via the stroke/operation swatch with nothing
+  // selected. Read at call time (a getter, not a value) so the latest default
+  // applies without re-creating addLayer. When omitted or unresolved, the new
+  // layer keeps createLayer's Cut default — byte-stable with the legacy path.
   const addLayer = useCallback((patternType) => {
     const requested = typeof patternType === 'string' ? patternType : undefined;
+    const defaultOpId = typeof getDefaultOperationId === 'function' ? getDefaultOperationId() : undefined;
     setLayers((prev) => {
       if (prev.length >= cap) return prev;
-      return [...prev, createLayer(prev.length, requested)];
+      const layer = createLayer(prev.length, requested);
+      return [...prev, defaultOpId ? { ...layer, operationId: defaultOpId } : layer];
     });
-  }, [cap]);
+  }, [cap, getDefaultOperationId]);
 
   // Import an SVG file's outline as ONE place-as-artwork layer (issue #12, C4).
   // Parses the SVG → imported-path layer carrying the verbatim `d` data in

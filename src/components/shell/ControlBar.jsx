@@ -16,6 +16,7 @@
 // acceptance criteria require.
 
 import { useState } from "react";
+import OperationPicker from "./OperationPicker";
 
 const FONTS = ["Inter", "Georgia", "Courier", "Helvetica"];
 const ALIGNMENTS = [
@@ -30,24 +31,52 @@ const ARRANGE = [
   { id: "back", label: "Send to back" },
 ];
 
-function OperationSwatch({ operation }) {
+// Stroke/operation swatch (#11/C2). Reflects the current operation's color and
+// opens the OperationPicker. Picking routes through onAssignOperation, which the
+// host (Studio) resolves as: assign the selected layer, or — with nothing
+// selected — set the document default operation for the next added layer.
+function OperationSwatch({ operation, operations, onAssignOperation }) {
   const op = operation ?? { name: "Cut", color: "#e23b3b" };
+  const [open, setOpen] = useState(false);
+  const canPick = Array.isArray(operations) && operations.length > 0;
+
   return (
-    <button
-      type="button"
-      aria-label={`Operation: ${op.name}`}
-      title={`Operation: ${op.name} (picker coming soon)`}
-      onClick={() => {
-        /* operation picker is issue #11 — stubbed no-op */
-      }}
-      className="flex items-center gap-1.5 rounded-sm border border-hairline px-1.5 py-0.5 hover:bg-paper-warm transition-colors duration-fast ease-out-quart"
-    >
-      <span
-        className="block h-3.5 w-3.5 rounded-xs border border-hairline"
-        style={{ backgroundColor: op.color }}
-      />
-      <span className="text-[11px] text-ink-soft">{op.name}</span>
-    </button>
+    <div className="relative">
+      <button
+        type="button"
+        aria-label={`Operation: ${op.name}`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        title={`Operation: ${op.name}`}
+        onClick={() => canPick && setOpen((v) => !v)}
+        className="flex items-center gap-1.5 rounded-sm border border-hairline px-1.5 py-0.5 hover:bg-paper-warm transition-colors duration-fast ease-out-quart"
+      >
+        <span
+          data-op-color
+          className="block h-3.5 w-3.5 rounded-xs border border-hairline"
+          style={{ backgroundColor: op.color }}
+        />
+        <span className="text-[11px] text-ink-soft">{op.name}</span>
+      </button>
+      {open && canPick && (
+        <>
+          {/* Click-away dismiss. */}
+          <div className="fixed inset-0 z-40" aria-hidden="true" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 top-full">
+            <OperationPicker
+              operations={operations}
+              open
+              activeOperationId={operation?.id}
+              onSelect={(operationId) => {
+                onAssignOperation?.(operationId);
+                setOpen(false);
+              }}
+              onClose={() => setOpen(false)}
+            />
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -223,6 +252,8 @@ export default function ControlBar({
   hasSelection = false,
   docInfo,
   operation,
+  operations,
+  onAssignOperation,
   view,
 }) {
   // Decide which contextual cluster to show (decision 9). Text -> text controls;
@@ -245,7 +276,11 @@ export default function ControlBar({
     <div className="flex h-full items-center gap-3 px-3">
       {context}
       <div className="ml-auto">
-        <OperationSwatch operation={operation} />
+        <OperationSwatch
+          operation={operation}
+          operations={operations}
+          onAssignOperation={onAssignOperation}
+        />
       </div>
     </div>
   );

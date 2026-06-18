@@ -23,12 +23,38 @@ export default function RightPanel({
   displayMode = 'design',
   unit = 'mm',
   marginPx = 0,
+  // Optional controlled view (pro shell's Hand/Zoom tools — B6 / #9). When
+  // `externalZoom` is provided the canvas zoom is controlled by the shell and
+  // `setZoom` updates flow through `onZoomChange`; when absent (legacy / flag-OFF
+  // path) the panel keeps its own internal zoom state — byte-identical behavior.
+  // `externalPan` similarly translates the artboard when the shell drives pan.
+  externalZoom,
+  onZoomChange,
+  externalPan,
 }) {
   const containerRef = useRef(null);
   const wrapperRef = useRef(null);
   const [fitScale, setFitScale] = useState(1);
-  const [zoom, setZoom] = useState(1);
+  const [internalZoom, setInternalZoom] = useState(1);
   const [bgPickerOpen, setBgPickerOpen] = useState(false);
+
+  // Controlled when the shell supplies a zoom value + setter; otherwise internal.
+  const isControlledZoom = externalZoom != null && typeof onZoomChange === "function";
+  const zoom = isControlledZoom ? externalZoom : internalZoom;
+  const setZoom = useCallback(
+    (next) => {
+      if (isControlledZoom) {
+        onZoomChange((prev) => (typeof next === "function" ? next(prev) : next));
+      } else {
+        setInternalZoom(next);
+      }
+    },
+    [isControlledZoom, onZoomChange]
+  );
+  const pan = externalPan ?? { x: 0, y: 0 };
+  // Only prepend a translate when the shell actually drives pan, so the legacy
+  // (flag-OFF) transform string stays byte-identical.
+  const panTransform = externalPan ? `translate(${pan.x}px, ${pan.y}px) ` : "";
 
   const { patternInstances } = useCanvas(
     containerRef,
@@ -73,11 +99,14 @@ export default function RightPanel({
   }, [canvasW, canvasH]);
 
   // Scroll wheel zoom
-  const handleWheel = useCallback((e) => {
-    e.preventDefault();
-    const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
-    setZoom((z) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z * factor)));
-  }, []);
+  const handleWheel = useCallback(
+    (e) => {
+      e.preventDefault();
+      const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+      setZoom((z) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z * factor)));
+    },
+    [setZoom]
+  );
 
   // Attach wheel listener with { passive: false } to allow preventDefault
   useEffect(() => {
@@ -110,7 +139,7 @@ export default function RightPanel({
         style={{
           width: canvasW,
           height: canvasH,
-          transform: `scale(${finalScale})`,
+          transform: `${panTransform}scale(${finalScale})`,
           transformOrigin: "center center",
           boxShadow: isPrepare
             ? "0 0 0 1px rgba(0,201,177,0.35), 7px 7px 25px 2px rgba(0,0,0, 0.5)"

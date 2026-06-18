@@ -3,7 +3,16 @@ import { createPortal } from "react-dom";
 import LeftPanel from "../components/LeftPanel";
 import Inspector from "../components/shell/Inspector";
 import MenuBar from "../components/shell/MenuBar";
-import { useInspectorSlot, useMenuSlot } from "../components/shell/shellSlots";
+import ToolStrip from "../components/shell/ToolStrip";
+import ControlBar from "../components/shell/ControlBar";
+import {
+  useInspectorSlot,
+  useMenuSlot,
+  useToolStripSlot,
+  useControlBarSlot,
+} from "../components/shell/shellSlots";
+import useActiveTool from "../lib/hooks/useActiveTool";
+import useCanvasView from "../lib/hooks/useCanvasView";
 import ConfirmDialog from "../components/ui/ConfirmDialog";
 import { EXAMPLES, EXAMPLE_COUNT } from "../examples";
 import RightPanel from "../components/RightPanel";
@@ -116,6 +125,22 @@ export default function Studio() {
   // rendering unchanged. When present, the menu bar is portaled into the shell's
   // Menu bar region and the legacy loose top bar is suppressed (no orphans).
   const menuSlot = useMenuSlot();
+
+  // Pro-shell tool-strip + contextual-control-bar slots (B6 / #9). Null in the
+  // legacy layout (no provider) → both portals are no-ops. Active-tool state is
+  // owned here (Studio) so the same state drives the tool strip and the control
+  // bar; hotkeys are bound only when the tool strip slot is present (flag-ON),
+  // so V/T/space never hijack the legacy layout.
+  const toolStripSlot = useToolStripSlot();
+  const controlBarSlot = useControlBarSlot();
+  const { activeTool, setActiveTool } = useActiveTool({
+    enabled: !!toolStripSlot,
+  });
+  // Canvas pan/zoom the Hand/Zoom tools drive. Only wired into RightPanel on the
+  // flag-ON (pro shell) path — `inProShell` below — so the legacy canvas keeps
+  // its own internal zoom and stays byte-identical when the flag is off.
+  const canvasView = useCanvasView();
+  const inProShell = !!toolStripSlot;
 
   const { groups, saveGroup, deleteGroup, renameGroup } = useLayerGroups();
   const patternInstancesRef = useRef({});
@@ -452,6 +477,9 @@ export default function Studio() {
             displayMode={activeTab}
             unit={unit}
             marginPx={margin}
+            externalZoom={inProShell ? canvasView.zoom : undefined}
+            onZoomChange={inProShell ? canvasView.setZoom : undefined}
+            externalPan={inProShell ? canvasView.pan : undefined}
           />
         </div>
       </div>
@@ -558,6 +586,37 @@ export default function Studio() {
             buildShareState={buildShareState}
           />,
           menuSlot
+        )}
+
+      {/* Pro-shell tool strip (B6 / #9). Portaled into the shell's Tool strip
+          region when the slot is present; renders nothing in the legacy layout
+          (slot is null → no-op). Active-tool state is owned by Studio so it also
+          drives the contextual control bar below. */}
+      {toolStripSlot &&
+        createPortal(
+          <ToolStrip activeTool={activeTool} onToolChange={setActiveTool} />,
+          toolStripSlot
+        )}
+
+      {/* Pro-shell contextual control bar (B6 / #9). Portaled into the shell's
+          Contextual control bar region; swaps its contents by the active tool /
+          selection. No-op in the legacy layout (slot null). The inspector
+          defaults to the top layer for now (object-tree selection is #5), so a
+          selection exists whenever there are layers. */}
+      {controlBarSlot &&
+        createPortal(
+          <ControlBar
+            activeTool={activeTool}
+            hasSelection={selectedLayerId !== null}
+            docInfo={{
+              canvasW,
+              canvasH,
+              unit,
+              layerCount: layers.length,
+            }}
+            view={canvasView}
+          />,
+          controlBarSlot
         )}
 
       {/* Pro-shell param inspector (B3 / #6). Portaled into the shell's right

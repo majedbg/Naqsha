@@ -47,3 +47,33 @@ export function MenuSlotProvider({ value, children }) {
 export function useMenuSlot() {
   return useContext(MenuSlotContext);
 }
+
+// Tool strip slot (Lane B / B6, issue #9). Same bridge mechanism as above:
+// AppShell publishes the Tool strip region's DOM node; the hosted Studio reads
+// it and React-portals its <ToolStrip/> into it. Defaults to null so the legacy
+// layout (no provider) renders no tool strip — a true flag-OFF no-op.
+const ToolStripSlotContext = createContext(null);
+
+export function ToolStripSlotProvider({ value, children }) {
+  return createElement(ToolStripSlotContext.Provider, { value }, children);
+}
+
+// Returns the Tool strip region's DOM node when inside the pro shell, else null.
+export function useToolStripSlot() {
+  return useContext(ToolStripSlotContext);
+}
+
+// Contextual control bar slot (Lane B / B6, issue #9). Same bridge mechanism:
+// AppShell publishes the Contextual control bar region's DOM node; Studio
+// portals its <ControlBar/> into it. Defaults to null (flag-OFF no-op).
+const ControlBarSlotContext = createContext(null);
+
+export function ControlBarSlotProvider({ value, children }) {
+  return createElement(ControlBarSlotContext.Provider, { value }, children);
+}
+
+// Returns the Contextual control bar region's DOM node inside the pro shell,
+// else null.
+export function useControlBarSlot() {
+  return useContext(ControlBarSlotContext);
+}

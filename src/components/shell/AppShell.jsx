@@ -14,7 +14,12 @@
 // component module) so this file only exports components.
 
 import { useState } from 'react';
-import { InspectorSlotProvider, MenuSlotProvider } from './shellSlots';
+import {
+  InspectorSlotProvider,
+  MenuSlotProvider,
+  ToolStripSlotProvider,
+  ControlBarSlotProvider,
+} from './shellSlots';
 
 // Shared frame for every region: a labeled landmark with a dashed placeholder
 // affordance so the empty skeleton reads as "intentionally empty" in the UI.
@@ -51,18 +56,24 @@ export function MenuBarRegion({ children, contentRef, className = '' }) {
   );
 }
 
-export function ControlBarRegion({ children, className = '' }) {
+export function ControlBarRegion({ children, contentRef, className = '' }) {
+  // `contentRef` (a callback ref) exposes the region's inner mount node so the
+  // hosted Studio can portal its contextual control bar into it (B6 / #9). When
+  // omitted, the region renders its placeholder / passed children as before.
   return (
     <Region label="Contextual control bar" className={`h-9 shrink-0 ${className}`}>
-      {children}
+      {contentRef ? <div ref={contentRef} className="h-full" /> : children}
     </Region>
   );
 }
 
-export function ToolStripRegion({ children, className = '' }) {
+export function ToolStripRegion({ children, contentRef, className = '' }) {
+  // `contentRef` (a callback ref) exposes the region's inner mount node so the
+  // hosted Studio can portal its vertical tool strip into it (B6 / #9). When
+  // omitted, the region renders its placeholder / passed children as before.
   return (
     <Region label="Tool strip" className={`w-12 shrink-0 ${className}`}>
-      {children}
+      {contentRef ? <div ref={contentRef} className="h-full" /> : children}
     </Region>
   );
 }
@@ -122,24 +133,33 @@ export default function AppShell({ children }) {
   // The Menu bar region's inner mount node, published the same way so the hosted
   // Studio can portal its top menu bar into it (B5 / #8).
   const [menuNode, setMenuNode] = useState(null);
+  // The Tool strip + Contextual control bar region mount nodes (B6 / #8 pattern,
+  // issue #9), published so the hosted Studio can portal its tool strip and
+  // contextual control bar into them.
+  const [toolStripNode, setToolStripNode] = useState(null);
+  const [controlBarNode, setControlBarNode] = useState(null);
 
   return (
     <div className="flex flex-col h-dvh bg-paper">
       <MenuBarRegion contentRef={setMenuNode} />
-      <ControlBarRegion />
+      <ControlBarRegion contentRef={setControlBarNode} />
 
       <div className="flex flex-1 min-h-0">
-        <ToolStripRegion />
+        <ToolStripRegion contentRef={setToolStripNode} />
         <ObjectTreeRegion />
 
-        {/* The live Studio is hosted here. It reads the Inspector + Menu slots
-            from context and portals the param inspector and the top menu bar
-            into their regions. */}
+        {/* The live Studio is hosted here. It reads the slots from context and
+            portals the param inspector, top menu bar, tool strip, and contextual
+            control bar into their regions. */}
         <CanvasRegion>
           <MenuSlotProvider value={menuNode}>
-            <InspectorSlotProvider value={inspectorNode}>
-              {children}
-            </InspectorSlotProvider>
+            <ToolStripSlotProvider value={toolStripNode}>
+              <ControlBarSlotProvider value={controlBarNode}>
+                <InspectorSlotProvider value={inspectorNode}>
+                  {children}
+                </InspectorSlotProvider>
+              </ControlBarSlotProvider>
+            </ToolStripSlotProvider>
           </MenuSlotProvider>
         </CanvasRegion>
 

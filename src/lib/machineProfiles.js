@@ -64,6 +64,14 @@ export const MACHINE_PROFILES = {
     colorsLocked: true,
     lockedColors: LASER_COLORS,
     defaultBed: { width: MM(20), height: MM(12), unit: 'mm' }, // ~508 × 305 mm
+    // Generic bed presets for the Document Setup dialog (#14, C6). All in mm.
+    // Camp-specific beds are #18 and intentionally NOT here. The first preset
+    // mirrors defaultBed so reopening on a fresh document matches a named row.
+    bedPresets: [
+      { id: 'laser-20x12', label: 'Desktop laser (508 × 305)', width: MM(20), height: MM(12) },
+      { id: 'laser-a4', label: 'A4 (297 × 210)', width: 297, height: 210 },
+      { id: 'laser-a3', label: 'A3 (420 × 297)', width: 420, height: 297 },
+    ],
   },
   plotter: {
     id: 'plotter',
@@ -75,6 +83,11 @@ export const MACHINE_PROFILES = {
     colorsLocked: false,
     lockedColors: {},
     defaultBed: { width: MM(6), height: MM(8), unit: 'mm' }, // AxiDraw V3, 152 × 203 mm
+    bedPresets: [
+      { id: 'plotter-axidraw-v3', label: 'AxiDraw V3 (152 × 203)', width: MM(6), height: MM(8) },
+      { id: 'plotter-a4', label: 'A4 (297 × 210)', width: 297, height: 210 },
+      { id: 'plotter-a3', label: 'A3 (420 × 297)', width: 420, height: 297 },
+    ],
   },
   dragCutter: {
     id: 'dragCutter',
@@ -86,6 +99,11 @@ export const MACHINE_PROFILES = {
     colorsLocked: false,
     lockedColors: {},
     defaultBed: { width: MM(12), height: MM(12), unit: 'mm' }, // Silhouette Cameo, 305 × 305 mm
+    bedPresets: [
+      { id: 'drag-cameo-12x12', label: 'Cameo mat (305 × 305)', width: MM(12), height: MM(12) },
+      { id: 'drag-cameo-12x24', label: 'Cameo long (305 × 610)', width: MM(12), height: MM(24) },
+      { id: 'drag-portrait-8x12', label: 'Portrait mat (203 × 305)', width: MM(8), height: MM(12) },
+    ],
   },
 };
 
@@ -124,6 +142,13 @@ export function defaultMachineParams(id, process) {
 // status bar to read (A2-AC3).
 export function defaultBedSize(id) {
   return { ...getProfile(id).defaultBed };
+}
+
+// The profile's bed PRESETS (named bed sizes) for the Document Setup dialog
+// (#14, C6). Filtered to the active machine by construction — each profile owns
+// its own list. Returned as fresh copies (callers must not mutate). Dims are mm.
+export function bedPresetsFor(id) {
+  return (getProfile(id).bedPresets ?? []).map((p) => ({ ...p }));
 }
 
 // The locked convention color for a (profile, process) pair, or null when the

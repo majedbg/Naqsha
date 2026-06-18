@@ -21,6 +21,7 @@ import useActiveTool from "../lib/hooks/useActiveTool";
 import useCanvasView from "../lib/hooks/useCanvasView";
 import useSvgImport from "../lib/hooks/useSvgImport";
 import ConfirmDialog from "../components/ui/ConfirmDialog";
+import DocumentSetupDialog from "../components/shell/DocumentSetupDialog";
 import { EXAMPLES, EXAMPLE_COUNT } from "../examples";
 import RightPanel from "../components/RightPanel";
 import LayerGroupModal from "../components/LayerGroupModal";
@@ -226,9 +227,29 @@ export default function Studio() {
   // cross-profile undo is semantically broken). Route the remap through the
   // history hook's non-recording `resetHistory`, which replaces the library and
   // CLEARS the undo/redo stacks.
+  // Bed-as-artboard is OVERRIDABLE document state (C6 / #14): seeded from the
+  // active profile's defaultBed, switched back to that default whenever the
+  // machine profile changes (inside handleProfileChange — the single profile
+  // path), and overridable to a preset or custom dims by the Document Setup
+  // dialog. CanvasChrome (rulers + bed rect) and StatusBar read THIS state, so
+  // applying updates them immediately. It is intentionally NOT threaded into the
+  // export manifest (export keeps reading the separate canvasW/H-derived
+  // bedWmm/bedHmm), so changing the artboard never alters export output.
+  const [bedSize, setBedSize] = useState(() => defaultBedSize(activeProfileId));
+
+  // Document Setup dialog open state (C6 / #14). Opened from the File menu.
+  const [documentSetupOpen, setDocumentSetupOpen] = useState(false);
+
+  // Switching the machine profile also resets the bed-as-artboard to the new
+  // profile's default bed (C6 / #14). This lives HERE — the single profile-change
+  // path the LayerTree selector AND the Document Setup dialog both route through —
+  // so the default bed follows the machine wherever the switch originates, and a
+  // custom bed the dialog sets afterward (it calls setBedSize AFTER this) is not
+  // clobbered. `setBedSize` is a stable setState referenced at call time.
   const handleProfileChange = useCallback(
     (nextProfileId) => {
       setActiveProfileId(nextProfileId);
+      setBedSize(defaultBedSize(nextProfileId));
       resetHistory(remapOperationsToProfile(operations, nextProfileId));
       if (nextProfileId === "laser" || nextProfileId === "plotter") {
         setOutputMode(nextProfileId);
@@ -327,7 +348,6 @@ export default function Studio() {
   // readout update when the profile changes. Live cursor coords (in the active
   // unit) flow up from RightPanel through `setCursorPos`.
   const statusBarSlot = useStatusBarSlot();
-  const bedSize = defaultBedSize(activeProfileId);
   const [cursorPos, setCursorPos] = useState(null);
 
   // Pro-shell operations panel slot (C1 / #10). Null in the legacy layout (no
@@ -445,6 +465,22 @@ export default function Studio() {
     markCleanFrom,
     canvasContainerRef,
   });
+
+  // Document Setup apply (C6 / #14). Routes the profile half through the SAME
+  // handleProfileChange the LayerTree selector uses (so the remap + default-bed
+  // reset stay single-sourced), THEN overrides the bed with the dialog's chosen
+  // preset/custom dims. Order matters: handleProfileChange resets the bed to the
+  // new profile's default first, so the setBedSize below must come AFTER it or
+  // the reset would clobber the custom bed.
+  const handleDocumentSetupApply = useCallback(
+    ({ profileId, bedSize: nextBed }) => {
+      if (profileId && profileId !== activeProfileId) {
+        handleProfileChange(profileId);
+      }
+      if (nextBed) setBedSize(nextBed);
+    },
+    [activeProfileId, handleProfileChange]
+  );
 
   const handleOpenAIChat = (layer) => {
     if (layer?.patternType?.startsWith("ai-")) {
@@ -873,6 +909,7 @@ export default function Studio() {
             onSave={handleSaveLayerGroup}
             onSaveToCloud={handleSaveToCloud}
             onOpenCloudDesigns={() => setUI("showCloudModal", true)}
+            onDocumentSetup={() => setDocumentSetupOpen(true)}
             onUndo={canUndo ? undo : undefined}
             onRedo={canRedo ? redo : undefined}
             buildShareState={buildShareState}
@@ -994,6 +1031,22 @@ export default function Studio() {
           />,
           operationsPanelSlot
         )}
+
+      {/* Document Setup dialog (C6 / #14). Gated on the menu slot so it is live
+          ONLY in the pro shell (its sole entry point is the File-menu item) and a
+          true no-op in the legacy layout. Reads the LIVE active profile + bed so
+          reopening shows current settings; Apply routes the profile half through
+          the shared handleProfileChange and overrides the artboard bed. */}
+      {menuSlot && (
+        <DocumentSetupDialog
+          open={documentSetupOpen}
+          profileId={activeProfileId}
+          bedSize={bedSize}
+          unit={unit}
+          onApply={handleDocumentSetupApply}
+          onClose={() => setDocumentSetupOpen(false)}
+        />
+      )}
 
       <ConfirmDialog
         open={pendingExample !== null}

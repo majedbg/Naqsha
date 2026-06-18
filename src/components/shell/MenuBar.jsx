@@ -104,6 +104,7 @@ export default function MenuBar({
   onSave,
   onSaveToCloud,
   onOpenCloudDesigns,
+  onDocumentSetup,
   onUndo,
   onRedo,
   buildShareState,
@@ -120,6 +121,13 @@ export default function MenuBar({
         { label: "Open…", onSelect: onOpen },
         { label: "Examples", onSelect: onExamples },
         { label: "Import…", onSelect: onImport, disabled: !onImport },
+        { separator: true },
+        // Document Setup… (C6 / #14) — machine profile + bed (= artboard).
+        {
+          label: "Document Setup…",
+          onSelect: onDocumentSetup,
+          disabled: !onDocumentSetup,
+        },
         { separator: true },
         { label: "Export…", onSelect: onExport },
         { label: "Save…", onSelect: onSave },

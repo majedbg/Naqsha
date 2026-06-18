@@ -6,12 +6,14 @@ import LayerTree from "../components/shell/LayerTree";
 import MenuBar from "../components/shell/MenuBar";
 import ToolStrip from "../components/shell/ToolStrip";
 import ControlBar from "../components/shell/ControlBar";
+import StatusBar from "../components/shell/StatusBar";
 import {
   useInspectorSlot,
   useMenuSlot,
   useToolStripSlot,
   useControlBarSlot,
   useObjectTreeSlot,
+  useStatusBarSlot,
 } from "../components/shell/shellSlots";
 import useActiveTool from "../lib/hooks/useActiveTool";
 import useCanvasView from "../lib/hooks/useCanvasView";
@@ -34,7 +36,7 @@ import { exportLayerSVG, exportAllLayersSVG, buildManifest } from "../lib/svgExp
 import ShareLinkButton from "../components/ShareLinkButton";
 import { resolveExportColor } from "../lib/fabrication";
 import { seedOperations } from "../lib/operations";
-import { remapOperationsToProfile } from "../lib/machineProfiles";
+import { remapOperationsToProfile, defaultBedSize } from "../lib/machineProfiles";
 import { findMoirePartnerA } from "../lib/moirePair";
 import useCanvasSize, { loadCanvasState } from "../lib/hooks/useCanvasSize";
 import useUIState from "../lib/hooks/useUIState";
@@ -201,6 +203,15 @@ export default function Studio() {
   // its own internal zoom and stays byte-identical when the flag is off.
   const canvasView = useCanvasView();
   const inProShell = !!toolStripSlot;
+
+  // Pro-shell status bar (B4 / #7). Slot is null in the legacy layout (no
+  // provider) → the portal below is a no-op. The active machine profile drives
+  // the bed-as-artboard dimensions (NOT canvasW/H), so the bed + status-bar bed
+  // readout update when the profile changes. Live cursor coords (in the active
+  // unit) flow up from RightPanel through `setCursorPos`.
+  const statusBarSlot = useStatusBarSlot();
+  const bedSize = defaultBedSize(activeProfileId);
+  const [cursorPos, setCursorPos] = useState(null);
 
   const { groups, saveGroup, deleteGroup, renameGroup } = useLayerGroups();
   const patternInstancesRef = useRef({});
@@ -606,6 +617,8 @@ export default function Studio() {
             externalZoom={inProShell ? canvasView.zoom : undefined}
             onZoomChange={inProShell ? canvasView.setZoom : undefined}
             externalPan={inProShell ? canvasView.pan : undefined}
+            bedSize={inProShell ? bedSize : undefined}
+            onCursorMove={inProShell ? setCursorPos : undefined}
           />
         </div>
       </div>
@@ -780,6 +793,24 @@ export default function Studio() {
             onProfileChange={handleProfileChange}
           />,
           objectTreeSlot
+        )}
+
+      {/* Pro-shell bottom status bar (B4 / #7). Portaled into the shell's
+          Status bar region when the slot is present; renders nothing in the
+          legacy layout (slot null → no-op). Reports the active unit, live zoom
+          %, the live cursor coords (in the active unit, fed from RightPanel via
+          the same px→unit scale the rulers use), and the active machine/bed
+          (from the active profile, so it tracks profile changes). */}
+      {statusBarSlot &&
+        createPortal(
+          <StatusBar
+            unit={unit}
+            zoom={canvasView.zoom}
+            cursor={cursorPos}
+            profileId={activeProfileId}
+            bedSize={bedSize}
+          />,
+          statusBarSlot
         )}
 
       <ConfirmDialog

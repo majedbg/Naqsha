@@ -20,6 +20,7 @@ import {
   ToolStripSlotProvider,
   ControlBarSlotProvider,
   ObjectTreeSlotProvider,
+  StatusBarSlotProvider,
 } from './shellSlots';
 
 // Shared frame for every region: a labeled landmark with a dashed placeholder
@@ -118,10 +119,14 @@ export function OperationsPanelRegion({ children, className = '' }) {
   );
 }
 
-export function StatusBarRegion({ children, className = '' }) {
+export function StatusBarRegion({ children, contentRef, className = '' }) {
+  // `contentRef` (a callback ref) exposes the region's inner mount node so the
+  // hosted Studio can portal its status bar (units / zoom % / live cursor mm /
+  // active bed) into it (B4 / #7). When omitted, the region renders its
+  // placeholder / passed children as before.
   return (
     <Region label="Status bar" className={`h-7 shrink-0 ${className}`}>
-      {children}
+      {contentRef ? <div ref={contentRef} className="h-full" /> : children}
     </Region>
   );
 }
@@ -146,6 +151,9 @@ export default function AppShell({ children }) {
   // The Object tree region's inner mount node (B2 / #5), published so the hosted
   // Studio can portal its layer tree + machine-profile selector into it.
   const [objectTreeNode, setObjectTreeNode] = useState(null);
+  // The Status bar region's inner mount node (B4 / #7), published so the hosted
+  // Studio can portal its status bar into it.
+  const [statusBarNode, setStatusBarNode] = useState(null);
 
   return (
     <div className="flex flex-col h-dvh bg-paper">
@@ -164,9 +172,11 @@ export default function AppShell({ children }) {
             <ToolStripSlotProvider value={toolStripNode}>
               <ControlBarSlotProvider value={controlBarNode}>
                 <ObjectTreeSlotProvider value={objectTreeNode}>
-                  <InspectorSlotProvider value={inspectorNode}>
-                    {children}
-                  </InspectorSlotProvider>
+                  <StatusBarSlotProvider value={statusBarNode}>
+                    <InspectorSlotProvider value={inspectorNode}>
+                      {children}
+                    </InspectorSlotProvider>
+                  </StatusBarSlotProvider>
                 </ObjectTreeSlotProvider>
               </ControlBarSlotProvider>
             </ToolStripSlotProvider>
@@ -179,7 +189,7 @@ export default function AppShell({ children }) {
         </div>
       </div>
 
-      <StatusBarRegion />
+      <StatusBarRegion contentRef={setStatusBarNode} />
     </div>
   );
 }

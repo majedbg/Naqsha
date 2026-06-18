@@ -1,6 +1,8 @@
 import { useRef, useState, useEffect, useCallback } from "react";
 import useCanvas from "../lib/useCanvas";
 import BedOverlay from "./canvas/BedOverlay";
+import CanvasChrome from "./canvas/CanvasChrome";
+import { cursorToUnit } from "../lib/canvasChrome";
 
 const BG_PRESETS = [
   { color: "#0a1628", label: "Dark Blue" },
@@ -31,6 +33,13 @@ export default function RightPanel({
   externalZoom,
   onZoomChange,
   externalPan,
+  // Canvas chrome (pro shell only — B4 / #7). When `bedSize` is supplied the
+  // panel renders the mm rulers + machine-bed artboard over the canvas and
+  // reports the live cursor position (in the active unit) via `onCursorMove`.
+  // All three are wired ONLY on the flag-ON path, so legacy/flag-OFF stays a
+  // byte-identical no-op (no chrome, no cursor tracking).
+  bedSize,
+  onCursorMove,
 }) {
   const containerRef = useRef(null);
   const wrapperRef = useRef(null);
@@ -125,11 +134,55 @@ export default function RightPanel({
 
   const isPrepare = displayMode === 'prepare';
 
+  // Pro-shell canvas chrome (B4 / #7): only active when the shell supplies a
+  // bed size. Reporting the cursor uses the SAME on-screen scale (finalScale)
+  // the rulers use, so the status-bar readout reads correctly against them.
+  // Suppressed in the legacy Prepare/bed view, which draws its own BedOverlay
+  // rulers — so the two ruler systems never stack until the Prepare tab is
+  // dissolved (B7).
+  const showChrome = bedSize != null && !isPrepare;
+  const handleCanvasMouseMove = useCallback(
+    (e) => {
+      if (!onCursorMove) return;
+      const surface = containerRef.current;
+      if (!surface) return;
+      const rect = surface.getBoundingClientRect();
+      // Offset from the artboard origin in screen px, then back-projected to the
+      // active unit through the shared scale.
+      const sx = e.clientX - rect.left;
+      const sy = e.clientY - rect.top;
+      onCursorMove({
+        x: cursorToUnit(sx, unit, finalScale),
+        y: cursorToUnit(sy, unit, finalScale),
+      });
+    },
+    [onCursorMove, unit, finalScale]
+  );
+  const handleCanvasMouseLeave = useCallback(() => {
+    if (onCursorMove) onCursorMove(null);
+  }, [onCursorMove]);
+
   return (
     <div
       ref={wrapperRef}
       className={`h-full bg-surface flex flex-col items-center justify-center relative ${zoom > 1.25 ? "overflow-auto" : "overflow-hidden"}`}
+      onMouseMove={showChrome ? handleCanvasMouseMove : undefined}
+      onMouseLeave={showChrome ? handleCanvasMouseLeave : undefined}
     >
+      {/* Pro-shell fabrication chrome (B4 / #7): mm rulers + bed artboard.
+          Sits OUTSIDE the canvas transform and consumes the full on-screen
+          scale (finalScale) as its zoom, so its ticks align with the scaled
+          canvas and with the cursor readout (which divides by the same scale).
+          Null bedSize (legacy / flag-OFF) → not rendered, a true no-op. */}
+      {showChrome && (
+        <CanvasChrome
+          bedWidthMm={bedSize.width}
+          bedHeightMm={bedSize.height}
+          unit={unit}
+          zoom={finalScale}
+          pan={pan}
+        />
+      )}
       {isPrepare && (
         <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-paper/90 border border-violet/40 text-accent/90 text-[10px] uppercase tracking-wider font-semibold rounded-md px-2.5 py-1 z-10 pointer-events-none">
           Prepare · Bed view

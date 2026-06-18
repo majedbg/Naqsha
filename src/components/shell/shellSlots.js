@@ -94,3 +94,19 @@ export function ControlBarSlotProvider({ value, children }) {
 export function useControlBarSlot() {
   return useContext(ControlBarSlotContext);
 }
+
+// Status bar slot (Lane B / B4, issue #7). Same bridge mechanism as above:
+// AppShell publishes the Status bar region's DOM node; the hosted Studio reads
+// it and React-portals its <StatusBar/> (units / zoom % / live cursor mm /
+// active bed) into it. Defaults to null so the legacy layout (no provider)
+// renders no status bar — a true flag-OFF no-op.
+const StatusBarSlotContext = createContext(null);
+
+export function StatusBarSlotProvider({ value, children }) {
+  return createElement(StatusBarSlotContext.Provider, { value }, children);
+}
+
+// Returns the Status bar region's DOM node when inside the pro shell, else null.
+export function useStatusBarSlot() {
+  return useContext(StatusBarSlotContext);
+}

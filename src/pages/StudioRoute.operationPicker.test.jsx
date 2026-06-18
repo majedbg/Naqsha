@@ -57,12 +57,14 @@ describe("StudioRoute — operation picker wiring (C2)", () => {
     const rows = within(tree).getAllByTestId("layer-row");
     // The top row defaults to Cut (red). Open its chip and pick Score.
     const chip = within(rows[0]).getByTestId("operation-chip");
-    expect(chip).toHaveTextContent(/cut/i);
+    // The row chip shows the operation INITIAL inline + full name in its `title`
+    // (spec §3.1: no operation-name text inline). Assert identity via the title.
+    expect(chip).toHaveAttribute("title", expect.stringMatching(/cut/i));
     fireEvent.click(chip);
     fireEvent.click(screen.getByRole("menuitem", { name: /score/i }));
     // The chip now reflects the reassigned operation.
     const reassigned = within(within(tree).getAllByTestId("layer-row")[0]).getByTestId("operation-chip");
-    expect(reassigned).toHaveTextContent(/score/i);
+    expect(reassigned).toHaveAttribute("title", expect.stringMatching(/score/i));
   });
 
   it("with NOTHING selected, picking from the swatch sets the document default (not an assignment)", () => {
@@ -72,7 +74,8 @@ describe("StudioRoute — operation picker wiring (C2)", () => {
     renderPro();
     const tree = screen.getByRole("region", { name: /object tree|layers/i });
     const topChipBefore = within(within(tree).getAllByTestId("layer-row")[0]).getByTestId("operation-chip");
-    expect(topChipBefore).toHaveTextContent(/cut/i);
+    // Row chip identity via title (initial-only inline, spec §3.1).
+    expect(topChipBefore).toHaveAttribute("title", expect.stringMatching(/cut/i));
 
     const bar = screen.getByRole("region", { name: "Contextual control bar" });
     fireEvent.click(within(bar).getByRole("button", { name: /operation/i }));
@@ -81,7 +84,7 @@ describe("StudioRoute — operation picker wiring (C2)", () => {
     // The existing top layer is UNCHANGED (still Cut) — proving it was a default-
     // set, not an assignment.
     const topChipAfter = within(within(tree).getAllByTestId("layer-row")[0]).getByTestId("operation-chip");
-    expect(topChipAfter).toHaveTextContent(/cut/i);
+    expect(topChipAfter).toHaveAttribute("title", expect.stringMatching(/cut/i));
     // The control-bar swatch now reflects the new document default (Engrave).
     expect(
       within(screen.getByRole("region", { name: "Contextual control bar" })).getByRole("button", {
@@ -98,12 +101,12 @@ describe("StudioRoute — operation picker wiring (C2)", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: /engrave/i }));
     expect(
       within(within(tree).getAllByTestId("layer-row")[0]).getByTestId("operation-chip")
-    ).toHaveTextContent(/engrave/i);
+    ).toHaveAttribute("title", expect.stringMatching(/engrave/i));
 
     // Undo (Ctrl+Z) reverts the assignment back to Cut.
     fireEvent.keyDown(window, { key: "z", ctrlKey: true });
     expect(
       within(within(tree).getAllByTestId("layer-row")[0]).getByTestId("operation-chip")
-    ).toHaveTextContent(/cut/i);
+    ).toHaveAttribute("title", expect.stringMatching(/cut/i));
   });
 });

@@ -211,6 +211,8 @@ export default function RightPanel({
           Null bedSize (legacy / flag-OFF) → not rendered, a true no-op. */}
       {showChrome && (
         <CanvasChrome
+          canvasWidthPx={canvasW}
+          canvasHeightPx={canvasH}
           bedWidthMm={bedSize.width}
           bedHeightMm={bedSize.height}
           unit={unit}

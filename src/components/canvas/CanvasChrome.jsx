@@ -1,11 +1,16 @@
 // CanvasChrome — fabrication chrome around the canvas (Lane B / B4, issue #7).
 //
-// Draws mm (or in/px) rulers along the top + left of the canvas and the machine
-// BED as the artboard. Fully prop-driven so it renders + is assertable under
-// jsdom without the live p5 surface:
+// Draws rulers (mm/in/px) along the top + left, a solid outline of the DESIGN
+// CANVAS (the artboard the rulers measure), and the active machine BED as a
+// dashed "fits-on-machine" guide sharing the same top-left origin. Fully
+// prop-driven so it renders + is assertable under jsdom without the live p5
+// surface:
 //
-//   bedWidthMm / bedHeightMm  the active machine profile's bed size (NOT the
-//                             canvas px size — the bed is the artboard, #7-AC2).
+//   canvasWidthPx / canvasHeightPx  the design canvas size (96-PPI px, same as
+//                             the p5 surface). The rulers measure THIS, and it's
+//                             the solid artboard outline.
+//   bedWidthMm / bedHeightMm  the active machine profile's bed size (mm). Drawn
+//                             as the dashed guide, NOT the rulers' basis.
 //   unit                      the active display unit (mm default).
 //   zoom                      the shell's useCanvasView zoom; tick screen
 //                             positions scale by it so rulers track zoom.
@@ -33,6 +38,13 @@ const RULER = 18; // px band along top/left
 const LABEL_FS = 9;
 
 export default function CanvasChrome({
+  // The DESIGN canvas — rulers measure THIS and it's the solid artboard outline.
+  // Native px (96 PPI), matching the p5 surface; converted to the display unit.
+  canvasWidthPx,
+  canvasHeightPx,
+  // The MACHINE bed (mm, from the active profile) — drawn as a dashed
+  // "fits-on-machine" guide sharing the canvas's top-left origin, so you can see
+  // how much of the design the selected machine can actually reach.
   bedWidthMm,
   bedHeightMm,
   unit = 'mm',
@@ -40,24 +52,35 @@ export default function CanvasChrome({
   pan = { x: 0, y: 0 },
   origin = null,
 }) {
-  // Bed dims arrive in mm (the canonical chrome unit from machineProfiles).
-  // Convert mm -> base px (96 PPI) once via units.js, then re-express the bed's
-  // length in the active display unit for the rulers.
+  const z = Number.isFinite(zoom) && zoom > 0 ? zoom : 1;
+
+  // Canvas (artboard) extent — rulers measure this. px -> display unit -> screen.
+  const canvasWUnit = pxToUnit(canvasWidthPx, unit);
+  const canvasHUnit = pxToUnit(canvasHeightPx, unit);
+  const canvasScreenW = unitToPx(canvasWUnit, unit) * z;
+  const canvasScreenH = unitToPx(canvasHUnit, unit) * z;
+
+  // Bed-guide extent — mm -> base px -> display unit -> screen. May be smaller OR
+  // larger than the canvas; the SVG sizes to the larger of the two so the guide
+  // is never clipped.
   const bedWUnit = pxToUnit(bedWidthMm * PX_PER_MM, unit);
   const bedHUnit = pxToUnit(bedHeightMm * PX_PER_MM, unit);
-
-  const z = Number.isFinite(zoom) && zoom > 0 ? zoom : 1;
   const bedScreenW = unitToPx(bedWUnit, unit) * z;
   const bedScreenH = unitToPx(bedHUnit, unit) * z;
 
-  const { major: majorX, minor: minorX } = rulerTicks(bedWUnit, unit, z);
-  const { major: majorY, minor: minorY } = rulerTicks(bedHUnit, unit, z);
+  // Rulers measure the CANVAS (the design), not the machine bed.
+  const { major: majorX, minor: minorX } = rulerTicks(canvasWUnit, unit, z);
+  const { major: majorY, minor: minorY } = rulerTicks(canvasHUnit, unit, z);
+
+  // The SVG must hold both rects + the ruler bands without clipping either.
+  const extentW = Math.max(canvasScreenW, bedScreenW);
+  const extentH = Math.max(canvasScreenH, bedScreenH);
 
   // Place the SVG. When `origin` (the measured canvas top-left) is given, shift
-  // the chrome so the bed/ruler corner (RULER,RULER inside the SVG) lands on the
-  // canvas corner — the ruler band then sits in the RULER-px gutter just outside
-  // the artwork's top/left edges. `origin` already includes pan, so pan is not
-  // re-added here. Absent → legacy pan-only translate (chrome pinned top-left).
+  // the chrome so the artboard/ruler corner (RULER,RULER inside the SVG) lands on
+  // the canvas corner — the ruler band then sits in the RULER-px gutter just
+  // outside the artwork's top/left edges. `origin` already includes pan, so pan
+  // is not re-added here. Absent → legacy pan-only translate (pinned top-left).
   const translate = origin
     ? `translate(${origin.x - RULER}px, ${origin.y - RULER}px)`
     : `translate(${pan.x}px, ${pan.y}px)`;
@@ -70,13 +93,30 @@ export default function CanvasChrome({
     >
       <svg
         className="absolute left-0 top-0 overflow-visible"
-        width={bedScreenW + RULER}
-        height={bedScreenH + RULER}
+        width={extentW + RULER}
+        height={extentH + RULER}
         style={{ transform: translate }}
       >
-        {/* Bed artboard — the machine bed, sized from the active profile. */}
+        {/* Design-canvas artboard — solid; the rulers measure this extent. */}
         <rect
-          data-testid="bed-artboard"
+          data-testid="canvas-artboard"
+          data-canvas-w-px={canvasWidthPx}
+          data-canvas-h-px={canvasHeightPx}
+          x={RULER + 0.5}
+          y={RULER + 0.5}
+          width={Math.max(0, canvasScreenW - 1)}
+          height={Math.max(0, canvasScreenH - 1)}
+          fill="none"
+          stroke="#00c9b1"
+          strokeOpacity="0.55"
+          strokeWidth="1"
+        />
+
+        {/* Machine-bed guide — dashed + muted; shares the canvas top-left origin
+            (design 0,0 = machine home) so you can see how much of the design the
+            active machine can reach. May fall inside or beyond the canvas. */}
+        <rect
+          data-testid="bed-guide"
           data-bed-w-mm={bedWidthMm}
           data-bed-h-mm={bedHeightMm}
           x={RULER + 0.5}
@@ -85,13 +125,14 @@ export default function CanvasChrome({
           height={Math.max(0, bedScreenH - 1)}
           fill="none"
           stroke="#00c9b1"
-          strokeOpacity="0.55"
+          strokeOpacity="0.4"
           strokeWidth="1"
+          strokeDasharray="5 4"
         />
 
-        {/* Ruler bands */}
-        <rect x={0} y={0} width={bedScreenW + RULER} height={RULER} fill="#0a0a0a" fillOpacity="0.35" />
-        <rect x={0} y={0} width={RULER} height={bedScreenH + RULER} fill="#0a0a0a" fillOpacity="0.35" />
+        {/* Ruler bands (sized to the larger extent) */}
+        <rect x={0} y={0} width={extentW + RULER} height={RULER} fill="#0a0a0a" fillOpacity="0.35" />
+        <rect x={0} y={0} width={RULER} height={extentH + RULER} fill="#0a0a0a" fillOpacity="0.35" />
 
         {/* Corner unit badge */}
         <text

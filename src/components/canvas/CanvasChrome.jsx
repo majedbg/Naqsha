@@ -9,10 +9,20 @@
 //   unit                      the active display unit (mm default).
 //   zoom                      the shell's useCanvasView zoom; tick screen
 //                             positions scale by it so rulers track zoom.
-//   pan                       optional {x,y} the shell's Hand tool drives.
+//   pan                       optional {x,y} the shell's Hand tool drives
+//                             (legacy path, used only when `origin` is absent).
+//   origin                    optional {x,y} the on-screen top-left of the
+//                             canvas surface, measured relative to the chrome's
+//                             container. When supplied, the chrome translates so
+//                             ruler 0,0 sits at the canvas corner — keeping the
+//                             rulers ON the artwork instead of pinned to the
+//                             container's top-left. `origin` already encodes
+//                             centering + pan + scroll (it's the same measured
+//                             rect the cursor readout uses), so pan is NOT
+//                             re-applied on this path. Absent → legacy pan-only.
 //
 // Tick screen positions are computed (rulerTicks) rather than left to a CSS
-// transform, so they track zoom/pan explicitly and stay aligned with the cursor
+// transform, so they track zoom explicitly and stay aligned with the cursor
 // readout (which divides by the same scale). Pointer-events-none so it never
 // steals canvas interaction.
 
@@ -28,6 +38,7 @@ export default function CanvasChrome({
   unit = 'mm',
   zoom = 1,
   pan = { x: 0, y: 0 },
+  origin = null,
 }) {
   // Bed dims arrive in mm (the canonical chrome unit from machineProfiles).
   // Convert mm -> base px (96 PPI) once via units.js, then re-express the bed's
@@ -42,6 +53,15 @@ export default function CanvasChrome({
   const { major: majorX, minor: minorX } = rulerTicks(bedWUnit, unit, z);
   const { major: majorY, minor: minorY } = rulerTicks(bedHUnit, unit, z);
 
+  // Place the SVG. When `origin` (the measured canvas top-left) is given, shift
+  // the chrome so the bed/ruler corner (RULER,RULER inside the SVG) lands on the
+  // canvas corner — the ruler band then sits in the RULER-px gutter just outside
+  // the artwork's top/left edges. `origin` already includes pan, so pan is not
+  // re-added here. Absent → legacy pan-only translate (chrome pinned top-left).
+  const translate = origin
+    ? `translate(${origin.x - RULER}px, ${origin.y - RULER}px)`
+    : `translate(${pan.x}px, ${pan.y}px)`;
+
   return (
     <div
       data-testid="canvas-chrome"
@@ -52,7 +72,7 @@ export default function CanvasChrome({
         className="absolute left-0 top-0 overflow-visible"
         width={bedScreenW + RULER}
         height={bedScreenH + RULER}
-        style={{ transform: `translate(${pan.x}px, ${pan.y}px)` }}
+        style={{ transform: translate }}
       >
         {/* Bed artboard — the machine bed, sized from the active profile. */}
         <rect

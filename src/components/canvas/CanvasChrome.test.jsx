@@ -49,6 +49,56 @@ describe('CanvasChrome — rulers track zoom', () => {
   });
 });
 
+describe('CanvasChrome — positions ruler 0,0 at the canvas origin', () => {
+  const RULER = 18; // mirrors the band width in CanvasChrome
+  const svgTransform = (container) =>
+    container.querySelector('svg').style.transform;
+
+  it('translates so the bed/ruler corner lands on the measured canvas origin (origin minus the ruler band)', () => {
+    const { container } = render(
+      <CanvasChrome
+        bedWidthMm={100}
+        bedHeightMm={80}
+        unit="mm"
+        zoom={1}
+        origin={{ x: 320, y: 140 }}
+      />
+    );
+    expect(svgTransform(container)).toBe(
+      `translate(${320 - RULER}px, ${140 - RULER}px)`
+    );
+  });
+
+  it('ignores pan when an origin is supplied (origin already encodes pan)', () => {
+    const { container } = render(
+      <CanvasChrome
+        bedWidthMm={100}
+        bedHeightMm={80}
+        zoom={1}
+        origin={{ x: 200, y: 100 }}
+        pan={{ x: 999, y: 999 }}
+      />
+    );
+    expect(svgTransform(container)).toBe(
+      `translate(${200 - RULER}px, ${100 - RULER}px)`
+    );
+  });
+
+  it('falls back to legacy pan-only translate when origin is absent (no behavior change)', () => {
+    const { container } = render(
+      <CanvasChrome bedWidthMm={100} bedHeightMm={80} zoom={1} pan={{ x: 5, y: 7 }} />
+    );
+    expect(svgTransform(container)).toBe('translate(5px, 7px)');
+  });
+
+  it('defaults to translate(0,0) with neither origin nor pan', () => {
+    const { container } = render(
+      <CanvasChrome bedWidthMm={100} bedHeightMm={80} zoom={1} />
+    );
+    expect(svgTransform(container)).toBe('translate(0px, 0px)');
+  });
+});
+
 describe('CanvasChrome — bed artboard matches the active profile bed size', () => {
   it('draws the bed at the laser profile dimensions', () => {
     const laser = defaultBedSize('laser'); // 508 x 305 mm

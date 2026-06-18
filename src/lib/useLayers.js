@@ -5,6 +5,7 @@ import { getDynamicDefaults, getDynamicParamDefs } from './patternRegistry';
 import { isMoireMember, findMoirePartnerA, findMoirePartnerB } from './moirePair';
 import { migrateLayer } from './migration';
 import { operationIdForRole } from './operations';
+import { parseSVGImport } from './svgImport';
 
 // Distinct group id for a Moiré pair (links role A + role B).
 let nextGroupNum = 1;
@@ -155,6 +156,47 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
       return [...prev, createLayer(prev.length, requested)];
     });
   }, [cap]);
+
+  // Import an SVG file's outline as ONE place-as-artwork layer (issue #12, C4).
+  // Parses the SVG → imported-path layer carrying the verbatim `d` data in
+  // `params.pathData`, marked `type:'import'`, defaulting to the document's Cut
+  // operation. Additive: it never touches existing pattern layers. Returns
+  // { ok, error? } so callers (File>Import, drag-drop, paste) can surface a
+  // graceful message. Capacity-aware (respects the tier cap, like addLayer).
+  const addImportedLayer = useCallback((svgString) => {
+    const parsed = parseSVGImport(svgString);
+    if (!parsed.ok) return { ok: false, error: parsed.error };
+    // Capacity decided synchronously off live `layers` (setLayers is async),
+    // mirroring changeLayerPattern's pattern, so the returned outcome is exact.
+    if (layers.length >= cap) return { ok: false, error: 'Layer limit reached.' };
+
+    setLayers((prev) => {
+      if (prev.length >= cap) return prev; // re-check against live state
+      const index = prev.length;
+      const layer = {
+        id: genId(),
+        name: `Imported ${index + 1}`,
+        type: 'import',
+        color: DEFAULT_COLORS[index % DEFAULT_COLORS.length],
+        opacity: 100,
+        visible: true,
+        bgColor: '#ffffff',
+        bgOpacity: 0,
+        // `import` is not a generative pattern; patternType keeps the same name
+        // so any consumer that reads it sees a stable, non-colliding value.
+        patternType: 'import',
+        params: { pathData: parsed.paths },
+        seed: 0,
+        randomizeKeys: [],
+        paramsCache: {},
+        role: 'cut',
+        operationId: operationIdForRole('cut'), // default operation = Cut
+        penSlot: (index % 4) + 1,
+      };
+      return [...prev, layer];
+    });
+    return { ok: true };
+  }, [cap, layers]);
 
   const duplicateLayer = useCallback((id) => {
     setLayers((prev) => {
@@ -496,7 +538,7 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
   }, []);
 
   return {
-    layers, addLayer, duplicateLayer, removeLayer, updateLayer, reorderLayers,
+    layers, addLayer, addImportedLayer, duplicateLayer, removeLayer, updateLayer, reorderLayers,
     changeLayerPattern,
     randomizeLayer, randomizeAll, randomizeLayerParams, randomizeAllParams,
     loadLayerSet, bgColor, setBgColor,

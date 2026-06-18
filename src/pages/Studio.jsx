@@ -13,6 +13,7 @@ import {
 } from "../components/shell/shellSlots";
 import useActiveTool from "../lib/hooks/useActiveTool";
 import useCanvasView from "../lib/hooks/useCanvasView";
+import useSvgImport from "../lib/hooks/useSvgImport";
 import ConfirmDialog from "../components/ui/ConfirmDialog";
 import { EXAMPLES, EXAMPLE_COUNT } from "../examples";
 import RightPanel from "../components/RightPanel";
@@ -99,6 +100,7 @@ export default function Studio() {
   const {
     layers,
     addLayer,
+    addImportedLayer,
     duplicateLayer,
     removeLayer,
     updateLayer,
@@ -146,6 +148,51 @@ export default function Studio() {
   const patternInstancesRef = useRef({});
   const canvasContainerRef = useRef(null);
   const [livePatternInstances, setLivePatternInstances] = useState({});
+
+  // === SVG import (issue #12, C4 — place as artwork) ===
+  // One import = one layer, via three entry points: File>Import (file picker),
+  // drag-drop onto the canvas, and paste. All funnel through addImportedLayer;
+  // malformed/empty SVG surfaces a brief inline message (the app has no toast).
+  const importFileInputRef = useRef(null);
+  const [importError, setImportError] = useState(null);
+  const importErrorTimer = useRef(null);
+
+  const handleImportSVG = useCallback(
+    (svgText) => {
+      const outcome = addImportedLayer(svgText);
+      if (!outcome.ok) {
+        setImportError(outcome.error || "Could not import this SVG.");
+        clearTimeout(importErrorTimer.current);
+        importErrorTimer.current = setTimeout(() => setImportError(null), 4000);
+      } else {
+        setImportError(null);
+      }
+    },
+    [addImportedLayer]
+  );
+
+  // File > Import — open a file picker and read the chosen .svg.
+  const handleImportClick = useCallback(() => {
+    importFileInputRef.current?.click();
+  }, []);
+
+  const handleImportFileChange = useCallback(
+    async (e) => {
+      const file = e.target.files?.[0];
+      e.target.value = ""; // allow re-importing the same file
+      if (!file) return;
+      try {
+        const text = await file.text();
+        handleImportSVG(text);
+      } catch {
+        setImportError("Could not read that file.");
+      }
+    },
+    [handleImportSVG]
+  );
+
+  // Drag-drop + paste onto the canvas (the other two entry points).
+  useSvgImport(canvasContainerRef, handleImportSVG);
 
   // === Dirty-tracking + share-link hydration ===
   const { markCleanFrom, isDirty } = useDesignPersistence({
@@ -353,6 +400,15 @@ export default function Studio() {
 
   return (
     <div className="flex flex-col h-dvh bg-paper">
+      {/* Hidden file input backing File > Import (issue #12). Click is triggered
+          by the menu item; reads the chosen .svg and adds one artwork layer. */}
+      <input
+        ref={importFileInputRef}
+        type="file"
+        accept=".svg,image/svg+xml"
+        className="hidden"
+        onChange={handleImportFileChange}
+      />
       {/* App title — the naqsheh etymology lives in the hover card. */}
       <div className="shrink-0 bg-paper-warm border-b border-hairline px-4 py-2 group/title relative">
         <h1 className="display text-md font-semibold text-ink tracking-tight cursor-default select-none">
@@ -464,7 +520,17 @@ export default function Studio() {
         {/* Canvas: DOM-second, ordered first on mobile (top). Mobile gets a
             fixed 45vh so it doesn't eat the LeftPanel's scroll area; desktop
             fills the remaining horizontal space. */}
-        <div className="order-1 md:order-none shrink-0 md:shrink h-[45dvh] md:h-auto md:flex-1 md:min-h-0 min-w-0">
+        <div className="order-1 md:order-none shrink-0 md:shrink h-[45dvh] md:h-auto md:flex-1 md:min-h-0 min-w-0 relative">
+          {/* SVG import failure message (issue #12). No toast system in the app,
+              so a brief inline banner over the canvas. Auto-clears after 4s. */}
+          {importError && (
+            <div
+              role="alert"
+              className="absolute top-3 left-1/2 -translate-x-1/2 z-20 bg-paper border border-red-500/50 text-red-500 text-xs rounded-md px-3 py-1.5 shadow-sm"
+            >
+              {importError}
+            </div>
+          )}
           <RightPanel
             layers={layers}
             canvasW={canvasW}
@@ -579,6 +645,7 @@ export default function Studio() {
           <MenuBar
             onOpen={() => setUI("showLoadModal", true)}
             onExamples={() => setUI("showExamples", !showExamples)}
+            onImport={handleImportClick}
             onExport={() => handleExportAll(true)}
             onSave={handleSaveLayerGroup}
             onSaveToCloud={handleSaveToCloud}

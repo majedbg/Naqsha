@@ -58,6 +58,10 @@ export default function DocumentSetupDialog({
   // (and DocumentSetupDialog.test.jsx) that omit them are unaffected.
   canvasW,
   canvasH,
+  // Extra bed presets to surface ALONGSIDE the active profile's presets (#18).
+  // The ITP Camp kit feeds its 2 laser beds here while the kit mode is active;
+  // they appear under the laser machine's preset list. mm dims, like bedPresets.
+  extraBedPresets = [],
   onApply,
   onClose,
 }) {
@@ -104,7 +108,10 @@ export default function DocumentSetupDialog({
 
   if (!open) return null;
 
-  const presets = bedPresetsFor(draftProfile);
+  // The active profile's presets, plus any kit-supplied extras (#18). Extras are
+  // only meaningful for the profile they target (the kit is laser-gated), so they
+  // ride alongside whatever profile is currently drafted.
+  const presets = [...bedPresetsFor(draftProfile), ...extraBedPresets];
 
   // Switching the machine in the dialog reseeds the bed to that profile's
   // default (in the active unit) and resets the preset selector — mirrors how

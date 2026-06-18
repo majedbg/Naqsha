@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- ITP Camp badge / pin backing — round, ~2 inch = 50.8 mm diameter. Single
+     circular cut outline. viewBox = mm; centre at (25.4,25.4). -->
+<svg xmlns="http://www.w3.org/2000/svg" width="50.8mm" height="50.8mm" viewBox="0 0 50.8 50.8">
+  <path fill="none" stroke="#000000" stroke-width="0.5"
+        d="M 0 25.4 a 25.4 25.4 0 1 0 50.8 0 a 25.4 25.4 0 1 0 -50.8 0 Z"/>
+</svg>

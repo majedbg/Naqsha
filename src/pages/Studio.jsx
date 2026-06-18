@@ -27,6 +27,7 @@ import RightPanel from "../components/RightPanel";
 import LayerGroupModal from "../components/LayerGroupModal";
 import CloudSaveModal from "../components/CloudSaveModal";
 import PatternPickerModal from "../components/PatternPickerModal";
+import KitPresetModal from "../components/KitPresetModal";
 import useLayers from "../lib/useLayers";
 import useLayerGroups from "../lib/useLayerGroups";
 import { useAuth } from "../lib/AuthContext";
@@ -49,6 +50,9 @@ import useUIState from "../lib/hooks/useUIState";
 import useOptimizations from "../lib/hooks/useOptimizations";
 import useDesignPersistence from "../lib/hooks/useDesignPersistence";
 import useCloudPersistence from "../lib/hooks/useCloudPersistence";
+import { useTheme } from "../lib/useTheme";
+import useKitMode from "../lib/hooks/useKitMode";
+import { ITP_CAMP_KIT_ID, getKit } from "../kits/kitRegistry";
 
 export default function Studio() {
   const { loading, user } = useAuth();
@@ -242,6 +246,37 @@ export default function Studio() {
 
   // Document Setup dialog open state (C6 / #14). Opened from the File menu.
   const [documentSetupOpen, setDocumentSetupOpen] = useState(false);
+
+  // === ITP Camp kit mode (issue #18, Lane C / C9) ===
+  // The reversible kit lifecycle: entering applies the theme skin + a kit bed and
+  // snapshots the prior theme/bed; exiting restores them verbatim. The hook owns
+  // the snapshot; Studio supplies the live theme + bed and their setters.
+  const { theme, setTheme } = useTheme();
+  const kitMode = useKitMode({
+    kitId: ITP_CAMP_KIT_ID,
+    theme,
+    bed: bedSize,
+    setTheme,
+    setBed: setBedSize,
+  });
+  // Floating preset-asset modal open state (mirrors the pattern picker).
+  const [kitPresetOpen, setKitPresetOpen] = useState(false);
+  // Drop a kit asset through the SAME place-as-artwork import path as File>Import.
+  const handleKitPresetPick = useCallback(
+    (svg) => {
+      if (typeof svg === "string") addImportedLayer(svg);
+      setKitPresetOpen(false);
+    },
+    [addImportedLayer]
+  );
+  // No-leftover-state guard: the enter/exit control is Laser-gated, so if the
+  // machine leaves Laser while the kit is active the control would vanish with no
+  // way to exit. Auto-exit (restore the snapshot) on any non-laser profile.
+  useEffect(() => {
+    if (kitMode.active && activeProfileId !== "laser") {
+      kitMode.exit();
+    }
+  }, [activeProfileId, kitMode]);
 
   // Switching the machine profile also resets the bed-as-artboard to the new
   // profile's default bed (C6 / #14). This lives HERE — the single profile-change
@@ -827,6 +862,16 @@ export default function Studio() {
         }}
       />
 
+      {/* ITP Camp preset-asset modal (#18). A floating modal (mirrors the
+          pattern picker), opened on entering kit mode; picking an asset drops it
+          via the place-as-artwork import path (addImportedLayer). */}
+      <KitPresetModal
+        open={kitPresetOpen}
+        kitId={ITP_CAMP_KIT_ID}
+        onPick={handleKitPresetPick}
+        onClose={() => setKitPresetOpen(false)}
+      />
+
       {/* Load modal */}
       {showLoadModal && (
         <LayerGroupModal
@@ -1008,6 +1053,16 @@ export default function Studio() {
               profileId={activeProfileId}
               onCommitOperations={commitOperations}
               onAddOperation={handleAddOperation}
+              // ITP Camp kit mode (#18). The enter/exit control is Laser-gated
+              // inside OperationsPanel. Entering also opens the preset modal.
+              kitAvailable
+              kitActive={kitMode.active}
+              kitName={getKit(ITP_CAMP_KIT_ID)?.name}
+              onEnterKit={() => {
+                kitMode.enter();
+                setKitPresetOpen(true);
+              }}
+              onExitKit={kitMode.exit}
             />
             {/* Re-homed optimize controls (#16 AC2). Sibling of OperationsPanel
                 in the SAME shell region so OperationsPanel (and its tests) stay
@@ -1038,6 +1093,8 @@ export default function Studio() {
           // again in the shell so export dimensions are controllable.
           canvasW={canvasW}
           canvasH={canvasH}
+          // ITP Camp beds surface as laser presets while the kit is active (#18).
+          extraBedPresets={kitMode.bedPresets}
           onApply={handleDocumentSetupApply}
           onClose={() => setDocumentSetupOpen(false)}
         />

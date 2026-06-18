@@ -19,3 +19,4 @@
 |------:|--------|--------|----------------------|-------|
 | #1 | ✅ DONE | 0f4fce0 | 594→632 (+38) | A1+A3+A4. operations.js + migration.js; export rewired via resolveExportColor; examples rewritten; equivalence asserted vs literals; no existing test/snapshot touched. |
 | #2 | ✅ DONE | 0454300 | 632→640 (+8) | B1. AppShell (8 region frames) + StudioRoute strangler gate behind `VITE_PRO_SHELL` flag; OFF=legacy no-op, ON+desktop=shell w/ Studio in canvas. Only App.jsx modified. |
+| #3 | ✅ DONE | a5d9b76 | 640→667 (+27) | A2. machineProfiles.js (Laser/Plotter/Drag Cutter): process sets, param schemas, default beds, remapOperationsToProfile. migration.js strips outputMode; ids `laser`/`plotter`/`dragCutter` align w/ #1. No selector UI (lands #5). |

@@ -51,6 +51,13 @@ export default function DocumentSetupDialog({
   profileId = "laser",
   bedSize,
   unit = "mm",
+  // Export document size in px (canvasW/canvasH from Studio's useCanvasSize). This
+  // is the size the EXPORT manifest + SVG dimensions use — distinct from the bed
+  // (display/artboard) above. Optional: the document-size control only renders
+  // when both are supplied AND an onApply consumer exists, so existing callers
+  // (and DocumentSetupDialog.test.jsx) that omit them are unaffected.
+  canvasW,
+  canvasH,
   onApply,
   onClose,
 }) {
@@ -60,6 +67,11 @@ export default function DocumentSetupDialog({
   const [draftW, setDraftW] = useState("");
   const [draftH, setDraftH] = useState("");
   const [presetId, setPresetId] = useState("custom");
+  // Export document size draft (px). Kept separate from the bed dims above.
+  const [draftDocW, setDraftDocW] = useState("");
+  const [draftDocH, setDraftDocH] = useState("");
+  const hasCanvasSize =
+    typeof canvasW === "number" && typeof canvasH === "number";
   const applyRef = useRef(null);
 
   useEffect(() => {
@@ -69,6 +81,10 @@ export default function DocumentSetupDialog({
     setDraftW(String(roundForUnit(mmToUnit(bed.width, unit), unit)));
     setDraftH(String(roundForUnit(mmToUnit(bed.height, unit), unit)));
     setPresetId("custom");
+    if (hasCanvasSize) {
+      setDraftDocW(String(Math.round(canvasW)));
+      setDraftDocH(String(Math.round(canvasH)));
+    }
     // Focus the primary action, mirroring ConfirmDialog.
     applyRef.current?.focus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -120,7 +136,16 @@ export default function DocumentSetupDialog({
       height: unitToMm(Number.isFinite(h) ? h : 0, unit),
       unit: "mm",
     };
-    onApply?.({ profileId: draftProfile, bedSize: bed });
+    const payload = { profileId: draftProfile, bedSize: bed };
+    // Export document size (px) — only included when the control is present, so
+    // callers that don't pass canvasW/H see an unchanged payload shape.
+    if (hasCanvasSize) {
+      const docW = Math.round(Number(draftDocW));
+      const docH = Math.round(Number(draftDocH));
+      if (Number.isFinite(docW) && docW > 0) payload.canvasW = docW;
+      if (Number.isFinite(docH) && docH > 0) payload.canvasH = docH;
+    }
+    onApply?.(payload);
     onClose?.();
   };
 
@@ -219,6 +244,47 @@ export default function DocumentSetupDialog({
             />
           </label>
         </div>
+
+        {/* Export document size (#16 AC2 re-home). The size the exported SVG +
+            manifest use (canvasW/canvasH, px) — distinct from the bed/artboard
+            above. Labelled "Document W/H" so it never collides with the bed
+            Width/Height inputs. Only shown when Studio supplies canvasW/H. */}
+        {hasCanvasSize && (
+          <div className="border-t border-hairline pt-3">
+            <span className="block text-[10px] font-semibold uppercase tracking-wider text-ink-soft mb-1">
+              Export document size (px)
+            </span>
+            <div className="flex items-end gap-3">
+              <label className="flex-1">
+                <span className="block text-[10px] text-ink-soft/70 mb-1">
+                  Document W
+                </span>
+                <input
+                  type="number"
+                  aria-label="Document W"
+                  value={draftDocW}
+                  min={1}
+                  onChange={(e) => setDraftDocW(e.target.value)}
+                  className="w-full rounded-xs border border-hairline bg-paper-warm px-1.5 py-1 text-xs text-ink outline-none focus:border-violet num"
+                />
+              </label>
+              <span className="pb-1.5 text-xs text-ink-soft/60">×</span>
+              <label className="flex-1">
+                <span className="block text-[10px] text-ink-soft/70 mb-1">
+                  Document H
+                </span>
+                <input
+                  type="number"
+                  aria-label="Document H"
+                  value={draftDocH}
+                  min={1}
+                  onChange={(e) => setDraftDocH(e.target.value)}
+                  className="w-full rounded-xs border border-hairline bg-paper-warm px-1.5 py-1 text-xs text-ink outline-none focus:border-violet num"
+                />
+              </label>
+            </div>
+          </div>
+        )}
 
         <div className="mt-lg flex items-center justify-end gap-xs">
           <button

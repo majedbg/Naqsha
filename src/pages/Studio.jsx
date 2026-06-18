@@ -1,6 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { createPortal } from "react-dom";
-import LeftPanel from "../components/LeftPanel";
 import Inspector from "../components/shell/Inspector";
 import LayerTree from "../components/shell/LayerTree";
 import MenuBar from "../components/shell/MenuBar";
@@ -22,20 +21,22 @@ import useCanvasView from "../lib/hooks/useCanvasView";
 import useSvgImport from "../lib/hooks/useSvgImport";
 import ConfirmDialog from "../components/ui/ConfirmDialog";
 import DocumentSetupDialog from "../components/shell/DocumentSetupDialog";
-import { EXAMPLES, EXAMPLE_COUNT } from "../examples";
+import { EXAMPLES } from "../examples";
+import ExamplesGallery from "../components/sidebar/ExamplesGallery";
 import RightPanel from "../components/RightPanel";
 import LayerGroupModal from "../components/LayerGroupModal";
 import CloudSaveModal from "../components/CloudSaveModal";
 import PatternPickerModal from "../components/PatternPickerModal";
-import AIPatternChat from "../components/AIPatternChat";
 import useLayers from "../lib/useLayers";
-import { getDynamicDefaults } from "../lib/patternRegistry";
 import useLayerGroups from "../lib/useLayerGroups";
 import { useAuth } from "../lib/AuthContext";
 import { useGate } from "../lib/useGate";
 import AuthButton from "../components/AuthButton";
 import ThemeToggle from "../components/ui/ThemeToggle";
-import { exportLayerSVG, exportAllLayersSVG, buildManifest } from "../lib/svgExport";
+import { exportAllLayersSVG, exportLayerSVG, buildManifest } from "../lib/svgExport";
+import AIPatternChat from "../components/AIPatternChat";
+import OptimizeControls from "../components/shell/OptimizeControls";
+import { getDynamicDefaults } from "../lib/patternRegistry";
 import ShareLinkButton from "../components/ShareLinkButton";
 import { resolveExportColor } from "../lib/fabrication";
 import { seedOperations, addOperation, resolveOperation } from "../lib/operations";
@@ -54,7 +55,10 @@ export default function Studio() {
   const { limits } = useGate();
   const savedCanvas = loadCanvasState();
 
-  // === UI chrome (active tab + modals + AI-chat) ===
+  // === UI chrome (modals + examples) ===
+  // `activeTab` is no longer a user-facing surface (#16 removed the Design/
+  // Prepare/Export tabs); it is still read once here only to round-trip the
+  // legacy `sonoform-canvas` localStorage blob shape for existing users.
   const { ui, set: setUI } = useUIState({ savedTab: savedCanvas?.activeTab });
   const {
     activeTab,
@@ -64,9 +68,6 @@ export default function Studio() {
     saveName,
     showExamples,
     pendingExample,
-    aiChatOpen,
-    aiChatMode,
-    aiChatLayer,
   } = ui;
 
   // === Canvas sizing (owns the sonoform-canvas blob incl. activeTab) ===
@@ -83,15 +84,17 @@ export default function Studio() {
     setMargin,
     outputMode,
     setOutputMode,
-    prepareConfigured,
-    handlePresetChange,
-    handleCustomChange,
     applyCanvasSize,
     bedWmm,
     bedHmm,
   } = useCanvasSize({ savedCanvas, activeTab });
 
-  // === Optimization preview/applied state machine ===
+  // === Optimization applied state (export + plot overlay basis) ===
+  // The interactive simplify/merge/reorder CONTROLS lived in the legacy Prepare
+  // tab's OptimizeSection. For #16 AC2 they are re-homed into a compact
+  // OptimizeControls panel portaled (as a sibling) into the shell's operations
+  // region. `appliedOptimizations`/`appliedOpsList` still feed export + the plot
+  // overlay; the update/apply/revert handlers drive the re-homed controls.
   const {
     optimizations,
     updateOptimization,
@@ -115,18 +118,24 @@ export default function Studio() {
   const getDefaultOperationId = useCallback(() => defaultOperationIdRef.current, []);
 
   // === Layers ===
+  // NOTE: useLayers also exposes duplicateLayer / removeLayer / randomizeLayer /
+  // randomizeAll / randomizeLayerParams / randomizeAllParams. Those were wired
+  // ONLY through the legacy LayersSection (LeftPanel), removed in #16. The shell
+  // LayerTree does not yet expose per-layer remove / duplicate / randomize — a
+  // known AC2 gap flagged for the orchestrator. The implementations survive in
+  // useLayers, so re-homing them in the shell later is cheap.
   const {
     layers,
     addLayer,
     addImportedLayer,
-    duplicateLayer,
-    removeLayer,
     updateLayer,
     reorderLayers,
     changeLayerPattern,
+    duplicateLayer,
+    removeLayer,
     randomizeLayer,
-    randomizeAll,
     randomizeLayerParams,
+    randomizeAll,
     randomizeAllParams,
     loadLayerSet,
     bgColor,
@@ -140,12 +149,16 @@ export default function Studio() {
   const objectTreeSlot = useObjectTreeSlot();
 
   // === Document operation library + active machine profile (B2 / #5) ===
-  // Both are lifted into LIVE state here so the object tree's profile selector
-  // can re-map operation colors. Seeded EXACTLY as before so export stays
-  // byte-stable: operations start from seedOperations() (same ids/colors), and
-  // the active profile is seeded FROM the migrated `outputMode` (not the laser
-  // default) — so on load `activeProfileId === outputMode` and the export path
-  // resolves identical colors. A remap only fires when the user switches.
+  // `activeProfileId` is the SINGLE SOURCE OF TRUTH for the active machine
+  // profile (the #5 machine-profile selector + Document Setup drive it). It is
+  // SEEDED from the persisted `outputMode` so a returning user's saved laser /
+  // plotter profile is restored on load and export colors stay byte-stable
+  // (`outputMode` lives in the `sonoform-canvas` localStorage blob; the profile
+  // id itself is not separately persisted). After load, `outputMode` is only a
+  // write-only persistence mirror kept current by `handleProfileChange` — the
+  // legacy OutputModeSection that used to *set* it is gone (#16). Operations are
+  // seeded EXACTLY as before (seedOperations(), same ids/colors), so a remap
+  // only fires when the user switches profiles.
   const [activeProfileId, setActiveProfileId] = useState(outputMode);
 
   // === Operation library + assignment undo/redo (C1 / #10) ===
@@ -193,17 +206,6 @@ export default function Studio() {
     captureAssignments,
     restoreAssignments,
   });
-
-  // Keep the active profile tracking the legacy `outputMode` so the legacy
-  // OutputModeSection toggle (flag-OFF path) still drives export colors exactly
-  // as before — `machineProfile` below derives from `activeProfileId`, and
-  // without this sync a frozen initial value would silently stop the legacy
-  // toggle from changing export output. Same-value setState bails out (no loop);
-  // `dragCutter` (no legacy outputMode) is set only via the profile selector and
-  // is unaffected because outputMode never becomes 'dragCutter'.
-  useEffect(() => {
-    setActiveProfileId(outputMode);
-  }, [outputMode]);
 
   // === Live selection state (B2 / #5) ===
   // Replaces the old hardcoded `layers[0]` placeholder. Clicking a tree row sets
@@ -262,6 +264,12 @@ export default function Studio() {
           ? remapped
           : remapped.filter((o) => !isBandOperation(o))
       );
+      // Mirror the laser/plotter profile into the persisted `outputMode` so the
+      // chosen profile round-trips through the `sonoform-canvas` localStorage
+      // blob and `activeProfileId` re-seeds from it on next load. This is now a
+      // write-only persistence mirror (the legacy OutputModeSection that read +
+      // wrote it is gone, #16). `dragCutter` has no legacy outputMode value, so
+      // its persistence is out of scope here — unchanged from before.
       if (nextProfileId === "laser" || nextProfileId === "plotter") {
         setOutputMode(nextProfileId);
       }
@@ -369,15 +377,12 @@ export default function Studio() {
   const { activeTool, setActiveTool } = useActiveTool({
     enabled: !!toolStripSlot,
   });
-  // Canvas pan/zoom the Hand/Zoom tools drive. Only wired into RightPanel on the
-  // flag-ON (pro shell) path — `inProShell` below — so the legacy canvas keeps
-  // its own internal zoom and stays byte-identical when the flag is off.
+  // Canvas pan/zoom the Hand/Zoom tools drive, wired into the (shell-hosted)
+  // RightPanel canvas.
   const canvasView = useCanvasView();
-  const inProShell = !!toolStripSlot;
 
-  // Pro-shell status bar (B4 / #7). Slot is null in the legacy layout (no
-  // provider) → the portal below is a no-op. The active machine profile drives
-  // the bed-as-artboard dimensions (NOT canvasW/H), so the bed + status-bar bed
+  // Pro-shell status bar (B4 / #7). The active machine profile drives the
+  // bed-as-artboard dimensions (NOT canvasW/H), so the bed + status-bar bed
   // readout update when the profile changes. Live cursor coords (in the active
   // unit) flow up from RightPanel through `setCursorPos`.
   const statusBarSlot = useStatusBarSlot();
@@ -385,9 +390,7 @@ export default function Studio() {
 
   // Plot preview + overlap overlay toggle (C7 / #15). OFF by default → clean
   // canvas. Driven from the View > Overlays menu item and surfaced as the
-  // PlotOverlay on the canvas. Only meaningful on the pro-shell path (the legacy
-  // layout keeps its Prepare-tab preview/overlap UI untouched — that's #16), so
-  // the RightPanel wiring below is gated by `inProShell` and stays a no-op off.
+  // PlotOverlay on the canvas.
   const [showOverlays, setShowOverlays] = useState(false);
 
   // Pro-shell operations panel slot (C1 / #10). Null in the legacy layout (no
@@ -426,7 +429,6 @@ export default function Studio() {
   const { groups, saveGroup, deleteGroup, renameGroup } = useLayerGroups();
   const patternInstancesRef = useRef({});
   const canvasContainerRef = useRef(null);
-  const [livePatternInstances, setLivePatternInstances] = useState({});
 
   // === SVG import (issue #12, C4 — place as artwork) ===
   // One import = one layer, via three entry points: File>Import (file picker),
@@ -512,47 +514,61 @@ export default function Studio() {
   // preset/custom dims. Order matters: handleProfileChange resets the bed to the
   // new profile's default first, so the setBedSize below must come AFTER it or
   // the reset would clobber the custom bed.
+  // Also re-homes the EXPORT document size (#16 AC2): canvasW/canvasH come back
+  // from the dialog (px) and route through applyCanvasSize so the export
+  // dimensions become user-settable again AND presetIndex stays coherent (snaps
+  // to a known preset or Custom, exactly as the cloud/example loaders do).
   const handleDocumentSetupApply = useCallback(
-    ({ profileId, bedSize: nextBed }) => {
+    ({ profileId, bedSize: nextBed, canvasW: nextW, canvasH: nextH }) => {
       if (profileId && profileId !== activeProfileId) {
         handleProfileChange(profileId);
       }
       if (nextBed) setBedSize(nextBed);
+      if (typeof nextW === "number" && typeof nextH === "number") {
+        applyCanvasSize(nextW, nextH);
+      }
     },
-    [activeProfileId, handleProfileChange]
+    [activeProfileId, handleProfileChange, applyCanvasSize]
   );
 
-  const handleOpenAIChat = (layer) => {
-    if (layer?.patternType?.startsWith("ai-")) {
-      setUI("aiChatMode", "revise");
-      setUI("aiChatLayer", layer);
-    } else {
-      setUI("aiChatMode", "create");
-      setUI("aiChatLayer", layer || null);
-    }
-    setUI("aiChatOpen", true);
-  };
+  // AI-pattern chat (create / revise) — re-homed for #16 AC2. The legacy
+  // LayersSection per-layer "AI" action (onOpenAIChat) is gone; the shell re-homes
+  // a trigger as an Object-menu item ("Generate with AI…", create-mode) AND keeps
+  // the per-layer "revise" path available (the chat opens against the selected
+  // layer when one exists). The open/mode/target state already lives in useUIState
+  // (aiChatOpen/aiChatMode/aiChatLayer). handleAIPatternGenerated re-homes the
+  // surviving success behavior verbatim (switch the target layer to the generated
+  // pattern, merging the dynamic defaults).
+  const handleOpenAIChat = useCallback(
+    (layer) => {
+      if (layer?.patternType?.startsWith("ai-")) {
+        setUI("aiChatMode", "revise");
+        setUI("aiChatLayer", layer);
+      } else {
+        setUI("aiChatMode", "create");
+        setUI("aiChatLayer", layer || null);
+      }
+      setUI("aiChatOpen", true);
+    },
+    [setUI]
+  );
 
-  const handleAIPatternGenerated = (patternId, defaultParams) => {
-    // If we have a target layer, switch it to the new pattern. Route through the
-    // pair-aware router so that switching a Moiré member to an AI pattern
-    // DISSOLVES the pair (removes the partner, clears role fields) instead of
-    // leaving a dangling half-pair. For non-moiré layers this is identical to a
-    // plain updateLayer (default branch of changeLayerPattern).
-    if (aiChatLayer) {
-      changeLayerPattern(aiChatLayer.id, {
-        patternType: patternId,
-        params: {
-          ...(defaultParams || {}),
-          ...(getDynamicDefaults(patternId) || {}),
-        },
-      });
-    }
-  };
+  const handleAIPatternGenerated = useCallback(
+    (patternId, defaultParams) => {
+      const target = ui.aiChatLayer;
+      if (target) {
+        updateLayer(target.id, {
+          patternType: patternId,
+          params: { ...(defaultParams || {}), ...(getDynamicDefaults(patternId) || {}) },
+        });
+      }
+    },
+    [ui.aiChatLayer, updateLayer]
+  );
 
-  // The active machine profile drives export. Seeded from `outputMode`, kept in
-  // sync by handleProfileChange, so this stays equal to the legacy `outputMode`
-  // on the export path (laser | plotter) and the resolved colors are unchanged.
+  // The active machine profile drives export. `activeProfileId` is the single
+  // source of truth (#16); on the export path (laser | plotter) it equals the
+  // persisted `outputMode`, so the resolved colors are unchanged.
   const machineProfile = activeProfileId;
 
   // Resolve a layer's export color through its operation (A4). Laser → the
@@ -577,16 +593,19 @@ export default function Studio() {
       optimizations: appliedOpsList,
     });
 
+  // Per-layer SVG export (#16 AC2 re-home). Re-homed onto the LayerTree row's
+  // Export action. The legacy LayersSection row action called exportLayerSVG with
+  // the layer + its live pattern instance; here we additionally resolve the
+  // layer's export color through its operation (exportLayer), so a single-layer
+  // export matches the active-profile color convention used by Export-all.
   const handleExportLayer = (layerId) => {
     const layer = layers.find((l) => l.id === layerId);
     const instance = patternInstancesRef.current?.[layerId];
-    if (layer && instance) {
-      exportLayerSVG(exportLayer(layer), instance, canvasW, canvasH, {
-        metadata: limits.svgMetadata,
-        manifest: buildExportManifest(),
-        optimizations: appliedOptimizations,
-      });
-    }
+    if (!layer || !instance) return;
+    exportLayerSVG(exportLayer(layer), instance, canvasW, canvasH, {
+      metadata: limits.svgMetadata,
+      profileId: machineProfile,
+    });
   };
 
   const handleExportAll = (includeHidden, opts = {}) => {
@@ -710,149 +729,53 @@ export default function Studio() {
         className="hidden"
         onChange={handleImportFileChange}
       />
-      {/* App title — the naqsheh etymology lives in the hover card. */}
-      <div className="shrink-0 bg-paper-warm border-b border-hairline px-4 py-2 group/title relative">
-        <h1 className="display text-md font-semibold text-ink tracking-tight cursor-default select-none">
-          Naqsha
-        </h1>
-        <div className="absolute left-4 top-full mt-1 z-50 w-[420px] opacity-0 pointer-events-none group-hover/title:opacity-100 group-hover/title:pointer-events-auto transition-opacity duration-medium ease-out-quart">
-          <div className="bg-paper border border-hairline rounded-sm p-4">
-            <p className="text-xs text-ink-soft leading-relaxed">
-              <span className="text-ink font-medium">Naqsha</span> takes its name from the Arabic and Persian{" "}
-              <span className="font-medium text-ink display" dir="rtl">نقشه</span>{" "}
-              — a word that refuses to separate the pattern from the plan, the visible form from the rules that generated it.
-              Naqsha is that process as a tool — generative algorithms, parameters you control, output sized for posters,
-              laser-cut acrylic and pen plotters, each session a record of where your rules led you on that particular day
-              with that particular seed. The design is always regenerable and never finished, which is not a limitation but the point.
-            </p>
-          </div>
-        </div>
-      </div>
-
-      {/* Legacy loose top bar. Suppressed when hosted in the pro shell (menuSlot
-          present) — those actions are folded into the portaled <MenuBar/> below,
-          so no orphaned buttons remain. Rendered unchanged in the legacy layout
-          (menuSlot null) → flag-OFF is a true no-op. */}
-      {!menuSlot && (
-        <div className="shrink-0 h-9 bg-paper border-b border-hairline flex items-center px-4 gap-4">
-          <span className="text-xs text-ink-soft select-none">Naqsha</span>
-          <button
-            onClick={() => setUI("showExamples", !showExamples)}
-            aria-pressed={showExamples}
-            className={`text-xs transition-colors duration-fast ease-out-quart ${
-              showExamples ? "text-ink" : "text-ink-soft hover:text-ink"
-            }`}
+      {/* Studio-in-canvas (Lane B / B7, #16): hosted inside the pro shell's
+          Canvas region, so Studio renders ONLY the live canvas here. The title,
+          menu, tool strip, inspector, object tree, status bar, and operations
+          panel are all portaled into their own shell regions below. The legacy
+          two-pane layout (loose top bar + LeftPanel Design/Prepare/Export tabs)
+          was removed in #16. */}
+      <div className="relative flex-1 min-h-0">
+        {/* SVG import failure message (issue #12). No toast system in the app,
+            so a brief inline banner over the canvas. Auto-clears after 4s. */}
+        {importError && (
+          <div
+            role="alert"
+            className="absolute top-3 left-1/2 -translate-x-1/2 z-20 bg-paper border border-red-500/50 text-red-500 text-xs rounded-md px-3 py-1.5 shadow-sm"
           >
-            Examples
-            {EXAMPLE_COUNT > 0 && (
-              <span className="ml-1 text-ink-soft/70 num">({EXAMPLE_COUNT})</span>
-            )}
-          </button>
-          <button
-            onClick={() => setUI("showLoadModal", true)}
-            className="text-xs text-ink-soft hover:text-ink transition-colors duration-fast ease-out-quart"
-          >
-            Load existing
-            {groups.length > 0 && (
-              <span className="ml-1 text-ink-soft/70 num">({groups.length})</span>
-            )}
-          </button>
-          <ShareLinkButton buildState={buildShareState} />
-          <div className="ml-auto flex items-center gap-xs">
-            <ThemeToggle />
-            <AuthButton />
+            {importError}
           </div>
-        </div>
-      )}
+        )}
+        <RightPanel
+          layers={layers}
+          canvasW={canvasW}
+          canvasH={canvasH}
+          patternInstancesRef={patternInstancesRef}
+          canvasContainerRef={canvasContainerRef}
+          bgColor={bgColor}
+          onBgColorChange={setBgColor}
+          unit={unit}
+          externalZoom={canvasView.zoom}
+          onZoomChange={canvasView.setZoom}
+          externalPan={canvasView.pan}
+          bedSize={bedSize}
+          onCursorMove={setCursorPos}
+          showPlotOverlay={showOverlays}
+          appliedOptimizations={appliedOptimizations}
+        />
 
-      {/* Main content — column on mobile (canvas on top), row on desktop.
-          Mobile: canvas gets a fixed 45vh, LeftPanel gets the remaining space
-          with an internal scroll. Desktop: LeftPanel has a fixed width,
-          canvas fills the rest horizontally. */}
-      <div className="flex flex-col md:flex-row flex-1 min-h-0">
-        {/* LeftPanel: below canvas on mobile (flex-1 so internal scroll has a
-            height to scroll against); fixed-width on desktop. */}
-        <div className="order-2 md:order-none flex flex-col flex-1 md:flex-none min-h-0 overflow-hidden">
-          <LeftPanel
-            width={canvasW}
-            height={canvasH}
-            presetIndex={presetIndex}
-            unit={unit}
-            onUnitChange={setUnit}
-            margin={margin}
-            onMarginChange={setMargin}
-            onPresetChange={handlePresetChange}
-            onCustomChange={handleCustomChange}
-            activeTab={activeTab}
-            onTabChange={(tab) => setUI("activeTab", tab)}
-            prepareStale={false}
-            prepareConfigured={prepareConfigured}
-            outputMode={outputMode}
-            onOutputModeChange={setOutputMode}
-            optimizations={optimizations}
-            appliedOptimizations={appliedOptimizations}
-            onOptimizationChange={updateOptimization}
-            onOptimizationApply={applyOptimization}
-            onOptimizationRevert={revertOptimization}
-            patternInstances={livePatternInstances}
-            layers={layers}
-            onUpdateLayer={updateLayer}
-            onChangeLayerPattern={changeLayerPattern}
-            onRemoveLayer={removeLayer}
-            onAddLayer={() => setUI("showPatternPicker", true)}
-            onDuplicateLayer={duplicateLayer}
-            onRandomizeLayer={randomizeLayer}
-            onRandomizeAll={randomizeAll}
-            onRandomizeLayerParams={randomizeLayerParams}
-            onRandomizeAllParams={randomizeAllParams}
-            onReorderLayers={reorderLayers}
-            onExportLayer={handleExportLayer}
-            onExportAll={handleExportAll}
-            onSaveLayerGroup={handleSaveLayerGroup}
-            onSaveToCloud={handleSaveToCloud}
-            onOpenCloudDesigns={() => setUI("showCloudModal", true)}
-            onOpenAIChat={handleOpenAIChat}
-            examplesOpen={showExamples}
-            examples={EXAMPLES}
-            onSelectExample={handleSelectExample}
-            onCloseExamples={() => setUI("showExamples", false)}
-          />
-        </div>
-        {/* Canvas: DOM-second, ordered first on mobile (top). Mobile gets a
-            fixed 45vh so it doesn't eat the LeftPanel's scroll area; desktop
-            fills the remaining horizontal space. */}
-        <div className="order-1 md:order-none shrink-0 md:shrink h-[45dvh] md:h-auto md:flex-1 md:min-h-0 min-w-0 relative">
-          {/* SVG import failure message (issue #12). No toast system in the app,
-              so a brief inline banner over the canvas. Auto-clears after 4s. */}
-          {importError && (
-            <div
-              role="alert"
-              className="absolute top-3 left-1/2 -translate-x-1/2 z-20 bg-paper border border-red-500/50 text-red-500 text-xs rounded-md px-3 py-1.5 shadow-sm"
-            >
-              {importError}
-            </div>
-          )}
-          <RightPanel
-            layers={layers}
-            canvasW={canvasW}
-            canvasH={canvasH}
-            patternInstancesRef={patternInstancesRef}
-            canvasContainerRef={canvasContainerRef}
-            onPatternInstancesChange={setLivePatternInstances}
-            bgColor={bgColor}
-            onBgColorChange={setBgColor}
-            displayMode={activeTab}
-            unit={unit}
-            marginPx={margin}
-            externalZoom={inProShell ? canvasView.zoom : undefined}
-            onZoomChange={inProShell ? canvasView.setZoom : undefined}
-            externalPan={inProShell ? canvasView.pan : undefined}
-            bedSize={inProShell ? bedSize : undefined}
-            onCursorMove={inProShell ? setCursorPos : undefined}
-            showPlotOverlay={inProShell && showOverlays}
-            appliedOptimizations={appliedOptimizations}
-          />
-        </div>
+        {/* Examples gallery (re-homed in #16). Opened from File > Examples;
+            overlays the canvas region (the legacy LeftPanel that used to host it
+            is gone). Picking an example loads it; Close dismisses the overlay. */}
+        {showExamples && (
+          <div className="absolute inset-0 z-30">
+            <ExamplesGallery
+              examples={EXAMPLES}
+              onSelect={handleSelectExample}
+              onClose={() => setUI("showExamples", false)}
+            />
+          </div>
+        )}
       </div>
 
       {/* Save dialog */}
@@ -929,17 +852,6 @@ export default function Studio() {
         />
       )}
 
-      {aiChatOpen && (
-        <AIPatternChat
-          mode={aiChatMode}
-          existingSource={
-            aiChatMode === "revise" && aiChatLayer ? null : undefined
-          }
-          existingName={aiChatLayer?.name}
-          onPatternGenerated={handleAIPatternGenerated}
-          onClose={() => setUI("aiChatOpen", false)}
-        />
-      )}
 
       {/* Pro-shell top menu bar (B5 / #8). Portaled into the shell's Menu bar
           region when the slot is present; renders nothing in the legacy layout
@@ -948,6 +860,7 @@ export default function Studio() {
       {menuSlot &&
         createPortal(
           <MenuBar
+            onNew={() => setUI("showPatternPicker", true)}
             onOpen={() => setUI("showLoadModal", true)}
             onExamples={() => setUI("showExamples", !showExamples)}
             onImport={handleImportClick}
@@ -960,6 +873,11 @@ export default function Studio() {
             onRedo={canRedo ? redo : undefined}
             onToggleOverlays={() => setShowOverlays((v) => !v)}
             overlaysOn={showOverlays}
+            onGenerateAI={() =>
+              handleOpenAIChat(
+                layers.find((l) => l.id === selectedLayerId) || null
+              )
+            }
             buildShareState={buildShareState}
           />,
           menuSlot
@@ -1045,6 +963,15 @@ export default function Studio() {
             onReorderLayers={reorderLayers}
             onProfileChange={handleProfileChange}
             onAssignOperation={assignOperationToLayer}
+            // Re-homed per-layer + header actions (#16 AC2) — wired to the
+            // surviving useLayers / per-layer-export handlers.
+            onDeleteLayer={removeLayer}
+            onDuplicateLayer={duplicateLayer}
+            onRandomizeLayer={randomizeLayer}
+            onRandomizeLayerParams={randomizeLayerParams}
+            onExportLayer={handleExportLayer}
+            onRandomizeAll={randomizeAll}
+            onRandomizeAllParams={randomizeAllParams}
           />,
           objectTreeSlot
         )}
@@ -1075,12 +1002,24 @@ export default function Studio() {
           undo/redo history so library + assignment changes are reversible. */}
       {operationsPanelSlot &&
         createPortal(
-          <OperationsPanel
-            operations={operations}
-            profileId={activeProfileId}
-            onCommitOperations={commitOperations}
-            onAddOperation={handleAddOperation}
-          />,
+          <>
+            <OperationsPanel
+              operations={operations}
+              profileId={activeProfileId}
+              onCommitOperations={commitOperations}
+              onAddOperation={handleAddOperation}
+            />
+            {/* Re-homed optimize controls (#16 AC2). Sibling of OperationsPanel
+                in the SAME shell region so OperationsPanel (and its tests) stay
+                untouched. Wired to the surviving useOptimizations API; the
+                applied state already feeds export + the plot overlay. */}
+            <OptimizeControls
+              optimizations={optimizations}
+              onUpdate={updateOptimization}
+              onApply={applyOptimization}
+              onRevert={revertOptimization}
+            />
+          </>,
           operationsPanelSlot
         )}
 
@@ -1095,8 +1034,30 @@ export default function Studio() {
           profileId={activeProfileId}
           bedSize={bedSize}
           unit={unit}
+          // Export document size (#16 AC2) — makes canvasW/canvasH user-settable
+          // again in the shell so export dimensions are controllable.
+          canvasW={canvasW}
+          canvasH={canvasH}
           onApply={handleDocumentSetupApply}
           onClose={() => setDocumentSetupOpen(false)}
+        />
+      )}
+
+      {/* AI-pattern chat (#16 AC2 re-home). Gated on the menu slot so it is live
+          ONLY in the pro shell (its entry point is the Object-menu item) and a
+          no-op in any non-shell mount. Opens against ui.aiChatLayer when a layer
+          was targeted (revise) or with none (create). On success the surviving
+          handleAIPatternGenerated switches the target layer to the generated
+          pattern. */}
+      {menuSlot && ui.aiChatOpen && (
+        <AIPatternChat
+          mode={ui.aiChatMode}
+          existingSource={
+            ui.aiChatMode === "revise" && ui.aiChatLayer ? null : undefined
+          }
+          existingName={ui.aiChatLayer?.name}
+          onPatternGenerated={handleAIPatternGenerated}
+          onClose={() => setUI("aiChatOpen", false)}
         />
       )}
 

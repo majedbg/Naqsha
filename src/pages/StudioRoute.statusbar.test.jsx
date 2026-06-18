@@ -63,13 +63,18 @@ describe("StudioRoute — canvas-chrome status bar (B4)", () => {
     expect(bed).toHaveTextContent(new RegExp(String(plotter.width)));
   });
 
-  it("flag OFF: legacy layout renders no status bar (true no-op)", () => {
+  it("below the breakpoint (mobile) renders no status bar (desktop-only)", () => {
+    // #16: legacy removed; below the breakpoint StudioRoute renders MobileStudio,
+    // which has no AppShell Status bar region. (Was: "flag OFF → legacy no-op".)
+    const prevWidth = window.innerWidth;
+    window.innerWidth = 500;
     render(
       <MemoryRouter>
-        <StudioRoute proShell={false} />
+        <StudioRoute />
       </MemoryRouter>
     );
     expect(screen.queryByTestId("status-bar")).not.toBeInTheDocument();
     expect(screen.queryAllByRole("region")).toHaveLength(0);
+    window.innerWidth = prevWidth;
   });
 });

@@ -41,14 +41,23 @@ describe("StudioRoute — param inspector in the right column (B3)", () => {
     ).toBeGreaterThan(0);
   });
 
-  it("flag OFF: legacy layout renders no shell inspector (true no-op)", () => {
-    render(
-      <MemoryRouter>
-        <StudioRoute proShell={false} />
-      </MemoryRouter>
-    );
-    expect(screen.queryByTestId("inspector-params")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("inspector-empty")).not.toBeInTheDocument();
-    expect(screen.queryAllByRole("region")).toHaveLength(0);
+  it("below the breakpoint (mobile) renders no shell inspector region (desktop-only)", () => {
+    // #16: legacy removed; below the breakpoint StudioRoute renders MobileStudio,
+    // which has no AppShell Inspector region (its param drawer is closed by
+    // default). (Was: "flag OFF → legacy no-op".)
+    const prevWidth = window.innerWidth;
+    window.innerWidth = 500;
+    try {
+      render(
+        <MemoryRouter>
+          <StudioRoute />
+        </MemoryRouter>
+      );
+      expect(screen.queryByRole("region", { name: "Inspector" })).not.toBeInTheDocument();
+      expect(screen.queryByTestId("inspector-params")).not.toBeInTheDocument();
+      expect(screen.queryAllByRole("region")).toHaveLength(0);
+    } finally {
+      window.innerWidth = prevWidth;
+    }
   });
 });

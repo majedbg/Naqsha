@@ -117,6 +117,7 @@ export default function MenuBar({
   onRedo,
   onToggleOverlays,
   overlaysOn = false,
+  onGenerateAI,
   buildShareState,
 }) {
   // A single "which menu is open" id keeps only one dropdown open at a time and
@@ -178,9 +179,17 @@ export default function MenuBar({
       ],
     },
     {
-      // Object operations are a later slice; placeholder only.
       label: "Object",
-      items: [{ label: "No object operations yet", disabled: true }],
+      items: [
+        // AI-pattern generator (re-homed for #16 AC2). Opens AIPatternChat in
+        // create mode (the legacy per-layer "AI" action is gone with LeftPanel);
+        // the per-layer revise path still exists via the chat's mode toggle.
+        {
+          label: "Generate with AI…",
+          onSelect: onGenerateAI,
+          disabled: !onGenerateAI,
+        },
+      ],
     },
     {
       label: "Help",

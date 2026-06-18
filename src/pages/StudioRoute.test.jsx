@@ -16,53 +16,39 @@ vi.mock('../lib/AuthContext', () => ({
   AuthProvider: ({ children }) => children,
 }));
 
-describe('StudioRoute flag gate (B1)', () => {
-  it('flag OFF renders the legacy Studio layout untouched (no shell regions)', () => {
+// #16 (B7) decommissioned the legacy two-pane layout + the VITE_PRO_SHELL flag.
+// StudioRoute is now: desktop (≥768px) → the pro shell with Studio in the canvas
+// region; below the breakpoint → the simplified MobileStudio view (NOT the
+// removed legacy layout). These tests assert that gate.
+describe('StudioRoute desktop/mobile gate (B7 / #16)', () => {
+  it('desktop (≥768px) renders the eight shell regions with Studio inside the canvas region', () => {
     render(
       <MemoryRouter>
-        <StudioRoute proShell={false} />
+        <StudioRoute />
       </MemoryRouter>
     );
-    // Legacy layout has no role="region" shell frames.
-    expect(screen.queryAllByRole('region')).toHaveLength(0);
-    // The real Studio chrome is present.
-    expect(
-      screen.getByRole('button', { name: /Examples/ })
-    ).toBeInTheDocument();
-    expect(screen.getByTestId('canvas-surface')).toBeInTheDocument();
+    expect(screen.getAllByRole('region')).toHaveLength(8);
+    const canvas = screen.getByRole('region', { name: 'Canvas' });
+    // Studio renders inside the Canvas region (probed via its canvas surface).
+    const surface = screen.getByTestId('canvas-surface');
+    expect(canvas).toContainElement(surface);
   });
 
-  it('flag ON but below the desktop breakpoint falls through to legacy Studio (no shell regions)', () => {
+  it('below the 768px breakpoint renders the simplified mobile view (no shell regions)', () => {
     const prevWidth = window.innerWidth;
     window.innerWidth = 500; // below the 768px md breakpoint
     try {
       render(
         <MemoryRouter>
-          <StudioRoute proShell={true} />
+          <StudioRoute />
         </MemoryRouter>
       );
+      // MobileStudio (not the removed legacy two-pane): no AppShell regions, but
+      // the live canvas surface is still present.
       expect(screen.queryAllByRole('region')).toHaveLength(0);
-      expect(
-        screen.getByRole('button', { name: /Examples/ })
-      ).toBeInTheDocument();
+      expect(screen.getByTestId('canvas-surface')).toBeInTheDocument();
     } finally {
       window.innerWidth = prevWidth;
     }
-  });
-
-  it('flag ON renders the eight shell regions with Studio inside the canvas region', () => {
-    render(
-      <MemoryRouter>
-        <StudioRoute proShell={true} />
-      </MemoryRouter>
-    );
-    expect(screen.getAllByRole('region')).toHaveLength(8);
-    const canvas = screen.getByRole('region', { name: 'Canvas' });
-    // The existing Studio renders inside the Canvas region. (Originally this
-    // probed Studio's loose Examples button; #8 folds that button into the File
-    // menu and suppresses the legacy loose top bar in the shell, so we assert
-    // the invariant — Studio-in-canvas — via its canvas surface instead.)
-    const surface = screen.getByTestId('canvas-surface');
-    expect(canvas).toContainElement(surface);
   });
 });

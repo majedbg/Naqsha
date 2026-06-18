@@ -56,21 +56,28 @@ describe("StudioRoute — menu bar in the shell's Menu bar region (B5)", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("flag OFF: legacy loose top bar is unchanged and no shell region exists", () => {
-    render(
-      <MemoryRouter>
-        <StudioRoute proShell={false} />
-      </MemoryRouter>
-    );
-    // Legacy loose buttons still present (true no-op).
-    expect(
-      screen.getByRole("button", { name: /load existing/i })
-    ).toBeInTheDocument();
-    // No shell regions at all.
-    expect(screen.queryAllByRole("region")).toHaveLength(0);
-    // No menu bar.
-    expect(
-      screen.queryByRole("button", { name: "File" })
-    ).not.toBeInTheDocument();
+  it("below the breakpoint (mobile) renders no menu bar / shell region (desktop-only)", () => {
+    // #16: legacy removed; below the breakpoint StudioRoute renders MobileStudio,
+    // which has no AppShell Menu bar region. (Was: "flag OFF → legacy no-op".)
+    const prevWidth = window.innerWidth;
+    window.innerWidth = 500;
+    try {
+      render(
+        <MemoryRouter>
+          <StudioRoute />
+        </MemoryRouter>
+      );
+      // No menu bar region and no File menu.
+      expect(
+        screen.queryByRole("region", { name: "Menu bar" })
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "File" })
+      ).not.toBeInTheDocument();
+      // No shell regions at all.
+      expect(screen.queryAllByRole("region")).toHaveLength(0);
+    } finally {
+      window.innerWidth = prevWidth;
+    }
   });
 });

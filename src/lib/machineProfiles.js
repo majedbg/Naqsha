@@ -13,10 +13,11 @@
 // Cameo drag (blade) cutter routed through `naqsha-cutter-bridge` — has no
 // legacy `outputMode` and so takes a fresh id, `dragCutter`.
 //
-// This is a pure data + transform module. It does NOT replace the legacy
-// `OUTPUT_MODES` / `applyOutputMode` path (svgExport / useCanvasSize keep their
-// `outputMode` plumbing until B7/A4 decommission it); it is the NEW-path model
-// that the operation library and Document Setup read.
+// This is a pure data + transform module. The legacy user-facing `outputMode`
+// toggle was removed in B7 (#16); `outputMode` now survives ONLY as the
+// persisted seed for `activeProfileId` (svgExport / useCanvasSize still read it
+// for that round-trip). This module is the NEW-path model that the operation
+// library, machine-profile selector, and Document Setup read.
 
 import { createOperation } from './operations.js';
 

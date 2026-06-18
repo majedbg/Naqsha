@@ -1,6 +1,5 @@
 import { useRef, useState, useEffect, useCallback } from "react";
 import useCanvas from "../lib/useCanvas";
-import BedOverlay from "./canvas/BedOverlay";
 import CanvasChrome from "./canvas/CanvasChrome";
 import PlotOverlay from "./canvas/PlotOverlay";
 import { cursorToUnit } from "../lib/canvasChrome";
@@ -23,9 +22,7 @@ export default function RightPanel({
   onPatternInstancesChange,
   bgColor,
   onBgColorChange,
-  displayMode = 'design',
   unit = 'mm',
-  marginPx = 0,
   // Optional controlled view (pro shell's Hand/Zoom tools — B6 / #9). When
   // `externalZoom` is provided the canvas zoom is controlled by the shell and
   // `setZoom` updates flow through `onZoomChange`; when absent (legacy / flag-OFF
@@ -142,15 +139,10 @@ export default function RightPanel({
   const finalScale = fitScale * zoom;
   const zoomPercent = Math.round(zoom * 100);
 
-  const isPrepare = displayMode === 'prepare';
-
   // Pro-shell canvas chrome (B4 / #7): only active when the shell supplies a
   // bed size. Reporting the cursor uses the SAME on-screen scale (finalScale)
   // the rulers use, so the status-bar readout reads correctly against them.
-  // Suppressed in the legacy Prepare/bed view, which draws its own BedOverlay
-  // rulers — so the two ruler systems never stack until the Prepare tab is
-  // dissolved (B7).
-  const showChrome = bedSize != null && !isPrepare;
+  const showChrome = bedSize != null;
   const handleCanvasMouseMove = useCallback(
     (e) => {
       if (!onCursorMove) return;
@@ -193,33 +185,18 @@ export default function RightPanel({
           pan={pan}
         />
       )}
-      {isPrepare && (
-        <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-paper/90 border border-violet/40 text-accent/90 text-[10px] uppercase tracking-wider font-semibold rounded-md px-2.5 py-1 z-10 pointer-events-none">
-          Prepare · Bed view
-        </div>
-      )}
       <div
         style={{
           width: canvasW,
           height: canvasH,
           transform: `${panTransform}scale(${finalScale})`,
           transformOrigin: "center center",
-          boxShadow: isPrepare
-            ? "0 0 0 1px rgba(0,201,177,0.35), 7px 7px 25px 2px rgba(0,0,0, 0.5)"
-            : "7px 7px 25px 2px rgba(0,0,0, 0.5)",
+          boxShadow: "7px 7px 25px 2px rgba(0,0,0, 0.5)",
           flexShrink: 0,
           position: "relative",
         }}
       >
         <div ref={containerRef} />
-        {isPrepare && (
-          <BedOverlay
-            canvasW={canvasW}
-            canvasH={canvasH}
-            marginPx={marginPx}
-            unit={unit}
-          />
-        )}
         {/* Plot preview + overlap overlay (C7 / #15). Sibling of the p5 surface
             inside the scaled wrapper, so it shares the artwork's coordinate
             space and the canvas transform. Gated by the shell's Overlays toggle;

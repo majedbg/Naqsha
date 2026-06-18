@@ -1,6 +1,9 @@
 import { useRef, useState, useEffect, useCallback } from "react";
 import useCanvas from "../lib/useCanvas";
 import BedOverlay from "./canvas/BedOverlay";
+import CanvasChrome from "./canvas/CanvasChrome";
+import PlotOverlay from "./canvas/PlotOverlay";
+import { cursorToUnit } from "../lib/canvasChrome";
 
 const BG_PRESETS = [
   { color: "#0a1628", label: "Dark Blue" },
@@ -23,12 +26,54 @@ export default function RightPanel({
   displayMode = 'design',
   unit = 'mm',
   marginPx = 0,
+  // Optional controlled view (pro shell's Hand/Zoom tools — B6 / #9). When
+  // `externalZoom` is provided the canvas zoom is controlled by the shell and
+  // `setZoom` updates flow through `onZoomChange`; when absent (legacy / flag-OFF
+  // path) the panel keeps its own internal zoom state — byte-identical behavior.
+  // `externalPan` similarly translates the artboard when the shell drives pan.
+  externalZoom,
+  onZoomChange,
+  externalPan,
+  // Canvas chrome (pro shell only — B4 / #7). When `bedSize` is supplied the
+  // panel renders the mm rulers + machine-bed artboard over the canvas and
+  // reports the live cursor position (in the active unit) via `onCursorMove`.
+  // All three are wired ONLY on the flag-ON path, so legacy/flag-OFF stays a
+  // byte-identical no-op (no chrome, no cursor tracking).
+  bedSize,
+  onCursorMove,
+  // Plot preview + overlap overlay (pro shell only — C7 / #15). When
+  // `showPlotOverlay` is true the panel renders <PlotOverlay/> as a sibling of
+  // the p5 surface INSIDE the scaled wrapper, so it auto-aligns with the live
+  // design and scales with the canvas transform. OFF by default (the parent
+  // simply doesn't pass it / passes false) → a true no-op clean canvas, matching
+  // the legacy/flag-OFF path byte-for-byte. `appliedOptimizations` selects the
+  // route-preview basis (post-optimize, like the legacy PlotPreviewSection).
+  showPlotOverlay = false,
+  appliedOptimizations = null,
 }) {
   const containerRef = useRef(null);
   const wrapperRef = useRef(null);
   const [fitScale, setFitScale] = useState(1);
-  const [zoom, setZoom] = useState(1);
+  const [internalZoom, setInternalZoom] = useState(1);
   const [bgPickerOpen, setBgPickerOpen] = useState(false);
+
+  // Controlled when the shell supplies a zoom value + setter; otherwise internal.
+  const isControlledZoom = externalZoom != null && typeof onZoomChange === "function";
+  const zoom = isControlledZoom ? externalZoom : internalZoom;
+  const setZoom = useCallback(
+    (next) => {
+      if (isControlledZoom) {
+        onZoomChange((prev) => (typeof next === "function" ? next(prev) : next));
+      } else {
+        setInternalZoom(next);
+      }
+    },
+    [isControlledZoom, onZoomChange]
+  );
+  const pan = externalPan ?? { x: 0, y: 0 };
+  // Only prepend a translate when the shell actually drives pan, so the legacy
+  // (flag-OFF) transform string stays byte-identical.
+  const panTransform = externalPan ? `translate(${pan.x}px, ${pan.y}px) ` : "";
 
   const { patternInstances } = useCanvas(
     containerRef,
@@ -73,11 +118,14 @@ export default function RightPanel({
   }, [canvasW, canvasH]);
 
   // Scroll wheel zoom
-  const handleWheel = useCallback((e) => {
-    e.preventDefault();
-    const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
-    setZoom((z) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z * factor)));
-  }, []);
+  const handleWheel = useCallback(
+    (e) => {
+      e.preventDefault();
+      const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+      setZoom((z) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z * factor)));
+    },
+    [setZoom]
+  );
 
   // Attach wheel listener with { passive: false } to allow preventDefault
   useEffect(() => {
@@ -96,11 +144,55 @@ export default function RightPanel({
 
   const isPrepare = displayMode === 'prepare';
 
+  // Pro-shell canvas chrome (B4 / #7): only active when the shell supplies a
+  // bed size. Reporting the cursor uses the SAME on-screen scale (finalScale)
+  // the rulers use, so the status-bar readout reads correctly against them.
+  // Suppressed in the legacy Prepare/bed view, which draws its own BedOverlay
+  // rulers — so the two ruler systems never stack until the Prepare tab is
+  // dissolved (B7).
+  const showChrome = bedSize != null && !isPrepare;
+  const handleCanvasMouseMove = useCallback(
+    (e) => {
+      if (!onCursorMove) return;
+      const surface = containerRef.current;
+      if (!surface) return;
+      const rect = surface.getBoundingClientRect();
+      // Offset from the artboard origin in screen px, then back-projected to the
+      // active unit through the shared scale.
+      const sx = e.clientX - rect.left;
+      const sy = e.clientY - rect.top;
+      onCursorMove({
+        x: cursorToUnit(sx, unit, finalScale),
+        y: cursorToUnit(sy, unit, finalScale),
+      });
+    },
+    [onCursorMove, unit, finalScale]
+  );
+  const handleCanvasMouseLeave = useCallback(() => {
+    if (onCursorMove) onCursorMove(null);
+  }, [onCursorMove]);
+
   return (
     <div
       ref={wrapperRef}
       className={`h-full bg-surface flex flex-col items-center justify-center relative ${zoom > 1.25 ? "overflow-auto" : "overflow-hidden"}`}
+      onMouseMove={showChrome ? handleCanvasMouseMove : undefined}
+      onMouseLeave={showChrome ? handleCanvasMouseLeave : undefined}
     >
+      {/* Pro-shell fabrication chrome (B4 / #7): mm rulers + bed artboard.
+          Sits OUTSIDE the canvas transform and consumes the full on-screen
+          scale (finalScale) as its zoom, so its ticks align with the scaled
+          canvas and with the cursor readout (which divides by the same scale).
+          Null bedSize (legacy / flag-OFF) → not rendered, a true no-op. */}
+      {showChrome && (
+        <CanvasChrome
+          bedWidthMm={bedSize.width}
+          bedHeightMm={bedSize.height}
+          unit={unit}
+          zoom={finalScale}
+          pan={pan}
+        />
+      )}
       {isPrepare && (
         <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-paper/90 border border-violet/40 text-accent/90 text-[10px] uppercase tracking-wider font-semibold rounded-md px-2.5 py-1 z-10 pointer-events-none">
           Prepare · Bed view
@@ -110,7 +202,7 @@ export default function RightPanel({
         style={{
           width: canvasW,
           height: canvasH,
-          transform: `scale(${finalScale})`,
+          transform: `${panTransform}scale(${finalScale})`,
           transformOrigin: "center center",
           boxShadow: isPrepare
             ? "0 0 0 1px rgba(0,201,177,0.35), 7px 7px 25px 2px rgba(0,0,0, 0.5)"
@@ -126,6 +218,19 @@ export default function RightPanel({
             canvasH={canvasH}
             marginPx={marginPx}
             unit={unit}
+          />
+        )}
+        {/* Plot preview + overlap overlay (C7 / #15). Sibling of the p5 surface
+            inside the scaled wrapper, so it shares the artwork's coordinate
+            space and the canvas transform. Gated by the shell's Overlays toggle;
+            null when off → clean canvas. */}
+        {showPlotOverlay && (
+          <PlotOverlay
+            layers={layers}
+            patternInstances={patternInstances}
+            canvasW={canvasW}
+            canvasH={canvasH}
+            appliedOptimizations={appliedOptimizations}
           />
         )}
       </div>

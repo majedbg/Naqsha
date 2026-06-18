@@ -40,6 +40,11 @@ export function buildLayerParamsValue({
   onChange,
   randomizeKeys,
   onRandomizeKeysChange,
+  // Active document unit ('mm' | 'in' | 'px'), provided ONLY by the shell
+  // Inspector (#13). When present, length-tagged params (def.unit === 'length')
+  // display/convert in this unit; values stay px in layer state. The legacy
+  // LayerCard omits it (undefined) so legacy keeps showing raw px.
+  unit,
 }) {
   const defs =
     PATTERN_PARAM_DEFS[patternType] || getDynamicParamDefs(patternType);
@@ -98,6 +103,7 @@ export function buildLayerParamsValue({
     defs,
     params,
     defaults,
+    unit,
     randomizeKeys,
     onChange,
     onRandomizeKeysChange,

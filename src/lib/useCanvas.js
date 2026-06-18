@@ -3,6 +3,7 @@ import p5 from 'p5';
 import { getDynamicPatternClass } from './patternRegistry';
 import { P5Adapter } from './patterns/drawingContext';
 import { PATTERN_CLASSES } from './patterns';
+import ImportedPath from './patterns/ImportedPath';
 import { resolveMoireSource } from './moirePair';
 
 export default function useCanvas(containerRef, layers, canvasW, canvasH, bgColor = '#ffffff') {
@@ -28,6 +29,19 @@ export default function useCanvas(containerRef, layers, canvasW, canvasH, bgColo
     // We iterate in reverse so bottom layers paint first
     const renderOrder = [...layers].reverse();
     for (const layer of renderOrder) {
+      // Imported-path artwork (issue #12) has no generative PatternClass — it's a
+      // synthetic instance wrapping parsed SVG path data. Build it from layer
+      // data so it both draws on canvas and exports via buildAllLayersSVG.
+      if (layer.type === 'import') {
+        const instance = new ImportedPath();
+        newInstances[layer.id] = instance;
+        const ctx = layer.visible ? drawCtx : noDrawCtx;
+        instance.generateWithContext(
+          ctx, layer.seed, layer.params, canvasW, canvasH, layer.color, layer.opacity
+        );
+        continue;
+      }
+
       const PatternClass = PATTERN_CLASSES[layer.patternType] || getDynamicPatternClass(layer.patternType);
       if (!PatternClass) continue;
 

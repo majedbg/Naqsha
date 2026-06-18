@@ -14,6 +14,14 @@ import { dirname, join } from 'node:path';
 const outDir = join(dirname(fileURLToPath(import.meta.url)), '../src/examples');
 const PPI = 96;
 
+// Seeded operation library shared by every example (issue #1, A1). Stable ids
+// so layer.operationId references stay valid across regenerations.
+const SEEDED_OPERATIONS = [
+  { id: 'op-cut', name: 'Cut', color: '#FF0000', process: 'cut', machineParams: {}, order: 0 },
+  { id: 'op-score', name: 'Score', color: '#0000FF', process: 'score', machineParams: {}, order: 1 },
+  { id: 'op-engrave', name: 'Engrave', color: '#000000', process: 'engrave', machineParams: {}, order: 2 },
+];
+
 function layer({ patternType, seed, color, name, opacity = 100, params = {} }) {
   return {
     id: `${name.toLowerCase().replace(/\s+/g, '-')}-${patternType}`,
@@ -29,6 +37,7 @@ function layer({ patternType, seed, color, name, opacity = 100, params = {} }) {
     randomizeKeys: [],
     paramsCache: {},
     role: 'cut',
+    operationId: 'op-cut',
     penSlot: 1,
   };
 }
@@ -105,13 +114,22 @@ const EXAMPLES = [
 ];
 
 for (const ex of EXAMPLES) {
+  const { canvasW, canvasH, bgColor, layers } = ex.config;
   const out = {
     id: ex.id,
     name: ex.name,
     description: ex.description,
     order: ex.order,
     thumb: `${ex.id}.png`,
-    config: ex.config,
+    config: {
+      schemaVersion: 1,
+      machineProfile: 'plotter',
+      operations: SEEDED_OPERATIONS,
+      canvasW,
+      canvasH,
+      bgColor,
+      layers,
+    },
   };
   const path = join(outDir, `${ex.id}.json`);
   writeFileSync(path, JSON.stringify(out, null, 2) + '\n');

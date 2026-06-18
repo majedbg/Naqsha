@@ -33,13 +33,22 @@ export const PRESET_SIZES = [
 
 export const PPI = 96;
 
+// `hasVariableWeight` (issue #4, A5-F4) marks the patterns that emit genuine
+// per-element stroke-weight VARIATION — i.e. their generate() computes a
+// different `strokeWeight` for different elements (so variable-weight banding
+// has something to quantize). It is true for the structural capability ("this
+// code path CAN emit weight variation"), independent of whether the current
+// params actually exercise it. Only `recursive` (RecursiveGeometry, `sw =
+// strokeAtLevel(level)`) varies among the registered patterns; every other
+// pattern pushes the single constant `strokeWeight` param for every element,
+// so the flag is absent (treated as false). Off by default + capability-gated.
 export const PATTERN_TYPES = [
   { id: 'spirograph', label: 'Spirograph' },
   { id: 'flowfield', label: 'Flow Field' },
   { id: 'phyllotaxis', label: 'Phyllotaxis' },
   { id: 'wave', label: 'Waves' },
   { id: 'voronoi', label: 'Voronoi' },
-  { id: 'recursive', label: 'Recursive' },
+  { id: 'recursive', label: 'Recursive', hasVariableWeight: true },
   { id: 'phyllodash', label: 'Phyllotaxis Dash' },
   { id: 'grainfield', label: 'Grain Field' },
   { id: 'flowhatch', label: 'Flow Hatch' },
@@ -463,10 +472,40 @@ const MODULE_GRID_TILES_PLOT_PARAM = {
   tooltip: 'Drag to set columns × rows',
 };
 
+// ──────────────────────────────────────────────────────────────────────────
+// Unit tagging (GitHub issue #13) — the AI-pattern unit-tag contract.
+//
+// A param def MAY carry an optional `unit` tag describing how its value relates
+// to real-world measurement. It is DISPLAY-ONLY metadata: the value stored in
+// layer state and handed to pattern generation/export is ALWAYS px, regardless
+// of the tag. The tag only changes how the shell Inspector formats the readout
+// and parses typed entry.
+//
+//   unit: 'length'  — a px-backed real-world length (a distance/size/offset in
+//                     pixels at 96 PPI). The Inspector shows it in the active
+//                     document unit (mm/in) and converts entry back to px via
+//                     src/lib/units.js. The px-space slider bounds (min/max/step)
+//                     are unchanged; only the readout/entry are unit-aware.
+//   (absent)        — UNITLESS / raw. Shown verbatim. Use for everything that is
+//                     not a real-world length: counts (cols, waveCount, dashCount,
+//                     particleCount, lineCount), angles in degrees (angle, rotation,
+//                     startAngle), symmetry, revolutions/turns, noiseScale, growth
+//                     and scale multipliers (sizeGrowth, scaleFactor, patternScale),
+//                     probabilities/jitter ratios, and curve shaping factors.
+//
+// CONTRACT for AI-generated patterns: when emitting a param def whose value is a
+// px distance/size the user thinks of in mm/in, add `unit: 'length'`. Do NOT tag
+// dimensionless params. Never special-case units in pattern generation — read the
+// raw px value as today. See docs/ai-pattern-unit-contract.md for the full spec.
+//
+// NOTE: composite controls (plot2d / pad2d such as RADII_PLOT_PARAM and
+// OFFSET_PAD_PARAM) route through their own components, not the Slider, so the
+// `unit` tag is not yet honoured for them — they remain raw px (deferred).
+// ──────────────────────────────────────────────────────────────────────────
 export const PATTERN_PARAM_DEFS = {
   spirograph: [
     RADII_PLOT_PARAM,
-    { key: 'd', label: 'Pen Offset', min: 10, max: 600, step: 1, tooltip: 'Distance from center of inner circle to pen point' },
+    { key: 'd', label: 'Pen Offset', min: 10, max: 600, step: 1, unit: 'length', tooltip: 'Distance from center of inner circle to pen point' },
     { key: 'revolutions', label: 'Revolutions', min: 1, max: 40, step: 1, tooltip: 'Number of full rotations to draw' },
     { key: 'strokeWeight', label: 'Stroke Weight', min: 0.3, max: 3, step: 0.1, tooltip: 'Line thickness' },
     SYMMETRY_PARAM,
@@ -512,8 +551,8 @@ export const PATTERN_PARAM_DEFS = {
   wave: [
     { key: 'waveCount', label: 'Wave Count', min: 2, max: 12, step: 1, tooltip: 'Number of overlapping wave layers' },
     { key: 'frequency', label: 'Frequency', min: 1, max: 20, step: 0.5, tooltip: 'Number of wave cycles across the canvas' },
-    { key: 'amplitude', label: 'Amplitude', min: 5, max: 500, step: 1, tooltip: 'Maximum wave height in pixels — can exceed frame for edge bleed' },
-    { key: 'lineSpacing', label: 'Line Spacing', min: 4, max: 40, step: 1, tooltip: 'Vertical space between wave lines' },
+    { key: 'amplitude', label: 'Amplitude', min: 5, max: 500, step: 1, unit: 'length', tooltip: 'Maximum wave height in pixels — can exceed frame for edge bleed' },
+    { key: 'lineSpacing', label: 'Line Spacing', min: 4, max: 40, step: 1, unit: 'length', tooltip: 'Vertical space between wave lines' },
     { key: 'strokeWeight', label: 'Stroke Weight', min: 0.3, max: 3, step: 0.1, tooltip: 'Line thickness' },
     SYMMETRY_PARAM,
     START_ANGLE_PARAM,

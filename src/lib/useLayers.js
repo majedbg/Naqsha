@@ -3,6 +3,9 @@ import { DEFAULT_PARAMS, DEFAULT_COLORS, MAX_LAYERS, PATTERN_PARAM_DEFS, RANDOMI
 import { randomPatchForDef } from './params/paramOps';
 import { getDynamicDefaults, getDynamicParamDefs } from './patternRegistry';
 import { isMoireMember, findMoirePartnerA, findMoirePartnerB } from './moirePair';
+import { migrateLayer } from './migration';
+import { operationIdForRole } from './operations';
+import { parseSVGImport } from './svgImport';
 
 // Distinct group id for a Moiré pair (links role A + role B).
 let nextGroupNum = 1;
@@ -69,7 +72,8 @@ function createLayer(index, requestedType) {
     paramsCache: {},
     // Fabrication metadata — consumed only when Prepare's output mode
     // applies. Safe to exist in plotter/design modes; just ignored.
-    role: 'cut',          // 'cut' | 'score' | 'engrave' — used in laser output mode
+    role: 'cut',          // 'cut' | 'score' | 'engrave' — legacy assignment surface
+    operationId: operationIdForRole('cut'), // operation-library reference (issue #1)
     penSlot: (index % 4) + 1, // 1..4 — used in plotter output mode
   };
 }
@@ -94,7 +98,10 @@ function loadLayers() {
       }
     }
     nextId = maxNum + 1;
-    return parsed;
+    // Migration boundary (local): legacy layers carry `role` but no
+    // `operationId`. Map them forward so export/canvas resolve through an
+    // operation. Never reset-to-default.
+    return parsed.map((l) => migrateLayer(l));
   } catch {
     return null;
   }
@@ -105,7 +112,7 @@ function loadLayers() {
 // `def.type === 'select'` which missed `iconselect` defs (e.g. shape, fillMode)
 // and produced NaN. paramOps branches on `def.options` presence instead.
 
-export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYERS } = {}) {
+export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYERS, getDefaultOperationId } = {}) {
   // Effective capacity = the tier cap (Guest 3, Free/Pro/Studio 6), never above
   // the hard MAX_LAYERS. Existing call sites that don't pass maxLayers keep the
   // old MAX_LAYERS behavior.
@@ -142,13 +149,61 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
   // `patternType` optional (from the pattern picker). The `typeof === 'string'`
   // guard means a bare `onClick={addLayer}` (which would pass an event) still
   // creates a default-cycled layer, unchanged.
+  // `getDefaultOperationId` (issue #11/C2) supplies the document DEFAULT operation
+  // for newly added layers — set via the stroke/operation swatch with nothing
+  // selected. Read at call time (a getter, not a value) so the latest default
+  // applies without re-creating addLayer. When omitted or unresolved, the new
+  // layer keeps createLayer's Cut default — byte-stable with the legacy path.
   const addLayer = useCallback((patternType) => {
     const requested = typeof patternType === 'string' ? patternType : undefined;
+    const defaultOpId = typeof getDefaultOperationId === 'function' ? getDefaultOperationId() : undefined;
     setLayers((prev) => {
       if (prev.length >= cap) return prev;
-      return [...prev, createLayer(prev.length, requested)];
+      const layer = createLayer(prev.length, requested);
+      return [...prev, defaultOpId ? { ...layer, operationId: defaultOpId } : layer];
     });
-  }, [cap]);
+  }, [cap, getDefaultOperationId]);
+
+  // Import an SVG file's outline as ONE place-as-artwork layer (issue #12, C4).
+  // Parses the SVG → imported-path layer carrying the verbatim `d` data in
+  // `params.pathData`, marked `type:'import'`, defaulting to the document's Cut
+  // operation. Additive: it never touches existing pattern layers. Returns
+  // { ok, error? } so callers (File>Import, drag-drop, paste) can surface a
+  // graceful message. Capacity-aware (respects the tier cap, like addLayer).
+  const addImportedLayer = useCallback((svgString) => {
+    const parsed = parseSVGImport(svgString);
+    if (!parsed.ok) return { ok: false, error: parsed.error };
+    // Capacity decided synchronously off live `layers` (setLayers is async),
+    // mirroring changeLayerPattern's pattern, so the returned outcome is exact.
+    if (layers.length >= cap) return { ok: false, error: 'Layer limit reached.' };
+
+    setLayers((prev) => {
+      if (prev.length >= cap) return prev; // re-check against live state
+      const index = prev.length;
+      const layer = {
+        id: genId(),
+        name: `Imported ${index + 1}`,
+        type: 'import',
+        color: DEFAULT_COLORS[index % DEFAULT_COLORS.length],
+        opacity: 100,
+        visible: true,
+        bgColor: '#ffffff',
+        bgOpacity: 0,
+        // `import` is not a generative pattern; patternType keeps the same name
+        // so any consumer that reads it sees a stable, non-colliding value.
+        patternType: 'import',
+        params: { pathData: parsed.paths },
+        seed: 0,
+        randomizeKeys: [],
+        paramsCache: {},
+        role: 'cut',
+        operationId: operationIdForRole('cut'), // default operation = Cut
+        penSlot: (index % 4) + 1,
+      };
+      return [...prev, layer];
+    });
+    return { ok: true };
+  }, [cap, layers]);
 
   const duplicateLayer = useCallback((id) => {
     setLayers((prev) => {
@@ -223,8 +278,16 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
   }, []);
 
   const updateLayer = useCallback((id, patch) => {
+    // The role toggle (OutputModeSection) is the temporary assignment surface
+    // until the Operations panel ships. Export + plot-preview now resolve through
+    // `operationId`, so keep it in sync whenever a `role` is assigned — otherwise
+    // a role edit would silently no-op the export and diverge from the preview.
+    const synced =
+      patch && Object.prototype.hasOwnProperty.call(patch, 'role')
+        ? { ...patch, operationId: operationIdForRole(patch.role) }
+        : patch;
     setLayers((prev) =>
-      prev.map((l) => (l.id === id ? { ...l, ...patch } : l))
+      prev.map((l) => (l.id === id ? { ...l, ...synced } : l))
     );
   }, []);
 
@@ -292,6 +355,7 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
           randomizeKeys: moireRandomizeKeys(),
           paramsCache: {},
           role: 'cut',
+          operationId: operationIdForRole('cut'),
           penSlot: ((idx + 1) % 4) + 1,
           moireRole: 'B',
           moireGroupId: groupId,
@@ -474,11 +538,14 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
       if (match) maxNum = Math.max(maxNum, Number(match[1]));
     }
     nextId = maxNum + 1;
-    setLayers(newLayers);
+    // Migration funnel: every load boundary that applies a layer set (examples,
+    // cloud, share, saved groups) flows through here, so each layer ends up with
+    // a resolvable `operationId` (derived from legacy `role` when absent).
+    setLayers(newLayers.map((l) => migrateLayer(l)));
   }, []);
 
   return {
-    layers, addLayer, duplicateLayer, removeLayer, updateLayer, reorderLayers,
+    layers, addLayer, addImportedLayer, duplicateLayer, removeLayer, updateLayer, reorderLayers,
     changeLayerPattern,
     randomizeLayer, randomizeAll, randomizeLayerParams, randomizeAllParams,
     loadLayerSet, bgColor, setBgColor,

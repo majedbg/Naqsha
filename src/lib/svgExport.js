@@ -6,6 +6,8 @@
 
 import { optimizeGroup } from './plotter/pipeline';
 import { PPI, MM_PER_IN } from './plotter/constants.js';
+import { resolveOperation } from './operations.js';
+import { realizeVariableWeightElements } from './variableWeight.js';
 
 const pxToMm = (px) => (px / PPI) * MM_PER_IN;
 
@@ -83,7 +85,25 @@ ${bgRect ? `  ${bgRect}\n` : ''}  ${group}
 </svg>`;
 }
 
-export function buildAllLayersSVG(layers, patternInstances, canvasW, canvasH, includeHidden = false, { metadata = false, manifest, optimizations } = {}) {
+// ADDITIVE variable-weight branch (issue #17 / #4 follow-up). For a layer whose
+// `variableWeight.enabled` is true on a supported profile, emit per-element band
+// COLORS via realizeVariableWeightElements (one `<g>` of per-bucket-colored
+// `<path>`s) instead of the single-color group. Returns null when the layer is
+// not variable-weight-enabled or the profile/instance doesn't support it, so the
+// caller falls back to the normal byte-stable single-color path.
+function variableWeightGroup(layer, instance, profileId) {
+  if (!layer?.variableWeight?.enabled) return null;
+  const elements = instance?.svgElements;
+  if (!Array.isArray(elements)) return null;
+  const inner = realizeVariableWeightElements(elements, {
+    profileId,
+    n: layer.variableWeight.n,
+  });
+  if (inner == null) return null; // unsupported profile (e.g. dragCutter)
+  return `<g id="${layer.id}" opacity="${(layer.opacity ?? 100) / 100}">\n${inner}\n  </g>`;
+}
+
+export function buildAllLayersSVG(layers, patternInstances, canvasW, canvasH, includeHidden = false, { metadata = false, manifest, optimizations, profileId } = {}) {
   // Reverse so bottom layers come first in SVG (matching visual order)
   const ordered = [...layers].reverse();
   const groups = ordered
@@ -92,8 +112,11 @@ export function buildAllLayersSVG(layers, patternInstances, canvasW, canvasH, in
       const instance = patternInstances[l.id];
       if (!instance) return '';
       const bgRect = layerBgRect(l, canvasW, canvasH);
-      const rawGroup = instance.toSVGGroup(l.id, l.color, l.opacity);
-      const group = maybeOptimize(rawGroup, optimizations);
+      // Variable-weight layers export per-element band colors (additive); every
+      // other layer keeps the byte-stable single-color group path.
+      const vwGroup = variableWeightGroup(l, instance, profileId);
+      const rawGroup = vwGroup ?? instance.toSVGGroup(l.id, l.color, l.opacity);
+      const group = vwGroup ? rawGroup : maybeOptimize(rawGroup, optimizations);
       return (bgRect ? bgRect + '\n  ' : '') + group;
     })
     .join('\n  ');
@@ -122,20 +145,30 @@ export function exportAllLayersSVG(layers, patternInstances, canvasW, canvasH, i
 export function buildManifest({
   appName = 'Naqsha',
   version = '1',
-  outputMode = 'plotter',
+  // `machineProfile` is the new field (replaces the old `outputMode` toggle);
+  // `outputMode` is still accepted as a fallback for any legacy caller.
+  machineProfile,
+  outputMode,
+  operations,
   bedW, bedH, bedUnit = 'mm',
   layers = [],
   optimizations = [],
 } = {}) {
   const ts = new Date().toISOString();
-  const layerLines = layers.map((l) =>
-    `  layer: ${l.name || l.id} | pattern: ${l.patternType} | seed: ${l.seed} | role: ${l.role ?? '-'} | pen: ${l.penSlot ?? '-'}`
-  );
+  const profile = machineProfile ?? outputMode ?? 'plotter';
+  // Per-layer line reflects the assigned operation (name + process) when an
+  // operation library is supplied, falling back to the legacy `role` otherwise.
+  const layerLines = layers.map((l) => {
+    const op = operations ? resolveOperation(operations, l.operationId) : undefined;
+    const opName = op ? op.name : '-';
+    const process = op ? op.process : (l.role ?? '-');
+    return `  layer: ${l.name || l.id} | pattern: ${l.patternType} | seed: ${l.seed} | operation: ${opName} | process: ${process} | pen: ${l.penSlot ?? '-'}`;
+  });
   return [
     `${appName} export v${version}`,
     `timestamp: ${ts}`,
     `bed: ${bedW} x ${bedH} ${bedUnit}`,
-    `output: ${outputMode}`,
+    `output: ${profile}`,
     `optimizations: ${optimizations.length ? optimizations.join(', ') : 'none'}`,
     ...layerLines,
   ].join('\n');

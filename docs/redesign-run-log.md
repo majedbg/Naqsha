@@ -63,10 +63,10 @@ Branch `layout-rework` — final suite **901 passed | 4 skipped** (from 594 base
 
 ### ⛔ Blocked / skipped: **NONE.** Every AFK issue landed green.
 
-### 🌙 HITL parked (NOT implemented, per runbook §7 — data needed)
-GitHub comments are permission-blocked this session, so the data-needs are recorded here:
-- **#18 ITP Camp Kit** — needs: the **2 ITP Camp laser-bed dimensions**, the **ITP Camp logo SVG**, and **palette sign-off**.
-- **#19 ITP Camp access + submission** — needs: the **NYU-ID roster** (IDs + names) for `itp_camp_roster`.
+### 🌙 HITL status
+GitHub comments are permission-blocked this session, so status is recorded here:
+- **#18 ITP Camp Kit** — ✅ **DONE** (`5f39bf8`, see table). User provided the 2 logos + the 12×24″ small bed; built with the plan-extracted palette (⚠️ NOT formally signed off), large bed assumed = small (⚠️ TBD), pixel/retro heading font deferred (no offline webfont).
+- **#19 ITP Camp access + submission** — ⛔ still parked: needs the **NYU-ID roster** (IDs + names) for `itp_camp_roster`. (Also needs the Supabase RPCs `validate_nyu_id`/`submit_itp_export` + RLS — buildable once the roster shape is known.)
 - **#20 [Stretch] direct machine-code generation** — out of scope for this redesign; parked.
 
 ### ⚠️ Known gaps / follow-ups surfaced during the run (for review)

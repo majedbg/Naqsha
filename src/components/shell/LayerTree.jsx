@@ -17,11 +17,13 @@
 // documented NO-OP stub here — the reassign picker is issue #11/C2; this slice
 // only RENDERS the chip and updates it when `operationId` changes.
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { PATTERN_TYPES } from "../../constants";
 import { resolveOperation } from "../../lib/operations";
 import { PROFILE_IDS, getProfile } from "../../lib/machineProfiles";
 import OperationPicker from "./OperationPicker";
+import RowMenu from "./RowMenu";
+import ConfirmDialog from "../ui/ConfirmDialog";
 
 // Human label for a pattern type (falls back to the raw id for AI / extras /
 // import layers not in the static table).
@@ -70,15 +72,19 @@ function PatternIcon() {
   );
 }
 
-// The operation chip: a color swatch + name, resolved from the layer's
-// operationId through the document operation library. Reflects the assigned
-// operation and updates when `operationId` (or the library) changes. Clicking it
-// opens the OperationPicker and reassigns THIS row's layer (#11/C2). The click is
-// kept from bubbling so opening the picker never also selects the row.
+// The operation chip (op-swatch, spec §3.1): a color swatch + the operation's
+// uppercase INITIAL (Cut→C, Score→S, Engrave→E), resolved from the layer's
+// operationId through the document operation library. The FULL operation name
+// never shows inline — it lives in the swatch's hover `title` tooltip (and in the
+// dropdown). Reflects the assigned operation and updates when `operationId` (or
+// the library) changes. Clicking it opens the OperationPicker and reassigns THIS
+// row's layer (#11/C2). The click is kept from bubbling so opening the picker
+// never also selects the row.
 function OperationChip({ layer, operations, onAssignOperation }) {
   const op = resolveOperation(operations, layer.operationId);
   const color = op?.color ?? "#000000";
   const name = op?.name ?? "—";
+  const initial = name && name !== "—" ? name.charAt(0).toUpperCase() : "—";
   const [open, setOpen] = useState(false);
   const canPick = Array.isArray(operations) && operations.length > 0 && !!onAssignOperation;
 
@@ -89,7 +95,8 @@ function OperationChip({ layer, operations, onAssignOperation }) {
         data-testid="operation-chip"
         aria-haspopup="menu"
         aria-expanded={open}
-        title={`Operation: ${name}`}
+        aria-label={`Operation: ${name}`}
+        title={name}
         onClick={(e) => {
           e.stopPropagation();
           if (canPick) setOpen((v) => !v);
@@ -101,7 +108,7 @@ function OperationChip({ layer, operations, onAssignOperation }) {
           className="inline-block h-2.5 w-2.5 shrink-0 rounded-[2px] border border-hairline"
           style={{ backgroundColor: color }}
         />
-        <span className="truncate">{name}</span>
+        <span className="tabular-nums">{initial}</span>
       </button>
       {open && canPick && (
         <>
@@ -129,18 +136,9 @@ function OperationChip({ layer, operations, onAssignOperation }) {
   );
 }
 
-// Small inline glyphs for the re-homed per-row actions. Kept stroke-only to match
-// the visibility/lock icons already in this row.
-function DuplicateIcon() {
-  return (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-      <rect x="9" y="9" width="13" height="13" rx="2" />
-      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-    </svg>
-  );
-}
-function RandomizeIcon() {
-  // A small die mark — the legacy "randomize seed" affordance.
+// The dice (🎲) glyph — "randomize PARAMS" for this layer (spec §5). Distinct
+// from the legacy rand-SEED die, which is REMOVED entirely (§3.1).
+function DiceIcon() {
   return (
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
       <rect x="3" y="3" width="18" height="18" rx="2" />
@@ -148,65 +146,76 @@ function RandomizeIcon() {
       <circle cx="16" cy="16" r="1" fill="currentColor" />
       <circle cx="16" cy="8" r="1" fill="currentColor" />
       <circle cx="8" cy="16" r="1" fill="currentColor" />
+      <circle cx="12" cy="12" r="1" fill="currentColor" />
     </svg>
   );
 }
-function RandomizeParamsIcon() {
-  // A sliders mark — distinguishes "randomize the checked PARAMS" from the die
-  // (randomize seed) above.
+// The ⋯ overflow trigger — opens this row's RowMenu (rename/duplicate/download/
+// delete). The menu panel itself is RowMenu (WI-4); this is the caller-owned
+// trigger.
+function MoreIcon() {
   return (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-      <line x1="4" y1="21" x2="4" y2="14" />
-      <line x1="4" y1="10" x2="4" y2="3" />
-      <line x1="12" y1="21" x2="12" y2="12" />
-      <line x1="12" y1="8" x2="12" y2="3" />
-      <line x1="20" y1="21" x2="20" y2="16" />
-      <line x1="20" y1="12" x2="20" y2="3" />
-      <line x1="1" y1="14" x2="7" y2="14" />
-      <line x1="9" y1="8" x2="15" y2="8" />
-      <line x1="17" y1="16" x2="23" y2="16" />
-    </svg>
-  );
-}
-function ExportIcon() {
-  return (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-      <polyline points="7 10 12 15 17 10" />
-      <line x1="12" y1="15" x2="12" y2="3" />
-    </svg>
-  );
-}
-function TrashIcon() {
-  return (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-      <polyline points="3 6 5 6 21 6" />
-      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true">
+      <circle cx="5" cy="12" r="1.6" />
+      <circle cx="12" cy="12" r="1.6" />
+      <circle cx="19" cy="12" r="1.6" />
     </svg>
   );
 }
 
-function LayerRow({ layer, index, total, selected, operations, onSelect, onUpdateLayer, onReorderLayers, onAssignOperation, onDeleteLayer, onDuplicateLayer, onRandomizeLayer, onRandomizeLayerParams, onExportLayer }) {
+function LayerRow({
+  layer, index, total, selected, operations, compact,
+  onSelect, onUpdateLayer, onReorderLayers, onAssignOperation,
+  onDeleteLayer, onDuplicateLayer, onRandomizeLayerParams, onExportLayer,
+  menuOpen, onRequestMenu, onCloseMenu,
+}) {
   const move = (to) => {
     if (to < 0 || to >= total) return;
     onReorderLayers(index, to);
   };
-  // A per-row action button: stops propagation so triggering the action never
-  // also selects the row (matching the visibility/lock toggles already here).
-  // Rendered only when the corresponding handler is supplied, so LayerTree stays
-  // back-compatible with callers (and existing tests) that don't pass them.
-  const action = (handler, label, Icon, danger = false) =>
-    handler ? (
-      <button
-        type="button"
-        aria-label={label}
-        title={label}
-        onClick={(e) => { e.stopPropagation(); handler(layer.id); }}
-        className={`shrink-0 text-ink-soft ${danger ? "hover:text-red-500" : "hover:text-ink"}`}
-      >
-        <Icon />
-      </button>
-    ) : null;
+
+  // Inline rename state (spec §7). `editing` flips the name span to an <input>;
+  // `draft` holds the in-progress text. Entering edit mode focuses + selects all
+  // (so typing replaces). Commit (Enter/blur) trims and rejects empty/whitespace;
+  // Esc reverts. Both double-click and ⋯→Rename funnel through `beginEdit`.
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(layer.name);
+  const inputRef = useRef(null);
+
+  const beginEdit = () => {
+    setDraft(layer.name);
+    setEditing(true);
+  };
+  useEffect(() => {
+    if (!editing) return;
+    const el = inputRef.current;
+    if (!el) return;
+    el.focus();
+    el.select();
+  }, [editing]);
+
+  const commit = () => {
+    const trimmed = draft.trim();
+    if (trimmed && trimmed !== layer.name) {
+      onUpdateLayer(layer.id, { name: trimmed, nameIsCustom: true });
+    }
+    setEditing(false);
+  };
+  const cancel = () => setEditing(false);
+
+  // ConfirmDialog state, hoisted to the row so it survives the menu unmounting on
+  // select (RowMenu fires its callback then closes). `confirm` ∈ null | "delete"
+  // | "randomize".
+  const [confirm, setConfirm] = useState(null);
+
+  // A per-row inline action button (dice). Stops propagation so it never selects
+  // the row. Rendered only when its handler is supplied.
+  const requestRandomize = (e) => {
+    e.stopPropagation();
+    if (layer.locked) return; // dice is disabled on locked layers (no confirm).
+    setConfirm("randomize");
+  };
+
   return (
     <div
       data-testid="layer-row"
@@ -253,11 +262,50 @@ function LayerRow({ layer, index, total, selected, operations, onSelect, onUpdat
         <PatternIcon />
       </span>
 
-      {/* Name */}
-      <span className="flex-1 min-w-0 truncate text-xs text-ink">{layer.name}</span>
+      {/* Name — full-row click selects; DOUBLE-click enters inline rename (§7). */}
+      {editing ? (
+        <input
+          ref={inputRef}
+          type="text"
+          value={draft}
+          aria-label="Layer name"
+          onClick={(e) => e.stopPropagation()}
+          onDoubleClick={(e) => e.stopPropagation()}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            e.stopPropagation();
+            if (e.key === "Enter") { e.preventDefault(); commit(); }
+            else if (e.key === "Escape") { e.preventDefault(); cancel(); }
+          }}
+          className="flex-1 min-w-0 rounded-xs border border-violet bg-paper px-1 py-0 text-xs text-ink outline-none"
+        />
+      ) : (
+        <span
+          className="flex-1 min-w-0 truncate text-xs text-ink"
+          onDoubleClick={(e) => { e.stopPropagation(); beginEdit(); }}
+        >
+          {layer.name}
+        </span>
+      )}
 
-      {/* Operation chip */}
+      {/* Operation chip (op-swatch) */}
       <OperationChip layer={layer} operations={operations} onAssignOperation={onAssignOperation} />
+
+      {/* 🎲 dice — randomize PARAMS (§5). Disabled on a locked layer (no confirm).
+          Hidden when `compact` (responsive §3.2). Only rendered with a handler. */}
+      {onRandomizeLayerParams && !compact && (
+        <button
+          type="button"
+          aria-label="Randomize layer params"
+          title={layer.locked ? "Layer locked" : "Randomize parameters"}
+          disabled={!!layer.locked}
+          onClick={requestRandomize}
+          className="shrink-0 text-ink-soft hover:text-ink disabled:opacity-30 disabled:cursor-not-allowed"
+        >
+          <DiceIcon />
+        </button>
+      )}
 
       {/* Visibility toggle */}
       <button
@@ -281,14 +329,62 @@ function LayerRow({ layer, index, total, selected, operations, onSelect, onUpdat
         <LockIcon locked={!!layer.locked} />
       </button>
 
-      {/* Re-homed per-row actions (#16 AC2): randomize seed, duplicate, export,
-          delete — each wired to the surviving useLayers / export handler. Only
-          rendered when the handler is supplied. */}
-      {action(onRandomizeLayer, "Randomize layer", RandomizeIcon)}
-      {action(onRandomizeLayerParams, "Randomize layer params", RandomizeParamsIcon)}
-      {action(onDuplicateLayer, "Duplicate layer", DuplicateIcon)}
-      {action(onExportLayer, "Export layer", ExportIcon)}
-      {action(onDeleteLayer, "Delete layer", TrashIcon, true)}
+      {/* ⋯ overflow trigger + its RowMenu (WI-4). The trigger is caller-owned;
+          LayerTree tracks ONE open menu id, so opening this row closes any other.
+          Rename always available (needs only onUpdateLayer); duplicate/download/
+          delete items are gated on their handlers. */}
+      <div className="relative shrink-0" onClick={(e) => e.stopPropagation()}>
+        <button
+          type="button"
+          aria-label="Row actions"
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          title="More"
+          // Keep the trigger's mousedown from reaching document: otherwise
+          // RowMenu's mousedown click-away (WI-4) would pre-close the open menu a
+          // beat before this click's toggle reopened it — so clicking ⋯ again
+          // never closed it. Click-away elsewhere is unaffected.
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => { e.stopPropagation(); onRequestMenu(layer.id); }}
+          className="shrink-0 text-ink-soft hover:text-ink"
+        >
+          <MoreIcon />
+        </button>
+        <RowMenu
+          open={menuOpen}
+          onClose={onCloseMenu}
+          onRename={beginEdit}
+          onDuplicate={onDuplicateLayer ? () => onDuplicateLayer(layer.id) : undefined}
+          onDownload={onExportLayer ? () => onExportLayer(layer.id) : undefined}
+          onDelete={onDeleteLayer ? () => setConfirm("delete") : undefined}
+        />
+      </div>
+
+      {/* Confirm dialogs — hoisted to the row so they outlive the menu closing
+          on select. Wrapped so their (fixed-overlay) clicks never bubble up to
+          the row's select handler. Randomize is NOT danger; Delete is danger,
+          with truthful copy (there is no undo). */}
+      <span onClick={(e) => e.stopPropagation()}>
+        <ConfirmDialog
+          open={confirm === "randomize"}
+          title="Randomize parameters?"
+          message="This overwrites the current values for this layer."
+          confirmLabel="Randomize"
+          cancelLabel="Cancel"
+          onConfirm={() => { setConfirm(null); onRandomizeLayerParams?.(layer.id); }}
+          onCancel={() => setConfirm(null)}
+        />
+        <ConfirmDialog
+          open={confirm === "delete"}
+          danger
+          title={`Delete "${layer.name}"?`}
+          message="This can't be undone."
+          confirmLabel="Delete"
+          cancelLabel="Cancel"
+          onConfirm={() => { setConfirm(null); onDeleteLayer?.(layer.id); }}
+          onCancel={() => setConfirm(null)}
+        />
+      </span>
     </div>
   );
 }
@@ -307,12 +403,18 @@ export default function LayerTree({
   // back-compatible with callers/tests that don't supply them.
   onDeleteLayer,
   onDuplicateLayer,
-  onRandomizeLayer,
   onRandomizeLayerParams,
   onExportLayer,
   onRandomizeAll,
   onRandomizeAllParams,
+  // Responsive (spec §3.2): below a ~240px panel width the host passes
+  // `compact` to hide the 🎲 dice. No container-query plugin is installed on this
+  // Tailwind v3 build, so the panel width is threaded via this boolean (kept
+  // testable in jsdom, which can't evaluate `@container`).
+  compact = false,
 }) {
+  // One row menu open at a time: the tree owns the open-menu layer id (spec §4).
+  const [openMenuId, setOpenMenuId] = useState(null);
   return (
     <div className="flex h-full flex-col" data-testid="layer-tree">
       {/* Machine-profile selector — pinned at the TOP of the column. */}
@@ -381,9 +483,12 @@ export default function LayerTree({
             onAssignOperation={onAssignOperation}
             onDeleteLayer={onDeleteLayer}
             onDuplicateLayer={onDuplicateLayer}
-            onRandomizeLayer={onRandomizeLayer}
             onRandomizeLayerParams={onRandomizeLayerParams}
             onExportLayer={onExportLayer}
+            compact={compact}
+            menuOpen={openMenuId === layer.id}
+            onRequestMenu={(id) => setOpenMenuId((cur) => (cur === id ? null : id))}
+            onCloseMenu={() => setOpenMenuId(null)}
           />
         ))}
       </div>

@@ -41,10 +41,20 @@ function isValidProfile(id) {
 // boundary (local / cloud / share / examples) yields a resolvable operationId.
 export function migrateLayer(layer, operations) {
   if (!layer || typeof layer !== 'object') return layer;
-  if (layer.operationId && (!operations || resolveOperation(operations, layer.operationId))) {
-    return layer;
+  // WI-1 migration defaults applied at EVERY load boundary, BEFORE the
+  // operationId early-return (so saved work with a valid operationId still gets
+  // them). `??` keeps it idempotent: a persisted nameIsCustom:false / locked:true
+  // survives, and existing `name` values are never rewritten. A layer lacking
+  // nameIsCustom is treated as `true` (never surprise-rename saved work).
+  const withDefaults = {
+    ...layer,
+    nameIsCustom: layer.nameIsCustom ?? true,
+    locked: layer.locked ?? false,
+  };
+  if (withDefaults.operationId && (!operations || resolveOperation(operations, withDefaults.operationId))) {
+    return withDefaults;
   }
-  return { ...layer, operationId: operationIdForRole(layer.role) };
+  return { ...withDefaults, operationId: operationIdForRole(withDefaults.role) };
 }
 
 // Migrate a saved-design `config` object to the current schema. Pure and

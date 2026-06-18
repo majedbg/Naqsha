@@ -41,14 +41,20 @@ describe("LayerTree (B2 — layer tree + machine-profile selector)", () => {
     const rows = screen.getAllByTestId("layer-row");
     expect(rows).toHaveLength(2);
 
+    // Inline now shows the operation's uppercase INITIAL only (Cut→C, Score→S);
+    // the full name lives in the chip's `title` tooltip, never inline (spec §3.1).
     const chip1 = within(rows[0]).getByTestId("operation-chip");
-    expect(chip1).toHaveTextContent("Cut");
+    expect(chip1).toHaveTextContent("C");
+    expect(chip1).not.toHaveTextContent("Cut");
+    expect(chip1).toHaveAttribute("title", expect.stringContaining("Cut"));
     expect(chip1.querySelector("[data-chip-swatch]")).toHaveStyle({
       backgroundColor: "#FF0000",
     });
 
     const chip2 = within(rows[1]).getByTestId("operation-chip");
-    expect(chip2).toHaveTextContent("Score");
+    expect(chip2).toHaveTextContent("S");
+    expect(chip2).not.toHaveTextContent("Score");
+    expect(chip2).toHaveAttribute("title", expect.stringContaining("Score"));
     expect(chip2.querySelector("[data-chip-swatch]")).toHaveStyle({
       backgroundColor: "#0000FF",
     });
@@ -80,13 +86,16 @@ describe("LayerTree (B2 — layer tree + machine-profile selector)", () => {
     }
     render(<Harness />);
     const chip = screen.getByTestId("operation-chip");
-    expect(chip).toHaveTextContent("Cut");
+    expect(chip).toHaveTextContent("C");
+    expect(chip).toHaveAttribute("title", expect.stringContaining("Cut"));
     expect(chip.querySelector("[data-chip-swatch]")).toHaveStyle({ backgroundColor: "#FF0000" });
 
     fireEvent.click(screen.getByRole("button", { name: "reassign" }));
 
     const chipAfter = screen.getByTestId("operation-chip");
-    expect(chipAfter).toHaveTextContent("Engrave");
+    expect(chipAfter).toHaveTextContent("E");
+    expect(chipAfter).not.toHaveTextContent("Engrave");
+    expect(chipAfter).toHaveAttribute("title", expect.stringContaining("Engrave"));
     expect(chipAfter.querySelector("[data-chip-swatch]")).toHaveStyle({ backgroundColor: "#000000" });
   });
 
@@ -193,5 +202,154 @@ describe("LayerTree (B2 — layer tree + machine-profile selector)", () => {
     );
     fireEvent.click(screen.getAllByTestId("layer-row")[1]);
     expect(onSelectLayer).toHaveBeenCalledWith("l2");
+  });
+
+  // (e) ROW LAYOUT (spec §3) — inline order is
+  //   [reorder] glyph name op-swatch 🎲 👁 🔒 ⋯
+  // asserted by DOM position so the ordering is actually pinned. Inline
+  // dup/download/delete are GONE (they live only in the ⋯ menu now), and the
+  // legacy rand-SEED die is removed entirely (§3.1).
+  it("lays the row out as [reorder] glyph name op-swatch dice eye lock more, with no rand-seed and no inline dup/download/delete", () => {
+    render(
+      <LayerTree
+        layers={[makeLayer("l1", { name: "A" })]}
+        operations={seedOperations()}
+        profileId="laser"
+        selectedLayerId={null}
+        onSelectLayer={() => {}}
+        onUpdateLayer={() => {}}
+        onReorderLayers={() => {}}
+        onProfileChange={() => {}}
+        onRandomizeLayerParams={() => {}}
+        onDuplicateLayer={() => {}}
+        onExportLayer={() => {}}
+        onDeleteLayer={() => {}}
+      />
+    );
+    const row = screen.getByTestId("layer-row");
+
+    const reorder = within(row).getByLabelText("Reorder layer");
+    const chip = within(row).getByTestId("operation-chip");
+    const dice = within(row).getByRole("button", { name: "Randomize layer params" });
+    const eye = within(row).getByRole("button", { name: /Hide layer|Show layer/ });
+    const lock = within(row).getByRole("button", { name: /Lock layer|Unlock layer/ });
+    const more = within(row).getByRole("button", { name: "Row actions" });
+
+    // Helper: a precedes b in document order.
+    const precedes = (a, b) =>
+      Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(precedes(reorder, chip)).toBe(true);
+    expect(precedes(chip, dice)).toBe(true);
+    expect(precedes(dice, eye)).toBe(true);
+    expect(precedes(eye, lock)).toBe(true);
+    expect(precedes(lock, more)).toBe(true);
+
+    // No rand-SEED die anywhere (removed by §3.1).
+    expect(within(row).queryByRole("button", { name: "Randomize layer" })).not.toBeInTheDocument();
+    // Inline dup/download/delete are gone from the row (only behind ⋯).
+    expect(within(row).queryByRole("button", { name: "Duplicate layer" })).not.toBeInTheDocument();
+    expect(within(row).queryByRole("button", { name: "Export layer" })).not.toBeInTheDocument();
+    expect(within(row).queryByRole("button", { name: "Download layer" })).not.toBeInTheDocument();
+    expect(within(row).queryByRole("button", { name: "Delete layer" })).not.toBeInTheDocument();
+  });
+
+  // (e) ROW LAYOUT — the op element shows the swatch + initial only (no inline
+  // operation-name text), with the full name in its title.
+  it("renders the op element as swatch + initial only, full name in title", () => {
+    render(
+      <LayerTree
+        layers={[makeLayer("l1", { operationId: "op-engrave" })]}
+        operations={seedOperations()}
+        profileId="laser"
+        selectedLayerId={null}
+        onSelectLayer={() => {}}
+        onUpdateLayer={() => {}}
+        onReorderLayers={() => {}}
+        onProfileChange={() => {}}
+      />
+    );
+    const chip = screen.getByTestId("operation-chip");
+    expect(chip).toHaveTextContent("E");
+    expect(chip).not.toHaveTextContent("Engrave");
+    expect(chip).toHaveAttribute("title", expect.stringContaining("Engrave"));
+    expect(chip.querySelector("[data-chip-swatch]")).toBeInTheDocument();
+  });
+
+  // (e) RESPONSIVE (spec §3.2) — below 240px the dice is hidden. Mechanism: a
+  // `compact` boolean prop (no container-query plugin is installed on this
+  // Tailwind v3 build). When compact, the dice is not rendered; eye/lock/⋯ and
+  // the op-swatch stay.
+  it("hides the dice when compact, keeping eye/lock/more and the op-swatch", () => {
+    render(
+      <LayerTree
+        layers={[makeLayer("l1")]}
+        operations={seedOperations()}
+        profileId="laser"
+        selectedLayerId={null}
+        onSelectLayer={() => {}}
+        onUpdateLayer={() => {}}
+        onReorderLayers={() => {}}
+        onProfileChange={() => {}}
+        onRandomizeLayerParams={() => {}}
+        compact
+      />
+    );
+    const row = screen.getByTestId("layer-row");
+    expect(within(row).queryByRole("button", { name: "Randomize layer params" })).not.toBeInTheDocument();
+    expect(within(row).getByRole("button", { name: /Hide layer|Show layer/ })).toBeInTheDocument();
+    expect(within(row).getByRole("button", { name: /Lock layer|Unlock layer/ })).toBeInTheDocument();
+    expect(within(row).getByRole("button", { name: "Row actions" })).toBeInTheDocument();
+    expect(within(row).getByTestId("operation-chip")).toBeInTheDocument();
+  });
+
+  // (e) ONE MENU AT A TIME — opening row B's ⋯ closes row A's.
+  it("keeps only one row menu open at a time", () => {
+    render(
+      <LayerTree
+        layers={[makeLayer("l1", { name: "A" }), makeLayer("l2", { name: "B" })]}
+        operations={seedOperations()}
+        profileId="laser"
+        selectedLayerId={null}
+        onSelectLayer={() => {}}
+        onUpdateLayer={() => {}}
+        onReorderLayers={() => {}}
+        onProfileChange={() => {}}
+        onDuplicateLayer={() => {}}
+      />
+    );
+    const rows = screen.getAllByTestId("layer-row");
+    fireEvent.click(within(rows[0]).getByRole("button", { name: "Row actions" }));
+    expect(within(rows[0]).getByTestId("row-menu")).toBeInTheDocument();
+
+    fireEvent.click(within(rows[1]).getByRole("button", { name: "Row actions" }));
+    expect(within(rows[1]).getByTestId("row-menu")).toBeInTheDocument();
+    expect(within(rows[0]).queryByTestId("row-menu")).not.toBeInTheDocument();
+  });
+
+  // (e) ⋯ toggles its OWN menu shut. The real-browser path is mousedown (RowMenu's
+  // WI-4 click-away) then click (the toggle); the trigger stops mousedown reaching
+  // document so the menu doesn't pre-close and reopen. This drives that sequence.
+  it("toggles a row's own menu closed when its ⋯ is clicked again", () => {
+    render(
+      <LayerTree
+        layers={[makeLayer("l1", { name: "A" })]}
+        operations={seedOperations()}
+        profileId="laser"
+        selectedLayerId={null}
+        onSelectLayer={() => {}}
+        onUpdateLayer={() => {}}
+        onReorderLayers={() => {}}
+        onProfileChange={() => {}}
+        onDuplicateLayer={() => {}}
+      />
+    );
+    const row = screen.getByTestId("layer-row");
+    const trigger = within(row).getByRole("button", { name: "Row actions" });
+    fireEvent.click(trigger);
+    expect(within(row).getByTestId("row-menu")).toBeInTheDocument();
+    // Real-browser open→close: mousedown (would trip click-away) then click.
+    fireEvent.mouseDown(trigger);
+    fireEvent.click(trigger);
+    expect(within(row).queryByTestId("row-menu")).not.toBeInTheDocument();
   });
 });

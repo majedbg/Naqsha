@@ -930,6 +930,9 @@ export default function Studio() {
             // For a Moiré role-B selection this is the partner-A id, so edits
             // redirect to A (B reads A) — matching legacy LayersSection behavior.
             selectedLayerId={inspectorTargetId}
+            // Active document unit (#13) — length-tagged params display/convert
+            // in this unit; values stay px in layer state.
+            unit={unit}
             onUpdateLayer={updateLayer}
             onChangeLayerPattern={changeLayerPattern}
           />,

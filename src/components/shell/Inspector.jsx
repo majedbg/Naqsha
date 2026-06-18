@@ -31,7 +31,7 @@ import {
 // The param-editing body for one selected layer. Split into its own component so
 // usePatternCache (a hook) is only called when a layer is actually selected —
 // hooks can't be called conditionally inside Inspector itself.
-function SelectedLayerInspector({ layer, onUpdateLayer, onChangeLayerPattern }) {
+function SelectedLayerInspector({ layer, unit, onUpdateLayer, onChangeLayerPattern }) {
   // Pattern swap: route through the same cache machine LayerCard uses, applied via
   // the pair-aware onChangeLayerPattern when present (falls back to a plain param
   // update so the component works standalone / in tests without a router).
@@ -45,6 +45,8 @@ function SelectedLayerInspector({ layer, onUpdateLayer, onChangeLayerPattern }) 
   const layerParamsValue = buildLayerParamsValue({
     patternType: layer.patternType,
     params: layer.params,
+    // Active document unit so length-tagged params (#13) display/convert in it.
+    unit,
     onChange: (params) => onUpdateLayer(layer.id, { params }),
     randomizeKeys: layer.randomizeKeys,
     onRandomizeKeysChange: (keys) =>
@@ -75,6 +77,10 @@ function SelectedLayerInspector({ layer, onUpdateLayer, onChangeLayerPattern }) 
 export default function Inspector({
   layers = [],
   selectedLayerId,
+  // Active document unit ('mm' | 'in' | 'px') from Studio. Threaded into the
+  // param context so length-tagged params display/convert in it (#13). Undefined
+  // = raw px display (back-compat with callers that don't pass it).
+  unit,
   onUpdateLayer,
   onChangeLayerPattern,
 }) {
@@ -106,6 +112,7 @@ export default function Inspector({
       // state bleed in the param controls).
       key={layer.id}
       layer={layer}
+      unit={unit}
       onUpdateLayer={onUpdateLayer}
       onChangeLayerPattern={onChangeLayerPattern}
     />

@@ -1,4 +1,5 @@
 import { useId, useRef, useState } from 'react';
+import { pxToUnit, unitToPx } from '../../lib/units';
 
 /*
  * Slider — the primitive numeric input for Naqsha.
@@ -21,6 +22,17 @@ import { useId, useRef, useState } from 'react';
  *   Option + Arrow  — 0.1 × step (sub-cell fine adjust)
  *   Home / End      — min / max
  */
+// How many decimal places are needed to show one px-step's worth of resolution
+// in the target unit. e.g. a 1px step ≈ 0.2646mm → 2 decimals; ≈ 0.0104in → 3.
+// Clamped to [1, 4] so the readout stays editable without runaway precision.
+function unitDecimals(stepInUnit) {
+  const s = Math.abs(stepInUnit);
+  if (!Number.isFinite(s) || s === 0) return 2;
+  if (s >= 1) return 1;
+  const places = Math.ceil(-Math.log10(s));
+  return Math.min(4, Math.max(1, places));
+}
+
 export default function Slider({
   label,
   value,
@@ -31,6 +43,13 @@ export default function Slider({
   tooltip,
   disabled = false,
   id: providedId,
+  // Unit-aware readout/entry (issue #13, Plan B). When `unit` is a real-world
+  // unit ('mm'/'in'), the slider stays a PX-space control — its native range
+  // input min/max/step/value remain px, so snapping, arrow keys and the geometry
+  // that consumes `value` are byte-identical to today — but the visible value
+  // readout is formatted in `unit` and typed entry is parsed back to px before
+  // onChange. Absent / 'px' = raw px (legacy, unchanged).
+  unit,
 }) {
   const autoId = useId();
   const id = providedId ?? `slider-${autoId}`;
@@ -38,9 +57,22 @@ export default function Slider({
   const [editValue, setEditValue] = useState('');
   const valueRef = useRef(null);
 
+  // Unit-aware display is active only for real-world units. 'px' or unset keeps
+  // the original raw-px path verbatim.
+  const inUnit = unit === 'mm' || unit === 'in';
+
+  // px-space decimals (used for snapping and for the raw readout).
   const decimals =
     step < 1 ? String(step).split('.')[1]?.length || 1 : 0;
-  const displayValue = Number(value).toFixed(decimals);
+
+  // Display decimals: when showing a real-world unit, derive resolution from the
+  // px step CONVERTED to that unit so a fine px step (e.g. 1px ≈ 0.26mm) keeps
+  // enough digits to be editable, rather than collapsing to "0".
+  const displayDecimals = inUnit ? unitDecimals(pxToUnit(step, unit)) : decimals;
+
+  const displayValue = inUnit
+    ? Number(pxToUnit(value, unit)).toFixed(displayDecimals)
+    : Number(value).toFixed(decimals);
   const percent = ((value - min) / (max - min)) * 100;
 
   const snapToStep = (v, useStep = step) => {
@@ -61,7 +93,12 @@ export default function Slider({
   const commitEdit = () => {
     setEditing(false);
     const parsed = parseFloat(editValue);
-    if (!isNaN(parsed)) onChange(snapToStep(parsed));
+    if (isNaN(parsed)) return;
+    // When editing in a real-world unit, the typed number is in that unit —
+    // convert back to px BEFORE snapping (snapToStep + onChange both operate in
+    // px, so the value that reaches layer state / geometry stays px).
+    const px = inUnit ? unitToPx(parsed, unit) : parsed;
+    onChange(snapToStep(px));
   };
 
   /**
@@ -143,7 +180,7 @@ export default function Slider({
           <input
             ref={valueRef}
             type="number"
-            inputMode={decimals > 0 ? 'decimal' : 'numeric'}
+            inputMode={(inUnit ? displayDecimals : decimals) > 0 ? 'decimal' : 'numeric'}
             className="
               text-xs text-saffron num
               w-16 text-right
@@ -154,9 +191,9 @@ export default function Slider({
               [&::-webkit-outer-spin-button]:appearance-none
             "
             value={editValue}
-            min={min}
-            max={max}
-            step={step}
+            min={inUnit ? pxToUnit(min, unit) : min}
+            max={inUnit ? pxToUnit(max, unit) : max}
+            step={inUnit ? Number(pxToUnit(step, unit).toFixed(displayDecimals)) || 'any' : step}
             onChange={(e) => setEditValue(e.target.value)}
             onBlur={commitEdit}
             onKeyDown={(e) => {

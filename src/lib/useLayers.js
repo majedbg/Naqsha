@@ -1,9 +1,10 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { DEFAULT_PARAMS, DEFAULT_COLORS, MAX_LAYERS, PATTERN_PARAM_DEFS, RANDOMIZE_EXCLUDED_KEYS } from '../constants';
+import { DEFAULT_PARAMS, DEFAULT_COLORS, MAX_LAYERS, PATTERN_PARAM_DEFS, RANDOMIZE_EXCLUDED_KEYS, PATTERN_SYMBOLS } from '../constants';
 import { randomPatchForDef } from './params/paramOps';
 import { getDynamicDefaults, getDynamicParamDefs } from './patternRegistry';
 import { isMoireMember, findMoirePartnerA, findMoirePartnerB } from './moirePair';
 import { migrateLayer } from './migration';
+import { autoLayerName } from './autoLayerName';
 import { operationIdForRole } from './operations';
 import { parseSVGImport } from './svgImport';
 
@@ -44,6 +45,16 @@ function randomSeed() {
   return Math.floor(Math.random() * 100000);
 }
 
+// Pattern-switch name recompute (WI-1 §8). When a layer's name is auto
+// (nameIsCustom === false) and the target type has a symbol, recompute the
+// auto-name. Custom names stay frozen; symbol-less targets keep the old name
+// (avoids a meaningless "Layer N" jump on switch). Returns a patch fragment.
+function nameRecompute(layer, patch) {
+  if (layer.nameIsCustom !== false) return {};
+  if (!PATTERN_SYMBOLS[patch.patternType]) return {};
+  return { name: autoLayerName(patch.patternType) };
+}
+
 // `requestedType` (optional) lets the pattern-picker create a layer of a chosen
 // type. Moiré is NOT acceptable here — it's a two-surface pair spawned via
 // changeLayerPattern; a lone moiré layer would be a broken orphan. Unknown/blank
@@ -57,7 +68,9 @@ function createLayer(index, requestedType) {
   const defs = PATTERN_PARAM_DEFS[patternType] || getDynamicParamDefs(patternType) || [];
   return {
     id: genId(),
-    name: `Layer ${index + 1}`,
+    name: autoLayerName(patternType, index),
+    nameIsCustom: false,
+    locked: false,
     color: DEFAULT_COLORS[index % DEFAULT_COLORS.length],
     opacity: 100,
     visible: true,
@@ -183,6 +196,8 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
       const layer = {
         id: genId(),
         name: `Imported ${index + 1}`,
+        nameIsCustom: false,
+        locked: false,
         type: 'import',
         color: DEFAULT_COLORS[index % DEFAULT_COLORS.length],
         opacity: 100,
@@ -211,14 +226,27 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
       if (idx === -1) return prev;
       const source = prev[idx];
 
-      const cloneLayer = (src) => ({
-        ...src,
-        id: genId(),
-        name: `${src.name} copy`,
-        params: { ...src.params },
-        randomizeKeys: [...(src.randomizeKeys || [])],
-        paramsCache: JSON.parse(JSON.stringify(src.paramsCache || {})),
-      });
+      const cloneLayer = (src) => {
+        // Naming rule (WI-1 §8): custom source → "<name> copy" (stays custom);
+        // auto source → recompute the auto-name (stays auto, NO "copy" suffix).
+        const naming = src.nameIsCustom
+          ? { name: `${src.name} copy`, nameIsCustom: true }
+          : {
+              // Auto source: recompute the auto-name (NO "copy"). Guard symbol-less
+              // types (e.g. `import`) so we keep their deliberate name (`Imported N`)
+              // instead of degrading to `Layer N` — mirrors nameRecompute's guard.
+              name: PATTERN_SYMBOLS[src.patternType] ? autoLayerName(src.patternType) : src.name,
+              nameIsCustom: false,
+            };
+        return {
+          ...src,
+          id: genId(),
+          ...naming,
+          params: { ...src.params },
+          randomizeKeys: [...(src.randomizeKeys || [])],
+          paramsCache: JSON.parse(JSON.stringify(src.paramsCache || {})),
+        };
+      };
 
       // Moiré member → duplicate BOTH members as a NEW pair (new groupId),
       // needs 2 free slots; block gracefully if unavailable.
@@ -332,6 +360,10 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
           ...src,
           patternType: 'moire',
           name: 'Moiré A',
+          // Explicit: `...src` may carry a custom nameIsCustom; moiré names are
+          // deliberate, so reset so a later rename works.
+          nameIsCustom: false,
+          locked: false,
           params: moireDefaults(),
           randomizeKeys: moireRandomizeKeys(),
           paramsCache: patch.paramsCache ?? src.paramsCache ?? {},
@@ -344,6 +376,8 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
         const layerB = {
           id: genId(),
           name: 'Moiré B',
+          nameIsCustom: false,
+          locked: false,
           color: DEFAULT_COLORS[(idx + 1) % DEFAULT_COLORS.length],
           opacity: 100,
           visible: true,
@@ -381,17 +415,19 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
           .filter((l) => !partnerIds.has(l.id))
           .map((l) => {
             if (l.id !== id) return l;
-            // Apply the patch and strip the moiré role fields.
+            // Apply the patch and strip the moiré role fields. When the name is
+            // auto (nameIsCustom === false), recompute it for the new type.
             const { moireRole: _r, moireGroupId: _g, ...rest } = l;
-            return { ...rest, ...patch };
+            return { ...rest, ...patch, ...nameRecompute(l, patch) };
           });
       });
       return { ok: true, blocked: false };
     }
 
-    // Default: ordinary pattern switch (non-moiré → non-moiré).
+    // Default: ordinary pattern switch (non-moiré → non-moiré). When the layer's
+    // name is auto (nameIsCustom === false), recompute it for the new type.
     setLayers((prev) =>
-      prev.map((l) => (l.id === id ? { ...l, ...patch } : l))
+      prev.map((l) => (l.id === id ? { ...l, ...patch, ...nameRecompute(l, patch) } : l))
     );
     return { ok: true, blocked: false };
   }, [layers, cap]);

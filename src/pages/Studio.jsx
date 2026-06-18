@@ -1017,6 +1017,10 @@ export default function Studio() {
             onExportLayer={handleExportLayer}
             onRandomizeAll={randomizeAll}
             onRandomizeAllParams={randomizeAllParams}
+            // "+ New" add-layer row → opens the pattern picker, same path as the
+            // menu's New. Disabled at the tier's layer cap (addLayer no-ops there).
+            onAddLayer={() => setUI("showPatternPicker", true)}
+            addDisabled={layers.length >= (limits.maxLayers ?? Infinity)}
           />,
           objectTreeSlot
         )}

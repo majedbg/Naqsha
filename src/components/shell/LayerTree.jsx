@@ -312,6 +312,11 @@ export default function LayerTree({
   onExportLayer,
   onRandomizeAll,
   onRandomizeAllParams,
+  // Add-layer affordance (#new). When supplied, a dashed "+ New" row is pinned
+  // below the list; clicking it opens the document's pattern picker. `addDisabled`
+  // greys it out at the tier's layer cap so the click can't silently no-op.
+  onAddLayer,
+  addDisabled = false,
 }) {
   return (
     <div className="flex h-full flex-col" data-testid="layer-tree">
@@ -387,6 +392,34 @@ export default function LayerTree({
           />
         ))}
       </div>
+
+      {/* "+ New" add-layer row — pinned below the list so it's always reachable.
+          Opens the pattern picker (the periodic table) via onAddLayer. Disabled
+          at the tier's layer cap. Only rendered when a handler is supplied, so the
+          tree stays back-compatible with callers/tests that don't pass it. */}
+      {onAddLayer && (
+        <div className="shrink-0 border-t border-hairline p-1.5">
+          <button
+            type="button"
+            data-testid="layer-add-row"
+            aria-label="New layer"
+            title={addDisabled ? "Layer limit reached" : "New layer — choose a pattern"}
+            disabled={addDisabled}
+            onClick={() => onAddLayer()}
+            className={`flex w-full items-center gap-1.5 rounded-xs border border-dashed border-hairline px-1.5 py-1.5 text-xs text-ink-soft transition-colors duration-fast ${
+              addDisabled
+                ? "opacity-40 cursor-not-allowed"
+                : "hover:border-violet hover:text-ink hover:bg-paper-warm cursor-pointer"
+            }`}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true" className="shrink-0">
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+            <span className="flex-1 text-left">New</span>
+          </button>
+        </div>
+      )}
     </div>
   );
 }

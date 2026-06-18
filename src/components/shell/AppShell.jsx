@@ -14,6 +14,7 @@
 // component module) so this file only exports components.
 
 import { useState } from 'react';
+import usePanelWidth from '../../lib/hooks/usePanelWidth';
 import {
   InspectorSlotProvider,
   MenuSlotProvider,
@@ -27,12 +28,13 @@ import {
 // Shared frame for every region: a labeled landmark with a dashed placeholder
 // affordance so the empty skeleton reads as "intentionally empty" in the UI.
 // `children` lets the Canvas region host the live Studio.
-function Region({ label, className = '', children }) {
+function Region({ label, className = '', style, children }) {
   return (
     <section
       role="region"
       aria-label={label}
       data-region={label}
+      style={style}
       className={`relative min-w-0 min-h-0 border border-dashed border-hairline ${className}`}
     >
       {children ?? (
@@ -86,9 +88,35 @@ export function ObjectTreeRegion({ children, contentRef, className = '' }) {
   // hosted Studio can portal its layer tree + machine-profile selector into it
   // (B2 / #5). When omitted, the region renders its placeholder / passed
   // children as before.
+  //
+  // WI-3: the region is user-resizable + persisted. Width is state-driven (no
+  // fixed `w-56`) via inline px style; a thin invisible hit strip straddles the
+  // section's right edge as a resize handle (double-click resets to default).
+  const { width, isDragging, onMouseDown, onDoubleClick } = usePanelWidth();
   return (
-    <Region label="Object tree" className={`w-56 shrink-0 overflow-auto ${className}`}>
+    <Region
+      label="Object tree"
+      style={{ width }}
+      className={`shrink-0 overflow-auto ${className}`}
+    >
       {contentRef ? <div ref={contentRef} className="h-full" /> : children}
+      <div
+        data-testid="object-tree-resize"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize object tree"
+        onMouseDown={onMouseDown}
+        onDoubleClick={onDoubleClick}
+        className="absolute top-0 right-0 z-10 h-full w-1.5 translate-x-1/2 cursor-col-resize"
+      >
+        {/* 1px divider, brightened to accent on hover / during drag. */}
+        <span
+          aria-hidden="true"
+          className={`pointer-events-none absolute right-1/2 top-0 h-full w-px translate-x-1/2 ${
+            isDragging ? 'bg-accent' : 'bg-transparent hover:bg-accent'
+          }`}
+        />
+      </div>
     </Region>
   );
 }

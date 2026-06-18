@@ -18,3 +18,4 @@
 | Issue | Status | Commit | Tests (before→after) | Notes |
 |------:|--------|--------|----------------------|-------|
 | #1 | ✅ DONE | 0f4fce0 | 594→632 (+38) | A1+A3+A4. operations.js + migration.js; export rewired via resolveExportColor; examples rewritten; equivalence asserted vs literals; no existing test/snapshot touched. |
+| #2 | ✅ DONE | 0454300 | 632→640 (+8) | B1. AppShell (8 region frames) + StudioRoute strangler gate behind `VITE_PRO_SHELL` flag; OFF=legacy no-op, ON+desktop=shell w/ Studio in canvas. Only App.jsx modified. |

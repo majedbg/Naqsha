@@ -33,13 +33,22 @@ export const PRESET_SIZES = [
 
 export const PPI = 96;
 
+// `hasVariableWeight` (issue #4, A5-F4) marks the patterns that emit genuine
+// per-element stroke-weight VARIATION — i.e. their generate() computes a
+// different `strokeWeight` for different elements (so variable-weight banding
+// has something to quantize). It is true for the structural capability ("this
+// code path CAN emit weight variation"), independent of whether the current
+// params actually exercise it. Only `recursive` (RecursiveGeometry, `sw =
+// strokeAtLevel(level)`) varies among the registered patterns; every other
+// pattern pushes the single constant `strokeWeight` param for every element,
+// so the flag is absent (treated as false). Off by default + capability-gated.
 export const PATTERN_TYPES = [
   { id: 'spirograph', label: 'Spirograph' },
   { id: 'flowfield', label: 'Flow Field' },
   { id: 'phyllotaxis', label: 'Phyllotaxis' },
   { id: 'wave', label: 'Waves' },
   { id: 'voronoi', label: 'Voronoi' },
-  { id: 'recursive', label: 'Recursive' },
+  { id: 'recursive', label: 'Recursive', hasVariableWeight: true },
   { id: 'phyllodash', label: 'Phyllotaxis Dash' },
   { id: 'grainfield', label: 'Grain Field' },
   { id: 'flowhatch', label: 'Flow Hatch' },

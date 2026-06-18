@@ -77,5 +77,10 @@ GitHub comments are permission-blocked this session, so the data-needs are recor
 6. **Orphaned-on-disk** after #16: `OptimizeSection.jsx`, `LayersSection.jsx` (kept — a test imports it), `AIPatternChat.jsx` (re-homed/used). `ExamplesGallery.jsx` reconstructed as a canvas overlay.
 7. **`gh issue comment` blocked** all session → issues left OPEN with no SHA comment; this log + commit history are the audit trail.
 
+### Verification honesty notes (#16)
+- **`ShareView` mobile AC**: **not runtime-loaded.** Confirmed *statically* — `ShareView.jsx` imports none of the 9 deleted components, it's a separate route that doesn't pass through `StudioRoute`/`Studio`, and the passing build proves no dangling refs. Very likely fine, but flagged as "static-verified, not browser-loaded."
+- **#16 runtime check was a render + responsiveness check**, not an end-to-end folded-action test: confirmed the default shell boots a live canvas, all 8 regions populate, and the File-menu click didn't crash. Each menu item→handler is covered by #8's unit tests; no folded action was fired end-to-end in the browser.
+- **`LayersSection.import.test.jsx`** now exercises the orphaned `LayersSection.jsx` (kept only because that test imports it). For the PR: delete the orphan + its test together.
+
 ### ▶️ Suggested next human action
 Open a PR from **`layout-rework` → `main`** for review (17 commits + this log). Then decide on #18/#19 data, and triage the follow-ups above. To re-enable per-issue issue comments in future runs, add a Bash permission rule for `gh issue comment`.

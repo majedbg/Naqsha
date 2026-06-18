@@ -1,7 +1,8 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { createPortal } from "react-dom";
 import LeftPanel from "../components/LeftPanel";
 import Inspector from "../components/shell/Inspector";
+import LayerTree from "../components/shell/LayerTree";
 import MenuBar from "../components/shell/MenuBar";
 import ToolStrip from "../components/shell/ToolStrip";
 import ControlBar from "../components/shell/ControlBar";
@@ -10,6 +11,7 @@ import {
   useMenuSlot,
   useToolStripSlot,
   useControlBarSlot,
+  useObjectTreeSlot,
 } from "../components/shell/shellSlots";
 import useActiveTool from "../lib/hooks/useActiveTool";
 import useCanvasView from "../lib/hooks/useCanvasView";
@@ -32,13 +34,9 @@ import { exportLayerSVG, exportAllLayersSVG, buildManifest } from "../lib/svgExp
 import ShareLinkButton from "../components/ShareLinkButton";
 import { resolveExportColor } from "../lib/fabrication";
 import { seedOperations } from "../lib/operations";
+import { remapOperationsToProfile } from "../lib/machineProfiles";
+import { findMoirePartnerA } from "../lib/moirePair";
 import useCanvasSize, { loadCanvasState } from "../lib/hooks/useCanvasSize";
-
-// Document operation library. Stable seed ids (op-cut/op-score/op-engrave) match
-// the ids on bundled examples and the migration shim, so any layer's
-// `operationId` resolves here. No CRUD UI yet (Operations panel is a later
-// issue); the library is a constant for now.
-const DOCUMENT_OPERATIONS = seedOperations();
 import useUIState from "../lib/hooks/useUIState";
 import useOptimizations from "../lib/hooks/useOptimizations";
 import useDesignPersistence from "../lib/hooks/useDesignPersistence";
@@ -115,12 +113,72 @@ export default function Studio() {
     setBgColor,
   } = useLayers({ persistToLocal: limits.localStorage, maxLayers: limits.maxLayers });
 
-  // Pro-shell Inspector slot (B3 / #6). Null in the legacy layout (no provider),
-  // so the portal below is a true no-op when the pro shell is off. Until the
-  // object tree (#5) owns selection, the inspector defaults to the top layer
-  // (index 0 = front) so it is populated and editable in the shell.
+  // Pro-shell Inspector + Object-tree slots (B3 / #6, B2 / #5). Null in the
+  // legacy layout (no provider), so the portals below are true no-ops when the
+  // pro shell is off.
   const inspectorSlot = useInspectorSlot();
-  const selectedLayerId = layers[0]?.id ?? null;
+  const objectTreeSlot = useObjectTreeSlot();
+
+  // === Document operation library + active machine profile (B2 / #5) ===
+  // Both are lifted into LIVE state here so the object tree's profile selector
+  // can re-map operation colors. Seeded EXACTLY as before so export stays
+  // byte-stable: operations start from seedOperations() (same ids/colors), and
+  // the active profile is seeded FROM the migrated `outputMode` (not the laser
+  // default) — so on load `activeProfileId === outputMode` and the export path
+  // resolves identical colors. A remap only fires when the user switches.
+  const [operations, setOperations] = useState(() => seedOperations());
+  const [activeProfileId, setActiveProfileId] = useState(outputMode);
+
+  // Keep the active profile tracking the legacy `outputMode` so the legacy
+  // OutputModeSection toggle (flag-OFF path) still drives export colors exactly
+  // as before — `machineProfile` below derives from `activeProfileId`, and
+  // without this sync a frozen initial value would silently stop the legacy
+  // toggle from changing export output. Same-value setState bails out (no loop);
+  // `dragCutter` (no legacy outputMode) is set only via the profile selector and
+  // is unaffected because outputMode never becomes 'dragCutter'.
+  useEffect(() => {
+    setActiveProfileId(outputMode);
+  }, [outputMode]);
+
+  // === Live selection state (B2 / #5) ===
+  // Replaces the old hardcoded `layers[0]` placeholder. Clicking a tree row sets
+  // this; the Inspector consumes it. Falls back to the top layer when nothing is
+  // selected yet (so the shell inspector is populated) and self-heals when the
+  // selected layer is removed.
+  const [selectedLayerIdState, setSelectedLayerId] = useState(null);
+  const selectionExists =
+    selectedLayerIdState != null &&
+    layers.some((l) => l.id === selectedLayerIdState);
+  const selectedLayerId = selectionExists
+    ? selectedLayerIdState
+    : layers[0]?.id ?? null;
+
+  // Switching the machine profile sets the document's active profile AND re-maps
+  // the operation library to that profile's process/param/color vocabulary
+  // (laser locks cut/score/engrave colors; plotter/drag leave them editable).
+  // Keep the legacy `outputMode` in sync for the laser/plotter pair so the
+  // export path (which still reads it) follows the selector.
+  const handleProfileChange = useCallback(
+    (nextProfileId) => {
+      setActiveProfileId(nextProfileId);
+      setOperations((ops) => remapOperationsToProfile(ops, nextProfileId));
+      if (nextProfileId === "laser" || nextProfileId === "plotter") {
+        setOutputMode(nextProfileId);
+      }
+    },
+    [setOutputMode]
+  );
+
+  // The inspector edits the selected layer — EXCEPT for a Moiré role-B layer,
+  // whose params live on its partner A (B reads A). Redirect edits to A so
+  // selecting/editing a role-B row behaves like the legacy LayersSection. When A
+  // is missing (orphan B) or the layer is not role-B, the target is the layer
+  // itself.
+  const inspectorTargetId =
+    findMoirePartnerA(
+      layers.find((l) => l.id === selectedLayerId),
+      layers
+    )?.id ?? selectedLayerId;
 
   // Pro-shell menu-bar slot (B5 / #8). Null in the legacy layout (no provider),
   // so the menu-bar portal below is a no-op AND the legacy loose top bar keeps
@@ -255,15 +313,17 @@ export default function Studio() {
     }
   };
 
-  // The active machine profile is the migrated `outputMode` (laser | plotter).
-  const machineProfile = outputMode;
+  // The active machine profile drives export. Seeded from `outputMode`, kept in
+  // sync by handleProfileChange, so this stays equal to the legacy `outputMode`
+  // on the export path (laser | plotter) and the resolved colors are unchanged.
+  const machineProfile = activeProfileId;
 
   // Resolve a layer's export color through its operation (A4). Laser → the
   // operation's locked-convention color; plotter → the layer's own color.
   const exportLayer = (layer) => ({
     ...layer,
     color: resolveExportColor(layer, {
-      operations: DOCUMENT_OPERATIONS,
+      operations,
       outputMode: machineProfile,
     }),
   });
@@ -272,7 +332,7 @@ export default function Studio() {
     buildManifest({
       version: "1",
       machineProfile,
-      operations: DOCUMENT_OPERATIONS,
+      operations,
       bedW: bedWmm,
       bedH: bedHmm,
       bedUnit: "mm",
@@ -693,11 +753,33 @@ export default function Studio() {
         createPortal(
           <Inspector
             layers={layers}
-            selectedLayerId={selectedLayerId}
+            // For a Moiré role-B selection this is the partner-A id, so edits
+            // redirect to A (B reads A) — matching legacy LayersSection behavior.
+            selectedLayerId={inspectorTargetId}
             onUpdateLayer={updateLayer}
             onChangeLayerPattern={changeLayerPattern}
           />,
           inspectorSlot
+        )}
+
+      {/* Pro-shell object tree + machine-profile selector (B2 / #5). Portaled
+          into the shell's left Object-tree region when the slot is present;
+          renders nothing in the legacy layout (slot null → no-op). Drives live
+          selection (consumed by the Inspector above) and the document profile /
+          operation-library remap. */}
+      {objectTreeSlot &&
+        createPortal(
+          <LayerTree
+            layers={layers}
+            operations={operations}
+            profileId={activeProfileId}
+            selectedLayerId={selectedLayerId}
+            onSelectLayer={setSelectedLayerId}
+            onUpdateLayer={updateLayer}
+            onReorderLayers={reorderLayers}
+            onProfileChange={handleProfileChange}
+          />,
+          objectTreeSlot
         )}
 
       <ConfirmDialog

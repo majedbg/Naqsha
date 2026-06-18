@@ -19,6 +19,7 @@ import {
   MenuSlotProvider,
   ToolStripSlotProvider,
   ControlBarSlotProvider,
+  ObjectTreeSlotProvider,
 } from './shellSlots';
 
 // Shared frame for every region: a labeled landmark with a dashed placeholder
@@ -78,10 +79,14 @@ export function ToolStripRegion({ children, contentRef, className = '' }) {
   );
 }
 
-export function ObjectTreeRegion({ children, className = '' }) {
+export function ObjectTreeRegion({ children, contentRef, className = '' }) {
+  // `contentRef` (a callback ref) exposes the region's inner mount node so the
+  // hosted Studio can portal its layer tree + machine-profile selector into it
+  // (B2 / #5). When omitted, the region renders its placeholder / passed
+  // children as before.
   return (
     <Region label="Object tree" className={`w-56 shrink-0 overflow-auto ${className}`}>
-      {children}
+      {contentRef ? <div ref={contentRef} className="h-full" /> : children}
     </Region>
   );
 }
@@ -138,6 +143,9 @@ export default function AppShell({ children }) {
   // contextual control bar into them.
   const [toolStripNode, setToolStripNode] = useState(null);
   const [controlBarNode, setControlBarNode] = useState(null);
+  // The Object tree region's inner mount node (B2 / #5), published so the hosted
+  // Studio can portal its layer tree + machine-profile selector into it.
+  const [objectTreeNode, setObjectTreeNode] = useState(null);
 
   return (
     <div className="flex flex-col h-dvh bg-paper">
@@ -146,18 +154,20 @@ export default function AppShell({ children }) {
 
       <div className="flex flex-1 min-h-0">
         <ToolStripRegion contentRef={setToolStripNode} />
-        <ObjectTreeRegion />
+        <ObjectTreeRegion contentRef={setObjectTreeNode} />
 
         {/* The live Studio is hosted here. It reads the slots from context and
-            portals the param inspector, top menu bar, tool strip, and contextual
-            control bar into their regions. */}
+            portals the layer tree, param inspector, top menu bar, tool strip,
+            and contextual control bar into their regions. */}
         <CanvasRegion>
           <MenuSlotProvider value={menuNode}>
             <ToolStripSlotProvider value={toolStripNode}>
               <ControlBarSlotProvider value={controlBarNode}>
-                <InspectorSlotProvider value={inspectorNode}>
-                  {children}
-                </InspectorSlotProvider>
+                <ObjectTreeSlotProvider value={objectTreeNode}>
+                  <InspectorSlotProvider value={inspectorNode}>
+                    {children}
+                  </InspectorSlotProvider>
+                </ObjectTreeSlotProvider>
               </ControlBarSlotProvider>
             </ToolStripSlotProvider>
           </MenuSlotProvider>

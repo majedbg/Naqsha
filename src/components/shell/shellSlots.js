@@ -63,6 +63,23 @@ export function useToolStripSlot() {
   return useContext(ToolStripSlotContext);
 }
 
+// Object tree slot (Lane B / B2, issue #5). Same bridge mechanism as above:
+// AppShell publishes the Object tree region's DOM node; the hosted Studio reads
+// it and React-portals its <LayerTree/> into it — so the layer tree + machine-
+// profile selector live in the shell's left column while their state (layers,
+// selection, operations, profile) stays in Studio. Defaults to null so the
+// legacy layout (no provider) renders no tree — a true flag-OFF no-op.
+const ObjectTreeSlotContext = createContext(null);
+
+export function ObjectTreeSlotProvider({ value, children }) {
+  return createElement(ObjectTreeSlotContext.Provider, { value }, children);
+}
+
+// Returns the Object tree region's DOM node when inside the pro shell, else null.
+export function useObjectTreeSlot() {
+  return useContext(ObjectTreeSlotContext);
+}
+
 // Contextual control bar slot (Lane B / B6, issue #9). Same bridge mechanism:
 // AppShell publishes the Contextual control bar region's DOM node; Studio
 // portals its <ControlBar/> into it. Defaults to null (flag-OFF no-op).

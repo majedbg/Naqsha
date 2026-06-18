@@ -14,15 +14,25 @@
 // fabrication intent.
 
 import { seedOperations, resolveOperation, operationIdForRole } from './operations.js';
+import { PROFILE_IDS } from './machineProfiles.js';
 
 export const SCHEMA_VERSION = 1;
 
-const VALID_PROFILES = ['plotter', 'laser'];
+// Legacy `outputMode` values only ever covered laser/plotter; the new model
+// (machineProfiles.js) backs these ids and adds 'dragCutter' (no legacy
+// outputMode maps to it). Both legacy values stay valid profile ids.
+const LEGACY_OUTPUT_MODE_PROFILES = ['plotter', 'laser'];
 
 // outputMode → machine profile. Absent / unknown defaults to 'plotter' (the
-// historical default in useCanvasSize).
+// historical default in useCanvasSize). The result is a real machineProfiles id.
 function profileFromOutputMode(outputMode) {
-  return VALID_PROFILES.includes(outputMode) ? outputMode : 'plotter';
+  return LEGACY_OUTPUT_MODE_PROFILES.includes(outputMode) ? outputMode : 'plotter';
+}
+
+// A machineProfile already on a current config is honored only if it names a
+// real profile (so a stray value can't survive migration).
+function isValidProfile(id) {
+  return PROFILE_IDS.includes(id);
 }
 
 // Migrate one layer: honor an existing operationId, otherwise derive it from the
@@ -52,13 +62,20 @@ export function migrateConfig(config) {
 
   const migratedLayers = layers.map((layer) => migrateLayer(layer, operations));
 
+  // `outputMode` is the legacy global toggle; the new-path model carries a
+  // `machineProfile` instead, so drop the raw field from the migrated output.
+  const { outputMode: _legacyOutputMode, ...rest } = cfg;
+
+  const machineProfile =
+    alreadyCurrent && isValidProfile(cfg.machineProfile)
+      ? cfg.machineProfile
+      : profileFromOutputMode(cfg.outputMode);
+
   return {
-    ...cfg,
+    ...rest,
     schemaVersion: SCHEMA_VERSION,
     operations,
-    machineProfile: alreadyCurrent && cfg.machineProfile
-      ? cfg.machineProfile
-      : profileFromOutputMode(cfg.outputMode),
+    machineProfile,
     layers: migratedLayers,
   };
 }

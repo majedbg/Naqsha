@@ -122,12 +122,12 @@ export default function Studio() {
   const getDefaultOperationId = useCallback(() => defaultOperationIdRef.current, []);
 
   // === Layers ===
-  // NOTE: useLayers also exposes duplicateLayer / removeLayer / randomizeLayer /
-  // randomizeAll / randomizeLayerParams / randomizeAllParams. Those were wired
-  // ONLY through the legacy LayersSection (LeftPanel), removed in #16. The shell
-  // LayerTree does not yet expose per-layer remove / duplicate / randomize — a
-  // known AC2 gap flagged for the orchestrator. The implementations survive in
-  // useLayers, so re-homing them in the shell later is cheap.
+  // NOTE: useLayers also exposes the per-row randomize-seed handler
+  // (randomizeLayer). It is NOT wired here: the Object Tree row's seed control
+  // was removed in WI-5, and lock-aware randomization (WI-6 / spec §9) is driven
+  // by the surviving randomizeLayerParams (row dice) + randomizeAll /
+  // randomizeAllParams (tree header). randomizeLayer survives in useLayers for
+  // any future re-home, but Studio no longer references it.
   const {
     layers,
     addLayer,
@@ -137,7 +137,6 @@ export default function Studio() {
     changeLayerPattern,
     duplicateLayer,
     removeLayer,
-    randomizeLayer,
     randomizeLayerParams,
     randomizeAll,
     randomizeAllParams,
@@ -1012,7 +1011,6 @@ export default function Studio() {
             // surviving useLayers / per-layer-export handlers.
             onDeleteLayer={removeLayer}
             onDuplicateLayer={duplicateLayer}
-            onRandomizeLayer={randomizeLayer}
             onRandomizeLayerParams={randomizeLayerParams}
             onExportLayer={handleExportLayer}
             onRandomizeAll={randomizeAll}

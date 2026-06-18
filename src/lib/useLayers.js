@@ -515,13 +515,18 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
 
   const randomizeLayer = useCallback((id) => {
     setLayers((prev) =>
-      prev.map((l) => (l.id === id ? { ...l, seed: randomSeed() } : l))
+      prev.map((l) =>
+        // Locked layers never re-seed (spec §9 — defense in depth; the per-row
+        // dice is already UI-disabled on locked layers).
+        l.id === id && !l.locked ? { ...l, seed: randomSeed() } : l
+      )
     );
   }, []);
 
   const randomizeAll = useCallback(() => {
     setLayers((prev) =>
-      prev.map((l) => ({ ...l, seed: randomSeed() }))
+      // Skip locked layers — their seed is preserved (spec §9).
+      prev.map((l) => (l.locked ? l : { ...l, seed: randomSeed() }))
     );
   }, []);
 
@@ -530,6 +535,8 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
     setLayers((prev) =>
       prev.map((l) => {
         if (l.id !== id) return l;
+        // Locked layer → no-op, params unchanged (spec §9).
+        if (l.locked) return l;
         const keys = l.randomizeKeys;
         if (!keys || keys.length === 0) return l;
         const defs = PATTERN_PARAM_DEFS[l.patternType];
@@ -550,6 +557,8 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
   const randomizeAllParams = useCallback(() => {
     setLayers((prev) =>
       prev.map((l) => {
+        // Skip locked layers — their params are preserved (spec §9).
+        if (l.locked) return l;
         const keys = l.randomizeKeys;
         if (!keys || keys.length === 0) return l;
         const defs = PATTERN_PARAM_DEFS[l.patternType];

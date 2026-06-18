@@ -14,10 +14,20 @@ export default function ConfirmDialog({
   message,
   confirmLabel = 'Continue',
   cancelLabel = 'Cancel',
+  danger = false,
   onConfirm,
   onCancel,
 }) {
   const confirmRef = useRef(null);
+
+  // Opt-in destructive styling. `tone-strong` is the project's semantic
+  // destructive token (already used for Delete/error states); it has no paired
+  // `-hover` token, so the hover state dims via an opacity modifier. Text flips
+  // to `paper` for legibility on the darker red ground. Default keeps saffron —
+  // the existing call shape is untouched.
+  const confirmColor = danger
+    ? 'text-paper bg-tone-strong hover:bg-tone-strong/90'
+    : 'text-ink bg-saffron hover:bg-saffron-hover';
 
   useEffect(() => {
     if (!open) return;
@@ -74,7 +84,7 @@ export default function ConfirmDialog({
           <button
             ref={confirmRef}
             onClick={onConfirm}
-            className="px-md py-2xs rounded-xs text-sm font-medium text-ink bg-saffron hover:bg-saffron-hover transition-colors duration-fast ease-out-quart"
+            className={`px-md py-2xs rounded-xs text-sm font-medium ${confirmColor} transition-colors duration-fast ease-out-quart`}
           >
             {confirmLabel}
           </button>

@@ -97,14 +97,22 @@ describe("StudioRoute — tool strip + control bar in the shell (B6)", () => {
     ).toHaveTextContent("125%");
   });
 
-  it("flag OFF: no tool strip and no shell regions (true no-op)", () => {
-    render(
-      <MemoryRouter>
-        <StudioRoute proShell={false} />
-      </MemoryRouter>
-    );
-    expect(screen.queryAllByRole("region")).toHaveLength(0);
-    // No tool-strip Select button leaks into the legacy layout.
-    expect(screen.queryByRole("button", { name: /^select$/i })).not.toBeInTheDocument();
+  it("below the breakpoint (mobile) renders no tool strip / shell regions (desktop-only)", () => {
+    // #16: legacy removed; below the breakpoint StudioRoute renders MobileStudio,
+    // which has no AppShell Tool strip region. (Was: "flag OFF → legacy no-op".)
+    const prevWidth = window.innerWidth;
+    window.innerWidth = 500;
+    try {
+      render(
+        <MemoryRouter>
+          <StudioRoute />
+        </MemoryRouter>
+      );
+      expect(screen.queryAllByRole("region")).toHaveLength(0);
+      // No tool-strip Select button in the mobile view.
+      expect(screen.queryByRole("button", { name: /^select$/i })).not.toBeInTheDocument();
+    } finally {
+      window.innerWidth = prevWidth;
+    }
   });
 });

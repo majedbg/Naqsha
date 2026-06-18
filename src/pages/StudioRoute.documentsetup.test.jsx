@@ -158,16 +158,24 @@ describe("StudioRoute — Document Setup dialog (C6 / #14)", () => {
     expect(within(dialog).getByLabelText(/height/i)).toHaveValue(125);
   });
 
-  it("flag OFF: legacy layout renders no Document Setup entry/dialog (true no-op)", () => {
-    render(
-      <MemoryRouter>
-        <StudioRoute proShell={false} />
-      </MemoryRouter>
-    );
-    expect(screen.queryByRole("button", { name: "File" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("menuitem", { name: /document setup/i })
-    ).not.toBeInTheDocument();
+  it("below the breakpoint (mobile) exposes no Document Setup entry/dialog (desktop-only)", () => {
+    // #16: legacy removed; below the breakpoint StudioRoute renders MobileStudio,
+    // which has no menu bar / Document Setup. (Was: "flag OFF → legacy no-op".)
+    const prevWidth = window.innerWidth;
+    window.innerWidth = 500;
+    try {
+      render(
+        <MemoryRouter>
+          <StudioRoute />
+        </MemoryRouter>
+      );
+      expect(screen.queryByRole("button", { name: "File" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("menuitem", { name: /document setup/i })
+      ).not.toBeInTheDocument();
+    } finally {
+      window.innerWidth = prevWidth;
+    }
   });
 });

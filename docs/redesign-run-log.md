@@ -39,3 +39,49 @@
 | #14 | ✅ DONE | e85cacd | 841→853 (+12) | C6. DocumentSetupDialog.jsx (ConfirmDialog-style) opened from live File>Document Setup… (MenuBar onDocumentSetup); sets machine profile + bed (per-machine `bedPresets` in machineProfiles + custom W×H in active unit→mm). Converted #7's derived bedSize → overridable Studio state read by CanvasChrome/StatusBar (applies immediately). Profile switch reuses LayerTree's handleProfileChange (remap ops). Reopen shows live settings. Flag-OFF no-op. Default profile=plotter, unit=in (current app defaults). ⚠️ KNOWN GAP (carries from #7): display `bedSize` (artboard/rulers) is DECOUPLED from export manifest bed (`bedWmm/bedHmm` still derived from canvasW/H) — "bed=artboard" not fully unified w/ export; export byte-stable as a result. |
 | #15 | ✅ DONE | 8e4d7f9 | 853→862 (+9) | C7. PlotOverlay.jsx canvas overlay (modeled on BedOverlay; pointer-events-none sibling of p5 surface in scaled wrapper): reuses overlapCheck.countOverlaps (pre-optimize, like OverlapWarnings) for red overlap rings + buildPlottableLayers/buildRouteFromLayers (post-optimize, like PlotPreviewSection) for route trace. View>Overlays made live (menuitemcheckbox), OFF by default, gated `inProShell && showOverlays`. useMemo re-computes on layers/instances/opts (live). Flag-OFF no-op; export byte-stable. Test (b) via 1:1 RightPanel gate stand-in (p5 unmountable in jsdom, same as #7). |
 | #17 | ✅ DONE | 7e8fbd8 | 862→878 (+16) | C8 + 2 carried #4 follow-ups. Inspector VariableWeightControls: capability-gated (`hasVariableWeight(patternType) && supportsVariableWeight(profileId)` → recursive on laser/plotter only), OFF by default, "Advanced — manual machine setup required" warning, N control. `syncWeightBand` adds/removes N band ops in live operations (live re-bucket on N change); rows render in OperationsPanel. **Follow-up (1):** additive `variableWeightGroup` branch in buildAllLayersSVG (per-element band colors when `layer.variableWeight.enabled`; non-enabled byte-stable, svgExport.test.js untouched). **Follow-up (2):** band ops (bandId markers) exempt from laser color-lock in remapOperationsToProfile + OperationsPanel lockedColorFor. ⚠️ KNOWN LIMITATIONS: (a) enabled-layer export loses `wrapSVGSymmetry` (realizeVariableWeightElements emits bare paths — inherent to #4 helper; advanced off-by-default path only) — FOLLOW-UP; (b) single-layer export has no VW branch (in spec); (c) enabled flag persists after dragCutter round-trip (benign). |
+| #16 | ✅ DONE | b34b367 | 878→901 (+23 net) | B7 cutover. Removed legacy two-pane: deleted LeftPanel + Design/Prepare/Export tabs (9 files: LeftPanel/ExportSection/BedOverlay/prepare\*/SidebarTabs); removed `VITE_PRO_SHELL` flag — StudioRoute now desktop(≥768px)→shell, below→**MobileStudio** (new simplified single-column view). Untangled `outputMode` (activeProfileId single source of truth; outputMode kept as write-only persistence mirror so saved profile round-trips; export byte-stable). Removed dead #7 `!isPrepare` guard. **AC2 parity — all gaps re-homed:** delete/duplicate/randomize/per-layer-export → LayerTree row actions; AI chat → Object menu; optimize → OptimizeControls (in ops-panel slot); document/canvas size → Document Setup "Document W/H" inputs (`setCanvasW/H`). **Test transformation (orchestrator-owned, advisor-approved):** 7 superseded `StudioRoute.*` "flag-OFF→legacy" cases re-pointed to "below-breakpoint→MobileStudio" (desktop-only-chrome invariant preserved; legacy path deleted so flag-OFF condition moot). **RUNTIME VERIFIED** via dev server + Playwright: default shell boots LIVE p5 canvas (flow-field) + all 8 regions populated + File menu/account cluster live. ⚠️ Per-layer export now uses operation-resolved color (was raw layer.color) — aligns w/ live export path. ⚠️ Pre-existing non-fatal console warning: button-in-button in ParamGroup (not a #16 regression). ShareView untouched/mobile-viewable. |
+| #18 | ✅ DONE | 5f39bf8 | 901→922 (+21) | C9 — **HITL UNBLOCKED** (user provided 2 logos + bed 12×24″; large assumed=small). kitRegistry.js (ITP Camp = only kit, config-driven) + 3rd `itp-camp` theme skin (tokens.css, palette lime #B5E33C/teal #2E5C6E/sage #D9E2DD; `useTheme` extended) + useKitMode (reversible: snapshots live DOM theme + bed on enter, restores on exit) + KitPresetModal (7 assets: 2 logos staged in `src/kits/itp-camp/assets/` + 6 authored cut-shapes coaster/keychain/luggage-tag/ornament/badge/bookmark; drops via addImportedLayer = place-as-artwork). Enter/exit control in OperationsPanel **Laser-gated** (auto-exits on leaving laser). 2 bed presets 304.8×609.6mm. Logo clipPaths stripped at asset layer (svgImport untouched). ⚠️ ASSUMPTIONS pending user: palette = plan-extracted (NOT signed off), large bed = small (TBD), pixel/retro heading font deferred (no offline webfont). |
+
+---
+
+## 🌅 Morning Report (run complete)
+
+### ✅ All 17 AFK issues implemented, committed, pushed (none blocked)
+Order executed: **1, 2, 3, 6, 8, 9, 12, 4, 5, 7, 10, 11, 13, 14, 15, 17, 16.**
+Branch `layout-rework` — final suite **901 passed | 4 skipped** (from 594 baseline, **+307 tests**), `npm run build` ✓, `npm run lint` 0 errors. Pushed after every issue (local == remote). #16 additionally **runtime-verified** in a real browser (default shell boots a live p5 canvas + all 8 regions + working menus).
+
+| Issue | SHA | Issue | SHA |
+|---|---|---|---|
+| #1 | 0f4fce0 | #10 | e1fb0fc |
+| #2 | 0454300 | #11 | 5e18065 |
+| #3 | a5d9b76 | #13 | 27047dd |
+| #6 | 9c97d95 | #14 | e85cacd |
+| #8 | d3fcf18 | #15 | 8e4d7f9 |
+| #9 | adb3737 | #17 | 7e8fbd8 |
+| #12 | e2a4736 | #16 | b34b367 |
+| #4 | f357510 | #5 | 82baf0d · #7 4c027c4 |
+
+### ⛔ Blocked / skipped: **NONE.** Every AFK issue landed green.
+
+### 🌙 HITL status
+GitHub comments are permission-blocked this session, so status is recorded here:
+- **#18 ITP Camp Kit** — ✅ **DONE** (`5f39bf8`, see table). User provided the 2 logos + the 12×24″ small bed; built with the plan-extracted palette (⚠️ NOT formally signed off), large bed assumed = small (⚠️ TBD), pixel/retro heading font deferred (no offline webfont).
+- **#19 ITP Camp access + submission** — ⛔ still parked: needs the **NYU-ID roster** (IDs + names) for `itp_camp_roster`. (Also needs the Supabase RPCs `validate_nyu_id`/`submit_itp_export` + RLS — buildable once the roster shape is known.)
+- **#20 [Stretch] direct machine-code generation** — out of scope for this redesign; parked.
+
+### ⚠️ Known gaps / follow-ups surfaced during the run (for review)
+1. **Plan doc "current state" was partly fictional** — it described unmerged branches: there is **no scene graph** (SceneNode/TextNode/buildCombinedSceneSVG) and **no text-tool model** on `layout-rework`. #12 was reframed to the real `layers` model; #9's text-tool controls are presentational-only (no text object model exists). The plan/PRD also wrongly cite FlowField as weight-varying (it isn't; only `recursive` is).
+2. **#17 variable-weight export loses symmetry** — an enabled recursive layer exports via `realizeVariableWeightElements` (bare paths), losing `wrapSVGSymmetry`. Advanced, off-by-default path only. Follow-up: teach the realizer to honor symmetry.
+3. **#12 optimized export flattens imported SVG curves** — `parsePathD` is M/L/Z only, so C/Q curves distort under *optimized* export; default export is verbatim/correct.
+4. **#14/#16 bed-vs-canvas** — Document Setup now sets BOTH the machine bed (display/artboard) and (via #16) the export document size (`canvasW/H`), but they remain **separate** values; the plan's "bed = artboard" full unification is a deliberate future change (would alter export output).
+5. **Pre-existing non-fatal console warning**: button-in-button DOM nesting in `ParamGroup` (now visible because the shell Inspector renders param groups). Not introduced here.
+6. **Orphaned-on-disk** after #16: `OptimizeSection.jsx`, `LayersSection.jsx` (kept — a test imports it), `AIPatternChat.jsx` (re-homed/used). `ExamplesGallery.jsx` reconstructed as a canvas overlay.
+7. **`gh issue comment` blocked** all session → issues left OPEN with no SHA comment; this log + commit history are the audit trail.
+
+### Verification honesty notes (#16)
+- **`ShareView` mobile AC**: **not runtime-loaded.** Confirmed *statically* — `ShareView.jsx` imports none of the 9 deleted components, it's a separate route that doesn't pass through `StudioRoute`/`Studio`, and the passing build proves no dangling refs. Very likely fine, but flagged as "static-verified, not browser-loaded."
+- **#16 runtime check was a render + responsiveness check**, not an end-to-end folded-action test: confirmed the default shell boots a live canvas, all 8 regions populate, and the File-menu click didn't crash. Each menu item→handler is covered by #8's unit tests; no folded action was fired end-to-end in the browser.
+- **`LayersSection.import.test.jsx`** now exercises the orphaned `LayersSection.jsx` (kept only because that test imports it). For the PR: delete the orphan + its test together.
+
+### ▶️ Suggested next human action
+Open a PR from **`layout-rework` → `main`** for review (17 commits + this log). Then decide on #18/#19 data, and triage the follow-ups above. To re-enable per-issue issue comments in future runs, add a Bash permission rule for `gh issue comment`.

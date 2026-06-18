@@ -129,11 +129,84 @@ function OperationChip({ layer, operations, onAssignOperation }) {
   );
 }
 
-function LayerRow({ layer, index, total, selected, operations, onSelect, onUpdateLayer, onReorderLayers, onAssignOperation }) {
+// Small inline glyphs for the re-homed per-row actions. Kept stroke-only to match
+// the visibility/lock icons already in this row.
+function DuplicateIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <rect x="9" y="9" width="13" height="13" rx="2" />
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+    </svg>
+  );
+}
+function RandomizeIcon() {
+  // A small die mark — the legacy "randomize seed" affordance.
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <circle cx="8" cy="8" r="1" fill="currentColor" />
+      <circle cx="16" cy="16" r="1" fill="currentColor" />
+      <circle cx="16" cy="8" r="1" fill="currentColor" />
+      <circle cx="8" cy="16" r="1" fill="currentColor" />
+    </svg>
+  );
+}
+function RandomizeParamsIcon() {
+  // A sliders mark — distinguishes "randomize the checked PARAMS" from the die
+  // (randomize seed) above.
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <line x1="4" y1="21" x2="4" y2="14" />
+      <line x1="4" y1="10" x2="4" y2="3" />
+      <line x1="12" y1="21" x2="12" y2="12" />
+      <line x1="12" y1="8" x2="12" y2="3" />
+      <line x1="20" y1="21" x2="20" y2="16" />
+      <line x1="20" y1="12" x2="20" y2="3" />
+      <line x1="1" y1="14" x2="7" y2="14" />
+      <line x1="9" y1="8" x2="15" y2="8" />
+      <line x1="17" y1="16" x2="23" y2="16" />
+    </svg>
+  );
+}
+function ExportIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <polyline points="7 10 12 15 17 10" />
+      <line x1="12" y1="15" x2="12" y2="3" />
+    </svg>
+  );
+}
+function TrashIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <polyline points="3 6 5 6 21 6" />
+      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+    </svg>
+  );
+}
+
+function LayerRow({ layer, index, total, selected, operations, onSelect, onUpdateLayer, onReorderLayers, onAssignOperation, onDeleteLayer, onDuplicateLayer, onRandomizeLayer, onRandomizeLayerParams, onExportLayer }) {
   const move = (to) => {
     if (to < 0 || to >= total) return;
     onReorderLayers(index, to);
   };
+  // A per-row action button: stops propagation so triggering the action never
+  // also selects the row (matching the visibility/lock toggles already here).
+  // Rendered only when the corresponding handler is supplied, so LayerTree stays
+  // back-compatible with callers (and existing tests) that don't pass them.
+  const action = (handler, label, Icon, danger = false) =>
+    handler ? (
+      <button
+        type="button"
+        aria-label={label}
+        title={label}
+        onClick={(e) => { e.stopPropagation(); handler(layer.id); }}
+        className={`shrink-0 text-ink-soft ${danger ? "hover:text-red-500" : "hover:text-ink"}`}
+      >
+        <Icon />
+      </button>
+    ) : null;
   return (
     <div
       data-testid="layer-row"
@@ -207,6 +280,15 @@ function LayerRow({ layer, index, total, selected, operations, onSelect, onUpdat
       >
         <LockIcon locked={!!layer.locked} />
       </button>
+
+      {/* Re-homed per-row actions (#16 AC2): randomize seed, duplicate, export,
+          delete — each wired to the surviving useLayers / export handler. Only
+          rendered when the handler is supplied. */}
+      {action(onRandomizeLayer, "Randomize layer", RandomizeIcon)}
+      {action(onRandomizeLayerParams, "Randomize layer params", RandomizeParamsIcon)}
+      {action(onDuplicateLayer, "Duplicate layer", DuplicateIcon)}
+      {action(onExportLayer, "Export layer", ExportIcon)}
+      {action(onDeleteLayer, "Delete layer", TrashIcon, true)}
     </div>
   );
 }
@@ -221,6 +303,15 @@ export default function LayerTree({
   onReorderLayers,
   onProfileChange,
   onAssignOperation,
+  // Re-homed per-layer + header actions (#16 AC2). All optional so the tree stays
+  // back-compatible with callers/tests that don't supply them.
+  onDeleteLayer,
+  onDuplicateLayer,
+  onRandomizeLayer,
+  onRandomizeLayerParams,
+  onExportLayer,
+  onRandomizeAll,
+  onRandomizeAllParams,
 }) {
   return (
     <div className="flex h-full flex-col" data-testid="layer-tree">
@@ -243,6 +334,37 @@ export default function LayerTree({
         </select>
       </div>
 
+      {/* Re-homed randomize-all header actions (#16 AC2). The legacy
+          LayersSection header offered "Rand Seeds" / "Rand Params" across every
+          layer; they re-home here as tree-header actions wired to the surviving
+          randomizeAll / randomizeAllParams. Only shown when supplied. */}
+      {(onRandomizeAll || onRandomizeAllParams) && (
+        <div className="shrink-0 flex items-center justify-end gap-3 border-b border-hairline px-2 py-1">
+          {onRandomizeAllParams && (
+            <button
+              type="button"
+              aria-label="Randomize all params"
+              title="Randomize all checked params across every layer"
+              onClick={onRandomizeAllParams}
+              className="text-[11px] text-ink-soft hover:text-saffron transition-colors"
+            >
+              Rand Params
+            </button>
+          )}
+          {onRandomizeAll && (
+            <button
+              type="button"
+              aria-label="Randomize all seeds"
+              title="Randomize seeds for every layer"
+              onClick={onRandomizeAll}
+              className="text-[11px] text-ink-soft hover:text-saffron transition-colors"
+            >
+              Rand Seeds
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Layer rows (top = front, matching the legacy panel's ordering). */}
       <div className="flex-1 overflow-auto p-1.5 space-y-0.5">
         {layers.map((layer, i) => (
@@ -257,6 +379,11 @@ export default function LayerTree({
             onUpdateLayer={onUpdateLayer}
             onReorderLayers={onReorderLayers}
             onAssignOperation={onAssignOperation}
+            onDeleteLayer={onDeleteLayer}
+            onDuplicateLayer={onDuplicateLayer}
+            onRandomizeLayer={onRandomizeLayer}
+            onRandomizeLayerParams={onRandomizeLayerParams}
+            onExportLayer={onExportLayer}
           />
         ))}
       </div>

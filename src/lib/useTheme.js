@@ -2,11 +2,15 @@ import { useCallback, useState } from 'react';
 
 const STORAGE_KEY = 'sonoform-theme';
 
+// The themes Naqsha knows. 'light'/'dark' are the base pair; 'itp-camp' is the
+// named kit theme skin (issue #18) applied by the ITP Camp kit mode. Anything
+// outside this set is coerced to 'light' (paper is the anchor).
+const KNOWN_THEMES = new Set(['light', 'dark', 'itp-camp']);
+
 function readTheme() {
   if (typeof document === 'undefined') return 'light';
-  return document.documentElement.getAttribute('data-theme') === 'dark'
-    ? 'dark'
-    : 'light';
+  const attr = document.documentElement.getAttribute('data-theme');
+  return KNOWN_THEMES.has(attr) ? attr : 'light';
 }
 
 // Naqsha defaults to light regardless of OS preference. The OS

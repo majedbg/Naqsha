@@ -1,12 +1,11 @@
 import { useSyncExternalStore } from 'react';
 import Studio from './Studio';
+import MobileStudio from './MobileStudio';
 import AppShell from '../components/shell/AppShell';
-import { PRO_SHELL_FLAG } from '../components/shell/proShell';
 
-// Desktop breakpoint for the pro shell. Matches Tailwind's `md` (768px), which
-// is already the breakpoint the legacy Studio layout switches on. Below it, the
-// pro shell falls through to the current Studio layout for now (B1 is
-// desktop-first; responsive shell is a later concern).
+// Desktop breakpoint for the pro shell. Matches Tailwind's `md` (768px).
+// At/above it the pro app-shell renders with Studio hosted in the canvas
+// region; below it the simplified single-column mobile view renders instead.
 const SHELL_MIN_WIDTH = 768;
 
 // Subscribe to viewport width so the gate re-evaluates desktop/mobile on resize
@@ -27,31 +26,18 @@ function useIsDesktop() {
   return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 }
 
-// Strangler gate for the pro app-shell (Lane B / B1, issue #2).
+// Studio route (Lane B / B7, issue #16 — old two-pane + flag decommissioned).
 //
-// `proShell` defaults to the env-driven `PRO_SHELL_FLAG` but is overridable as a
-// prop so tests assert each branch without env stubbing.
+// The pro app-shell is now the default and only desktop surface; the legacy
+// two-pane Design/Prepare/Export layout and the `VITE_PRO_SHELL` flag are gone.
 //
-//   flag OFF                 → legacy Studio, byte-identical to the pre-shell app.
-//   flag ON + below md       → fall through to legacy Studio (desktop-first B1).
-//   flag ON + desktop (≥md)  → eight empty shell regions, Studio hosted in canvas.
-//
-// When the flag is off this returns bare <Studio /> and calls *no* hooks — no
-// resize subscription, nothing — so the legacy render path is a true no-op. The
-// breakpoint subscription lives in the shell-only child, which is only mounted
-// when the flag is on.
-export default function StudioRoute({ proShell = PRO_SHELL_FLAG }) {
-  if (!proShell) {
-    return <Studio />;
-  }
-  return <ProShellRoute />;
-}
-
-function ProShellRoute() {
+//   desktop (≥768px) → the pro shell, with Studio hosted in the canvas region.
+//   below breakpoint → the simplified single-column mobile editing view.
+export default function StudioRoute() {
   const isDesktop = useIsDesktop();
 
   if (!isDesktop) {
-    return <Studio />;
+    return <MobileStudio />;
   }
 
   return (

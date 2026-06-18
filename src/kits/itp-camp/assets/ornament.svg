@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- ITP Camp ornament / medallion — 70 mm circle with a 5-point star CUTOUT and
+     a top hanging hole. Outer circle, star cutout, and top hole are SEPARATE
+     subpaths. viewBox = mm; centre at (35,35). -->
+<svg xmlns="http://www.w3.org/2000/svg" width="70mm" height="70mm" viewBox="0 0 70 70">
+  <path fill="none" stroke="#000000" stroke-width="0.5"
+        d="M 5 35 a 30 30 0 1 0 60 0 a 30 30 0 1 0 -60 0 Z"/>
+  <path fill="none" stroke="#000000" stroke-width="0.5"
+        d="M 35 18 L 39.7 30.5 L 53 31 L 42.6 39.2 L 46.3 52 L 35 44.5 L 23.7 52 L 27.4 39.2 L 17 31 L 30.3 30.5 Z"/>
+  <path fill="none" stroke="#000000" stroke-width="0.5"
+        d="M 32.5 7 a 2.5 2.5 0 1 0 5 0 a 2.5 2.5 0 1 0 -5 0 Z"/>
+</svg>

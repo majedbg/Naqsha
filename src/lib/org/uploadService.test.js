@@ -12,15 +12,16 @@ vi.mock('../supabase', () => ({
   get supabase() { return _ref.client; },
 }));
 
-import { uploadSubmissionSvg, UploadValidationError } from './uploadService';
+import { uploadSubmissionSvg, removeSubmissionSvg, UploadValidationError } from './uploadService';
 
 // Build a supabase-shaped client whose storage upload is spied. `uploadResult`
 // lets a test inject the { data, error } the real storage API would return.
 function mockStorage(uploadResult = { data: { path: 'x' }, error: null }) {
   const uploadSpy = vi.fn().mockResolvedValue(uploadResult);
-  const fromSpy = vi.fn(() => ({ upload: uploadSpy }));
+  const removeSpy = vi.fn().mockResolvedValue({ data: [], error: null });
+  const fromSpy = vi.fn(() => ({ upload: uploadSpy, remove: removeSpy }));
   _ref.client = { storage: { from: fromSpy } };
-  return { fromSpy, uploadSpy };
+  return { fromSpy, uploadSpy, removeSpy };
 }
 
 beforeEach(() => {
@@ -90,6 +91,23 @@ describe('uploadSubmissionSvg — storage error', () => {
         svgString: '<svg></svg>',
       }),
     ).rejects.toBe(storageError);
+  });
+});
+
+// ─── Behavior 5: removeSubmissionSvg deletes the orphaned blob ────────────────
+describe('removeSubmissionSvg', () => {
+  it('removes the given path from the submissions bucket', async () => {
+    const { fromSpy, removeSpy } = mockStorage();
+
+    await removeSubmissionSvg('org-1/sub-1.svg');
+
+    expect(fromSpy).toHaveBeenCalledWith('submissions');
+    expect(removeSpy).toHaveBeenCalledWith(['org-1/sub-1.svg']);
+  });
+
+  it('is a no-op when supabase is not configured', async () => {
+    _ref.client = null;
+    await expect(removeSubmissionSvg('org-1/sub-1.svg')).resolves.toBeUndefined();
   });
 });
 

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { listActiveOrgMaterials } from '../../lib/org/materialService';
-import { uploadSubmissionSvg } from '../../lib/org/uploadService';
+import { uploadSubmissionSvg, removeSubmissionSvg } from '../../lib/org/uploadService';
 import { createSubmission } from '../../lib/org/submissionService';
 import HoldToSubmitButton from './HoldToSubmitButton.jsx';
 
@@ -52,6 +52,7 @@ export default function SubmitForm({
   const [editing, setEditing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState(false);
+  const [submitError, setSubmitError] = useState(null);
 
   const [layers, setLayers] = useState(() =>
     (draft.ops || []).map((o) => ({
@@ -105,8 +106,11 @@ export default function SubmitForm({
     layers.forEach((l, i) => {
       if (!l.op) reasons.push(`Tag layer ${i + 1}`);
     });
+    // Guard against an unresolved tenant/user: without these the upload path
+    // would be `undefined/<id>.svg` and RLS would reject the write.
+    if (!orgId || !userId) reasons.push('Preparing your workspace…');
     return reasons;
-  }, [editing, materialId, sizeConfirmed, layers]);
+  }, [editing, materialId, sizeConfirmed, layers, orgId, userId]);
 
   const ready = gateReasons.length === 0;
 
@@ -140,9 +144,13 @@ export default function SubmitForm({
   async function handleConfirmSubmit() {
     if (!ready || submitting) return;
     setSubmitting(true);
+    setSubmitError(null);
+    // Tracks a successful upload so its blob can be cleaned up if the
+    // subsequent DB-row creation fails (otherwise the object is orphaned).
+    let uploadedPath = null;
     try {
       const submissionId = newSubmissionId();
-      const svgPath = await uploadSubmissionSvg({
+      uploadedPath = await uploadSubmissionSvg({
         orgId,
         submissionId,
         svgString: draft.svgClean,
@@ -155,7 +163,7 @@ export default function SubmitForm({
         materialLabel: materialLabel(selectedMaterial),
         source: draft.source,
         designId: draft.designId || null,
-        svgPath,
+        svgPath: uploadedPath,
         widthMm: draft.widthMm,
         heightMm: draft.heightMm,
         ops,
@@ -164,7 +172,18 @@ export default function SubmitForm({
       });
       setDone(true);
       onSubmitted?.(row);
-    } catch {
+    } catch (err) {
+      // Surface the failure so a live RLS/network error is explained and
+      // retryable, and log it for diagnosis.
+      console.error(err);
+      setSubmitError(
+        'Submission failed. Please check your connection and try again.',
+      );
+      // Best-effort cleanup of the orphaned blob if the upload had succeeded
+      // but the row creation threw. Do not let cleanup mask the original error.
+      if (uploadedPath) {
+        Promise.resolve(removeSubmissionSvg(uploadedPath)).catch(() => {});
+      }
       setSubmitting(false);
     }
   }
@@ -317,6 +336,7 @@ export default function SubmitForm({
               <div className="flex flex-col items-start">
                 <HoldToSubmitButton
                   disabled={!ready || submitting}
+                  disabledReason={!ready ? gateReasons[0] : undefined}
                   onConfirm={handleConfirmSubmit}
                   holdMs={2000}
                   reducedMotion={prefersReducedMotion()}
@@ -327,6 +347,14 @@ export default function SubmitForm({
                       <li key={r}>{r}</li>
                     ))}
                   </ul>
+                )}
+                {submitError && (
+                  <p
+                    role="alert"
+                    className="mt-1 text-xs font-medium text-red-600"
+                  >
+                    {submitError}
+                  </p>
                 )}
               </div>
             </>

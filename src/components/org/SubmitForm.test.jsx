@@ -3,12 +3,31 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, act, fireEvent } from '@testing-library/react';
 import SubmitForm from './SubmitForm.jsx';
 import { listActiveOrgMaterials } from '../../lib/org/materialService';
-import { uploadSubmissionSvg } from '../../lib/org/uploadService';
+import { uploadSubmissionSvg, removeSubmissionSvg } from '../../lib/org/uploadService';
 import { createSubmission } from '../../lib/org/submissionService';
 
 vi.mock('../../lib/org/materialService');
 vi.mock('../../lib/org/uploadService');
 vi.mock('../../lib/org/submissionService');
+
+// Mock-with-delegation: render the REAL HoldToSubmitButton (so the hold
+// mechanism still drives onConfirm) while capturing the props it receives,
+// which lets us assert `disabledReason` is wired through.
+const { holdProps } = vi.hoisted(() => ({ holdProps: [] }));
+vi.mock('./HoldToSubmitButton.jsx', async (orig) => {
+  const actual = await orig();
+  const React = await import('react');
+  return {
+    default: (props) => {
+      holdProps.push(props);
+      return React.createElement(actual.default, props);
+    },
+  };
+});
+
+function lastHoldProps() {
+  return holdProps[holdProps.length - 1];
+}
 
 const MATERIALS = [
   {
@@ -46,6 +65,7 @@ function makeDraft(overrides = {}) {
 beforeEach(() => {
   vi.useFakeTimers();
   vi.clearAllMocks();
+  holdProps.length = 0;
   listActiveOrgMaterials.mockResolvedValue(MATERIALS);
 });
 
@@ -112,8 +132,12 @@ describe('SubmitForm', () => {
 
   it('gates submit with "Pick a material" until a material is chosen', async () => {
     await renderForm();
-    // no material chosen yet → submit disabled with a clear reason
-    expect(screen.getByText(/pick a material/i)).toBeTruthy();
+    // no material chosen yet → submit disabled with a clear reason.
+    // (Scope to the visible gate-reason <li>; the hold button also exposes the
+    // reason in an sr-only span, so an unscoped match is now ambiguous.)
+    expect(
+      screen.getByText(/pick a material/i, { selector: 'li' }),
+    ).toBeTruthy();
     const holdBtn = screen.getByRole('button', { name: /hold to submit/i });
     expect(holdBtn.disabled).toBe(true);
   });
@@ -210,7 +234,9 @@ describe('SubmitForm', () => {
     // original name restored, material not applied
     expect(screen.getByText('Lattice Panel')).toBeTruthy();
     expect(screen.queryByText('Throwaway')).toBeNull();
-    expect(screen.getByText(/pick a material/i)).toBeTruthy();
+    expect(
+      screen.getByText(/pick a material/i, { selector: 'li' }),
+    ).toBeTruthy();
   });
 
   it('on hold-complete: uploads then creates the submission, then calls onSubmitted(row)', async () => {
@@ -272,6 +298,134 @@ describe('SubmitForm', () => {
     expect(createArg.ops).toHaveLength(2);
 
     expect(onSubmitted).toHaveBeenCalledWith(row);
+  });
+
+  // Drive the form into a submit-ready state: pick a material in edit, save.
+  function makeReady() {
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+    });
+    act(() => {
+      fireEvent.change(screen.getByLabelText('Material'), {
+        target: { value: 'om1' },
+      });
+    });
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    });
+  }
+
+  async function holdToFire(holdBtn) {
+    await act(async () => {
+      fireEvent.mouseDown(holdBtn);
+      vi.advanceTimersByTime(2000);
+    });
+    await act(async () => {});
+    await act(async () => {});
+  }
+
+  // ─── Fix 1: surface upload/create failures (no silent swallow) ──────────────
+  it('surfaces an error and stays usable when createSubmission rejects', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    uploadSubmissionSvg.mockResolvedValue('org1/uuid-1.svg');
+    createSubmission.mockRejectedValue(new Error('RLS denied'));
+    const onSubmitted = vi.fn();
+
+    await renderForm({ onSubmitted });
+    makeReady();
+
+    const holdBtn = screen.getByRole('button', { name: /hold to submit/i });
+    await holdToFire(holdBtn);
+
+    // visible, accessible error message
+    expect(screen.getByRole('alert')).toBeTruthy();
+    // logged for diagnosis
+    expect(errSpy).toHaveBeenCalled();
+    // onSubmitted NOT called on failure
+    expect(onSubmitted).not.toHaveBeenCalled();
+    // form stays usable: hold button re-enabled so the user can retry
+    expect(
+      screen.getByRole('button', { name: /hold to submit/i }).disabled,
+    ).toBe(false);
+
+    errSpy.mockRestore();
+  });
+
+  it('surfaces an error when uploadSubmissionSvg rejects', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    uploadSubmissionSvg.mockRejectedValue(new Error('network blip'));
+    const onSubmitted = vi.fn();
+
+    await renderForm({ onSubmitted });
+    makeReady();
+
+    await holdToFire(screen.getByRole('button', { name: /hold to submit/i }));
+
+    expect(screen.getByRole('alert')).toBeTruthy();
+    expect(errSpy).toHaveBeenCalled();
+    expect(onSubmitted).not.toHaveBeenCalled();
+    expect(createSubmission).not.toHaveBeenCalled();
+
+    errSpy.mockRestore();
+  });
+
+  // ─── Fix 2: clean up orphaned blob when create fails after upload ───────────
+  it('removes the uploaded blob when createSubmission fails after a successful upload', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    uploadSubmissionSvg.mockResolvedValue('org1/uuid-1.svg');
+    createSubmission.mockRejectedValue(new Error('RLS denied'));
+
+    await renderForm();
+    makeReady();
+    await holdToFire(screen.getByRole('button', { name: /hold to submit/i }));
+
+    expect(removeSubmissionSvg).toHaveBeenCalledTimes(1);
+    expect(removeSubmissionSvg).toHaveBeenCalledWith('org1/uuid-1.svg');
+
+    errSpy.mockRestore();
+  });
+
+  it('does NOT attempt cleanup when the upload itself failed', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    uploadSubmissionSvg.mockRejectedValue(new Error('upload boom'));
+
+    await renderForm();
+    makeReady();
+    await holdToFire(screen.getByRole('button', { name: /hold to submit/i }));
+
+    expect(removeSubmissionSvg).not.toHaveBeenCalled();
+
+    errSpy.mockRestore();
+  });
+
+  // ─── Fix 3: pass the first unmet reason as disabledReason ───────────────────
+  it('passes the first unmet completeness reason as disabledReason to the hold button', async () => {
+    await renderForm();
+    // gate unmet (no material) → first reason surfaced to the button
+    expect(lastHoldProps().disabledReason).toBe('Pick a material');
+  });
+
+  it('clears disabledReason once the gate is satisfied', async () => {
+    await renderForm();
+    makeReady();
+    expect(lastHoldProps().disabledReason).toBeUndefined();
+  });
+
+  // ─── Fix 4: gate also requires orgId/userId ─────────────────────────────────
+  it('keeps submit disabled with a reason when orgId is missing', async () => {
+    await renderForm({ orgId: undefined });
+    makeReady();
+    const holdBtn = screen.getByRole('button', { name: /hold to submit/i });
+    expect(holdBtn.disabled).toBe(true);
+    expect(lastHoldProps().disabledReason).toBeTruthy();
+  });
+
+  it('keeps submit disabled with a reason when userId is missing', async () => {
+    await renderForm({ userId: undefined });
+    makeReady();
+    const holdBtn = screen.getByRole('button', { name: /hold to submit/i });
+    expect(holdBtn.disabled).toBe(true);
+    expect(lastHoldProps().disabledReason).toBeTruthy();
   });
 
   it('Cancel calls onCancel and persists nothing', async () => {

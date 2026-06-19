@@ -38,3 +38,10 @@ export async function uploadSubmissionSvg({ orgId, submissionId, svgString }) {
   if (error) throw error;
   return path;
 }
+
+// Deletes a previously-uploaded SVG blob. Used to clean up an orphaned object
+// when the DB row creation fails after the upload succeeded (best-effort).
+export async function removeSubmissionSvg(path) {
+  if (!supabase) return;
+  await supabase.storage.from(BUCKET).remove([path]);
+}

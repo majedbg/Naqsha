@@ -37,25 +37,43 @@ reviewers must pass (or their findings become a fix-worker task) before the next
 1. From a clean base: create worktree + branch.
    `git worktree add ../org-admin-mvp -b feat/org-admin-mvp main`  (work in `../org-admin-mvp`).
 2. Add dep: `npm i dompurify`. (In jsdom tests, instantiate `createDOMPurify(window)`.)
-3. Dispatch **Worker H (shared harness)** — BLOCKS all of Phase 1+. It owns:
+3. **Phase 0 — Migration normalization (orchestrator's FIRST dispatched task; BLOCKS live RLS).**
+   This repo's schema files are LOOSE in `supabase/` (`001_initial_schema.sql`…`003`), NOT in
+   `supabase/migrations/`, so `supabase db reset` ignores them and a fresh local stack has an EMPTY `public`
+   schema. Dispatch **Worker N (normalization)** — owns `supabase/migrations/` + `supabase/config.toml`:
+   - `git mv` the loose files into `supabase/migrations/` with ordered timestamp names, preserving order:
+     `20250101000001_initial_schema.sql`, `20250101000002_ai_credits.sql`,
+     `20250101000003_free_ai_allowance.sql`. (Worker 1a's `…000004_org_admin.sql` lands in the same dir,
+     with its seed as **idempotent** `insert … on conflict do nothing` so the seed travels with the migration
+     to every env.)
+   - Set `[auth.email] enable_confirmations = true` in `config.toml` (the spec §3 verified-email gate is
+     untestable with it off; prod must also have confirmations ON).
+   - Verify (done-signal): `npx supabase db reset` rebuilds the DB clean, exit 0 (001→003 apply, no errors).
+     After 1a lands, the same `db reset` also applies 004 + seed.
+   - **Caveat to log (`NEEDS-HUMAN`):** moving to `migrations/` makes it the source of truth for
+     `supabase db push` to PROD; since prod already has 001–003, the first push must be reconciled
+     (`supabase migration repair` / mark-applied). Do NOT push — flag it for the human.
+4. Dispatch **Worker H (shared harness)** — BLOCKS all of Phase 1+. It owns:
    - `src/test/supabaseMock.js` — a chainable mock Supabase client factory (`.from().select().eq()...`,
      `.storage.from().upload()`, `.auth.getUser()`), returning seeded rows + error injection. Used by all
      service tests (no Docker).
-   - `src/test/rlsHarness.js` — helper that, IF `supabase status` reports running, connects to local
-     Supabase with anon + per-user JWTs to exercise real RLS; otherwise marks the suite `skipped`
-     (never throws — autonomy must not stall on a dead Docker).
+   - `src/test/rlsHarness.js` — helper that, IF `npx supabase status` reports running, runs
+     `npx supabase db reset` (rebuilds from `migrations/` + seed) then connects with anon + per-user JWTs
+     (minted from the local JWT secret read via `npx supabase status -o env`; do NOT hardcode keys) to
+     exercise real RLS; otherwise marks the suite `skipped` (never throws — autonomy must not stall on a
+     dead Docker).
    - `src/test/fixtures/svg/` — fixtures: `units-mm.svg`, `units-px.svg`, `viewbox-only.svg`,
      `illustrator-pt.svg`, `inkscape-96.svg`, `malicious-script.svg`, `malicious-onload.svg`,
      `external-ref.svg`, `multi-color.svg`, `in-app-export.svg`.
-   - Harness has its own tests proving the mock + fixtures load.
+   - Harness has its own tests proving the mock + fixtures load + (when Docker up) `db reset` applies clean.
 
 ---
 
 ## 2. Dependency DAG (waves)
 
 ```
-SETUP ─► Worker H (harness) ─┬─► PHASE 1 logic wave (1b,1c,1d,1e,1f  ‖ parallel)
-                             └─► 1a migration+RLS+platform_admins+seed (‖ w/ logic) ─► R1 review
+SETUP ─► Worker N (normalize migrations/ + config) ─► Worker H (harness) ─┬─► PHASE 1 logic (1b–1f ‖)
+                                                                          └─► 1a migration+RLS+platform_admins+seed (‖) ─► R1 review
 R1 ─► PHASE 2 services (2a,2b,2c,2d,2e  ‖ parallel, mocked client) ─► R2 review (live RLS + platform gate)
 R2 ─┬─► PHASE 2.5 platform admin panel (P1,P2,P3) ─► R2.5 review (security)
     └─► PHASE 3 submit+form (3a,3b ‖) ─► 3c ─► 3d ; 3e ‖ ─► R3 review ─► DEMO GATE
@@ -74,7 +92,7 @@ test infra, DoD} + the verbatim worker rules from §0.
 ### PHASE 1 — Foundations
 
 **1a · Schema + RLS + storage + seed** _(infra: live local Supabase via rlsHarness; BLOCKS Phase 2)_
-Owns: `supabase/004_org_admin.sql`, `src/test/rls.org.test.js`.
+Owns: `supabase/migrations/20250101000004_org_admin.sql`, `src/test/rls.org.test.js`.
 Build the 6 tables exactly per spec §4 (orgs, **platform_admins**, org_members, materials, org_materials,
 submissions) with FKs + on-delete (`submissions.design_id` SET NULL, `org_material_id` RESTRICT +
 denormalized `material_label`; removing a member does NOT delete submissions),

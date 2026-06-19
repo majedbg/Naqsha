@@ -153,7 +153,7 @@ is_platform_admin()      -> bool   -- auth.email() (verified) in platform_admins
   updates `status`/`cut_at`. No cross-member visibility.
 - **Storage bucket** (private): read if owner or `is_org_admin(org_id)`; write by owner.
 
-### Seed (in the migration)
+### Seed (idempotent `insert … on conflict do nothing`, inside the `004_org_admin` migration under `supabase/migrations/`)
 - `platform_admins`: `email='majed.bg@gmail.com'`.
 - `orgs`: ITP Camp — `slug='itp-camp'`, `name='ITP Camp'` (slug == the existing in-code ITP kit id; its
   `accent_color`/`logo_url` bridge to that kit's branding — same identity, not two).

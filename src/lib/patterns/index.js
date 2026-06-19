@@ -62,3 +62,27 @@ export const PATTERN_CLASSES = {
 export function getPatternClass(id) {
   return PATTERN_CLASSES[id] || getDynamicPatternClass(id) || null;
 }
+
+// Patterns whose generate() is a PURE function of its params and ignores the seed
+// entirely — verified against each source: they call ctx.randomSeed(seed) at most,
+// but never mulberry32(seed), rng(), ctx.random(), ctx.noise() or randomGaussian(),
+// so the seed is dead. Reseeding one produces NO visible change, so the "randomize
+// seed" affordance (die / Rand Seeds) falls back to randomizing the layer's checked
+// params instead (see useLayers.randomizeLayer). Dynamic / AI patterns are absent
+// here and so default to seed-using.
+//
+// NOTE: this is NOT the same as PATTERN_TAXONOMY's `det: 'deterministic'` flag —
+// that is a *visual* classification (symmetric / non-noisy look), and several
+// 'deterministic' patterns (grid, duality, phyllotaxis, spiral…) DO consume the
+// seed via rng for micro-jitter. Determine seed-usage from code, not the taxonomy.
+export const SEEDLESS_PATTERN_IDS = new Set([
+  'spirograph',
+  'recursive',
+  'feather',
+  'moire',
+]);
+
+/** True when the pattern's output responds to its seed (the common case). */
+export function patternUsesSeed(patternType) {
+  return !SEEDLESS_PATTERN_IDS.has(patternType);
+}

@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect, useCallback } from "react";
+import { useRef, useState, useEffect, useLayoutEffect, useCallback } from "react";
 import useCanvas from "../lib/useCanvas";
 import CanvasChrome from "./canvas/CanvasChrome";
 import PlotOverlay from "./canvas/PlotOverlay";
@@ -143,6 +143,40 @@ export default function RightPanel({
   // bed size. Reporting the cursor uses the SAME on-screen scale (finalScale)
   // the rulers use, so the status-bar readout reads correctly against them.
   const showChrome = bedSize != null;
+
+  // Chrome alignment (B4 / #7 fix): the canvas surface is flex-CENTERED in the
+  // wrapper (and pan/zoom-transformed), but CanvasChrome is `absolute inset-0`
+  // of the wrapper — so without this it pins the rulers + bed to the wrapper's
+  // top-left while the artwork sits centered elsewhere. Measure the live canvas
+  // rect (the SAME element the cursor readout measures, so ticks ↔ cursor agree
+  // by construction) relative to the wrapper, and feed CanvasChrome that origin
+  // so ruler 0,0 tracks the canvas corner under centering, pan, zoom AND the
+  // overflow-auto scroll that kicks in past 1.25x.
+  const [chromeOrigin, setChromeOrigin] = useState(null);
+  useLayoutEffect(() => {
+    if (!showChrome) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional one-shot reset when chrome turns off; no cascading loop
+      setChromeOrigin(null);
+      return undefined;
+    }
+    const measure = () => {
+      const surface = containerRef.current;
+      const wrap = wrapperRef.current;
+      if (!surface || !wrap) return;
+      const sRect = surface.getBoundingClientRect();
+      const wRect = wrap.getBoundingClientRect();
+      setChromeOrigin({ x: sRect.left - wRect.left, y: sRect.top - wRect.top });
+    };
+    measure();
+    const wrap = wrapperRef.current;
+    window.addEventListener("resize", measure);
+    wrap?.addEventListener("scroll", measure);
+    return () => {
+      window.removeEventListener("resize", measure);
+      wrap?.removeEventListener("scroll", measure);
+    };
+  }, [showChrome, finalScale, pan.x, pan.y, canvasW, canvasH, bedSize]);
+
   const handleCanvasMouseMove = useCallback(
     (e) => {
       if (!onCursorMove) return;
@@ -178,11 +212,14 @@ export default function RightPanel({
           Null bedSize (legacy / flag-OFF) → not rendered, a true no-op. */}
       {showChrome && (
         <CanvasChrome
+          canvasWidthPx={canvasW}
+          canvasHeightPx={canvasH}
           bedWidthMm={bedSize.width}
           bedHeightMm={bedSize.height}
           unit={unit}
           zoom={finalScale}
           pan={pan}
+          origin={chromeOrigin}
         />
       )}
       <div

@@ -1,10 +1,14 @@
 // submissionService.test.js — Worker 2c
 // Unit tests (mocked supabase) + ONE live-RLS smoke (skips if Docker down).
 
-import { vi, describe, it, expect, beforeEach } from 'vitest';
+import { vi, describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest';
 import { createClient } from '@supabase/supabase-js';
 import { createSupabaseMock } from '../../test/supabaseMock';
-import { createRlsHarness } from '../../test/rlsHarness';
+import {
+  isLiveRlsAvailable,
+  setupLiveRls,
+  teardownLiveRls,
+} from '../../test/rlsHarness';
 
 // Mutable-ref getter pattern (mirrors designService.test.js). The file lives in
 // src/lib/org/, so it imports '../supabase'.
@@ -130,11 +134,21 @@ describe('listForOrg', () => {
 // ─── Behavior 5: LIVE-RLS SMOKE (skips if Docker down) ───────────────────────
 // A member creates a submission; the org admin sees it through real RLS, while
 // a different member cannot. ONE focused test.
-describe('submissionService — live RLS smoke', () => {
+// beforeAll/afterAll live INSIDE this describe so the DB lock is held only for
+// the live smoke, not during the mocked unit tests above. The sync probe gates
+// describe.skip; the destructive reset + lock acquire happen in beforeAll.
+(isLiveRlsAvailable() ? describe : describe.skip)('submissionService — live RLS smoke', () => {
+  let h;
+  beforeAll(async () => {
+    h = await setupLiveRls();
+  }, 720_000); // > lock-acquire timeout (600s) + one reset (~90s)
+  afterAll(() => {
+    teardownLiveRls();
+  });
+
   it(
     'member creates, admin sees, peer member cannot',
     async (ctx) => {
-      const h = createRlsHarness();
       if (h.skipped) {
         ctx.skip();
         return;

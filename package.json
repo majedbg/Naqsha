@@ -9,6 +9,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
+    "test:rls": "RLS_LIVE=1 vitest run --no-file-parallelism src/test/rls.org.test.js src/lib/org/submissionService.test.js src/lib/org/platformService.test.js src/lib/org/membershipService.test.js",
     "test:watch": "vitest",
     "test:cov": "vitest run --coverage",
     "gen:examples": "node scripts/genExamples.mjs"

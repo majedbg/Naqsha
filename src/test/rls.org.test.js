@@ -8,24 +8,40 @@
 // makes the matching profiles row); the per-user token's `sub` must equal that
 // id so auth.uid() matches.
 
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createClient } from '@supabase/supabase-js';
-import { createRlsHarness } from './rlsHarness.js';
+import {
+  isLiveRlsAvailable,
+  setupLiveRls,
+  teardownLiveRls,
+} from './rlsHarness.js';
 
-const h = createRlsHarness();
-const live = h.skipped ? describe.skip : describe;
+// SYNC, lock-free Docker probe picks describe vs describe.skip at eval time.
+// The destructive `db reset` happens later in beforeAll, under the DB lock, so
+// parallel worker processes never reset the schema out from under each other.
+const live = isLiveRlsAvailable() ? describe : describe.skip;
 
+let h;
 let service;
 let serviceUrl;
 let anonKey;
 
-beforeAll(() => {
+beforeAll(async () => {
+  h = await setupLiveRls();
   if (h.skipped) return;
   serviceUrl = h.env.API_URL || h.env.SUPABASE_URL;
   anonKey = h.env.ANON_KEY || h.env.SUPABASE_ANON_KEY;
   service = createClient(serviceUrl, h.env.SERVICE_ROLE_KEY, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
+  // hookTimeout must exceed LOCK_ACQUIRE_TIMEOUT_MS (600s) + one reset (~90s):
+  // the last suite to acquire waits for all others' resets, then runs its own.
+}, 720_000);
+
+// Release the DB lock once this suite's DB tests are done. Runs even if a test
+// threw, so the lock is always freed for the next suite.
+afterAll(() => {
+  teardownLiveRls();
 });
 
 let counter = 0;
@@ -467,6 +483,98 @@ live('org/admin RLS', () => {
       .select();
     expect(okOrg.error).toBeNull();
     expect(okOrg.data).toHaveLength(1);
+  });
+
+  // R2 #2: a plain (non-admin) member CANNOT self-set status='cut'. 'cut' is an
+  // operator (admin-only) decision; a member self-setting it would inject a
+  // falsely-completed job into the admin queue. The member update policy's
+  // WITH CHECK confines status to ('pending','canceled'), so this update fails
+  // WITH CHECK (non-null error) and the row's status is unchanged.
+  it('denies a plain member self-setting status=cut', async () => {
+    const slug = `org-${Date.now()}-${counter++}`;
+    const { orgId, orgMaterialId } = await seedOrg(slug);
+    const email = uniqueEmail('member');
+    const uid = await createUser(email);
+    await addMember(orgId, email, uid);
+    const sub = await seedSubmission(orgId, orgMaterialId, uid);
+
+    const client = clientFor(uid, email);
+    const bad = await client
+      .from('submissions')
+      .update({ status: 'cut', cut_at: new Date().toISOString() })
+      .eq('id', sub.id)
+      .select();
+    // WITH CHECK violation surfaces as an error and rebinds nothing.
+    expect(bad.error).not.toBeNull();
+
+    // Ground truth: status stays 'pending', cut_at stays null.
+    const { data: after } = await service
+      .from('submissions')
+      .select('status,cut_at')
+      .eq('id', sub.id)
+      .single();
+    expect(after.status).toBe('pending');
+    expect(after.cut_at).toBeNull();
+  });
+
+  // R2 #2: a plain member CAN cancel their own pending job (status='canceled'
+  // is in the allowed member set).
+  it('lets a plain member cancel their own submission', async () => {
+    const slug = `org-${Date.now()}-${counter++}`;
+    const { orgId, orgMaterialId } = await seedOrg(slug);
+    const email = uniqueEmail('member');
+    const uid = await createUser(email);
+    await addMember(orgId, email, uid);
+    const sub = await seedSubmission(orgId, orgMaterialId, uid);
+
+    const client = clientFor(uid, email);
+    const ok = await client
+      .from('submissions')
+      .update({ status: 'canceled' })
+      .eq('id', sub.id)
+      .select();
+    expect(ok.error).toBeNull();
+    expect(ok.data).toHaveLength(1);
+
+    const { data: after } = await service
+      .from('submissions')
+      .select('status')
+      .eq('id', sub.id)
+      .single();
+    expect(after.status).toBe('canceled');
+  });
+
+  // R2 #2 (spine): an ADMIN can still mark a member's job status='cut' + cut_at.
+  // The admin update policy is permissive and unrestricted by the member-side
+  // status set (RLS is OR-of-permissive), so the cut spine stays open.
+  it('lets an admin mark a member submission cut with cut_at', async () => {
+    const slug = `org-${Date.now()}-${counter++}`;
+    const { orgId, orgMaterialId } = await seedOrg(slug);
+    const memberEmail = uniqueEmail('m');
+    const adminEmail = uniqueEmail('adm');
+    const memberUid = await createUser(memberEmail);
+    const adminUid = await createUser(adminEmail);
+    await addMember(orgId, memberEmail, memberUid);
+    await addMember(orgId, adminEmail, adminUid, { isAdmin: true });
+    const sub = await seedSubmission(orgId, orgMaterialId, memberUid);
+
+    const adminClient = clientFor(adminUid, adminEmail);
+    const cutAt = new Date().toISOString();
+    const ok = await adminClient
+      .from('submissions')
+      .update({ status: 'cut', cut_at: cutAt })
+      .eq('id', sub.id)
+      .select();
+    expect(ok.error).toBeNull();
+    expect(ok.data).toHaveLength(1);
+
+    const { data: after } = await service
+      .from('submissions')
+      .select('status,cut_at')
+      .eq('id', sub.id)
+      .single();
+    expect(after.status).toBe('cut');
+    expect(after.cut_at).not.toBeNull();
   });
 
   // 10. A non-platform user CANNOT insert or update an org.

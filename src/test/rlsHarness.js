@@ -10,6 +10,9 @@
 
 import { execFileSync } from 'node:child_process';
 import { createHmac } from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { createClient as supabaseCreateClient } from '@supabase/supabase-js';
 
 function b64url(input) {
@@ -145,4 +148,176 @@ export function createRlsHarness({
   };
 
   return { skipped: false, status, env, anon, withUser };
+}
+
+// ─── Inter-process DB mutex ───────────────────────────────────────────────────
+//
+// Vitest runs test FILES in separate worker PROCESSES (parallel). Every live-RLS
+// suite calls `npx supabase db reset`, which DROPS + rebuilds the local `public`
+// schema. Run in parallel, one suite's reset wipes another suite's freshly
+// seeded rows mid-test → flaky failures.
+//
+// An in-memory flag can't serialize across processes, so we use a filesystem
+// lockfile in os.tmpdir() with a fixed name. Only one live-RLS suite holds the
+// DB at a time. The lock is held from BEFORE `db reset` until the suite's
+// DB-using tests are DONE (acquire in beforeAll, release in afterAll) — not just
+// across the reset call — so no other suite can reset mid-test.
+
+const LOCK_PATH = path.join(os.tmpdir(), 'naqsha-rls-db.lock');
+// Total time we'll wait to acquire before giving up. Must exceed the worst case
+// of N-1 suites each doing (reset + their DB tests) ahead of us. The full serial
+// run of all 4 suites is ~400s, so the last suite to acquire waits roughly that
+// minus its own hold. 600s gives comfortable headroom. The callers' beforeAll
+// hookTimeout is set ABOVE this (timeout + one reset).
+const LOCK_ACQUIRE_TIMEOUT_MS = 600 * 1000;
+// Steal threshold (cross-host backstop only). PID-liveness is the PRIMARY stale
+// signal — a dead holder is stolen instantly. The timestamp must NOT undercut a
+// live holder that legitimately holds the DB for a long suite, so it is kept
+// >= the acquire timeout: a waiter would give up before ever timestamp-stealing
+// from a still-running holder.
+const STALE_LOCK_MS = 15 * 60 * 1000; // 15 minutes (>= LOCK_ACQUIRE_TIMEOUT_MS)
+const LOCK_POLL_MS = 150;
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function isPidAlive(pid) {
+  if (!pid || typeof pid !== 'number') return false;
+  try {
+    // Signal 0 doesn't kill — it only probes existence/permission. ESRCH ⇒ dead.
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err && err.code === 'EPERM'; // alive but not ours ⇒ treat as alive
+  }
+}
+
+// A held lock is "stale" (safe to steal) if its writer PID is dead, or it's so
+// old that a crashed cross-host holder is the only explanation.
+function lockIsStale() {
+  let raw;
+  try {
+    raw = fs.readFileSync(LOCK_PATH, 'utf8');
+  } catch {
+    return false; // gone already; let the caller's create attempt race normally
+  }
+  let info;
+  try {
+    info = JSON.parse(raw);
+  } catch {
+    return true; // unparseable/garbage lock ⇒ steal
+  }
+  if (typeof info.pid === 'number' && !isPidAlive(info.pid)) return true;
+  if (typeof info.time === 'number' && Date.now() - info.time > STALE_LOCK_MS) {
+    return true;
+  }
+  return false;
+}
+
+// Acquire the cross-process lock by exclusively creating the lockfile ('wx').
+// Retries with backoff; breaks a provably-stale lock. Throws on timeout.
+async function acquireDbLock() {
+  const deadline = Date.now() + LOCK_ACQUIRE_TIMEOUT_MS;
+  for (;;) {
+    try {
+      const fd = fs.openSync(LOCK_PATH, 'wx');
+      fs.writeSync(
+        fd,
+        JSON.stringify({ pid: process.pid, time: Date.now() }),
+      );
+      fs.closeSync(fd);
+      return; // held
+    } catch (err) {
+      if (!err || err.code !== 'EEXIST') throw err; // unexpected fs error
+      // Someone holds it. Steal if stale, else wait.
+      if (lockIsStale()) {
+        try {
+          fs.unlinkSync(LOCK_PATH);
+        } catch {
+          // lost the unlink race; loop and retry the create
+        }
+        continue;
+      }
+      if (Date.now() >= deadline) {
+        throw new Error(
+          `rlsHarness: timed out after ${LOCK_ACQUIRE_TIMEOUT_MS}ms waiting for ${LOCK_PATH}`,
+        );
+      }
+      await sleep(LOCK_POLL_MS);
+    }
+  }
+}
+
+function releaseDbLock() {
+  // Only delete a lock we still own, so we never clobber a holder that stole
+  // ours after a stale-break (shouldn't happen within timeout, but be safe).
+  try {
+    const info = JSON.parse(fs.readFileSync(LOCK_PATH, 'utf8'));
+    if (info && info.pid === process.pid) fs.unlinkSync(LOCK_PATH);
+  } catch {
+    // already gone / unreadable — nothing to release
+  }
+}
+
+// Cheap, SYNC, lock-free Docker probe. Suites call this at module-eval time to
+// choose `describe` vs `describe.skip` WITHOUT touching the lock or stalling.
+//
+// OPT-IN GATE: the live-RLS suites are DESTRUCTIVE (each does `db reset`) and
+// CPU-heavy, so they must never run inside the default parallel `npm test`. They
+// run ONLY when explicitly opted in via `RLS_LIVE=1` (set by the dedicated
+// serial `npm run test:rls` script). The env check is FIRST and short-circuits
+// BEFORE spawning any `npx supabase status` subprocess — so the default run
+// spawns zero probes and never CPU-starves unrelated suites.
+//
+// Even with RLS_LIVE=1, if Docker is down this still returns false (the suites
+// SKIP, never fail/stall) because the status probe reports the stack stopped.
+export function isLiveRlsAvailable({ statusRunner } = {}) {
+  if (process.env.RLS_LIVE !== '1') return false;
+  const runStatus = statusRunner || realStatusRunner;
+  const status = runStatus();
+  return Boolean(status && status.running);
+}
+
+// Acquire the DB lock, then run `db reset` and build clients via the existing
+// createRlsHarness(). Returns the same shape createRlsHarness() does, plus the
+// lock is HELD on the happy path until teardownLiveRls() is called.
+//
+// Skip path (req 4): if Docker is down, returns { skipped: true } having NEVER
+// acquired the lock. If reset fails AFTER acquiring, the lock is released before
+// returning the skip — a failed reset must not wedge the other suites.
+export async function setupLiveRls(opts = {}) {
+  // 1. Status probe FIRST, lock-free. Down ⇒ skip, no lock.
+  if (!isLiveRlsAvailable(opts)) {
+    const runStatus = opts.statusRunner || realStatusRunner;
+    const status = runStatus();
+    return {
+      skipped: true,
+      reason:
+        (status && status.output) ||
+        'Supabase local stack is not running (npx supabase status reported stopped).',
+    };
+  }
+
+  // 2. Acquire the cross-process lock BEFORE reset.
+  await acquireDbLock();
+
+  // 3. Reset + build clients. Any non-happy outcome releases the lock.
+  let harness;
+  try {
+    harness = createRlsHarness(opts);
+  } catch (err) {
+    releaseDbLock();
+    throw err;
+  }
+  if (harness.skipped) {
+    releaseDbLock(); // reset failed after acquire — don't leak the lock
+    return harness;
+  }
+  return harness;
+}
+
+// Release the DB lock. Idempotent and safe to call when setup skipped (no lock
+// held) — releaseDbLock() only unlinks a lockfile this PID owns. Call from
+// afterAll in a way that always runs (vitest runs afterAll even on test throw).
+export function teardownLiveRls() {
+  releaseDbLock();
 }

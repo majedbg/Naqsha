@@ -17,15 +17,15 @@ export async function addMemberByEmail(orgId, email, { isAdmin = false } = {}) {
   return data;
 }
 
-export async function claimOnLogin(email, userId) {
+export async function claimOnLogin() {
   if (!supabase) return;
-  // Match the pending invited row by email and activate it. The mock has no
-  // `.is()`, so we filter on status='invited' (the same row as user_id IS NULL).
-  const { error } = await supabase
-    .from('org_members')
-    .update({ user_id: userId, status: 'active' })
-    .eq('email', email)
-    .eq('status', 'invited');
+  // Claim is the SECURITY DEFINER RPC `claim_memberships()`: it derives identity
+  // from the auth context (auth.uid()/auth.email()), enforces jwt_email_verified()
+  // (invite-hijack defense), and flips matching invited org_members rows to
+  // active + sets user_id (also fills platform_admins.user_id). A plain client
+  // UPDATE is denied by RLS — there is no member-self-UPDATE policy on
+  // org_members — so the RPC is the only working claim path.
+  const { error } = await supabase.rpc('claim_memberships');
   if (error) throw error;
 }
 

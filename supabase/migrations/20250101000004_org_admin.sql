@@ -238,6 +238,13 @@ create policy "submissions member update own"
     submitted_by = auth.uid()
     -- Keep the path/org binding invariant on UPDATE too (no svg_path rebind).
     and split_part(svg_path, '/', 1) = org_id::text
+    -- R2 #2: a member may only leave status in ('pending','canceled') — they
+    -- may cancel their own job but may NOT set 'cut'/'rejected'. Those are
+    -- operator (admin-only) decisions; 'cut_at' is a physical-machine fact.
+    -- The admin update policy is permissive and unrestricted, so an admin
+    -- (incl. majed, who is both admin AND member of itp-camp) can still mark
+    -- 'cut'/'rejected' (RLS is OR-of-permissive).
+    and status in ('pending', 'canceled')
   );
 create policy "submissions member delete own"
   on public.submissions for delete

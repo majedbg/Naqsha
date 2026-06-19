@@ -2,8 +2,14 @@
 // Mutable-ref vi.mock pattern (per designService.test.js) pointed at the shared
 // chainable mock factory (src/test/supabaseMock.js: createSupabaseMock).
 
-import { vi, describe, it, expect, beforeEach } from 'vitest';
+import { vi, describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest';
+import { createClient } from '@supabase/supabase-js';
 import { createSupabaseMock } from '../../test/supabaseMock';
+import {
+  isLiveRlsAvailable,
+  setupLiveRls,
+  teardownLiveRls,
+} from '../../test/rlsHarness';
 
 const _ref = { client: null };
 
@@ -71,27 +77,34 @@ describe('membershipService.addMemberByEmail — duplicate', () => {
   });
 });
 
-// ─── Behavior 3: claimOnLogin flips invited → active w/ user_id ───────────────
+// ─── Behavior 3: claimOnLogin calls the email-verified claim_memberships RPC ──
+// The claim path is the SECURITY DEFINER RPC `claim_memberships()` (derives
+// identity from auth.uid()/auth.email(), enforces jwt_email_verified()). A
+// plain client UPDATE is denied by RLS (no member-self-UPDATE policy), so
+// claimOnLogin() takes NO args and just invokes the RPC. The shared mock has
+// no `.rpc()`, so this uses a local vi.fn rpc stub.
 describe('membershipService.claimOnLogin', () => {
-  it('sets user_id and status="active" on the matching invited row', async () => {
-    const seed = {
-      org_members: [
-        { id: 'm1', org_id: 'org-1', email: 'pending@example.com', user_id: null, status: 'invited' },
-      ],
-    };
-    _ref.client = createSupabaseMock(seed);
+  it('invokes the claim_memberships RPC (no args — identity from auth context)', async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: null, error: null });
+    _ref.client = { rpc };
 
-    await claimOnLogin('pending@example.com', 'user-42');
+    await claimOnLogin();
 
-    expect(seed.org_members[0]).toMatchObject({
-      user_id: 'user-42',
-      status: 'active',
-    });
+    expect(rpc).toHaveBeenCalledWith('claim_memberships');
+  });
+
+  it('surfaces an error when the RPC fails', async () => {
+    const rpc = vi
+      .fn()
+      .mockResolvedValue({ data: null, error: { message: 'rpc denied' } });
+    _ref.client = { rpc };
+
+    await expect(claimOnLogin()).rejects.toMatchObject({ message: 'rpc denied' });
   });
 
   it('returns undefined/early when supabase is null', async () => {
     _ref.client = null;
-    await expect(claimOnLogin('x@example.com', 'u1')).resolves.toBeUndefined();
+    await expect(claimOnLogin()).resolves.toBeUndefined();
   });
 });
 
@@ -195,4 +208,97 @@ describe('membershipService.isOrgAdmin', () => {
     _ref.client = null;
     expect(await isOrgAdmin('org-1', 'u1')).toBe(false);
   });
+});
+
+// ─── LIVE-RLS SMOKE: claimOnLogin routes through claim_memberships RPC ────────
+// Proves the real claim path end-to-end against Postgres RLS. A VERIFIED email
+// flips its pending org_members row to active+user_id; an UNVERIFIED email is
+// denied (the jwt_email_verified() invite-hijack gate). Skips (never fails) if
+// the local Supabase stack is down.
+// beforeAll/afterAll live INSIDE this describe so the DB lock is held only for
+// the live smoke, not during the mocked unit tests above.
+(isLiveRlsAvailable() ? describe : describe.skip)('membershipService.claimOnLogin — live RLS smoke', () => {
+  let h;
+  beforeAll(async () => {
+    h = await setupLiveRls();
+  }, 720_000); // > lock-acquire timeout (600s) + one reset (~90s)
+  afterAll(() => {
+    teardownLiveRls();
+  });
+
+  it(
+    'verified email claims its pending membership; unverified email is denied',
+    async (ctx) => {
+      if (h.skipped) {
+        ctx.skip();
+        return;
+      }
+
+      const serviceUrl = h.env.API_URL || h.env.SUPABASE_URL;
+      // Service-role client: bypasses RLS for setup + readback (an invited row
+      // with user_id IS NULL is unreadable by the claiming user under RLS).
+      const service = createClient(serviceUrl, h.env.SERVICE_ROLE_KEY, {
+        auth: { autoRefreshToken: false, persistSession: false },
+      });
+
+      // Real auth user => profiles row via handle_new_user trigger, so the
+      // RPC's `set user_id = auth.uid()` satisfies the org_members FK.
+      const makeUser = async (email, verified) => {
+        const { data, error } = await service.auth.admin.createUser({
+          email,
+          email_confirm: verified,
+          password: 'password123!',
+        });
+        if (error) throw error;
+        return data.user.id;
+      };
+
+      const stamp = Date.now();
+      const { data: org, error: oErr } = await service
+        .from('orgs')
+        .insert({ slug: `claim-${stamp}`, name: `claim-${stamp}` })
+        .select()
+        .single();
+      expect(oErr).toBeNull();
+
+      // ── Verified email: claim succeeds ──
+      const okEmail = `claim-ok-${stamp}@example.test`;
+      await service
+        .from('org_members')
+        .insert({ org_id: org.id, email: okEmail, status: 'invited' });
+      const okUid = await makeUser(okEmail, true);
+
+      _ref.client = h.withUser({ sub: okUid, email: okEmail, email_verified: true });
+      await claimOnLogin();
+
+      const { data: claimed } = await service
+        .from('org_members')
+        .select('user_id,status')
+        .eq('org_id', org.id)
+        .eq('email', okEmail)
+        .single();
+      expect(claimed.user_id).toBe(okUid);
+      expect(claimed.status).toBe('active');
+
+      // ── Unverified email: claim is denied by jwt_email_verified() gate ──
+      const badEmail = `claim-bad-${stamp}@example.test`;
+      await service
+        .from('org_members')
+        .insert({ org_id: org.id, email: badEmail, status: 'invited' });
+      const badUid = await makeUser(badEmail, false);
+
+      _ref.client = h.withUser({ sub: badUid, email: badEmail, email_verified: false });
+      await claimOnLogin();
+
+      const { data: unclaimed } = await service
+        .from('org_members')
+        .select('user_id,status')
+        .eq('org_id', org.id)
+        .eq('email', badEmail)
+        .single();
+      expect(unclaimed.user_id).toBeNull();
+      expect(unclaimed.status).toBe('invited');
+    },
+    120_000,
+  );
 });

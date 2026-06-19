@@ -75,12 +75,13 @@ function PatternIcon() {
 // operation and updates when `operationId` (or the library) changes. Clicking it
 // opens the OperationPicker and reassigns THIS row's layer (#11/C2). The click is
 // kept from bubbling so opening the picker never also selects the row.
-function OperationChip({ layer, operations, onAssignOperation }) {
+function OperationChip({ layer, operations, onAssignOperation, disabled = false }) {
   const op = resolveOperation(operations, layer.operationId);
   const color = op?.color ?? "#000000";
   const name = op?.name ?? "—";
   const [open, setOpen] = useState(false);
-  const canPick = Array.isArray(operations) && operations.length > 0 && !!onAssignOperation;
+  const canPick =
+    !disabled && Array.isArray(operations) && operations.length > 0 && !!onAssignOperation;
 
   return (
     <div className="relative shrink-0">
@@ -187,22 +188,31 @@ function TrashIcon() {
 }
 
 function LayerRow({ layer, index, total, selected, operations, onSelect, onUpdateLayer, onReorderLayers, onAssignOperation, onDeleteLayer, onDuplicateLayer, onRandomizeLayer, onRandomizeLayerParams, onExportLayer }) {
+  // Full lock enforcement: a locked layer is protected from edits. Its mutating
+  // row actions (reorder, randomize, duplicate, export, delete) and operation
+  // reassignment are disabled; only the visibility toggle and the lock/unlock
+  // button stay live (so it can still be hidden or unlocked), and the row stays
+  // selectable (the inspector shows it read-only with an unlock affordance).
+  const locked = !!layer.locked;
   const move = (to) => {
-    if (to < 0 || to >= total) return;
+    if (locked || to < 0 || to >= total) return;
     onReorderLayers(index, to);
   };
   // A per-row action button: stops propagation so triggering the action never
   // also selects the row (matching the visibility/lock toggles already here).
   // Rendered only when the corresponding handler is supplied, so LayerTree stays
   // back-compatible with callers (and existing tests) that don't pass them.
+  // Disabled (not hidden) when the layer is locked, so the affordance is visibly
+  // unavailable rather than vanishing.
   const action = (handler, label, Icon, danger = false) =>
     handler ? (
       <button
         type="button"
         aria-label={label}
-        title={label}
-        onClick={(e) => { e.stopPropagation(); handler(layer.id); }}
-        className={`shrink-0 text-ink-soft ${danger ? "hover:text-red-500" : "hover:text-ink"}`}
+        title={locked ? `${label} (layer locked)` : label}
+        disabled={locked}
+        onClick={(e) => { e.stopPropagation(); if (!locked) handler(layer.id); }}
+        className={`shrink-0 text-ink-soft disabled:opacity-30 disabled:cursor-not-allowed ${danger ? "hover:text-red-500" : "hover:text-ink"}`}
       >
         <Icon />
       </button>
@@ -231,7 +241,7 @@ function LayerRow({ layer, index, total, selected, operations, onSelect, onUpdat
         <button
           type="button"
           aria-label="Move layer up"
-          disabled={index === 0}
+          disabled={index === 0 || locked}
           onClick={(e) => { e.stopPropagation(); move(index - 1); }}
           className="leading-none disabled:opacity-25 hover:text-ink"
         >
@@ -240,7 +250,7 @@ function LayerRow({ layer, index, total, selected, operations, onSelect, onUpdat
         <button
           type="button"
           aria-label="Move layer down"
-          disabled={index === total - 1}
+          disabled={index === total - 1 || locked}
           onClick={(e) => { e.stopPropagation(); move(index + 1); }}
           className="leading-none disabled:opacity-25 hover:text-ink"
         >
@@ -257,7 +267,7 @@ function LayerRow({ layer, index, total, selected, operations, onSelect, onUpdat
       <span className="flex-1 min-w-0 truncate text-xs text-ink">{layer.name}</span>
 
       {/* Operation chip */}
-      <OperationChip layer={layer} operations={operations} onAssignOperation={onAssignOperation} />
+      <OperationChip layer={layer} operations={operations} onAssignOperation={onAssignOperation} disabled={locked} />
 
       {/* Visibility toggle */}
       <button
@@ -391,14 +401,14 @@ export default function LayerTree({
             onExportLayer={onExportLayer}
           />
         ))}
-      </div>
 
-      {/* "+ New" add-layer row — pinned below the list so it's always reachable.
-          Opens the pattern picker (the periodic table) via onAddLayer. Disabled
-          at the tier's layer cap. Only rendered when a handler is supplied, so the
-          tree stays back-compatible with callers/tests that don't pass it. */}
-      {onAddLayer && (
-        <div className="shrink-0 border-t border-hairline p-1.5">
+        {/* "+ New" add-layer row — sits directly BELOW the last layer (inside the
+            scroll list, not pinned to the column's bottom) so it's always near the
+            layers, never stranded at the foot of a tall empty column. Opens the
+            pattern picker (the periodic table) via onAddLayer. Disabled at the
+            tier's layer cap. Only rendered when a handler is supplied, so the tree
+            stays back-compatible with callers/tests that don't pass it. */}
+        {onAddLayer && (
           <button
             type="button"
             data-testid="layer-add-row"
@@ -418,8 +428,8 @@ export default function LayerTree({
             </svg>
             <span className="flex-1 text-left">New</span>
           </button>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }

@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { DEFAULT_PARAMS, DEFAULT_COLORS, MAX_LAYERS, PATTERN_PARAM_DEFS, RANDOMIZE_EXCLUDED_KEYS } from '../constants';
 import { randomPatchForDef } from './params/paramOps';
 import { getDynamicDefaults, getDynamicParamDefs } from './patternRegistry';
+import { patternUsesSeed } from './patterns';
 import { isMoireMember, findMoirePartnerA, findMoirePartnerB } from './moirePair';
 import { migrateLayer } from './migration';
 import { operationIdForRole } from './operations';
@@ -477,56 +478,56 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
     });
   }, []);
 
+  // Return a copy of `l` with its CHECKED params (l.randomizeKeys) re-rolled.
+  // Returns the layer unchanged when nothing is checked or no defs exist. Shared
+  // by the param-randomize handlers AND the seed fallback below.
+  const withRandomizedParams = (l) => {
+    const keys = l.randomizeKeys;
+    if (!keys || keys.length === 0) return l;
+    const defs = PATTERN_PARAM_DEFS[l.patternType] || getDynamicParamDefs(l.patternType);
+    if (!defs) return l;
+    const newParams = { ...l.params };
+    for (const key of keys) {
+      const def = defs.find((d) => d.key === key);
+      if (def) Object.assign(newParams, randomPatchForDef(def));
+    }
+    return { ...l, params: newParams };
+  };
+
+  // Re-roll a layer's seed. For SEEDLESS patterns (Spirograph, Recursive, Feather,
+  // Moiré) the seed is ignored by generate(), so a bare reseed would be invisible —
+  // fall back to randomizing the layer's checked params so the die always produces a
+  // visible change. Seed-using patterns keep the cheap reseed-only behavior.
+  const reseedOrRandomizeParams = (l) => {
+    const seeded = { ...l, seed: randomSeed() };
+    return patternUsesSeed(l.patternType) ? seeded : withRandomizedParams(seeded);
+  };
+
   const randomizeLayer = useCallback((id) => {
     setLayers((prev) =>
-      prev.map((l) => (l.id === id ? { ...l, seed: randomSeed() } : l))
+      prev.map((l) => (l.id === id ? reseedOrRandomizeParams(l) : l))
     );
   }, []);
 
+  // Locked layers are protected from edits (full lock enforcement), so bulk
+  // randomize skips them — only unlocked layers are re-rolled.
   const randomizeAll = useCallback(() => {
     setLayers((prev) =>
-      prev.map((l) => ({ ...l, seed: randomSeed() }))
+      prev.map((l) => (l.locked ? l : reseedOrRandomizeParams(l)))
     );
   }, []);
 
   // Randomize checked params for a single layer
   const randomizeLayerParams = useCallback((id) => {
     setLayers((prev) =>
-      prev.map((l) => {
-        if (l.id !== id) return l;
-        const keys = l.randomizeKeys;
-        if (!keys || keys.length === 0) return l;
-        const defs = PATTERN_PARAM_DEFS[l.patternType];
-        if (!defs) return l;
-        const newParams = { ...l.params };
-        for (const key of keys) {
-          const def = defs.find((d) => d.key === key);
-          if (def) {
-            Object.assign(newParams, randomPatchForDef(def));
-          }
-        }
-        return { ...l, params: newParams };
-      })
+      prev.map((l) => (l.id === id ? withRandomizedParams(l) : l))
     );
   }, []);
 
-  // Randomize checked params for ALL layers
+  // Randomize checked params for ALL layers (locked layers are skipped).
   const randomizeAllParams = useCallback(() => {
     setLayers((prev) =>
-      prev.map((l) => {
-        const keys = l.randomizeKeys;
-        if (!keys || keys.length === 0) return l;
-        const defs = PATTERN_PARAM_DEFS[l.patternType];
-        if (!defs) return l;
-        const newParams = { ...l.params };
-        for (const key of keys) {
-          const def = defs.find((d) => d.key === key);
-          if (def) {
-            Object.assign(newParams, randomPatchForDef(def));
-          }
-        }
-        return { ...l, params: newParams };
-      })
+      prev.map((l) => (l.locked ? l : withRandomizedParams(l)))
     );
   }, []);
 

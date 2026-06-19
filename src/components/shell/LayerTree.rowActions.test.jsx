@@ -111,3 +111,81 @@ describe("LayerTree — re-homed per-row + header actions (#16 AC2)", () => {
     expect(screen.queryByRole("button", { name: "Randomize all seeds" })).not.toBeInTheDocument();
   });
 });
+
+describe("LayerTree — full lock enforcement on the row (#lock)", () => {
+  function renderWithLockedFirst(handlers = {}) {
+    const props = {
+      layers: [
+        { ...makeLayer("l1", { name: "A" }), locked: true },
+        makeLayer("l2", { name: "B" }),
+      ],
+      operations: seedOperations(),
+      profileId: "laser",
+      selectedLayerId: null,
+      onSelectLayer: vi.fn(),
+      onUpdateLayer: vi.fn(),
+      onReorderLayers: vi.fn(),
+      onProfileChange: vi.fn(),
+      onDeleteLayer: vi.fn(),
+      onDuplicateLayer: vi.fn(),
+      onRandomizeLayer: vi.fn(),
+      onRandomizeLayerParams: vi.fn(),
+      onExportLayer: vi.fn(),
+      onAssignOperation: vi.fn(),
+      ...handlers,
+    };
+    render(<LayerTree {...props} />);
+    return props;
+  }
+
+  it("disables every mutating row action on a locked layer", () => {
+    renderWithLockedFirst();
+    const locked = screen.getAllByTestId("layer-row")[0];
+    for (const name of [
+      "Randomize layer",
+      "Randomize layer params",
+      "Duplicate layer",
+      "Export layer",
+      "Delete layer",
+      "Move layer up",
+      "Move layer down",
+    ]) {
+      expect(within(locked).getByRole("button", { name })).toBeDisabled();
+    }
+  });
+
+  it("clicking a disabled action on a locked layer does not fire its handler", () => {
+    const onDeleteLayer = vi.fn();
+    const onRandomizeLayer = vi.fn();
+    renderWithLockedFirst({ onDeleteLayer, onRandomizeLayer });
+    const locked = screen.getAllByTestId("layer-row")[0];
+    fireEvent.click(within(locked).getByRole("button", { name: "Delete layer" }));
+    fireEvent.click(within(locked).getByRole("button", { name: "Randomize layer" }));
+    expect(onDeleteLayer).not.toHaveBeenCalled();
+    expect(onRandomizeLayer).not.toHaveBeenCalled();
+  });
+
+  it("keeps visibility + lock toggles live and the row selectable when locked", () => {
+    const onUpdateLayer = vi.fn();
+    const onSelectLayer = vi.fn();
+    renderWithLockedFirst({ onUpdateLayer, onSelectLayer });
+    const locked = screen.getAllByTestId("layer-row")[0];
+
+    // Visibility toggle stays usable (so a locked layer can still be hidden).
+    expect(within(locked).getByRole("button", { name: "Hide layer" })).toBeEnabled();
+    // The lock control reads "Unlock layer" and stays usable.
+    fireEvent.click(within(locked).getByRole("button", { name: "Unlock layer" }));
+    expect(onUpdateLayer).toHaveBeenCalledWith("l1", { locked: false });
+
+    // The row itself stays selectable (so the inspector can show it read-only).
+    fireEvent.click(within(locked).getByText("A"));
+    expect(onSelectLayer).toHaveBeenCalledWith("l1");
+  });
+
+  it("does not disable actions on an UNLOCKED sibling row", () => {
+    renderWithLockedFirst();
+    const unlocked = screen.getAllByTestId("layer-row")[1];
+    expect(within(unlocked).getByRole("button", { name: "Delete layer" })).toBeEnabled();
+    expect(within(unlocked).getByRole("button", { name: "Randomize layer" })).toBeEnabled();
+  });
+});

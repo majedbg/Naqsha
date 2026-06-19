@@ -149,4 +149,53 @@ describe("Inspector (B3 — selection-driven param inspector)", () => {
     expect(screen.queryAllByRole("slider")).toHaveLength(0);
     expect(screen.getByTestId("inspector-empty")).toBeInTheDocument();
   });
+
+  // (e) LOCK — a locked layer's inspector is read-only with an unlock affordance.
+  it("shows a read-only banner and inert editor body when the layer is locked", () => {
+    render(
+      <Inspector
+        layers={[{ ...makeLayer("l1", "flowfield", "Flow"), locked: true }]}
+        selectedLayerId="l1"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    expect(screen.getByTestId("inspector-locked-banner")).toBeInTheDocument();
+    // The editor body (last child of inspector-params) is made inert.
+    const body = screen
+      .getByTestId("inspector-params")
+      .querySelector(":scope > div:last-child");
+    expect(body.className).toMatch(/pointer-events-none/);
+  });
+
+  it("unlock button in the banner clears the lock via onUpdateLayer", () => {
+    const onUpdateSpy = vi.fn();
+    render(
+      <Harness
+        initialLayers={[{ ...makeLayer("l1", "flowfield", "Flow"), locked: true }]}
+        initialSelectedId="l1"
+        onUpdateSpy={onUpdateSpy}
+      />
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Unlock" }));
+    expect(onUpdateSpy).toHaveBeenCalledWith("l1", { locked: false });
+  });
+
+  it("editing a param on a locked layer is a no-op (read-only)", () => {
+    const onUpdateSpy = vi.fn();
+    render(
+      <Harness
+        initialLayers={[{ ...makeLayer("l1", "flowfield", "Flow"), locked: true }]}
+        initialSelectedId="l1"
+        onUpdateSpy={onUpdateSpy}
+      />
+    );
+    const slider = screen.getByRole("slider", { name: "Particle Count" });
+    fireEvent.change(slider, { target: { value: "1500" } });
+    // The locked layer's param onChange is wired to a no-op, so no params patch
+    // is emitted (only the later Unlock click would call onUpdateLayer).
+    expect(
+      onUpdateSpy.mock.calls.some(([, patch]) => patch && "params" in patch)
+    ).toBe(false);
+  });
 });

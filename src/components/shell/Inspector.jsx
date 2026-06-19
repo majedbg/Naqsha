@@ -108,10 +108,19 @@ function VariableWeightControls({ layer, profileId, onVariableWeightChange }) {
 // usePatternCache (a hook) is only called when a layer is actually selected —
 // hooks can't be called conditionally inside Inspector itself.
 function SelectedLayerInspector({ layer, unit, profileId, onUpdateLayer, onChangeLayerPattern, onVariableWeightChange }) {
+  // Full lock enforcement (#lock): a locked layer's parameters are READ-ONLY. We
+  // no-op every mutating handler (defense in depth against keyboard/programmatic
+  // edits) AND visually disable the editor body below with pointer-events-none, so
+  // the controls are visible but inert. The unlock affordance lives OUTSIDE that
+  // inert wrapper so the layer can always be unlocked from here.
+  const locked = !!layer.locked;
+
   // Pattern swap: route through the same cache machine LayerCard uses, applied via
   // the pair-aware onChangeLayerPattern when present (falls back to a plain param
   // update so the component works standalone / in tests without a router).
-  const applyPatternPatch = onChangeLayerPattern
+  const applyPatternPatch = locked
+    ? () => {}
+    : onChangeLayerPattern
     ? (patch) => onChangeLayerPattern(layer.id, patch)
     : (patch) => onUpdateLayer(layer.id, patch);
   const { handlePatternChange } = usePatternCache(layer, applyPatternPatch);
@@ -123,36 +132,68 @@ function SelectedLayerInspector({ layer, unit, profileId, onUpdateLayer, onChang
     params: layer.params,
     // Active document unit so length-tagged params (#13) display/convert in it.
     unit,
-    onChange: (params) => onUpdateLayer(layer.id, { params }),
+    onChange: locked ? () => {} : (params) => onUpdateLayer(layer.id, { params }),
     randomizeKeys: layer.randomizeKeys,
-    onRandomizeKeysChange: (keys) =>
-      onUpdateLayer(layer.id, { randomizeKeys: keys }),
+    onRandomizeKeysChange: locked
+      ? () => {}
+      : (keys) => onUpdateLayer(layer.id, { randomizeKeys: keys }),
   });
 
   return (
     <div className="flex flex-col gap-3 p-3" data-testid="inspector-params">
-      {/* Pattern type + swap control, pinned at the top. */}
-      <div className="space-y-1.5">
-        <h3 className="text-xs font-semibold text-ink-soft uppercase tracking-wider">
-          Pattern
-        </h3>
-        <PatternTabs active={layer.patternType} onChange={handlePatternChange} />
-      </div>
-
-      {/* Collapsible, grouped param controls (Structure / Scale / Variation /
-          Stroke / Transform — the existing PARAM_GROUPS). */}
-      {layerParamsValue && (
-        <LayerParamsProvider value={layerParamsValue}>
-          <PatternParams />
-        </LayerParamsProvider>
+      {/* Locked banner + unlock affordance — OUTSIDE the inert wrapper, so a locked
+          layer can always be unlocked from the inspector. */}
+      {locked && (
+        <div
+          data-testid="inspector-locked-banner"
+          className="flex items-center justify-between gap-2 rounded-xs border border-hairline bg-paper-warm px-2 py-1.5"
+        >
+          <span className="flex items-center gap-1.5 text-[11px] text-ink-soft">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+              <rect x="3" y="11" width="18" height="11" rx="2" />
+              <path d="M7 11V7a5 5 0 0110 0v4" />
+            </svg>
+            Layer locked — read-only
+          </span>
+          <button
+            type="button"
+            onClick={() => onUpdateLayer(layer.id, { locked: false })}
+            className="shrink-0 rounded-xs px-1.5 py-0.5 text-[11px] font-medium text-ink hover:text-saffron transition-colors"
+          >
+            Unlock
+          </button>
+        </div>
       )}
 
-      {/* Variable line-weight UI (#17, C8) — capability-gated, OFF by default. */}
-      <VariableWeightControls
-        layer={layer}
-        profileId={profileId}
-        onVariableWeightChange={onVariableWeightChange}
-      />
+      {/* Editor body. When locked, the whole subtree is made inert (no pointer
+          events, dimmed) and every mutating handler is already a no-op above. */}
+      <div
+        className={`flex flex-col gap-3 ${locked ? "pointer-events-none select-none opacity-60" : ""}`}
+        aria-disabled={locked || undefined}
+      >
+        {/* Pattern type + swap control, pinned at the top. */}
+        <div className="space-y-1.5">
+          <h3 className="text-xs font-semibold text-ink-soft uppercase tracking-wider">
+            Pattern
+          </h3>
+          <PatternTabs active={layer.patternType} onChange={handlePatternChange} />
+        </div>
+
+        {/* Collapsible, grouped param controls (Structure / Scale / Variation /
+            Stroke / Transform — the existing PARAM_GROUPS). */}
+        {layerParamsValue && (
+          <LayerParamsProvider value={layerParamsValue}>
+            <PatternParams />
+          </LayerParamsProvider>
+        )}
+
+        {/* Variable line-weight UI (#17, C8) — capability-gated, OFF by default. */}
+        <VariableWeightControls
+          layer={layer}
+          profileId={profileId}
+          onVariableWeightChange={onVariableWeightChange}
+        />
+      </div>
     </div>
   );
 }

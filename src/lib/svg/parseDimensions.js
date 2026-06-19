@@ -10,23 +10,53 @@ const MM_PER_IN = 25.4;
 const PX_PER_IN = 96;
 const PT_PER_IN = 72;
 
-function getAttr(svgString, name) {
-  const re = new RegExp(`\\b${name}\\s*=\\s*"([^"]*)"`);
-  const m = re.exec(svgString);
-  return m ? m[1] : null;
+// Extract the root `<svg …>` opening tag only. Attribute reads must be scoped
+// to this slice so a CHILD element's width/height (e.g. a background <rect> or
+// <image>) is never mistaken for the document size.
+function rootTag(svgString) {
+  const m = /<svg\b[^>]*>/.exec(svgString);
+  return m ? m[0] : '';
 }
 
-function parseLength(raw) {
-  if (raw == null) return null;
-  const match = /^\s*([+-]?(?:\d+\.?\d*|\.\d+))\s*(mm|px|pt)?\s*$/.exec(raw);
-  if (!match) return null;
-  return { value: parseFloat(match[1]), unit: match[2] || '' };
+function getAttr(svgString, name) {
+  const re = new RegExp(`\\b${name}\\s*=\\s*(["'])(.*?)\\1`);
+  const m = re.exec(svgString);
+  return m ? m[2] : null;
+}
+
+// Classify a raw width/height attribute value into one of:
+//   { kind: 'absent' }      — attribute not present
+//   { kind: 'length', ... } — a usable absolute length (finite & > 0)
+//   { kind: 'unusable' }    — present but not a usable absolute size:
+//                             percentages/relative units, or a parsed
+//                             length that is non-finite or ≤ 0. These route
+//                             to the viewBox fallback (ambiguous), not a throw.
+//   { kind: 'garbage' }     — syntactically unparseable (e.g. "abc"). Always
+//                             throws INVALID_DIMENSION regardless of viewBox.
+function classifyDim(raw) {
+  if (raw == null) return { kind: 'absent' };
+  // Percentages are relative to the viewport — not an absolute physical size.
+  if (/^\s*[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?\s*%\s*$/.test(raw)) {
+    return { kind: 'unusable' };
+  }
+  const match =
+    /^\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)\s*(mm|cm|in|px|pt)?\s*$/.exec(
+      raw,
+    );
+  if (!match) return { kind: 'garbage' };
+  const value = parseFloat(match[1]);
+  if (!Number.isFinite(value) || value <= 0) return { kind: 'unusable' };
+  return { kind: 'length', value, unit: match[2] || '' };
 }
 
 function toMm(length, dpi) {
   switch (length.unit) {
     case 'mm':
       return length.value;
+    case 'cm':
+      return length.value * 10;
+    case 'in':
+      return length.value * MM_PER_IN;
     case 'pt':
       return (length.value / PT_PER_IN) * MM_PER_IN;
     case 'px':
@@ -38,22 +68,24 @@ function toMm(length, dpi) {
 }
 
 export function parseDimensions(svgString) {
-  const rawWidth = getAttr(svgString, 'width');
-  const rawHeight = getAttr(svgString, 'height');
-  const width = parseLength(rawWidth);
-  const height = parseLength(rawHeight);
+  const root = rootTag(svgString);
+  const rawWidth = getAttr(root, 'width');
+  const rawHeight = getAttr(root, 'height');
+  const width = classifyDim(rawWidth);
+  const height = classifyDim(rawHeight);
 
-  // A dimension attribute that is present but unparseable (e.g. width="abc")
-  // is corrupt input — fail loudly rather than silently falling back.
-  if ((rawWidth != null && !width) || (rawHeight != null && !height)) {
+  // A dimension attribute that is syntactically unparseable (e.g. width="abc")
+  // is corrupt input — fail loudly rather than silently falling back, even when
+  // a viewBox is present.
+  if (width.kind === 'garbage' || height.kind === 'garbage') {
     throw new SvgDimensionError(
       'SVG has an unparseable width/height attribute',
       'INVALID_DIMENSION',
     );
   }
 
-  if (width && height) {
-    const dpi = pxDpiFor(svgString);
+  if (width.kind === 'length' && height.kind === 'length') {
+    const dpi = pxDpiFor(root);
     const source = width.unit || 'px';
     return {
       widthMm: toMm(width, dpi),
@@ -63,10 +95,11 @@ export function parseDimensions(svgString) {
     };
   }
 
-  // No explicit width/height: fall back to the viewBox. We can only express
-  // its user units as a physical size by assuming a DPI, so the result is
-  // flagged ambiguous. Assumption: user units are treated as px at 96dpi.
-  const viewBox = parseViewBox(getAttr(svgString, 'viewBox'));
+  // Explicit dims are absent, relative (%), or non-positive — fall back to the
+  // viewBox. We can only express its user units as a physical size by assuming
+  // a DPI, so the result is flagged ambiguous. Assumption: user units are
+  // treated as px at 96dpi.
+  const viewBox = parseViewBox(getAttr(root, 'viewBox'));
   if (viewBox) {
     return {
       widthMm: (viewBox.width / PX_PER_IN) * MM_PER_IN,
@@ -74,6 +107,16 @@ export function parseDimensions(svgString) {
       ambiguous: true,
       source: 'viewbox',
     };
+  }
+
+  // No viewBox to fall back to. If a dimension was present-but-unusable
+  // (non-positive or relative %), that is invalid input; otherwise the SVG
+  // simply carries no dimensions at all.
+  if (width.kind === 'unusable' || height.kind === 'unusable') {
+    throw new SvgDimensionError(
+      'SVG has a non-positive or relative width/height and no viewBox fallback',
+      'INVALID_DIMENSION',
+    );
   }
 
   throw new SvgDimensionError(

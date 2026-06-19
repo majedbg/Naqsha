@@ -58,6 +58,13 @@ export function sanitizeSvg(svgString) {
     // below — any external/remote reference (http(s), //, data:, javascript:) is
     // stripped there — so re-allowing <use> does not weaken our protections.
     ADD_TAGS: ['use'],
+    // <style> blocks and inline style="" can smuggle remote references via CSS
+    // url() (e.g. fill:url(http://evil/p.png)) — a tracking-pixel / exfiltration
+    // vector our href hook can't reach. Laser cut/score/engrave geometry uses
+    // presentation attributes (stroke/fill) directly, never CSS, so forbidding
+    // both is safe for the domain.
+    FORBID_TAGS: ['style'],
+    FORBID_ATTR: ['style'],
   });
 
   const removed = (DOMPurify.removed || [])

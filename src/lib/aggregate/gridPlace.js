@@ -13,7 +13,25 @@
 //     rowHeight + gapMm; fits when yMm + rowHeight + gapMm <= sheetHMm.
 //   - No rotation.
 
-export function gridPlace(pieces, { sheetWMm, sheetHMm, gapMm }) {
+export function gridPlace(pieces, { sheetWMm, sheetHMm, gapMm = 0 }) {
+  // Validate sheet config up front (before any piece is examined) so that a
+  // bad sheet/gap throws a clear INVALID_SHEET, never a misleading
+  // PIECE_TOO_LARGE and never NaN/undefined coordinates downstream.
+  if (
+    !Number.isFinite(sheetWMm) ||
+    !Number.isFinite(sheetHMm) ||
+    sheetWMm <= 0 ||
+    sheetHMm <= 0 ||
+    !Number.isFinite(gapMm) ||
+    gapMm < 0
+  ) {
+    const err = new Error(
+      `Invalid sheet config (sheetWMm=${sheetWMm}, sheetHMm=${sheetHMm}, gapMm=${gapMm})`,
+    );
+    err.code = 'INVALID_SHEET';
+    throw err;
+  }
+
   const sheets = [];
   let current = null; // current sheet (array of placed pieces)
   let cursorX = gapMm;
@@ -30,6 +48,24 @@ export function gridPlace(pieces, { sheetWMm, sheetHMm, gapMm }) {
 
   for (const piece of pieces) {
     const { id, wMm, hMm } = piece;
+
+    // Validate piece dims BEFORE the oversize guard: NaN/non-finite values
+    // make every comparison false, so they would slip past and poison
+    // cursorX with NaN. Reject any non-finite or non-positive dimension.
+    if (
+      !Number.isFinite(wMm) ||
+      !Number.isFinite(hMm) ||
+      wMm <= 0 ||
+      hMm <= 0
+    ) {
+      const err = new Error(
+        `Piece ${id} has invalid dimensions (${wMm}x${hMm}mm); ` +
+          'wMm and hMm must be finite and > 0',
+      );
+      err.code = 'INVALID_PIECE';
+      err.pieceId = id;
+      throw err;
+    }
 
     // A piece that cannot fit even alone (respecting edge gaps) is fatal.
     if (wMm + 2 * gapMm > sheetWMm || hMm + 2 * gapMm > sheetHMm) {

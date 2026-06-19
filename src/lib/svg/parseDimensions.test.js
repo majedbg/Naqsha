@@ -93,6 +93,86 @@ describe('parseDimensions', () => {
     }
   });
 
+  it('A0: ignores a child element width/height and falls back to viewBox', () => {
+    const svg = `<svg viewBox="0 0 24 24"><rect width="10" height="20"/></svg>`;
+    // viewBox 24x24 as px@96: 24/96*25.4 = 6.35
+    const result = parseDimensions(svg);
+    expect(result.widthMm).toBeCloseTo(6.35, 4);
+    expect(result.heightMm).toBeCloseTo(6.35, 4);
+    expect(result.ambiguous).toBe(true);
+    expect(result.source).toBe('viewbox');
+  });
+
+  it('A6: reads single-quoted root attributes', () => {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width='80mm' height='60mm'/>`;
+    const result = parseDimensions(svg);
+    expect(result.widthMm).toBe(80);
+    expect(result.heightMm).toBe(60);
+    expect(result.source).toBe('mm');
+  });
+
+  it('A1: converts cm to mm (8cm -> 80mm)', () => {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="8cm" height="6cm"/>`;
+    const result = parseDimensions(svg);
+    expect(result.widthMm).toBeCloseTo(80, 6);
+    expect(result.heightMm).toBeCloseTo(60, 6);
+    expect(result.ambiguous).toBe(false);
+    expect(result.source).toBe('cm');
+  });
+
+  it('A1: converts in to mm (2in -> 50.8mm)', () => {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="2in" height="1in"/>`;
+    const result = parseDimensions(svg);
+    expect(result.widthMm).toBeCloseTo(50.8, 6);
+    expect(result.heightMm).toBeCloseTo(25.4, 6);
+    expect(result.source).toBe('in');
+  });
+
+  it('A3: parses scientific notation (3e2px -> 200px)', () => {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="3e2px" height="150px"/>`;
+    const result = parseDimensions(svg);
+    // 300 / 96 * 25.4 = 79.375
+    expect(result.widthMm).toBeCloseTo(79.375, 4);
+    expect(result.heightMm).toBeCloseTo(39.6875, 4);
+    expect(result.source).toBe('px');
+  });
+
+  it('A2: zero width with a viewBox falls back to viewBox (ambiguous)', () => {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="0" height="60" viewBox="0 0 24 24"/>`;
+    const result = parseDimensions(svg);
+    expect(result.widthMm).toBeCloseTo(6.35, 4);
+    expect(result.heightMm).toBeCloseTo(6.35, 4);
+    expect(result.ambiguous).toBe(true);
+    expect(result.source).toBe('viewbox');
+  });
+
+  it('A2: negative width with a viewBox falls back to viewBox (ambiguous)', () => {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="-100" height="60" viewBox="0 0 24 24"/>`;
+    const result = parseDimensions(svg);
+    expect(result.widthMm).toBeCloseTo(6.35, 4);
+    expect(result.ambiguous).toBe(true);
+    expect(result.source).toBe('viewbox');
+  });
+
+  it('A2: percentage width with a good viewBox falls back to viewBox (ambiguous)', () => {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" viewBox="0 0 24 24"/>`;
+    const result = parseDimensions(svg);
+    expect(result.widthMm).toBeCloseTo(6.35, 4);
+    expect(result.heightMm).toBeCloseTo(6.35, 4);
+    expect(result.ambiguous).toBe(true);
+    expect(result.source).toBe('viewbox');
+  });
+
+  it('A2: non-positive dimension with no viewBox throws a typed error', () => {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="0" height="60"/>`;
+    expect(() => parseDimensions(svg)).toThrow(SvgDimensionError);
+    try {
+      parseDimensions(svg);
+    } catch (err) {
+      expect(err.code).toBe('INVALID_DIMENSION');
+    }
+  });
+
   it('throws a typed error when a dimension is unparseable garbage', () => {
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="abc" height="60mm" viewBox="0 0 80 60"/>`;
     expect(() => parseDimensions(svg)).toThrow(SvgDimensionError);

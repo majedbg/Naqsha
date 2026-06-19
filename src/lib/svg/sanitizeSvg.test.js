@@ -141,6 +141,53 @@ describe('sanitizeSvg — external/remote references', () => {
   });
 });
 
+describe('sanitizeSvg — CSS-based remote references', () => {
+  it('strips a <style> @import pulling a remote stylesheet', () => {
+    const svg =
+      '<svg xmlns="http://www.w3.org/2000/svg">' +
+      '<style>@import url(http://evil.example.com/x.css);</style>' +
+      '<rect width="5" height="5"/></svg>';
+    const { clean, removed } = sanitizeSvg(svg);
+
+    // No remote URL survives anywhere in the cleaned output.
+    expect(clean).not.toContain('evil.example.com');
+    expect(clean).not.toMatch(/@import/i);
+    expect(clean).not.toMatch(/<style/i);
+    // Geometry survives.
+    expect(clean).toContain('<rect');
+    // The <style> removal is reported.
+    expect(removed.some((r) => /style/i.test(r))).toBe(true);
+  });
+
+  it('strips a <style> block whose CSS url() points at a remote resource', () => {
+    const svg =
+      '<svg xmlns="http://www.w3.org/2000/svg">' +
+      '<style>rect{fill:url(http://evil.example.com/p.png)}</style>' +
+      '<rect width="5" height="5"/></svg>';
+    const { clean, removed } = sanitizeSvg(svg);
+
+    expect(clean).not.toContain('evil.example.com');
+    expect(clean).not.toMatch(/<style/i);
+    expect(clean).toContain('<rect');
+    expect(removed.some((r) => /style/i.test(r))).toBe(true);
+  });
+
+  it('strips an inline style="" attribute whose url() points at a remote resource', () => {
+    const svg =
+      '<svg xmlns="http://www.w3.org/2000/svg">' +
+      '<rect width="5" height="5" style="fill:url(http://evil.example.com/p.png)"/>' +
+      '</svg>';
+    const { clean, removed } = sanitizeSvg(svg);
+
+    expect(clean).not.toContain('evil.example.com');
+    expect(clean).not.toMatch(/style=/i);
+    // Geometry survives, just without the style attribute.
+    expect(clean).toContain('<rect');
+    // The style-attribute removal is reported.
+    expect(removed.some((r) => /style/i.test(r))).toBe(true);
+  });
+});
+
 describe('sanitizeSvg — removed[] accuracy', () => {
   it('reports every vector taken out of a multi-vector document and nothing benign', () => {
     const svg =

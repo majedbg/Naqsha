@@ -355,6 +355,120 @@ live('org/admin RLS', () => {
     expect(data[0].slug).toBe(slug);
   });
 
+  // R1 MEDIUM: a submission's svg_path folder must be bound to its org_id. A
+  // member of orgs A and B cannot file a row under org B whose SVG lives under
+  // A's path prefix (path/row org divergence). Inserts go through the member's
+  // RLS client (not the service-role seed) so WITH CHECK is exercised.
+  it('binds submission svg_path folder to its org_id', async () => {
+    const a = await seedOrg(`orgA-${Date.now()}-${counter++}`);
+    const b = await seedOrg(`orgB-${Date.now()}-${counter++}`);
+    const email = uniqueEmail('multi');
+    const uid = await createUser(email);
+    await addMember(a.orgId, email, uid);
+    await addMember(b.orgId, email, uid);
+
+    const client = clientFor(uid, email);
+
+    // Diverging: row org = B, path folder = A. Must be denied.
+    const bad = await client
+      .from('submissions')
+      .insert({
+        org_id: b.orgId,
+        submitted_by: uid,
+        org_material_id: b.orgMaterialId,
+        source: 'upload',
+        svg_path: `${a.orgId}/x.svg`,
+        width_mm: 100,
+        height_mm: 100,
+      })
+      .select();
+    expect(bad.error).not.toBeNull();
+
+    const { data: leaked } = await service
+      .from('submissions')
+      .select('id')
+      .eq('org_id', b.orgId)
+      .eq('svg_path', `${a.orgId}/x.svg`);
+    expect(leaked ?? []).toHaveLength(0);
+
+    // Positive control: matching folder = row org B. Must be allowed.
+    const good = await client
+      .from('submissions')
+      .insert({
+        org_id: b.orgId,
+        submitted_by: uid,
+        org_material_id: b.orgMaterialId,
+        source: 'upload',
+        svg_path: `${b.orgId}/ok.svg`,
+        width_mm: 100,
+        height_mm: 100,
+      })
+      .select();
+    expect(good.error).toBeNull();
+    expect(good.data).toHaveLength(1);
+
+    // UPDATE must not re-create the divergence (immutable-snapshot intent):
+    // rebinding svg_path to A's prefix on a B-org row is denied.
+    const rebind = await client
+      .from('submissions')
+      .update({ svg_path: `${a.orgId}/x.svg` })
+      .eq('id', good.data[0].id)
+      .select();
+    expect(rebind.data ?? []).toHaveLength(0); // WITH CHECK blocks the rebind
+    const { data: stillBound } = await service
+      .from('submissions')
+      .select('svg_path')
+      .eq('id', good.data[0].id)
+      .single();
+    expect(stillBound.svg_path).toBe(`${b.orgId}/ok.svg`);
+  });
+
+  // R1 BLOCKER: an UNVERIFIED platform-admin email is DENIED platform privileges
+  // (org INSERT + materials write); a VERIFIED platform-admin email stays allowed.
+  it('denies an unverified platform-admin email and allows a verified one', async () => {
+    // Two distinct allowlisted emails (auth users are unique by email).
+    const unverifiedEmail = uniqueEmail('padmin-unv');
+    const verifiedEmail = uniqueEmail('padmin-ver');
+    await service
+      .from('platform_admins')
+      .insert([{ email: unverifiedEmail }, { email: verifiedEmail }]);
+
+    const unverifiedUid = await createUser(unverifiedEmail, { verified: false });
+    const unverified = clientFor(unverifiedUid, unverifiedEmail, {
+      verified: false,
+    });
+    const slugDenied = `unverified-org-${Date.now()}-${counter++}`;
+    const insOrg = await unverified
+      .from('orgs')
+      .insert({ slug: slugDenied, name: slugDenied })
+      .select();
+    expect(insOrg.error).not.toBeNull(); // org INSERT denied
+
+    const insMat = await unverified
+      .from('materials')
+      .insert({ name: `unverified-mat-${Date.now()}-${counter++}` })
+      .select();
+    expect(insMat.error).not.toBeNull(); // materials write denied
+
+    // No org / material leaked through.
+    const { data: orgsAfter } = await service
+      .from('orgs')
+      .select('id')
+      .eq('slug', slugDenied);
+    expect(orgsAfter ?? []).toHaveLength(0);
+
+    // A verified allowlisted email keeps full privilege.
+    const verifiedUid = await createUser(verifiedEmail, { verified: true });
+    const verified = clientFor(verifiedUid, verifiedEmail, { verified: true });
+    const slugAllowed = `verified-org-${Date.now()}-${counter++}`;
+    const okOrg = await verified
+      .from('orgs')
+      .insert({ slug: slugAllowed, name: slugAllowed })
+      .select();
+    expect(okOrg.error).toBeNull();
+    expect(okOrg.data).toHaveLength(1);
+  });
+
   // 10. A non-platform user CANNOT insert or update an org.
   it('denies a non-platform user inserting or updating an org', async () => {
     const email = uniqueEmail('nobody');

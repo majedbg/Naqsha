@@ -177,6 +177,128 @@ describe('gridPlace — gap convention', () => {
   });
 });
 
+describe('gridPlace — invalid piece dimensions (B1/B3)', () => {
+  it('throws INVALID_PIECE for a NaN width (defeats the oversize guard)', () => {
+    expect(() =>
+      gridPlace([{ id: 'a', wMm: NaN, hMm: 10 }], {
+        sheetWMm: 100,
+        sheetHMm: 100,
+        gapMm: 0,
+      }),
+    ).toThrowError(
+      expect.objectContaining({ code: 'INVALID_PIECE', pieceId: 'a' }),
+    );
+  });
+
+  it('throws INVALID_PIECE for a NaN height', () => {
+    expect(() =>
+      gridPlace([{ id: 'a', wMm: 10, hMm: NaN }], {
+        sheetWMm: 100,
+        sheetHMm: 100,
+        gapMm: 0,
+      }),
+    ).toThrowError(
+      expect.objectContaining({ code: 'INVALID_PIECE', pieceId: 'a' }),
+    );
+  });
+
+  it('throws INVALID_PIECE for Infinity width', () => {
+    expect(() =>
+      gridPlace([{ id: 'inf', wMm: Infinity, hMm: 10 }], {
+        sheetWMm: 100,
+        sheetHMm: 100,
+        gapMm: 0,
+      }),
+    ).toThrowError(
+      expect.objectContaining({ code: 'INVALID_PIECE', pieceId: 'inf' }),
+    );
+  });
+
+  it('throws INVALID_PIECE for a zero-width piece (subsumes B3 overlap)', () => {
+    expect(() =>
+      gridPlace([{ id: 'z', wMm: 0, hMm: 5 }], {
+        sheetWMm: 10,
+        sheetHMm: 10,
+        gapMm: 0,
+      }),
+    ).toThrowError(
+      expect.objectContaining({ code: 'INVALID_PIECE', pieceId: 'z' }),
+    );
+  });
+
+  it('throws INVALID_PIECE for a negative height', () => {
+    expect(() =>
+      gridPlace([{ id: 'n', wMm: 10, hMm: -5 }], {
+        sheetWMm: 100,
+        sheetHMm: 100,
+        gapMm: 0,
+      }),
+    ).toThrowError(
+      expect.objectContaining({ code: 'INVALID_PIECE', pieceId: 'n' }),
+    );
+  });
+});
+
+describe('gridPlace — gap default & config validation (B2/B4)', () => {
+  it('defaults gapMm to 0 when omitted (places at the origin, no NaN coords)', () => {
+    const sheets = gridPlace([{ id: 'a', wMm: 10, hMm: 10 }], {
+      sheetWMm: 100,
+      sheetHMm: 100,
+    });
+    expect(sheets).toEqual([[{ id: 'a', xMm: 0, yMm: 0 }]]);
+  });
+
+  it('throws INVALID_SHEET for a non-finite gapMm', () => {
+    expect(() =>
+      gridPlace([{ id: 'a', wMm: 10, hMm: 10 }], {
+        sheetWMm: 100,
+        sheetHMm: 100,
+        gapMm: NaN,
+      }),
+    ).toThrowError(expect.objectContaining({ code: 'INVALID_SHEET' }));
+  });
+
+  it('throws INVALID_SHEET for a negative gapMm', () => {
+    expect(() =>
+      gridPlace([{ id: 'a', wMm: 10, hMm: 10 }], {
+        sheetWMm: 100,
+        sheetHMm: 100,
+        gapMm: -1,
+      }),
+    ).toThrowError(expect.objectContaining({ code: 'INVALID_SHEET' }));
+  });
+
+  it('throws INVALID_SHEET for a non-finite sheet width', () => {
+    expect(() =>
+      gridPlace([{ id: 'a', wMm: 10, hMm: 10 }], {
+        sheetWMm: NaN,
+        sheetHMm: 100,
+        gapMm: 0,
+      }),
+    ).toThrowError(expect.objectContaining({ code: 'INVALID_SHEET' }));
+  });
+
+  it('throws INVALID_SHEET for a zero sheet height', () => {
+    expect(() =>
+      gridPlace([{ id: 'a', wMm: 10, hMm: 10 }], {
+        sheetWMm: 100,
+        sheetHMm: 0,
+        gapMm: 0,
+      }),
+    ).toThrowError(expect.objectContaining({ code: 'INVALID_SHEET' }));
+  });
+
+  it('throws INVALID_SHEET (not PIECE_TOO_LARGE) for a negative sheet width', () => {
+    expect(() =>
+      gridPlace([{ id: 'a', wMm: 10, hMm: 10 }], {
+        sheetWMm: -5,
+        sheetHMm: 100,
+        gapMm: 0,
+      }),
+    ).toThrowError(expect.objectContaining({ code: 'INVALID_SHEET' }));
+  });
+});
+
 describe('gridPlace — empty input', () => {
   it('returns no sheets for an empty piece list', () => {
     expect(

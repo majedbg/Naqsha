@@ -132,7 +132,7 @@ set search_path = public as $$
   select exists (
     select 1 from public.platform_admins p
     where p.email = auth.email()
-  );
+  ) and public.jwt_email_verified();
 $$;
 
 -- claim-on-login: matching VERIFIED email flips org_members.user_id + status,
@@ -224,11 +224,21 @@ create policy "submissions member own"
   using (submitted_by = auth.uid());
 create policy "submissions member insert own"
   on public.submissions for insert
-  with check (submitted_by = auth.uid() and public.is_org_member(org_id));
+  with check (
+    submitted_by = auth.uid()
+    and public.is_org_member(org_id)
+    -- Bind the storage path's org folder to the row's org_id (R1 MEDIUM):
+    -- the <org_id> prefix is attacker-controlled, so prevent path/row divergence.
+    and split_part(svg_path, '/', 1) = org_id::text
+  );
 create policy "submissions member update own"
   on public.submissions for update
   using (submitted_by = auth.uid())
-  with check (submitted_by = auth.uid());
+  with check (
+    submitted_by = auth.uid()
+    -- Keep the path/org binding invariant on UPDATE too (no svg_path rebind).
+    and split_part(svg_path, '/', 1) = org_id::text
+  );
 create policy "submissions member delete own"
   on public.submissions for delete
   using (submitted_by = auth.uid());

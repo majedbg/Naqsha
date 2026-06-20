@@ -3,10 +3,16 @@
 // Patterns and text layers are both selectable, but they differ in how their
 // bounding box + rotate/scale pivot are derived:
 //
-//   - PATTERN / IMPORT: draws across the whole canvas with no cheap tight
-//     extent, so its selectable bbox is the FULL CANVAS {0,0,canvasW,canvasH}
-//     and its pivot is the CANVAS CENTER (canvasW/2, canvasH/2). This matches
-//     useCanvas's pattern render (center-pivot transform) and svgExport's pivot.
+//   - PATTERN: draws across the whole canvas with no cheap tight extent, so its
+//     selectable bbox is the FULL CANVAS {0,0,canvasW,canvasH} and its pivot is
+//     the CANVAS CENTER (canvasW/2, canvasH/2). This matches useCanvas's pattern
+//     render (center-pivot transform) and svgExport's pivot.
+//
+//   - IMPORT: dropped/imported artwork has a TIGHT geometry extent (its path
+//     bbox), so the selectable bbox hugs the object and the pivot is that bbox's
+//     centre — resize/rotate act in place. useCanvas render + svgExport use the
+//     SAME pivot (importLayerPivot) so chrome, hit-test, render and export agree.
+//     Geometry-less imports fall back to the PATTERN case (full canvas).
 //
 //   - TEXT: exposes a TIGHT bbox from its laid-out glyphs. TextNode.localBBox()
 //     is ORIGIN-based ({x:0,y:0,w,h}), so the WORLD bbox is {x, y, w, h} (x,y
@@ -22,6 +28,7 @@
 
 import { isTextLayer, textNodeFromLayer } from '../text/textLayer.js';
 import { TextNode } from './TextNode.js';
+import { importLayerBBox } from './placement.js';
 
 const IDENTITY = { x: 0, y: 0, rotation: 0, scale: 1 };
 
@@ -55,6 +62,24 @@ export function buildSelectables({ layers = [], font = null, canvasW, canvasH })
         pivot: { x: x + local.w / 2, y: y + local.h / 2 },
       });
       continue;
+    }
+
+    // IMPORT: dropped/imported artwork draws at a TIGHT geometry extent, not the
+    // whole canvas. Use its geometry bbox so the selection box hugs the object and
+    // its handles stay on-screen; pivot is that bbox's centre so resize/rotate act
+    // IN PLACE (matching useCanvas render + svgExport, which use the same pivot).
+    // No measurable geometry → fall back to full-canvas (legacy behaviour).
+    if (layer.type === 'import') {
+      const bb = importLayerBBox(layer);
+      if (bb) {
+        out.push({
+          id: layer.id,
+          kind: 'import',
+          localBBox: { x: bb.x, y: bb.y, w: bb.w, h: bb.h },
+          pivot: { x: bb.x + bb.w / 2, y: bb.y + bb.h / 2 },
+        });
+        continue;
+      }
     }
 
     out.push({

@@ -105,3 +105,39 @@ describe('buildSelectables — text layers', () => {
     expect(pickTopmost({ x: 1, y: 1 }, sels)).toBe(null);
   });
 });
+
+describe('buildSelectables — import layers', () => {
+  // A 40×40 square anchored at (10,20): the selection box must hug THIS, not the
+  // whole canvas, so its handles stay on-screen.
+  const importLayer = {
+    id: 'i1',
+    type: 'import',
+    visible: true,
+    params: { pathData: ['M 10 20 L 50 20 L 50 60 L 10 60 Z'] },
+  };
+
+  it('emits a TIGHT import selectable hugging the geometry, with a bbox-center pivot', () => {
+    const sels = buildSelectables({ layers: [importLayer], canvasW: W, canvasH: H });
+    expect(sels).toHaveLength(1);
+    const sel = sels[0];
+    expect(sel.id).toBe('i1');
+    expect(sel.kind).toBe('import');
+    expect(sel.localBBox).toEqual({ x: 10, y: 20, w: 40, h: 40 });
+    // Pivot is the geometry-bbox center — must match useCanvas render + svgExport.
+    expect(sel.pivot).toEqual({ x: 30, y: 40 });
+  });
+
+  it('hit-tests inside the tight import bbox and misses far outside it', () => {
+    const sels = buildSelectables({ layers: [importLayer], canvasW: W, canvasH: H });
+    expect(pickTopmost({ x: 30, y: 40 }, sels)).toBe('i1'); // inside
+    expect(pickTopmost({ x: 300, y: 250 }, sels)).toBe(null); // would hit a full-canvas box
+  });
+
+  it('falls back to a full-canvas selectable for an import with no parseable geometry', () => {
+    const empty = { id: 'i2', type: 'import', visible: true, params: { pathData: [] } };
+    const sels = buildSelectables({ layers: [empty], canvasW: W, canvasH: H });
+    expect(sels[0].kind).toBe('pattern');
+    expect(sels[0].localBBox).toEqual({ x: 0, y: 0, w: W, h: H });
+    expect(sels[0].pivot).toEqual({ x: W / 2, y: H / 2 });
+  });
+});

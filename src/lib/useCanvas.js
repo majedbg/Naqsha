@@ -8,18 +8,21 @@ import { resolveMoireSource } from './moirePair';
 import { handlesFor } from './transform/handles';
 import { drawTextNode } from './text/drawTextNode';
 import { isTextLayer, textNodeFromLayer } from './text/textLayer';
+import { importLayerPivot } from './scene/placement';
+import { buildSelectables } from './scene/selectables';
 
-// Center-pivot node transform shared by render + selection chrome. Matches the
-// SVG `translate(x y) translate(cx cy) rotate scale translate(-cx -cy)` form
-// emitted by transformToSVG, so canvas-rendered geometry and exported SVG stay
-// byte-consistent. Identity transform → no-op (guarded), so untouched layers
-// render exactly as before. Caller wraps this in p.push()/p.pop().
-function applyNodeTransform(p, t, canvasW, canvasH) {
+// Pivoted node transform shared by render + selection chrome. Matches the SVG
+// `translate(x y) translate(cx cy) rotate scale translate(-cx -cy)` form emitted
+// by transformToSVG, so canvas-rendered geometry and exported SVG stay
+// byte-consistent. The pivot (cx,cy) is the canvas center for patterns and the
+// geometry-bbox center for IMPORT layers (so resize/rotate act in place) — the
+// caller passes whichever matches svgExport's wrapLayerTransform. Identity
+// transform → no-op (guarded), so untouched layers render exactly as before.
+// Caller wraps this in p.push()/p.pop().
+function applyNodeTransform(p, t, cx, cy) {
   if (!t) return;
   const moved = t.x || t.y || (t.rotation && t.rotation !== 0) || (t.scale != null && t.scale !== 1);
   if (!moved) return;
-  const cx = canvasW / 2;
-  const cy = canvasH / 2;
   p.translate(t.x || 0, t.y || 0);
   p.translate(cx, cy);
   if (t.rotation) p.rotate(p.radians(t.rotation));
@@ -84,7 +87,12 @@ export default function useCanvas(
           continue;
         }
         p.push();
-        applyNodeTransform(p, nodeTransforms[layer.id], canvasW, canvasH);
+        // Import pivots about its own geometry-bbox center (matches its tight
+        // selection box + svgExport), so a resize/rotate stays in place.
+        {
+          const piv = importLayerPivot(layer, canvasW, canvasH);
+          applyNodeTransform(p, nodeTransforms[layer.id], piv.x, piv.y);
+        }
         instance.generateWithContext(
           drawCtx, layer.seed, layer.params, canvasW, canvasH, layer.color, layer.opacity
         );
@@ -140,7 +148,7 @@ export default function useCanvas(
       // Center-pivot transform (move/resize/rotate). Wraps the layer's bg fill
       // AND its draw so both move together and match the exported SVG group.
       p.push();
-      applyNodeTransform(p, nodeTransforms[layer.id], canvasW, canvasH);
+      applyNodeTransform(p, nodeTransforms[layer.id], canvasW / 2, canvasH / 2);
 
       // Draw layer background fill if bgOpacity > 0
       if (layer.bgOpacity > 0) {
@@ -157,24 +165,29 @@ export default function useCanvas(
     }
 
     // Selection chrome (canvas-drawn): bbox outline + 8 resize handles + 1
-    // rotate handle, drawn INSIDE the node's center-pivot transform so they
-    // rotate/scale WITH the node. Handles are placed at LOCAL bbox coords (full
-    // canvas for a pattern), so the same transform maps them onto the node.
-    // Guarded by layers.find so a stale id (deleted layer) can't throw.
+    // rotate handle, drawn INSIDE the node's pivot transform so they rotate/scale
+    // WITH the node. The bbox + pivot come from buildSelectables — the SAME source
+    // of truth the Select tool hit-tests/gestures against — so the drawn handles
+    // and the grabbable handles always agree (full canvas for a pattern, tight
+    // geometry for an import, tight glyph bbox for text). Falls back to full
+    // canvas + canvas center when no selectable resolves (e.g. text before its
+    // font loads). Guarded by layers.find so a stale id can't throw.
     const selId = selectedRef.current;
     if (selId) {
       const selLayer = layers.find((l) => l.id === selId && l.visible !== false);
       if (selLayer) {
-        const selBBox = { x: 0, y: 0, w: canvasW, h: canvasH };
-        const cx = canvasW / 2;
-        const cy = canvasH / 2;
+        const sel = buildSelectables({ layers, font, canvasW, canvasH }).find(
+          (s) => s.id === selId
+        );
+        const selBBox = sel ? sel.localBBox : { x: 0, y: 0, w: canvasW, h: canvasH };
+        const piv = sel ? sel.pivot : { x: canvasW / 2, y: canvasH / 2 };
         const t = nodeTransforms[selId] || { x: 0, y: 0, rotation: 0, scale: 1 };
         p.push();
         p.translate(t.x || 0, t.y || 0);
-        p.translate(cx, cy);
+        p.translate(piv.x, piv.y);
         if (t.rotation) p.rotate(p.radians(t.rotation));
         if (t.scale != null && t.scale !== 1) p.scale(t.scale);
-        p.translate(-cx, -cy);
+        p.translate(-piv.x, -piv.y);
 
         // Bbox outline.
         p.noFill();

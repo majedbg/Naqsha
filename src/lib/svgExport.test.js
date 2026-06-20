@@ -79,6 +79,31 @@ describe('buildAllLayersSVG (pure)', () => {
     const out = buildAllLayersSVG([{ ...layer, transform: { x: 0, y: 0, rotation: 0, scale: 1 } }], { x: inst }, 384, 384, false, {});
     expect(out).not.toContain('<g transform=');
   });
+
+  // IMPORT layers pivot rotate/scale about their GEOMETRY bbox center (not the
+  // canvas center), so a scaled import lands in place — matching its tight
+  // selection box and the canvas render (useCanvas importLayerPivot).
+  it('emits the import bbox-center pivot for a scaled import (not the canvas center)', () => {
+    // 40×40 square at (10,20) → bbox center (30,40).
+    const importLayer = {
+      ...layer, bgOpacity: 0, type: 'import',
+      params: { pathData: ['M 10 20 L 50 20 L 50 60 L 10 60 Z'] },
+      transform: { x: 0, y: 0, rotation: 0, scale: 2 },
+    };
+    const out = buildLayerSVG(importLayer, inst, 384, 384, {});
+    expect(out).toContain('<g transform="translate(30 40) scale(2) translate(-30 -40)">');
+    expect(out).not.toContain('translate(192 192)'); // NOT the canvas center
+  });
+
+  it('keeps a translate-only import byte-stable (pivot cancels at identity scale)', () => {
+    const importLayer = {
+      ...layer, bgOpacity: 0, type: 'import',
+      params: { pathData: ['M 10 20 L 50 20 L 50 60 L 10 60 Z'] },
+      transform: { x: 5, y: 7, rotation: 0, scale: 1 },
+    };
+    const out = buildLayerSVG(importLayer, inst, 384, 384, {});
+    expect(out).toContain('<g transform="translate(5 7)">');
+  });
 });
 
 describe('downloadSVG (isolated DOM side-effect)', () => {

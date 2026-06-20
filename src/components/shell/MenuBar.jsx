@@ -207,11 +207,6 @@ export default function MenuBar({
 
   return (
     <div className="flex h-full items-center gap-2 px-3 bg-paper">
-      {/* App name, left. */}
-      <span className="display text-xs font-semibold text-ink tracking-tight select-none pr-2">
-        Naqsha
-      </span>
-
       {/* Top-level menus. */}
       <nav className="flex items-center gap-0.5" aria-label="Main menu">
         {menus.map((m) => (

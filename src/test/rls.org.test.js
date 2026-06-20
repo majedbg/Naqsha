@@ -577,6 +577,24 @@ live('org/admin RLS', () => {
     expect(after.cut_at).not.toBeNull();
   });
 
+  // Branding bridge (spec §2 #9): the seeded itp-camp org must carry the SAME
+  // accent as the in-code ITP kit (`--itp-lime: #B5E33C` in kitRegistry.js), so
+  // OrgContext's `--org-accent` injection renders the same identity as the
+  // studio's `[data-theme="itp-camp"]` kit. The migration seed sets this; a
+  // fresh `db reset` (run by the harness in beforeAll) must produce the value.
+  // logo_url stays null: the kit logo is an inline `?raw` SVG string, not a
+  // hosted URL, so there is no URL to bridge.
+  it('seeds the itp-camp org with the ITP kit accent color', async () => {
+    const { data, error } = await service
+      .from('orgs')
+      .select('accent_color,logo_url')
+      .eq('slug', 'itp-camp')
+      .single();
+    expect(error).toBeNull();
+    expect(data.accent_color).toBe('#B5E33C');
+    expect(data.logo_url).toBeNull();
+  });
+
   // 10. A non-platform user CANNOT insert or update an org.
   it('denies a non-platform user inserting or updating an org', async () => {
     const email = uniqueEmail('nobody');

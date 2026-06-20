@@ -295,8 +295,15 @@ insert into public.platform_admins (email)
   values ('majed.bg@gmail.com')
   on conflict (email) do nothing;
 
-insert into public.orgs (slug, name)
-  values ('itp-camp', 'ITP Camp')
+-- Branding bridge (spec §2 #9): seed the SAME accent as the in-code ITP kit
+-- (`--itp-lime: #B5E33C` in src/kits/kitRegistry.js), so OrgContext's
+-- `--org-accent` injection renders the studio's `[data-theme="itp-camp"]`
+-- identity. logo_url stays null: the kit logo is an inline `?raw` SVG string,
+-- not a hosted URL, so there is no URL to bridge. NOTE: `on conflict do nothing`
+-- means a stale row from a prior reset won't be updated — a FRESH `db reset`
+-- (which re-applies migrations on an empty DB) is required to seed the accent.
+insert into public.orgs (slug, name, accent_color)
+  values ('itp-camp', 'ITP Camp', '#B5E33C')
   on conflict (slug) do nothing;
 
 insert into public.org_members (org_id, email, is_admin, status)

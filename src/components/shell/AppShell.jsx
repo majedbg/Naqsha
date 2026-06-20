@@ -25,8 +25,8 @@ import {
   OperationsPanelSlotProvider,
 } from './shellSlots';
 
-// Shared frame for every region: a labeled landmark with a dashed placeholder
-// affordance so the empty skeleton reads as "intentionally empty" in the UI.
+// Shared frame for every region: a labeled landmark with a thin solid hairline
+// border so regions read as cleanly delineated in the UI.
 // `children` lets the Canvas region host the live Studio.
 function Region({ label, className = '', style, children }) {
   return (
@@ -35,7 +35,7 @@ function Region({ label, className = '', style, children }) {
       aria-label={label}
       data-region={label}
       style={style}
-      className={`relative min-w-0 min-h-0 border border-dashed border-hairline ${className}`}
+      className={`relative min-w-0 min-h-0 border border-solid border-hairline ${className}`}
     >
       {children ?? (
         <span className="pointer-events-none absolute left-2 top-1 text-[10px] uppercase tracking-wide text-ink-soft/60 select-none">

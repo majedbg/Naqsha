@@ -24,6 +24,7 @@ export default function StudioSubmitModal({
   canvasW,
   canvasH,
   operations,
+  designId = null,
   onClose,
   onSubmitted,
 }) {
@@ -36,6 +37,15 @@ export default function StudioSubmitModal({
     () => partitionSubmittableLayers(layers, operations),
     [layers, operations],
   );
+
+  // Name step. Prefilled from the design's top submittable layer (the studio has
+  // no human design name), required non-empty, and confirmed BEFORE SubmitToOrg
+  // mounts — SubmitToOrg snapshots its draft (incl. name) once on open, so the
+  // name must be final by then. Still re-editable later in the review card.
+  const [name, setName] = useState(
+    () => submit[0]?.name?.trim() || 'Untitled design',
+  );
+  const [nameConfirmed, setNameConfirmed] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -105,20 +115,65 @@ export default function StudioSubmitModal({
         </div>
       );
     }
+    const droppedNotice = dropped.length > 0 && (
+      <p
+        role="status"
+        className="rounded border border-amber-300 bg-amber-50 p-2 text-xs text-amber-800"
+      >
+        {`${dropped.length} layer(s) won’t be included (no cut/score/engrave operation): `}
+        {dropped.map((l) => l.name || l.id).join(', ')}
+      </p>
+    );
+
+    if (!nameConfirmed) {
+      const trimmed = name.trim();
+      return (
+        <form
+          className="flex flex-col gap-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (trimmed) setNameConfirmed(true);
+          }}
+        >
+          {droppedNotice}
+          <label className="flex flex-col gap-1 text-sm text-gray-700">
+            Name this submission
+            <input
+              aria-label="Submission name"
+              className="rounded border border-gray-300 px-2 py-1 text-sm"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              autoFocus
+            />
+          </label>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              className="rounded border border-gray-300 px-3 py-2 text-sm"
+              onClick={onClose}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="rounded bg-gray-900 px-3 py-2 text-sm text-white disabled:opacity-40"
+              disabled={!trimmed}
+            >
+              Continue
+            </button>
+          </div>
+        </form>
+      );
+    }
+
     return (
       <div className="flex flex-col gap-3">
-        {dropped.length > 0 && (
-          <p
-            role="status"
-            className="rounded border border-amber-300 bg-amber-50 p-2 text-xs text-amber-800"
-          >
-            {`${dropped.length} layer(s) won’t be included (no cut/score/engrave operation): `}
-            {dropped.map((l) => l.name || l.id).join(', ')}
-          </p>
-        )}
+        {droppedNotice}
         <SubmitToOrg
           orgId={selectedOrg.id}
           userId={userId}
+          name={name.trim()}
+          designId={designId}
           exportSvg={exportSvg}
           onSubmitted={onSubmitted}
           onCancel={onClose}

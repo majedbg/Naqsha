@@ -7,11 +7,18 @@ import { seedOperations } from '../../lib/operations';
 
 vi.mock('../../lib/org/membershipService');
 
-// Stub SubmitToOrg: surface the orgId it was mounted with. Keeps this test about
-// the org-selection + gating chrome, not the submit form internals.
+// Stub SubmitToOrg: surface the props it was mounted with (org/name/designId).
+// Keeps this test about the org-selection + naming chrome, not the form internals.
 vi.mock('./SubmitToOrg.jsx', () => ({
-  default: ({ orgId }) => <div data-testid="submit-to-org">{`org:${orgId}`}</div>,
+  default: ({ orgId, name, designId }) => (
+    <div data-testid="submit-to-org">{`org:${orgId}|name:${name}|design:${designId}`}</div>
+  ),
 }));
+
+// Advance past the name step (prefilled, just confirm) to reach SubmitToOrg.
+function continuePastName() {
+  fireEvent.click(screen.getByRole('button', { name: /continue/i }));
+}
 
 const OPS = [
   ...seedOperations(),
@@ -45,17 +52,37 @@ beforeEach(() => {
 });
 
 describe('StudioSubmitModal', () => {
-  it('with one org, goes straight into SubmitToOrg for that org', async () => {
+  it('with one org, prompts for a name then mounts SubmitToOrg with name + designId', async () => {
+    listMyOrgs.mockResolvedValue([{ id: 'org-1', name: 'ITP Camp' }]);
+
+    renderModal({ designId: 'design-9' });
+
+    // name step first — no submit form yet
+    const nameInput = await screen.findByLabelText('Submission name');
+    expect(screen.queryByTestId('submit-to-org')).toBeNull();
+    // prefilled from the top submittable layer name
+    expect(nameInput).toHaveValue('Outline');
+
+    fireEvent.change(nameInput, { target: { value: 'Coaster v2' } });
+    continuePastName();
+
+    const stub = await screen.findByTestId('submit-to-org');
+    expect(stub).toHaveTextContent('org:org-1|name:Coaster v2|design:design-9');
+    expect(listMyOrgs).toHaveBeenCalledWith('u1');
+  });
+
+  it('blocks Continue when the name is blank', async () => {
     listMyOrgs.mockResolvedValue([{ id: 'org-1', name: 'ITP Camp' }]);
 
     renderModal();
 
-    const stub = await screen.findByTestId('submit-to-org');
-    expect(stub).toHaveTextContent('org:org-1');
-    expect(listMyOrgs).toHaveBeenCalledWith('u1');
+    const nameInput = await screen.findByLabelText('Submission name');
+    fireEvent.change(nameInput, { target: { value: '   ' } });
+    expect(screen.getByRole('button', { name: /continue/i })).toBeDisabled();
+    expect(screen.queryByTestId('submit-to-org')).toBeNull();
   });
 
-  it('with several orgs, shows a picker and mounts SubmitToOrg for the chosen one', async () => {
+  it('with several orgs, picks an org, then names, then mounts SubmitToOrg for the chosen one', async () => {
     listMyOrgs.mockResolvedValue([
       { id: 'org-1', name: 'ITP Camp' },
       { id: 'org-2', name: 'Makerspace' },
@@ -63,11 +90,14 @@ describe('StudioSubmitModal', () => {
 
     renderModal();
 
-    // picker first — no submit form yet
+    // picker first — no name step / no submit form yet
     const pick = await screen.findByRole('button', { name: 'Makerspace' });
-    expect(screen.queryByTestId('submit-to-org')).toBeNull();
+    expect(screen.queryByLabelText('Submission name')).toBeNull();
 
     fireEvent.click(pick);
+
+    await screen.findByLabelText('Submission name');
+    continuePastName();
 
     const stub = await screen.findByTestId('submit-to-org');
     expect(stub).toHaveTextContent('org:org-2');
@@ -78,7 +108,8 @@ describe('StudioSubmitModal', () => {
 
     renderModal();
 
-    await screen.findByTestId('submit-to-org');
+    // the warning is shown up front, on the name step
+    await screen.findByLabelText('Submission name');
     const warn = screen.getByRole('status');
     expect(warn).toHaveTextContent(/won.t be included/i);
     expect(warn).toHaveTextContent('Doodle'); // the pen layer, by name

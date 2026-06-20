@@ -527,6 +527,7 @@ export default function Studio() {
 
   // === Cloud save/load ===
   const {
+    currentDesignId,
     setCurrentDesignId,
     handleSaveToCloud,
     handleLoadCloudDesign,
@@ -911,6 +912,7 @@ export default function Studio() {
           canvasW={canvasW}
           canvasH={canvasH}
           operations={operations}
+          designId={currentDesignId}
           onClose={() => setUI("showSubmitModal", false)}
           onSubmitted={() => setUI("showSubmitModal", false)}
         />

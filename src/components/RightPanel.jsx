@@ -5,6 +5,7 @@ import PlotOverlay from "./canvas/PlotOverlay";
 import { cursorToUnit } from "../lib/canvasChrome";
 import { screenToCanvas } from "../lib/canvas/coords";
 import { buildSelectables, pickTopmost } from "../lib/scene/selectables";
+import { textCreateFromDrag } from "../lib/text/textLayer";
 import { applyMoveDelta } from "../lib/tools/moveTransform";
 import {
   classifyPointer,
@@ -80,6 +81,9 @@ export default function RightPanel({
   placement = null,
   onPlaceAsset = () => {},
   onCancelPlacement = () => {},
+  // Text tool: a click/drag over the canvas creates a text layer. The geometry
+  // (origin + box + lineMode) is computed by textCreateFromDrag and handed up.
+  onCreateText = () => {},
 }) {
   const containerRef = useRef(null);
   const wrapperRef = useRef(null);
@@ -149,6 +153,7 @@ export default function RightPanel({
   // Drag/pan session state (refs so handlers don't re-bind / re-render per move).
   const dragRef = useRef(null); // { id, kind, startPoint, startTransform, center, moved }
   const panRef = useRef(null); // { lastX, lastY } during a Hand-tool pan
+  const createRef = useRef(null); // { start } during a Text-tool create drag
 
   // Expose pattern instances to parent for SVG export and optimization stats.
   useEffect(() => {
@@ -271,6 +276,7 @@ export default function RightPanel({
   // --- Canvas interaction: Hand-pan + Select/Move/Resize/Rotate ------------
   const handActive = activeTool === "hand";
   const selectActive = activeTool === "select";
+  const textActive = activeTool === "text";
 
   // Map a browser pointer position to canvas-internal coordinates. Uses the live
   // canvas-surface rect, so it's correct under centering, pan AND zoom.
@@ -316,12 +322,22 @@ export default function RightPanel({
         capturePointer(e);
         return;
       }
+
+      // Text tool: begin a create gesture (click or drag). Resolved on pointer-up
+      // into a new text layer via textCreateFromDrag + onCreateText.
+      if (textActive) {
+        const pt = toCanvasPoint(e.clientX, e.clientY);
+        if (!pt) return;
+        createRef.current = { start: pt };
+        capturePointer(e);
+        return;
+      }
       if (!selectActive) return;
 
       const pt = toCanvasPoint(e.clientX, e.clientY);
       if (!pt) return;
       const liveTransforms = transformsLiveRef.current || {};
-      const selectables = buildSelectables({ layers, canvasW, canvasH });
+      const selectables = buildSelectables({ layers, canvasW, canvasH, font: textFont });
 
       // 1) If a layer is selected, its rotate/resize handles take priority over
       //    re-selecting/moving — a handle hit starts a transform WITHOUT changing
@@ -369,7 +385,7 @@ export default function RightPanel({
       };
       capturePointer(e);
     },
-    [placing, onPlaceAsset, handActive, selectActive, toCanvasPoint, layers, canvasW, canvasH, selectedNodeId, onSelect]
+    [placing, onPlaceAsset, handActive, selectActive, textActive, toCanvasPoint, layers, canvasW, canvasH, selectedNodeId, onSelect, textFont]
   );
 
   const handlePointerMove = useCallback(
@@ -420,6 +436,16 @@ export default function RightPanel({
         releasePointer(e);
         return;
       }
+      // Text tool: resolve the create gesture into a new text layer. A tiny delta
+      // is a click (single-line); a real drag is a box (multi-line).
+      if (createRef.current) {
+        const start = createRef.current.start;
+        createRef.current = null;
+        releasePointer(e);
+        const end = toCanvasPoint(e.clientX, e.clientY) || start;
+        onCreateText(textCreateFromDrag(start, end));
+        return;
+      }
       const drag = dragRef.current;
       if (!drag) return;
       dragRef.current = null;
@@ -428,7 +454,7 @@ export default function RightPanel({
       // selecting click must not write a no-op transform.
       if (drag.moved) onCommit();
     },
-    [onCommit]
+    [onCommit, toCanvasPoint, onCreateText]
   );
 
   return (
@@ -516,8 +542,8 @@ export default function RightPanel({
             right: 0,
             bottom: 0,
             left: 0,
-            pointerEvents: selectActive || placing ? "auto" : "none",
-            cursor: placing ? "crosshair" : "default",
+            pointerEvents: selectActive || placing || textActive ? "auto" : "none",
+            cursor: placing || textActive ? "crosshair" : "default",
             touchAction: "none",
           }}
           onPointerDown={handlePointerDown}

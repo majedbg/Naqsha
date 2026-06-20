@@ -135,6 +135,7 @@ export default function Studio() {
     layers,
     addLayer,
     addImportedLayer,
+    addTextLayer,
     updateLayer,
     reorderLayers,
     changeLayerPattern,
@@ -554,6 +555,19 @@ export default function Studio() {
   );
   const handleCancelPlacement = useCallback(() => setPlacement(null), []);
 
+  // Text tool: RightPanel hands up the create geometry (origin + box + lineMode)
+  // from a click/drag. Spin up an (empty) text layer, select it, and drop back to
+  // the Select tool so it's immediately movable. Editing its content is phase 5.
+  const handleCreateText = useCallback(
+    ({ x, y, box, lineMode }) => {
+      const outcome = addTextLayer({ params: { x, y, box, lineMode } });
+      if (!outcome.ok) return;
+      setSelectedLayerId(outcome.id);
+      setActiveTool("select");
+    },
+    [addTextLayer, setActiveTool]
+  );
+
   // Esc cancels an armed placement (mirrors the modal's Esc-to-close).
   useEffect(() => {
     if (!placement) return undefined;
@@ -890,6 +904,7 @@ export default function Studio() {
           placement={placement}
           onPlaceAsset={handlePlaceAsset}
           onCancelPlacement={handleCancelPlacement}
+          onCreateText={handleCreateText}
         />
 
         {/* Examples gallery (re-homed in #16). Opened from File > Examples;

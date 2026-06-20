@@ -61,3 +61,29 @@ export function textNodeFromLayer(layer) {
     y: p.y,
   };
 }
+
+/**
+ * Derive the geometry of a new text layer from a canvas pointer gesture. A tiny
+ * delta (a CLICK) yields a single-line text anchored at the click; a DRAG yields
+ * a multi-line (box-wrapped) text whose origin is the min corner and whose box
+ * is the absolute drag extent.
+ * @param {{x:number,y:number}} start  pointer-down point (canvas space)
+ * @param {{x:number,y:number}} end    pointer-up point (canvas space)
+ * @returns {{ x:number, y:number, box:{w:number,h:number},
+ *             lineMode:'single'|'multi' }}
+ */
+export function textCreateFromDrag(start, end) {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  if (Math.abs(dx) < 4 && Math.abs(dy) < 4) {
+    // A click, not a drag → single-line text at the click point.
+    return { x: start.x, y: start.y, box: { w: 0, h: 0 }, lineMode: 'single' };
+  }
+  // A dragged box → multi-line text wrapping to the box width.
+  return {
+    x: Math.min(start.x, end.x),
+    y: Math.min(start.y, end.y),
+    box: { w: Math.abs(dx), h: Math.abs(dy) },
+    lineMode: 'multi',
+  };
+}

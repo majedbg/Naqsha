@@ -1,32 +1,62 @@
-// Selectable list for the Select tool (pattern layers).
+// Unified selectable list for the Select tool (pattern + text layers).
 //
-// A pattern draws across the whole canvas with no cheap tight extent, so its
-// selectable bbox is the FULL CANVAS {0,0,canvasW,canvasH} and its pivot is the
-// CANVAS CENTER (canvasW/2, canvasH/2). This matches useCanvas's pattern render
-// (center-pivot transform) and svgExport's pivot, so the selection chrome,
-// hit-test, gestures, render and export all agree.
+// Patterns and text layers are both selectable, but they differ in how their
+// bounding box + rotate/scale pivot are derived:
 //
-// Returned in layers[] order (front to back). Hit-testing walks the list
-// front-first so a click hits the topmost visible layer, mirroring z-order.
+//   - PATTERN / IMPORT: draws across the whole canvas with no cheap tight
+//     extent, so its selectable bbox is the FULL CANVAS {0,0,canvasW,canvasH}
+//     and its pivot is the CANVAS CENTER (canvasW/2, canvasH/2). This matches
+//     useCanvas's pattern render (center-pivot transform) and svgExport's pivot.
 //
-// Pure: no DOM. (Text nodes are intentionally out of scope here — this is the
-// pattern-only Select wiring.)
+//   - TEXT: exposes a TIGHT bbox from its laid-out glyphs. TextNode.localBBox()
+//     is ORIGIN-based ({x:0,y:0,w,h}), so the WORLD bbox is {x, y, w, h} (x,y
+//     from layer.params) and the pivot is its center (x + w/2, y + h/2). This
+//     same pivot is used by drawTextNode (canvas) and textNodeCommands (export)
+//     so selection chrome, hit-test, gestures, render and export all agree.
+//
+// Returned in layers[] order (front to back), preserving z-order. Hit-testing
+// walks the list front-first so a click hits the topmost visible layer.
+//
+// Pure: no DOM. The caller supplies a RESOLVED opentype `font` so text bboxes
+// can be measured; with no font, text layers are SKIPPED (not yet measurable).
+
+import { isTextLayer, textNodeFromLayer } from '../text/textLayer.js';
+import { TextNode } from './TextNode.js';
 
 const IDENTITY = { x: 0, y: 0, rotation: 0, scale: 1 };
 
 /**
- * @param {{ layers?: Array<object>, canvasW: number, canvasH: number }} scene
- * @returns {Array<{ id:string, kind:'pattern', localBBox:{x,y,w,h}, pivot:{x,y} }>}
+ * @param {{ layers?: Array<object>, font?: import('opentype.js').Font|null,
+ *           canvasW: number, canvasH: number }} scene
+ * @returns {Array<{ id:string, kind:'text'|'pattern',
+ *                   localBBox:{x,y,w,h}, pivot:{x,y} }>}
  *   `localBBox` is the node's WORLD-positioned (untransformed) bbox; `pivot` is
  *   its center. The node transform (from the transforms map) is layered ON TOP
  *   of this by the caller (hit-test / gestures / chrome / render / export).
  */
-export function buildSelectables({ layers = [], canvasW, canvasH }) {
+export function buildSelectables({ layers = [], font = null, canvasW, canvasH }) {
   const out = [];
   // Hidden layers are NOT selectable — a click over a hidden top layer must fall
   // through to the visible layer beneath it.
   for (const layer of layers) {
     if (layer.visible === false) continue;
+
+    if (isTextLayer(layer)) {
+      // Not measurable without a resolved font → not selectable yet.
+      if (!font) continue;
+      const tn = new TextNode({ ...textNodeFromLayer(layer), font });
+      const local = tn.localBBox(); // {x:0,y:0,w,h} — origin-based
+      const x = layer.params?.x || 0;
+      const y = layer.params?.y || 0;
+      out.push({
+        id: layer.id,
+        kind: 'text',
+        localBBox: { x, y, w: local.w, h: local.h },
+        pivot: { x: x + local.w / 2, y: y + local.h / 2 },
+      });
+      continue;
+    }
+
     out.push({
       id: layer.id,
       kind: 'pattern',

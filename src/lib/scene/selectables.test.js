@@ -1,5 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import { buildSelectables, pickTopmost, hitSelectable } from './selectables.js';
+import { defaultTextParams } from '../text/textLayer.js';
+import { loadWorkSans } from '../../test/loadWorkSans.js';
 
 const W = 400;
 const H = 300;
@@ -53,5 +55,53 @@ describe('pickTopmost', () => {
     const sel = { id: 'x', localBBox: { x: 0, y: 0, w: W, h: H }, pivot: { x: W / 2, y: H / 2 } };
     expect(hitSelectable({ x: 410, y: 150 }, sel, { x: 0, y: 0, rotation: 0, scale: 1 })).toBe(false);
     expect(hitSelectable({ x: 410, y: 150 }, sel, { x: 20, y: 0, rotation: 0, scale: 1 })).toBe(true);
+  });
+});
+
+describe('buildSelectables — text layers', () => {
+  let font;
+  beforeAll(() => {
+    font = loadWorkSans();
+  });
+
+  const textLayer = {
+    id: 't1',
+    type: 'text',
+    visible: true,
+    params: defaultTextParams({ text: 'Hi', x: 100, y: 100, fontSize: 64 }),
+  };
+
+  it('emits a TIGHT text selectable with a center pivot when a font is supplied', () => {
+    const sels = buildSelectables({ layers: [textLayer], font, canvasW: W, canvasH: H });
+    expect(sels).toHaveLength(1);
+    const sel = sels[0];
+    expect(sel.id).toBe('t1');
+    expect(sel.kind).toBe('text');
+    // Tight, not full canvas: origin at the glyph origin, width < canvas width.
+    expect(sel.localBBox.x).toBe(100);
+    expect(sel.localBBox.y).toBe(100);
+    expect(sel.localBBox.w).toBeGreaterThan(0);
+    expect(sel.localBBox.w).toBeLessThan(W);
+    // Pivot is the bbox center — must match drawTextNode/textNodeCommands.
+    expect(sel.pivot.x).toBeCloseTo(sel.localBBox.x + sel.localBBox.w / 2);
+    expect(sel.pivot.y).toBeCloseTo(sel.localBBox.y + sel.localBBox.h / 2);
+  });
+
+  it('skips text layers entirely when no font is resolved yet', () => {
+    const sels = buildSelectables({ layers: [textLayer], font: null, canvasW: W, canvasH: H });
+    expect(sels).toEqual([]);
+  });
+
+  it('pickTopmost hits inside the tight text bbox and returns the text id', () => {
+    const sels = buildSelectables({ layers: [textLayer], font, canvasW: W, canvasH: H });
+    const { x, y, w, h } = sels[0].localBBox;
+    const inside = { x: x + w / 2, y: y + h / 2 };
+    expect(pickTopmost(inside, sels)).toBe('t1');
+  });
+
+  it('pickTopmost misses far outside the tight text bbox', () => {
+    const sels = buildSelectables({ layers: [textLayer], font, canvasW: W, canvasH: H });
+    // Top-left corner of the canvas is well outside a glyph box anchored at 100,100.
+    expect(pickTopmost({ x: 1, y: 1 }, sels)).toBe(null);
   });
 });

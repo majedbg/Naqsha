@@ -3,18 +3,24 @@
 
 export const TIER_LIMITS = {
   guest: {
-    patterns: ['spirograph', 'flowfield', 'phyllotaxis', 'wave', 'voronoi', 'recursive', 'radialetch', 'grid', 'spiral', 'modulegrid', 'topographic', 'diffgrowth', 'girih', 'moire', 'circlepacking', 'dendrite'],
+    // --- WORKSHOP OVERRIDE (2026-06-20): all patterns + all params open to guests ---
+    // Re-enable the gated hierarchy after the workshop by restoring the two
+    // commented-out blocks below (and deleting the two override lines).
+    patterns: null,                  // null = all patterns open
+    // patterns: ['spirograph', 'flowfield', 'phyllotaxis', 'wave', 'voronoi', 'recursive', 'radialetch', 'grid', 'spiral', 'modulegrid', 'topographic', 'diffgrowth', 'girih', 'moire', 'circlepacking', 'dendrite'],
     maxLayers: 3,
     presetIndices: null,             // all sizes
     allowCustomSize: true,
-    maxParamsPerPattern: {
-      default: 7,            // first 7 non-universal params for any other pattern
-      recursive: Infinity,   // show all
-      radialetch: Infinity,  // show all
-      grid: Infinity,        // show all
-      phyllotaxis: Infinity, // show all
-      spiral: Infinity,      // show all
-    },
+    maxParamsPerPattern: Infinity,   // all params open
+    // maxParamsPerPattern: {
+    //   default: 7,            // first 7 non-universal params for any other pattern
+    //   recursive: Infinity,   // show all
+    //   radialetch: Infinity,  // show all
+    //   grid: Infinity,        // show all
+    //   phyllotaxis: Infinity, // show all
+    //   spiral: Infinity,      // show all
+    // },
+    // --- END WORKSHOP OVERRIDE ---
     lockedParamKeys: [],             // (guest uses maxParamsPerPattern instead)
     universalParams: true,           // transform params (symmetry/startAngle/offset) shown
     seedVisible: true,

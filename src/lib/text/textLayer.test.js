@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from 'vitest';
-import { isTextLayer, defaultTextParams, textNodeFromLayer } from './textLayer.js';
+import { isTextLayer, defaultTextParams, textNodeFromLayer, textCreateFromDrag } from './textLayer.js';
 import { textNodeCommands } from './drawTextNode.js';
 import { DEFAULT_FONT_ID } from './fontRegistry.js';
 import { loadWorkSans } from '../../test/loadWorkSans.js';
@@ -124,5 +124,27 @@ describe('text LAYER renders to drawable geometry (integration smoke)', () => {
     };
     const { commands } = textNodeCommands(textNodeFromLayer(layer), font);
     expect(commands.length).toBeGreaterThan(0);
+  });
+});
+
+describe('textCreateFromDrag', () => {
+  it('treats a tiny delta as a click → single-line at the start, empty box', () => {
+    const geo = textCreateFromDrag({ x: 50, y: 60 }, { x: 52, y: 61 });
+    expect(geo).toEqual({ x: 50, y: 60, box: { w: 0, h: 0 }, lineMode: 'single' });
+  });
+
+  it('treats a zero delta as a click', () => {
+    const geo = textCreateFromDrag({ x: 10, y: 20 }, { x: 10, y: 20 });
+    expect(geo).toEqual({ x: 10, y: 20, box: { w: 0, h: 0 }, lineMode: 'single' });
+  });
+
+  it('treats a real drag as a box → multi, box = abs deltas, origin = min corner', () => {
+    const geo = textCreateFromDrag({ x: 100, y: 100 }, { x: 220, y: 180 });
+    expect(geo).toEqual({ x: 100, y: 100, box: { w: 120, h: 80 }, lineMode: 'multi' });
+  });
+
+  it('normalizes a drag that goes up-and-left to the min corner', () => {
+    const geo = textCreateFromDrag({ x: 200, y: 200 }, { x: 100, y: 150 });
+    expect(geo).toEqual({ x: 100, y: 150, box: { w: 100, h: 50 }, lineMode: 'multi' });
   });
 });

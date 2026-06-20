@@ -1,9 +1,13 @@
-// KitPresetModal — the floating kit preset-asset picker (issue #18, Lane C / C9).
+// KitPresetModal — the floating kit material + preset-asset picker (issue #18, Lane C / C9).
 //
 // Mirrors PatternPickerModal's floating-modal style (NOT a tool-strip tool).
-// Lists the active kit's manifest assets as cards; picking one reports the
-// asset's IMPORT-READY SVG string OUT through `onPick`, which Studio funnels
-// straight into addImportedLayer — exactly like a File>Import (place-as-artwork).
+// Two sections:
+//   • Material — the kit's acrylic engrave-stock swatches (photographic previews).
+//     Picking one SELECTS a material (cosmetic/informational) via `onSelectMaterial`;
+//     it is NOT imported as a layer.
+//   • Presets — the kit's manifest assets as cards; picking one reports the asset's
+//     IMPORT-READY SVG string OUT through `onPick`, which Studio funnels straight into
+//     addImportedLayer — exactly like a File>Import (place-as-artwork).
 
 import { useEffect } from 'react';
 import { getKit } from '../kits/kitRegistry.js';
@@ -19,7 +23,14 @@ function AssetThumb({ svg }) {
   );
 }
 
-export default function KitPresetModal({ open, kitId, onPick, onClose }) {
+export default function KitPresetModal({
+  open,
+  kitId,
+  onPick,
+  onClose,
+  selectedMaterialId,
+  onSelectMaterial,
+}) {
   // Close on Escape (matches PatternPickerModal).
   useEffect(() => {
     if (!open) return undefined;
@@ -33,6 +44,7 @@ export default function KitPresetModal({ open, kitId, onPick, onClose }) {
   if (!open) return null;
   const kit = getKit(kitId);
   if (!kit) return null;
+  const materials = kit.materials ?? [];
 
   return (
     <div
@@ -46,9 +58,9 @@ export default function KitPresetModal({ open, kitId, onPick, onClose }) {
         {/* header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-hairline shrink-0">
           <div>
-            <h2 className="text-sm font-semibold text-ink">{kit.name} — presets</h2>
+            <h2 className="text-sm font-semibold text-ink">{kit.name} — material &amp; presets</h2>
             <p className="text-[11px] text-ink-soft mt-0.5">
-              Pick a preset to place it as artwork — imported just like File&nbsp;&gt;&nbsp;Import.
+              Choose your acrylic, then pick a preset to place it as artwork.
             </p>
           </div>
           <button
@@ -60,44 +72,99 @@ export default function KitPresetModal({ open, kitId, onPick, onClose }) {
           </button>
         </div>
 
-        {/* body — asset grid */}
-        <div className="overflow-auto p-4">
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-            {kit.assetManifest.map((asset) => (
+        {/* body */}
+        <div className="overflow-auto p-4 flex flex-col gap-5">
+          {/* Material — acrylic stock swatches (select, don't import). */}
+          {materials.length > 0 && (
+            <section>
+              <h3 className="text-[11px] font-semibold uppercase tracking-wide text-ink-soft mb-2">
+                Material
+              </h3>
               <div
-                key={asset.id}
-                className="group flex flex-col rounded-[5px] border border-hairline bg-paper overflow-hidden"
+                className="grid grid-cols-3 sm:grid-cols-4 gap-3"
+                role="radiogroup"
+                aria-label="Acrylic material"
               >
-                <button
-                  type="button"
-                  onClick={() => onPick?.(asset.svg, asset)}
-                  aria-label={asset.name}
-                  title={asset.name}
-                  className="flex flex-col text-left hover:bg-paper-warm transition-colors cursor-pointer"
+                {materials.map((material) => {
+                  const selected = material.id === selectedMaterialId;
+                  return (
+                    <button
+                      key={material.id}
+                      type="button"
+                      role="radio"
+                      aria-checked={selected}
+                      aria-label={material.name}
+                      onClick={() => onSelectMaterial?.(material.id, material)}
+                      title={material.name}
+                      className={`group flex flex-col rounded-[5px] overflow-hidden border transition-colors cursor-pointer text-left ${
+                        selected
+                          ? 'border-accent ring-2 ring-accent'
+                          : 'border-hairline hover:border-ink-soft'
+                      }`}
+                    >
+                      <div
+                        className="aspect-square w-full overflow-hidden"
+                        style={{ backgroundColor: material.color }}
+                      >
+                        <img
+                          src={material.image}
+                          alt={material.name}
+                          loading="lazy"
+                          className="w-full h-full object-cover"
+                        />
+                      </div>
+                      <span className="px-2 py-1.5 text-[11px] font-medium text-ink truncate">
+                        {material.name}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+          )}
+
+          {/* Presets — manifest assets (import as artwork). */}
+          <section>
+            <h3 className="text-[11px] font-semibold uppercase tracking-wide text-ink-soft mb-2">
+              Presets
+            </h3>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              {kit.assetManifest.map((asset) => (
+                <div
+                  key={asset.id}
+                  className="group flex flex-col rounded-[5px] border border-hairline bg-paper overflow-hidden"
                 >
-                  <div className="aspect-[4/3] w-full bg-paper-warm overflow-hidden">
-                    <AssetThumb svg={asset.svg} />
-                  </div>
-                  <span className="px-2 py-1.5 text-[11px] font-medium text-ink truncate">
-                    {asset.name}
-                  </span>
-                </button>
-                {/* Alternate variant (e.g. the flipped near-black logo) — a 2nd
-                    reachable pick so BOTH staged logo files are usable. */}
-                {asset.altSvg && (
                   <button
                     type="button"
-                    onClick={() => onPick?.(asset.altSvg, asset)}
-                    aria-label={`${asset.name} (dark variant)`}
-                    title={`${asset.name} (dark variant)`}
-                    className="border-t border-hairline px-2 py-1 text-[10px] text-ink-soft hover:text-ink hover:bg-paper-warm transition-colors text-left cursor-pointer"
+                    onClick={() => onPick?.(asset.svg, asset)}
+                    aria-label={asset.name}
+                    title={asset.name}
+                    className="flex flex-col text-left hover:bg-paper-warm transition-colors cursor-pointer"
                   >
-                    + Dark variant
+                    <div className="aspect-[4/3] w-full bg-paper-warm overflow-hidden">
+                      <AssetThumb svg={asset.svg} />
+                    </div>
+                    <span className="px-2 py-1.5 text-[11px] font-medium text-ink truncate">
+                      {asset.name}
+                    </span>
                   </button>
-                )}
-              </div>
-            ))}
-          </div>
+                  {/* Alternate variant (e.g. the flipped near-black logo) — a 2nd
+                      reachable pick so BOTH staged logo files are usable. */}
+                  {asset.altSvg && (
+                    <button
+                      type="button"
+                      onClick={() => onPick?.(asset.altSvg, asset)}
+                      aria-label={`${asset.name} (dark variant)`}
+                      title={`${asset.name} (dark variant)`}
+                      className="border-t border-hairline px-2 py-1 text-[10px] text-ink-soft hover:text-ink hover:bg-paper-warm transition-colors text-left cursor-pointer"
+                    >
+                      + Dark variant
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          </section>
         </div>
       </div>
     </div>

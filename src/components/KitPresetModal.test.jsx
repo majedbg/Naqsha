@@ -63,6 +63,55 @@ describe('KitPresetModal', () => {
     // No clipPath leakage in whatever string we drop.
     expect(svg).not.toContain('clipPath');
   });
+  it('renders all 7 acrylic materials as radio options with preview images', () => {
+    render(
+      <KitPresetModal open kitId={ITP_CAMP_KIT_ID} onPick={() => {}} onClose={() => {}} />
+    );
+    const kit = getKit(ITP_CAMP_KIT_ID);
+    for (const material of kit.materials) {
+      const opt = screen.getByRole('radio', { name: material.name });
+      expect(opt).toBeTruthy();
+    }
+    // Each material shows its photographic swatch via an <img>.
+    for (const material of kit.materials) {
+      expect(screen.getByRole('img', { name: material.name })).toBeTruthy();
+    }
+  });
+
+  it('picking a material reports its id OUT through onSelectMaterial (NOT onPick — not a layer)', () => {
+    const onPick = vi.fn();
+    const onSelectMaterial = vi.fn();
+    render(
+      <KitPresetModal
+        open
+        kitId={ITP_CAMP_KIT_ID}
+        onPick={onPick}
+        onClose={() => {}}
+        onSelectMaterial={onSelectMaterial}
+      />
+    );
+    const kit = getKit(ITP_CAMP_KIT_ID);
+    const gold = kit.materials.find((m) => m.id === 'gold-mirror');
+    fireEvent.click(screen.getByRole('radio', { name: gold.name }));
+    expect(onSelectMaterial).toHaveBeenCalledWith(gold.id, gold);
+    // Selecting a material must NOT import it as artwork.
+    expect(onPick).not.toHaveBeenCalled();
+  });
+
+  it('marks the selected material via aria-checked', () => {
+    render(
+      <KitPresetModal
+        open
+        kitId={ITP_CAMP_KIT_ID}
+        onPick={() => {}}
+        onClose={() => {}}
+        selectedMaterialId="aura-iridescent"
+        onSelectMaterial={() => {}}
+      />
+    );
+    expect(screen.getByRole('radio', { name: 'Aura Iridescent' }).getAttribute('aria-checked')).toBe('true');
+    expect(screen.getByRole('radio', { name: 'Clear' }).getAttribute('aria-checked')).toBe('false');
+  });
 });
 
 describe('kit preset drop → imported-path layer (via the import path)', () => {

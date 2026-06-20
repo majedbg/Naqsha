@@ -124,6 +124,10 @@ export default function RowMenu({
   // when the anchoring row sits near the panel's bottom edge.
   const flipClass = anchorNearBottom ? "bottom-full mb-1" : "top-full mt-1";
 
+  // Right-anchor (`right-0`): the ⋯ trigger sits at the panel's right edge, so a
+  // left-anchored menu would grow 140px rightward — off the panel, where the
+  // tree's `overflow-auto` scroll container clips it (the reported bug). Opening
+  // leftward keeps the whole menu inside the panel.
   return (
     <div
       ref={menuRef}
@@ -131,7 +135,7 @@ export default function RowMenu({
       aria-label="Row actions"
       data-testid="row-menu"
       onKeyDown={onKeyDown}
-      className={`absolute z-50 ${flipClass} min-w-[140px] rounded-sm border border-hairline bg-paper p-1 shadow-pop`}
+      className={`absolute right-0 z-50 ${flipClass} min-w-[140px] rounded-sm border border-hairline bg-paper p-1 shadow-pop`}
     >
       <MenuItem label="Rename" onActivate={select(onRename)} />
       <MenuItem label="Duplicate" onActivate={select(onDuplicate)} />

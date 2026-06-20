@@ -160,4 +160,27 @@ describe("LayerTree — re-homed per-row + header actions (#16 AC2)", () => {
     ).not.toThrow();
     expect(onSelectLayer).not.toHaveBeenCalled();
   });
+
+  it("renders the '+ New Layer' add row and invokes onAddLayer when clicked", () => {
+    const onAddLayer = vi.fn();
+    renderTree({ onAddLayer });
+    const add = screen.getByRole("button", { name: "Add layer" });
+    expect(add).toBeInTheDocument();
+    fireEvent.click(add);
+    expect(onAddLayer).toHaveBeenCalledTimes(1);
+  });
+
+  it("disables the add row at the layer cap (addDisabled)", () => {
+    const onAddLayer = vi.fn();
+    renderTree({ onAddLayer, addDisabled: true });
+    const add = screen.getByRole("button", { name: "Add layer" });
+    expect(add).toBeDisabled();
+    fireEvent.click(add);
+    expect(onAddLayer).not.toHaveBeenCalled();
+  });
+
+  it("omits the add row entirely when onAddLayer is not supplied", () => {
+    renderTree();
+    expect(screen.queryByRole("button", { name: "Add layer" })).not.toBeInTheDocument();
+  });
 });

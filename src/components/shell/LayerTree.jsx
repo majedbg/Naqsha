@@ -410,6 +410,12 @@ export default function LayerTree({
   onExportLayer,
   onRandomizeAll,
   onRandomizeAllParams,
+  // "+ New" add-layer row, pinned at the BOTTOM of the column (docs/how-to.md:
+  // "the + button at the bottom"). Opens the pattern picker on the host side.
+  // Optional so the tree stays back-compatible with callers/tests that omit it;
+  // `addDisabled` greys it out at the tier's layer cap.
+  onAddLayer,
+  addDisabled = false,
   // Responsive (spec §3.2): below a ~240px panel width the host passes
   // `compact` to hide the 🎲 dice. No container-query plugin is installed on this
   // Tailwind v3 build, so the panel width is threaded via this boolean (kept
@@ -522,6 +528,24 @@ export default function LayerTree({
             onCloseMenu={() => setOpenMenuId(null)}
           />
         ))}
+
+        {/* "+ New" add-layer row — sits DIRECTLY under the bottom-most layer (not
+            pinned to the column foot) so it reads as "add an object below". Lives
+            inside the scrolling rows list and mirrors the legacy LayersSection's
+            dashed "+ Add Layer" affordance; opens the pattern picker (host wires
+            onAddLayer) and is disabled at the tier's layer cap. Only rendered when
+            a handler is given. */}
+        {onAddLayer && (
+          <button
+            type="button"
+            aria-label="Add layer"
+            onClick={onAddLayer}
+            disabled={addDisabled}
+            className="w-full py-2 text-sm rounded border border-dashed border-hairline text-ink-soft hover:text-saffron hover:border-violet disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+          >
+            + New Layer
+          </button>
+        )}
       </div>
     </div>
   );

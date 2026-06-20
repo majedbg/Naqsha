@@ -11,12 +11,16 @@ export default function TopNav() {
 
   useEffect(() => {
     let alive = true;
-    Promise.all([isPlatformAdmin(), listMyAdminOrgs(userId)]).then(
-      ([platformAdmin, adminOrgs]) => {
+    Promise.all([isPlatformAdmin(), listMyAdminOrgs(userId)])
+      .then(([platformAdmin, adminOrgs]) => {
         if (!alive) return;
         setShowAdmin(platformAdmin || (adminOrgs?.length || 0) > 0);
-      }
-    );
+      })
+      .catch(() => {
+        // Fail closed: on any gate error, hide the Admin tab rather than
+        // leaving an unhandled rejection.
+        if (alive) setShowAdmin(false);
+      });
     return () => {
       alive = false;
     };

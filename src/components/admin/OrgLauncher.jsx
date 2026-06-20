@@ -36,7 +36,7 @@ export default function OrgLauncher({ userId: userIdProp }) {
       {loading ? (
         <p>Loading your organizations…</p>
       ) : error ? (
-        <p>Sorry, we couldn&apos;t load your organizations.</p>
+        <p role="alert">Sorry, we couldn&apos;t load your organizations.</p>
       ) : orgs.length === 0 ? (
         <p>You don&apos;t administer any organizations.</p>
       ) : (

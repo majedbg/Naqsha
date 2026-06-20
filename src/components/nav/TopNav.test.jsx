@@ -63,6 +63,23 @@ describe('TopNav', () => {
     expect(screen.queryByRole('link', { name: /admin/i })).toBeNull();
   });
 
+  it('fails closed (no Admin tab, no crash) when a gate fn rejects', async () => {
+    isPlatformAdmin.mockRejectedValue(new Error('network'));
+    listMyAdminOrgs.mockResolvedValue([{ id: 'o1', name: 'Acme' }]);
+
+    renderNav();
+
+    // Wait for the nav to mount and both gate calls to have run, so the
+    // .catch has executed before we assert the Admin tab's absence.
+    await screen.findByRole('navigation');
+    await waitFor(() => expect(isPlatformAdmin).toHaveBeenCalled());
+    await waitFor(() => expect(listMyAdminOrgs).toHaveBeenCalled());
+
+    expect(screen.queryByRole('link', { name: /admin/i })).toBeNull();
+    // Brand link still rendered → nav did not crash.
+    expect(screen.getByRole('link', { name: /sonoform/i })).toBeInTheDocument();
+  });
+
   it('renders the persistent brand/home link for everyone, even non-admins', async () => {
     useAuth.mockReturnValue({ user: null });
     isPlatformAdmin.mockResolvedValue(false);

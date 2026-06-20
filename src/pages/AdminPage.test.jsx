@@ -112,6 +112,30 @@ describe("AdminPage — platform Organizations section", () => {
     expect(assignOrgAdmin).toHaveBeenCalledWith("42", "boss@acme.com");
   });
 
+  // Behavior 6: an assignOrgAdmin failure (RLS denial / duplicate / network)
+  // surfaces a visible role="alert" in the row and does NOT clear the email
+  // (the control stays usable/retryable, email not falsely shown as assigned).
+  it("surfaces an assignOrgAdmin error in a role=alert and keeps the email", async () => {
+    isPlatformAdmin.mockResolvedValue(true);
+    listOrgs.mockResolvedValue([{ id: "42", name: "Acme", slug: "acme" }]);
+    assignOrgAdmin.mockRejectedValue(new Error("permission denied"));
+
+    renderPage();
+    await screen.findByText("Acme");
+
+    const row = screen.getByText("Acme").closest("li");
+    const emailInput = within(row).getByLabelText(/admin email/i);
+    fireEvent.change(emailInput, { target: { value: "boss@acme.com" } });
+    fireEvent.click(within(row).getByRole("button", { name: /assign/i }));
+
+    const alert = await within(row).findByRole("alert");
+    expect(alert).toHaveTextContent(/permission denied/i);
+    // email retained → not falsely shown as assigned, control retryable
+    expect(within(row).getByLabelText(/admin email/i)).toHaveValue(
+      "boss@acme.com"
+    );
+  });
+
   // Behavior 5: a createOrg error (e.g. duplicate slug) surfaces a visible
   // role="alert", not a silent failure.
   it("surfaces a createOrg error in a role=alert", async () => {

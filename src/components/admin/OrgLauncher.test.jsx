@@ -76,6 +76,15 @@ describe('OrgLauncher', () => {
     expect(screen.queryByRole('link')).toBeNull();
   });
 
+  it('announces the fetch-failure message via role="alert"', async () => {
+    listMyAdminOrgs.mockRejectedValue(new Error('boom'));
+
+    renderLauncher({ userId: 'user-1' });
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/couldn't load your organizations/i);
+  });
+
   it('falls back to the authenticated user id when no userId prop is given', async () => {
     listMyAdminOrgs.mockResolvedValue([]);
 

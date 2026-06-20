@@ -11,11 +11,19 @@ import OrgLauncher from "../components/admin/OrgLauncher";
 
 function OrgRow({ org }) {
   const [email, setEmail] = useState("");
+  const [error, setError] = useState(null);
 
   async function handleAssign(e) {
     e.preventDefault();
-    await assignOrgAdmin(org.id, email);
-    setEmail("");
+    setError(null);
+    try {
+      await assignOrgAdmin(org.id, email);
+      setEmail("");
+    } catch (err) {
+      // Surface the failure (RLS denial / duplicate / network) instead of
+      // silently doing nothing; keep `email` so the control stays retryable.
+      setError(err?.message || "Failed to assign admin.");
+    }
   }
 
   return (
@@ -31,6 +39,7 @@ function OrgRow({ org }) {
           />
         </label>
         <button type="submit">Assign admin</button>
+        {error && <p role="alert">{error}</p>}
       </form>
     </li>
   );

@@ -92,13 +92,14 @@ export default function RightPanel({
   const placing = !!placement;
   const [ghostPoint, setGhostPoint] = useState({ x: canvasW / 2, y: canvasH / 2 });
   // Re-seed the ghost to the canvas centre whenever a NEW placement arms (the
-  // cursor isn't over the canvas yet). Done during render via a prev-value ref —
-  // the React-blessed "adjust state on prop change" pattern, not an effect.
-  const prevPlacementRef = useRef(placement);
-  if (placement && placement !== prevPlacementRef.current) {
-    setGhostPoint({ x: canvasW / 2, y: canvasH / 2 });
+  // cursor isn't over the canvas yet). React's "adjust state on prop change"
+  // pattern: compare against the previous prop held in state and set during
+  // render (no effect, no ref write) — React re-renders immediately.
+  const [armedPlacement, setArmedPlacement] = useState(placement);
+  if (placement !== armedPlacement) {
+    setArmedPlacement(placement);
+    if (placement) setGhostPoint({ x: canvasW / 2, y: canvasH / 2 });
   }
-  prevPlacementRef.current = placement;
   const ghostMarkup = useMemo(
     () => (placement ? ghostSvg(placement.paths, placement.bbox) : null),
     [placement]

@@ -20,7 +20,9 @@ vi.mock('../supabase', () => ({
 }));
 
 import {
+  listMaterials,
   listActiveOrgMaterials,
+  listOrgMaterials,
   addOrgMaterial,
   toggleOrgMaterial,
 } from './materialService';
@@ -57,6 +59,86 @@ function mockSupabase(fromImpl) {
 beforeEach(() => {
   vi.clearAllMocks();
   _ref.client = null;
+});
+
+// ─── listMaterials (global catalog) ──────────────────────────────────────────
+describe('materialService.listMaterials', () => {
+  it('returns the global materials catalog ordered by name', async () => {
+    const catalog = [
+      { id: 'mat-1', name: '1/8in clear acrylic', type: 'acrylic', thickness_mm: 3.0, color: 'clear' },
+      { id: 'mat-2', name: '3mm plywood', type: 'plywood', thickness_mm: 3.0, color: 'natural' },
+    ];
+    const orderMock = vi.fn();
+    const supa = mockSupabase((table) => {
+      expect(table).toBe('materials');
+      const chain = makeChain({ data: catalog, error: null });
+      chain.order = (col) => { orderMock(col); return chain; };
+      return chain;
+    });
+
+    const result = await listMaterials();
+
+    expect(supa.from).toHaveBeenCalledWith('materials');
+    expect(orderMock).toHaveBeenCalledWith('name');
+    expect(result).toEqual(catalog);
+  });
+
+  it('returns empty array when supabase is null', async () => {
+    _ref.client = null;
+    expect(await listMaterials()).toEqual([]);
+  });
+
+  it('throws when query errors', async () => {
+    mockSupabase(() => makeChain({ data: null, error: { message: 'RLS denied' } }));
+    await expect(listMaterials()).rejects.toMatchObject({ message: 'RLS denied' });
+  });
+});
+
+// ─── listOrgMaterials (inactive-INCLUSIVE) ───────────────────────────────────
+describe('materialService.listOrgMaterials', () => {
+  it('returns merged rows INCLUDING inactive (no is_active filter)', async () => {
+    const joined = [
+      {
+        id: 'om-1', org_id: 'org-1', material_id: 'mat-1',
+        sheet_w_mm: 600, sheet_h_mm: 400, price: 25, is_active: true,
+        materials: { id: 'mat-1', name: 'acrylic', type: 'acrylic', thickness_mm: 3, color: 'clear' },
+      },
+      {
+        id: 'om-2', org_id: 'org-1', material_id: 'mat-2',
+        sheet_w_mm: 600, sheet_h_mm: 400, price: 30, is_active: false,
+        materials: { id: 'mat-2', name: 'plywood', type: 'plywood', thickness_mm: 3, color: 'natural' },
+      },
+    ];
+    const eqMock = vi.fn();
+    const supa = mockSupabase((table) => {
+      expect(table).toBe('org_materials');
+      const chain = makeChain({ data: joined, error: null });
+      chain.eq = (col, val) => { eqMock(col, val); return chain; };
+      return chain;
+    });
+
+    const result = await listOrgMaterials('org-1');
+
+    expect(supa.from).toHaveBeenCalledWith('org_materials');
+    // scoped to the org, but NOT filtered by is_active — admin must see inactive
+    // rows so the Activate toggle can round-trip a deactivated offering.
+    expect(eqMock).toHaveBeenCalledWith('org_id', 'org-1');
+    expect(eqMock).not.toHaveBeenCalledWith('is_active', true);
+    expect(result.map((r) => r.id)).toEqual(['om-1', 'om-2']);
+    expect(result.map((r) => r.is_active)).toEqual([true, false]);
+    // flattened identity from catalog join (org_materials.id not clobbered)
+    expect(result[1]).toMatchObject({ id: 'om-2', name: 'plywood', is_active: false });
+  });
+
+  it('returns empty array when supabase is null', async () => {
+    _ref.client = null;
+    expect(await listOrgMaterials('org-1')).toEqual([]);
+  });
+
+  it('throws when query errors', async () => {
+    mockSupabase(() => makeChain({ data: null, error: { message: 'RLS denied' } }));
+    await expect(listOrgMaterials('org-1')).rejects.toMatchObject({ message: 'RLS denied' });
+  });
 });
 
 // ─── TRACER ──────────────────────────────────────────────────────────────────

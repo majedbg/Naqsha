@@ -82,7 +82,8 @@ describe("DocumentSetupDialog (C6 — render + presets)", () => {
   it("selecting a preset fills the custom dims and applies them (mm)", () => {
     const onApply = vi.fn();
     render(<DocumentSetupDialog {...makeProps({ profileId: "laser", onApply })} />);
-    const preset = bedPresetsFor("laser").find((p) => p.label.includes("A4"));
+    // Pick a non-default named preset (index 1) — robust to the exact bed list.
+    const preset = bedPresetsFor("laser")[1];
     fireEvent.change(screen.getByLabelText(/bed preset/i), {
       target: { value: preset.id },
     });
@@ -90,6 +91,45 @@ describe("DocumentSetupDialog (C6 — render + presets)", () => {
     const arg = onApply.mock.calls[0][0];
     expect(arg.bedSize.width).toBeCloseTo(preset.width, 0);
     expect(arg.bedSize.height).toBeCloseTo(preset.height, 0);
+  });
+
+  it("offers at least 5 bed presets per machine profile", () => {
+    for (const id of ["laser", "plotter", "dragCutter"]) {
+      expect(bedPresetsFor(id).length).toBeGreaterThanOrEqual(5);
+    }
+  });
+
+  it("leads the laser list with US-standard inch beds (12 × 24 first)", () => {
+    const laser = bedPresetsFor("laser");
+    expect(laser[0].label).toMatch(/12 × 24 in/);
+    // 12 × 24 in → 305 × 610 mm.
+    expect(laser[0].width).toBeCloseTo(305, 0);
+    expect(laser[0].height).toBeCloseTo(610, 0);
+  });
+
+  it("toggling to inches converts the displayed dims; Apply still emits mm", () => {
+    const onApply = vi.fn();
+    // 254 mm = 10 in, 127 mm = 5 in — clean round-trip values.
+    const bed = { width: 254, height: 127, unit: "mm" };
+    render(
+      <DocumentSetupDialog
+        {...makeProps({ profileId: "laser", bedSize: bed, unit: "mm", onApply })}
+      />
+    );
+    // Seeded in mm.
+    expect(screen.getByLabelText(/width/i)).toHaveValue(254);
+    expect(screen.getByLabelText(/height/i)).toHaveValue(127);
+    // Toggle to inches — the same physical bed now shows in inches.
+    fireEvent.click(screen.getByRole("button", { name: "in" }));
+    expect(screen.getByLabelText(/width/i)).toHaveValue(10);
+    expect(screen.getByLabelText(/height/i)).toHaveValue(5);
+    // Apply: bed comes back in canonical mm, and the chosen unit rides along.
+    fireEvent.click(screen.getByRole("button", { name: /apply/i }));
+    const arg = onApply.mock.calls[0][0];
+    expect(arg.unit).toBe("in");
+    expect(arg.bedSize.unit).toBe("mm");
+    expect(arg.bedSize.width).toBeCloseTo(254, 0);
+    expect(arg.bedSize.height).toBeCloseTo(127, 0);
   });
 
   it("profile label appears for each profile option", () => {

@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import OrgAdminPage from './OrgAdminPage';
 import { isOrgAdmin } from '../../lib/org/membershipService';
-import { listActiveOrgMaterials } from '../../lib/org/materialService';
+import { listActiveOrgMaterials, listMaterials } from '../../lib/org/materialService';
 
 vi.mock('../../lib/org/membershipService');
 vi.mock('../../lib/org/materialService');
@@ -39,6 +39,14 @@ vi.mock('../../components/org/admin/AggregatePanel.jsx', () => ({
     </div>
   ),
 }));
+// Stub MaterialAdmin: surface the orgId + catalog size it was mounted with, so
+// the page test stays about wiring (admin-gating + catalog hand-off), not the
+// material-admin internals (covered by MaterialAdmin.test.jsx).
+vi.mock('../../components/org/admin/MaterialAdmin.jsx', () => ({
+  default: ({ orgId, catalog }) => (
+    <div data-testid="material-admin">{`org:${orgId}|catalog:${catalog.length}`}</div>
+  ),
+}));
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -46,6 +54,11 @@ beforeEach(() => {
   listActiveOrgMaterials.mockResolvedValue([
     { id: 'm1', sheet_w_mm: 300, sheet_h_mm: 200 },
     { id: 'm2', sheet_w_mm: 600, sheet_h_mm: 400 },
+  ]);
+  listMaterials.mockResolvedValue([
+    { id: 'cat-1', name: 'acrylic' },
+    { id: 'cat-2', name: 'plywood' },
+    { id: 'cat-3', name: 'mdf' },
   ]);
 });
 
@@ -57,6 +70,29 @@ describe('OrgAdminPage', () => {
 
     expect(await screen.findByText(/access denied/i)).toBeInTheDocument();
     expect(screen.queryByTestId('aggregate-panel')).toBeNull();
+  });
+
+  it('a non-admin never sees the Materials admin section or loads the catalog', async () => {
+    isOrgAdmin.mockResolvedValue(false);
+
+    render(<OrgAdminPage />);
+
+    await screen.findByText(/access denied/i);
+    expect(screen.queryByTestId('material-admin')).toBeNull();
+    expect(listMaterials).not.toHaveBeenCalled();
+  });
+
+  it('an admin sees the Materials section with MaterialAdmin fed the global catalog', async () => {
+    isOrgAdmin.mockResolvedValue(true);
+
+    render(<OrgAdminPage />);
+
+    // The stub mounts immediately at catalog:0, then the listMaterials effect
+    // resolves and re-renders at catalog:3 — wait for the loaded state.
+    await waitFor(() =>
+      expect(screen.getByTestId('material-admin')).toHaveTextContent('org:org-1|catalog:3'),
+    );
+    expect(listMaterials).toHaveBeenCalledTimes(1);
   });
 
   it('an admin sees the queue; selecting single-material rows mounts the aggregate panel with derived sheet dims', async () => {

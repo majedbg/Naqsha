@@ -73,6 +73,20 @@ export async function listMyAdminOrgs(userId) {
   return (data || []).map((row) => row.orgs);
 }
 
+// Every org the user is an ACTIVE member of (admin or not). Powers the studio
+// "Submit to org" picker — any member can submit a design, so this must NOT
+// filter on is_admin (that's listMyAdminOrgs, for the Admin tab / launcher).
+export async function listMyOrgs(userId) {
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from('org_members')
+    .select('orgs(*)')
+    .eq('user_id', userId)
+    .eq('status', 'active');
+  if (error) throw error;
+  return (data || []).map((row) => row.orgs);
+}
+
 export async function isOrgAdmin(orgId, userId) {
   if (!supabase) return false;
   const { data, error } = await supabase

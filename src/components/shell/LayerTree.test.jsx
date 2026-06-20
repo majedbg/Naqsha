@@ -352,4 +352,41 @@ describe("LayerTree (B2 — layer tree + machine-profile selector)", () => {
     fireEvent.click(trigger);
     expect(within(row).queryByTestId("row-menu")).not.toBeInTheDocument();
   });
+
+  // The Document Setup gear beside the machine selector opens the dialog.
+  it("invokes onDocumentSetup when the machine gear is clicked", () => {
+    const onDocumentSetup = vi.fn();
+    render(
+      <LayerTree
+        layers={[makeLayer("l1")]}
+        operations={seedOperations()}
+        profileId="laser"
+        selectedLayerId={null}
+        onSelectLayer={() => {}}
+        onUpdateLayer={() => {}}
+        onReorderLayers={() => {}}
+        onProfileChange={() => {}}
+        onDocumentSetup={onDocumentSetup}
+      />
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Document setup" }));
+    expect(onDocumentSetup).toHaveBeenCalledTimes(1);
+  });
+
+  // Back-compat: omitting onDocumentSetup hides the gear (no crash).
+  it("renders no gear when onDocumentSetup is omitted", () => {
+    render(
+      <LayerTree
+        layers={[makeLayer("l1")]}
+        operations={seedOperations()}
+        profileId="laser"
+        selectedLayerId={null}
+        onSelectLayer={() => {}}
+        onUpdateLayer={() => {}}
+        onReorderLayers={() => {}}
+        onProfileChange={() => {}}
+      />
+    );
+    expect(screen.queryByRole("button", { name: "Document setup" })).not.toBeInTheDocument();
+  });
 });

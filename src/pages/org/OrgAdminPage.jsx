@@ -2,10 +2,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { useOrg } from './OrgContext';
 import { useAuth } from '../../lib/AuthContext';
 import { isOrgAdmin } from '../../lib/org/membershipService';
-import { listActiveOrgMaterials } from '../../lib/org/materialService';
+import { listActiveOrgMaterials, listMaterials } from '../../lib/org/materialService';
 import { loadSubmissionSvg } from '../../lib/org/submissionStorage';
 import AdminQueue from '../../components/org/admin/AdminQueue.jsx';
 import AggregatePanel from '../../components/org/admin/AggregatePanel.jsx';
+import MaterialAdmin from '../../components/org/admin/MaterialAdmin.jsx';
 
 // Gap between placed pieces on a sheet. No per-material source in the data, so
 // it's a fixed default (matches the value the AggregatePanel tests exercise).
@@ -26,6 +27,7 @@ export default function OrgAdminPage() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [adminLoading, setAdminLoading] = useState(true);
   const [materials, setMaterials] = useState([]);
+  const [catalog, setCatalog] = useState([]);
   const [selected, setSelected] = useState([]);
 
   // Resolve admin status for this org+user. State is only ever set from the
@@ -78,6 +80,23 @@ export default function OrgAdminPage() {
     };
   }, [isAdmin, orgId]);
 
+  // Global materials catalog feeds the MaterialAdmin "add offering" dropdown.
+  // Admin-only — the catalog is platform data the member view never needs.
+  useEffect(() => {
+    let active = true;
+    if (!isAdmin) return undefined;
+    listMaterials()
+      .then((rows) => {
+        if (active) setCatalog(rows || []);
+      })
+      .catch(() => {
+        if (active) setCatalog([]);
+      });
+    return () => {
+      active = false;
+    };
+  }, [isAdmin]);
+
   // Single-material guard: how many distinct org_materials the selection spans.
   const selectedMaterialIds = useMemo(() => {
     const ids = new Set();
@@ -129,6 +148,13 @@ export default function OrgAdminPage() {
             </p>
           )}
         </div>
+      )}
+
+      {isAdmin && (
+        <section className="border-t border-gray-200 pt-4">
+          <h2 className="mb-3 text-base font-semibold text-gray-900">Materials</h2>
+          <MaterialAdmin orgId={orgId} catalog={catalog} />
+        </section>
       )}
     </div>
   );

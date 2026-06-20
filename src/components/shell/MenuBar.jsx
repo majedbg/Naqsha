@@ -109,6 +109,7 @@ export default function MenuBar({
   onExamples,
   onImport,
   onExport,
+  onSubmitToOrg,
   onSave,
   onSaveToCloud,
   onOpenCloudDesigns,
@@ -141,6 +142,13 @@ export default function MenuBar({
         },
         { separator: true },
         { label: "Export…", onSelect: onExport },
+        // Submit to org… (org/admin MVP) — in-app path to a workshop's cut queue.
+        // Disabled (no handler) until the user is signed in.
+        {
+          label: "Submit to org…",
+          onSelect: onSubmitToOrg,
+          disabled: !onSubmitToOrg,
+        },
         { label: "Save…", onSelect: onSave },
         { label: "Save to cloud", onSelect: onSaveToCloud },
         { label: "Cloud designs…", onSelect: onOpenCloudDesigns },

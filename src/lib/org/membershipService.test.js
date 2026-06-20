@@ -25,6 +25,7 @@ import {
   editMember,
   isOrgAdmin,
   listMyAdminOrgs,
+  listMyOrgs,
 } from './membershipService';
 
 beforeEach(() => {
@@ -289,6 +290,73 @@ describe('membershipService.listMyAdminOrgs', () => {
       { message: 'rls denied' },
     );
     await expect(listMyAdminOrgs('u1')).rejects.toMatchObject({ message: 'rls denied' });
+  });
+});
+
+// ─── listMyOrgs: every org the user is an active member of (admin OR not) ─────
+// Powers the studio "Submit to org" picker. Unlike listMyAdminOrgs it does NOT
+// filter on is_admin — a plain member must still be able to submit a design.
+describe('membershipService.listMyOrgs', () => {
+  it('returns flattened orgs for all active memberships, admin or not (tracer)', async () => {
+    const seed = {
+      org_members: [
+        {
+          id: 'm1', user_id: 'u1', is_admin: true, status: 'active',
+          orgs: { id: 'org-1', slug: 'acme', name: 'Acme' },
+        },
+        {
+          id: 'm2', user_id: 'u1', is_admin: false, status: 'active',
+          orgs: { id: 'org-2', slug: 'beta', name: 'Beta' },
+        },
+      ],
+    };
+    _ref.client = createSupabaseMock(seed);
+
+    const orgs = await listMyOrgs('u1');
+
+    expect(orgs).toEqual([
+      { id: 'org-1', slug: 'acme', name: 'Acme' },
+      { id: 'org-2', slug: 'beta', name: 'Beta' },
+    ]);
+  });
+
+  it('excludes non-active memberships but keeps non-admin ones', async () => {
+    const seed = {
+      org_members: [
+        {
+          id: 'm1', user_id: 'u1', is_admin: false, status: 'active',
+          orgs: { id: 'org-1', slug: 'acme', name: 'Acme' },
+        },
+        {
+          id: 'm2', user_id: 'u1', is_admin: true, status: 'invited',
+          orgs: { id: 'org-2', slug: 'beta', name: 'Beta' },
+        },
+      ],
+    };
+    _ref.client = createSupabaseMock(seed);
+
+    const orgs = await listMyOrgs('u1');
+
+    expect(orgs).toEqual([{ id: 'org-1', slug: 'acme', name: 'Acme' }]);
+  });
+
+  it('returns [] when the user has no active membership', async () => {
+    _ref.client = createSupabaseMock({ org_members: [] });
+    expect(await listMyOrgs('u1')).toEqual([]);
+  });
+
+  it('returns [] when supabase is null', async () => {
+    _ref.client = null;
+    expect(await listMyOrgs('u1')).toEqual([]);
+  });
+
+  it('throws when the query errors', async () => {
+    _ref.client = createSupabaseMock({ org_members: [] }).injectError(
+      'org_members',
+      'select',
+      { message: 'rls denied' },
+    );
+    await expect(listMyOrgs('u1')).rejects.toMatchObject({ message: 'rls denied' });
   });
 });
 

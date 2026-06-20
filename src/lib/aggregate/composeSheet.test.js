@@ -26,6 +26,33 @@ describe('composeSheet — tracer', () => {
     // the inner content is hoisted; the piece's own <svg>/viewBox wrapper is dropped
     expect(out).not.toContain('viewBox="0 0 10 10"');
   });
+
+  // Regression guard for the R4 "all-red sheet" worry on the design path: a
+  // design submission spans multiple ops (cut+score) but composeSheet only
+  // stamps ops[0] on the wrapping <g>. That group stroke must NOT flatten the
+  // piece's colors — each inner element carries its own stroke (the buildAll-
+  // LayersSVG/buildSubmissionSvg export always emits per-element strokes), so
+  // the group stroke is overridden and per-layer convention colors survive.
+  it('preserves a design piece’s own per-layer strokes (group op-stroke does not paint through)', () => {
+    const piece = {
+      id: 'design-1',
+      xMm: 0,
+      yMm: 0,
+      ops: [{ key: 'layer-a', op: 'cut' }, { key: 'layer-b', op: 'score' }],
+      svg:
+        '<svg xmlns="http://www.w3.org/2000/svg" width="100mm" viewBox="0 0 100 50">' +
+        '<g id="layer-a" data-role="cut"><path d="M0 0 L1 1" stroke="#FF0000"/></g>' +
+        '<g id="layer-b" data-role="score"><path d="M0 0 L2 2" stroke="#0000FF"/></g>' +
+        '</svg>',
+    };
+
+    const out = composeSheet([piece], { widthMm: 600, heightMm: 400 });
+
+    // Both the cut (red) and score (blue) inner strokes are still present — the
+    // single ops[0]=cut group stroke did not collapse the score layer to red.
+    expect(out).toContain('stroke="#FF0000"');
+    expect(out).toContain('stroke="#0000FF"');
+  });
 });
 
 describe('composeSheet — op normalization', () => {

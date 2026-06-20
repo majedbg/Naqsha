@@ -65,13 +65,19 @@ export const MACHINE_PROFILES = {
     colorsLocked: true,
     lockedColors: LASER_COLORS,
     defaultBed: { width: MM(20), height: MM(12), unit: 'mm' }, // ~508 × 305 mm
-    // Generic bed presets for the Document Setup dialog (#14, C6). All in mm.
-    // Camp-specific beds are #18 and intentionally NOT here. The first preset
-    // mirrors defaultBed so reopening on a fresh document matches a named row.
+    // Common laser-cutter beds for the Document Setup dialog (#14, C6). Led by the
+    // US-standard inch-denominated sizes (12×24, 20×12, 24×18), then the popular
+    // named metric machines. All stored in mm: inch-native use MM(), metric-native
+    // use literal mm. Camp-specific beds are #18 and intentionally NOT here. The
+    // 20×12 preset mirrors defaultBed so a fresh document matches a named row.
     bedPresets: [
-      { id: 'laser-20x12', label: 'Desktop laser (508 × 305)', width: MM(20), height: MM(12) },
-      { id: 'laser-a4', label: 'A4 (297 × 210)', width: 297, height: 210 },
-      { id: 'laser-a3', label: 'A3 (420 × 297)', width: 420, height: 297 },
+      { id: 'laser-us-12x24', label: '12 × 24 in (305 × 610)', width: MM(12), height: MM(24) },
+      { id: 'laser-us-20x12', label: '20 × 12 in (508 × 305)', width: MM(20), height: MM(12) },
+      { id: 'laser-us-24x18', label: '24 × 18 in (610 × 457)', width: MM(24), height: MM(18) },
+      { id: 'laser-k40', label: 'K40 (300 × 200)', width: 300, height: 200 },
+      { id: 'laser-glowforge', label: 'Glowforge (495 × 279)', width: 495, height: 279 },
+      { id: 'laser-co2-60x40', label: 'CO₂ 60×40 (600 × 400)', width: 600, height: 400 },
+      { id: 'laser-co2-90x60', label: 'CO₂ 90×60 (900 × 600)', width: 900, height: 600 },
     ],
   },
   plotter: {
@@ -84,10 +90,14 @@ export const MACHINE_PROFILES = {
     colorsLocked: false,
     lockedColors: {},
     defaultBed: { width: MM(6), height: MM(8), unit: 'mm' }, // AxiDraw V3, 152 × 203 mm
+    // The 5 most common pen-plotter beds — paper-standard travel sizes plus the
+    // dominant AxiDraw footprints. First preset mirrors defaultBed.
     bedPresets: [
       { id: 'plotter-axidraw-v3', label: 'AxiDraw V3 (152 × 203)', width: MM(6), height: MM(8) },
       { id: 'plotter-a4', label: 'A4 (297 × 210)', width: 297, height: 210 },
       { id: 'plotter-a3', label: 'A3 (420 × 297)', width: 420, height: 297 },
+      { id: 'plotter-axidraw-a3', label: 'AxiDraw A3 (430 × 297)', width: 430, height: 297 },
+      { id: 'plotter-a2', label: 'A2 (594 × 420)', width: 594, height: 420 },
     ],
   },
   dragCutter: {
@@ -100,10 +110,14 @@ export const MACHINE_PROFILES = {
     colorsLocked: false,
     lockedColors: {},
     defaultBed: { width: MM(12), height: MM(12), unit: 'mm' }, // Silhouette Cameo, 305 × 305 mm
+    // The 5 most common drag/blade-cutter mats (Silhouette + Cricut). First
+    // preset mirrors defaultBed.
     bedPresets: [
-      { id: 'drag-cameo-12x12', label: 'Cameo mat (305 × 305)', width: MM(12), height: MM(12) },
-      { id: 'drag-cameo-12x24', label: 'Cameo long (305 × 610)', width: MM(12), height: MM(24) },
-      { id: 'drag-portrait-8x12', label: 'Portrait mat (203 × 305)', width: MM(8), height: MM(12) },
+      { id: 'drag-cameo-12x12', label: 'Cameo / 12×12 (305 × 305)', width: MM(12), height: MM(12) },
+      { id: 'drag-cameo-12x24', label: 'Cameo long / 12×24 (305 × 610)', width: MM(12), height: MM(24) },
+      { id: 'drag-portrait-8x12', label: 'Portrait / 8×12 (203 × 305)', width: MM(8), height: MM(12) },
+      { id: 'drag-cricut-joy', label: 'Cricut Joy (114 × 305)', width: 114, height: 305 },
+      { id: 'drag-cameo-plus-15', label: 'Cameo Plus / 15×15 (381 × 381)', width: 381, height: 381 },
     ],
   },
 };

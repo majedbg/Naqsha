@@ -71,6 +71,11 @@ export default function DocumentSetupDialog({
   const [draftW, setDraftW] = useState("");
   const [draftH, setDraftH] = useState("");
   const [presetId, setPresetId] = useState("custom");
+  // Display unit for the bed dims — the mm/in toggle. Seeded from the live `unit`
+  // (px falls back to mm, since the toggle only offers mm/in). The W/H inputs
+  // show + accept values in THIS unit; Apply converts back to canonical mm and
+  // also reports the chosen unit OUT so the document's global unit can follow.
+  const [draftUnit, setDraftUnit] = useState(unit === "in" ? "in" : "mm");
   // Export document size draft (px). Kept separate from the bed dims above.
   const [draftDocW, setDraftDocW] = useState("");
   const [draftDocH, setDraftDocH] = useState("");
@@ -81,9 +86,11 @@ export default function DocumentSetupDialog({
   useEffect(() => {
     if (!open) return;
     const bed = bedSize ?? defaultBedSize(profileId);
+    const seedUnit = unit === "in" ? "in" : "mm";
     setDraftProfile(profileId);
-    setDraftW(String(roundForUnit(mmToUnit(bed.width, unit), unit)));
-    setDraftH(String(roundForUnit(mmToUnit(bed.height, unit), unit)));
+    setDraftUnit(seedUnit);
+    setDraftW(String(roundForUnit(mmToUnit(bed.width, seedUnit), seedUnit)));
+    setDraftH(String(roundForUnit(mmToUnit(bed.height, seedUnit), seedUnit)));
     setPresetId("custom");
     if (hasCanvasSize) {
       setDraftDocW(String(Math.round(canvasW)));
@@ -119,8 +126,8 @@ export default function DocumentSetupDialog({
   const handleMachineChange = (nextProfile) => {
     setDraftProfile(nextProfile);
     const def = defaultBedSize(nextProfile);
-    setDraftW(String(roundForUnit(mmToUnit(def.width, unit), unit)));
-    setDraftH(String(roundForUnit(mmToUnit(def.height, unit), unit)));
+    setDraftW(String(roundForUnit(mmToUnit(def.width, draftUnit), draftUnit)));
+    setDraftH(String(roundForUnit(mmToUnit(def.height, draftUnit), draftUnit)));
     setPresetId("custom");
   };
 
@@ -130,8 +137,20 @@ export default function DocumentSetupDialog({
     if (id === "custom") return;
     const preset = presets.find((p) => p.id === id);
     if (!preset) return;
-    setDraftW(String(roundForUnit(mmToUnit(preset.width, unit), unit)));
-    setDraftH(String(roundForUnit(mmToUnit(preset.height, unit), unit)));
+    setDraftW(String(roundForUnit(mmToUnit(preset.width, draftUnit), draftUnit)));
+    setDraftH(String(roundForUnit(mmToUnit(preset.height, draftUnit), draftUnit)));
+  };
+
+  // mm/in toggle. Switching converts the CURRENT W/H entries in place so the
+  // displayed numbers describe the same physical bed (the dims round-trip through
+  // mm). Selecting a unit never touches the named-preset selection.
+  const handleUnitToggle = (nextUnit) => {
+    if (nextUnit === draftUnit) return;
+    const wMm = unitToMm(Number(draftW) || 0, draftUnit);
+    const hMm = unitToMm(Number(draftH) || 0, draftUnit);
+    setDraftUnit(nextUnit);
+    setDraftW(String(roundForUnit(mmToUnit(wMm, nextUnit), nextUnit)));
+    setDraftH(String(roundForUnit(mmToUnit(hMm, nextUnit), nextUnit)));
   };
 
   const handleApply = () => {
@@ -139,11 +158,13 @@ export default function DocumentSetupDialog({
     const h = Number(draftH);
     // Convert the active-unit entry back to canonical mm at the boundary.
     const bed = {
-      width: unitToMm(Number.isFinite(w) ? w : 0, unit),
-      height: unitToMm(Number.isFinite(h) ? h : 0, unit),
+      width: unitToMm(Number.isFinite(w) ? w : 0, draftUnit),
+      height: unitToMm(Number.isFinite(h) ? h : 0, draftUnit),
       unit: "mm",
     };
-    const payload = { profileId: draftProfile, bedSize: bed };
+    // bedSize stays canonical mm; `unit` carries the chosen display unit OUT so
+    // the host can sync the document's global unit (rulers/status bar follow).
+    const payload = { profileId: draftProfile, bedSize: bed, unit: draftUnit };
     // Export document size (px) — only included when the control is present, so
     // callers that don't pass canvasW/H see an unchanged payload shape.
     if (hasCanvasSize) {
@@ -214,12 +235,41 @@ export default function DocumentSetupDialog({
           </select>
         </label>
 
+        {/* Unit toggle — mm / in. Drives the W/H display below; Apply converts
+            back to canonical mm and reports the chosen unit out. */}
+        <div className="flex items-center justify-between">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-ink-soft">
+            Units
+          </span>
+          <div
+            role="group"
+            aria-label="Units"
+            className="inline-flex rounded-xs border border-hairline overflow-hidden"
+          >
+            {["mm", "in"].map((u) => (
+              <button
+                key={u}
+                type="button"
+                aria-pressed={draftUnit === u}
+                onClick={() => handleUnitToggle(u)}
+                className={`px-2.5 py-1 text-xs transition-colors duration-fast ease-out-quart ${
+                  draftUnit === u
+                    ? "bg-saffron text-ink font-medium"
+                    : "bg-paper-warm text-ink-soft hover:text-ink"
+                }`}
+              >
+                {u}
+              </button>
+            ))}
+          </div>
+        </div>
+
         {/* Custom bed dimensions — in the active display unit, converted to mm
             on Apply. */}
         <div className="flex items-end gap-3">
           <label className="flex-1">
             <span className="block text-[10px] font-semibold uppercase tracking-wider text-ink-soft mb-1">
-              Width ({unit})
+              Width ({draftUnit})
             </span>
             <input
               type="number"
@@ -236,7 +286,7 @@ export default function DocumentSetupDialog({
           <span className="pb-1.5 text-xs text-ink-soft/60">×</span>
           <label className="flex-1">
             <span className="block text-[10px] font-semibold uppercase tracking-wider text-ink-soft mb-1">
-              Height ({unit})
+              Height ({draftUnit})
             </span>
             <input
               type="number"

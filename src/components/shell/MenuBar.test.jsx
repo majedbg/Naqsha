@@ -113,6 +113,22 @@ describe("MenuBar (B5 — top menu bar structure)", () => {
     expect(h.onExport).toHaveBeenCalledTimes(1);
   });
 
+  it("Submit to org item invokes onSubmitToOrg when provided", () => {
+    const h = makeHandlers({ onSubmitToOrg: vi.fn() });
+    render(<MenuBar {...h} />);
+    openMenu("File");
+    fireEvent.click(screen.getByRole("menuitem", { name: /submit to org/i }));
+    expect(h.onSubmitToOrg).toHaveBeenCalledTimes(1);
+  });
+
+  it("Submit to org item is disabled when no handler is supplied (signed-out)", () => {
+    render(<MenuBar {...makeHandlers()} />);
+    openMenu("File");
+    expect(
+      screen.getByRole("menuitem", { name: /submit to org/i })
+    ).toBeDisabled();
+  });
+
   it("Cloud designs item invokes the existing cloud handler", () => {
     const h = makeHandlers();
     render(<MenuBar {...h} />);

@@ -28,6 +28,7 @@ import LayerGroupModal from "../components/LayerGroupModal";
 import CloudSaveModal from "../components/CloudSaveModal";
 import PatternPickerModal from "../components/PatternPickerModal";
 import KitPresetModal from "../components/KitPresetModal";
+import StudioSubmitModal from "../components/org/StudioSubmitModal";
 import useLayers from "../lib/useLayers";
 import useLayerGroups from "../lib/useLayerGroups";
 import { useAuth } from "../lib/AuthContext";
@@ -72,6 +73,7 @@ export default function Studio() {
     saveName,
     showExamples,
     pendingExample,
+    showSubmitModal,
   } = ui;
 
   // === Canvas sizing (owns the sonoform-canvas blob incl. activeTab) ===
@@ -553,16 +555,21 @@ export default function Studio() {
   // dimensions become user-settable again AND presetIndex stays coherent (snaps
   // to a known preset or Custom, exactly as the cloud/example loaders do).
   const handleDocumentSetupApply = useCallback(
-    ({ profileId, bedSize: nextBed, canvasW: nextW, canvasH: nextH }) => {
+    ({ profileId, bedSize: nextBed, unit: nextUnit, canvasW: nextW, canvasH: nextH }) => {
       if (profileId && profileId !== activeProfileId) {
         handleProfileChange(profileId);
       }
       if (nextBed) setBedSize(nextBed);
+      // The dialog's mm/in toggle drives the document's global unit (rulers,
+      // status bar, length-tagged params all follow). bedSize stays canonical mm.
+      if ((nextUnit === "mm" || nextUnit === "in") && nextUnit !== unit) {
+        setUnit(nextUnit);
+      }
       if (typeof nextW === "number" && typeof nextH === "number") {
         applyCanvasSize(nextW, nextH);
       }
     },
-    [activeProfileId, handleProfileChange, applyCanvasSize]
+    [activeProfileId, handleProfileChange, applyCanvasSize, unit, setUnit]
   );
 
   // AI-pattern chat (create / revise) — re-homed for #16 AC2. The legacy
@@ -896,6 +903,19 @@ export default function Studio() {
         />
       )}
 
+      {showSubmitModal && user && (
+        <StudioSubmitModal
+          userId={user.id}
+          layers={layers}
+          getPatternInstances={() => patternInstancesRef.current || {}}
+          canvasW={canvasW}
+          canvasH={canvasH}
+          operations={operations}
+          onClose={() => setUI("showSubmitModal", false)}
+          onSubmitted={() => setUI("showSubmitModal", false)}
+        />
+      )}
+
 
       {/* Pro-shell top menu bar (B5 / #8). Portaled into the shell's Menu bar
           region when the slot is present; renders nothing in the legacy layout
@@ -909,6 +929,7 @@ export default function Studio() {
             onExamples={() => setUI("showExamples", !showExamples)}
             onImport={handleImportClick}
             onExport={() => handleExportAll(true)}
+            onSubmitToOrg={user ? () => setUI("showSubmitModal", true) : undefined}
             onSave={handleSaveLayerGroup}
             onSaveToCloud={handleSaveToCloud}
             onOpenCloudDesigns={() => setUI("showCloudModal", true)}
@@ -1006,6 +1027,9 @@ export default function Studio() {
             onUpdateLayer={updateLayer}
             onReorderLayers={reorderLayers}
             onProfileChange={handleProfileChange}
+            // Gear beside the machine selector opens the Document Setup dialog —
+            // a second entry point alongside the File menu's "Document Setup…".
+            onDocumentSetup={() => setDocumentSetupOpen(true)}
             onAssignOperation={assignOperationToLayer}
             // Re-homed per-layer + header actions (#16 AC2) — wired to the
             // surviving useLayers / per-layer-export handlers.
@@ -1080,12 +1104,15 @@ export default function Studio() {
           operationsPanelSlot
         )}
 
-      {/* Document Setup dialog (C6 / #14). Gated on the menu slot so it is live
-          ONLY in the pro shell (its sole entry point is the File-menu item) and a
-          true no-op in the legacy layout. Reads the LIVE active profile + bed so
-          reopening shows current settings; Apply routes the profile half through
-          the shared handleProfileChange and overrides the artboard bed. */}
-      {menuSlot && (
+      {/* Document Setup dialog (C6 / #14). Gated on the pro-shell slots so it is
+          live ONLY in the pro shell and a true no-op in the legacy layout. It has
+          TWO entry points, both pro-shell-only: the File-menu item (menuSlot) and
+          the gear beside the LayerTree machine selector (objectTreeSlot) — gate on
+          either so neither opener can set documentSetupOpen with nothing mounted.
+          Reads the LIVE active profile + bed so reopening shows current settings;
+          Apply routes the profile half through the shared handleProfileChange,
+          overrides the artboard bed, and syncs the document unit. */}
+      {(menuSlot || objectTreeSlot) && (
         <DocumentSetupDialog
           open={documentSetupOpen}
           profileId={activeProfileId}

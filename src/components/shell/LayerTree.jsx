@@ -398,6 +398,9 @@ export default function LayerTree({
   onUpdateLayer,
   onReorderLayers,
   onProfileChange,
+  // Opens the Document Setup dialog from the gear beside the machine selector.
+  // Optional so the tree stays back-compatible with callers/tests that omit it.
+  onDocumentSetup,
   onAssignOperation,
   // Re-homed per-layer + header actions (#16 AC2). All optional so the tree stays
   // back-compatible with callers/tests that don't supply them.
@@ -422,18 +425,46 @@ export default function LayerTree({
         <label className="block text-[10px] font-semibold uppercase tracking-wider text-ink-soft mb-1">
           Machine
         </label>
-        <select
-          aria-label="Machine profile"
-          value={profileId}
-          onChange={(e) => onProfileChange(e.target.value)}
-          className="w-full rounded-xs border border-hairline bg-paper-warm px-1.5 py-1 text-xs text-ink outline-none focus:border-violet"
-        >
-          {PROFILE_IDS.map((id) => (
-            <option key={id} value={id}>
-              {getProfile(id).label}
-            </option>
-          ))}
-        </select>
+        <div className="flex items-center gap-1.5">
+          <select
+            aria-label="Machine profile"
+            value={profileId}
+            onChange={(e) => onProfileChange(e.target.value)}
+            className="min-w-0 flex-1 rounded-xs border border-hairline bg-paper-warm px-1.5 py-1 text-xs text-ink outline-none focus:border-violet"
+          >
+            {PROFILE_IDS.map((id) => (
+              <option key={id} value={id}>
+                {getProfile(id).label}
+              </option>
+            ))}
+          </select>
+          {/* Document Setup gear — opens the bed/profile/units dialog. Inline SVG
+              (no icon dep), matching the tree's other inline-SVG controls. */}
+          {onDocumentSetup && (
+            <button
+              type="button"
+              aria-label="Document setup"
+              title="Document setup"
+              onClick={onDocumentSetup}
+              className="shrink-0 rounded-xs border border-hairline bg-paper-warm p-1 text-ink-soft hover:text-ink hover:border-violet transition-colors duration-fast ease-out-quart"
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <circle cx="12" cy="12" r="3" />
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+              </svg>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Re-homed randomize-all header actions (#16 AC2). The legacy

@@ -20,6 +20,31 @@ function flattenOrgMaterial(row) {
   };
 }
 
+// The global materials catalog (platform-owned, read by any authenticated user).
+// Feeds the MaterialAdmin "add material" dropdown.
+export async function listMaterials() {
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from('materials')
+    .select('*')
+    .order('name');
+  if (error) throw error;
+  return data || [];
+}
+
+// All of an org's offerings INCLUDING inactive ones. The admin UI needs the
+// inactive rows so its Activate toggle can round-trip a deactivated offering;
+// the aggregate/sheet path uses listActiveOrgMaterials (active-only) instead.
+export async function listOrgMaterials(orgId) {
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from('org_materials')
+    .select('*, materials(*)')
+    .eq('org_id', orgId);
+  if (error) throw error;
+  return (data || []).map(flattenOrgMaterial);
+}
+
 export async function listActiveOrgMaterials(orgId) {
   if (!supabase) return [];
   const { data, error } = await supabase

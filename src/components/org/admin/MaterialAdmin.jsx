@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
-  listActiveOrgMaterials,
+  listOrgMaterials,
   addOrgMaterial,
   toggleOrgMaterial,
 } from '../../../lib/org/materialService';
@@ -18,7 +18,7 @@ export default function MaterialAdmin({ orgId, catalog = [] }) {
 
   const refresh = useCallback(
     () =>
-      listActiveOrgMaterials(orgId)
+      listOrgMaterials(orgId)
         .then((data) => setRows(data || []))
         .catch(() => setRows([])),
     [orgId],
@@ -26,7 +26,7 @@ export default function MaterialAdmin({ orgId, catalog = [] }) {
 
   useEffect(() => {
     let active = true;
-    listActiveOrgMaterials(orgId)
+    listOrgMaterials(orgId)
       .then((data) => {
         if (active) setRows(data || []);
       })

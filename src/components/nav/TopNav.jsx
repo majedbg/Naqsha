@@ -29,7 +29,7 @@ export default function TopNav() {
   return (
     <nav aria-label="Primary" className="flex items-center gap-4 px-4 py-2">
       <Link to="/" className="font-semibold">
-        Sonoform
+        Naqsha
       </Link>
       {showAdmin && (
         <Link to="/admin" className="ml-auto">

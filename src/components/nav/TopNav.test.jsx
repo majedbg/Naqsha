@@ -77,7 +77,7 @@ describe('TopNav', () => {
 
     expect(screen.queryByRole('link', { name: /admin/i })).toBeNull();
     // Brand link still rendered → nav did not crash.
-    expect(screen.getByRole('link', { name: /sonoform/i })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /naqsha/i })).toBeInTheDocument();
   });
 
   it('renders the persistent brand/home link for everyone, even non-admins', async () => {
@@ -89,7 +89,7 @@ describe('TopNav', () => {
 
     const nav = await screen.findByRole('navigation', { name: /primary/i });
     expect(nav).toBeTruthy();
-    const home = screen.getByRole('link', { name: /sonoform/i });
+    const home = screen.getByRole('link', { name: /naqsha/i });
     expect(home.getAttribute('href')).toBe('/');
   });
 });

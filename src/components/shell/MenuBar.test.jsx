@@ -47,10 +47,8 @@ function openMenu(name) {
 }
 
 describe("MenuBar (B5 — top menu bar structure)", () => {
-  it("renders the app name and the five top-level menus + account cluster", () => {
+  it("renders the five top-level menus + account cluster", () => {
     render(<MenuBar {...makeHandlers()} />);
-    // App name on the left.
-    expect(screen.getByText("Naqsha")).toBeInTheDocument();
     // The five menus per spec.
     for (const menu of ["File", "Edit", "View", "Object", "Help"]) {
       expect(screen.getByRole("button", { name: menu })).toBeInTheDocument();

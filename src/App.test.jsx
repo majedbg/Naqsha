@@ -65,7 +65,7 @@ describe('App integration — TopNav + routes', () => {
     renderAt('/');
     // TopNav is the real component, mounted once above <Routes>.
     expect(screen.getByRole('navigation', { name: /primary/i })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /sonoform/i })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /naqsha/i })).toBeInTheDocument();
   });
 
   it('routes /admin to AdminPage', () => {

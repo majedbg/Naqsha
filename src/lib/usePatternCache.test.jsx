@@ -130,7 +130,10 @@ describe("usePatternCache", () => {
     ]);
   });
 
-  it("guest fresh-switch to duality pins the gate-loop randomizeKeys", () => {
+  // WORKSHOP OVERRIDE 2026-06-20: guest param cap lifted (maxParamsPerPattern
+  // Infinity in tierLimits.js), so duality now yields ALL its keys, not the first
+  // 7. Un-skip when the gated hierarchy is restored (grep "WORKSHOP OVERRIDE").
+  it.skip("guest fresh-switch to duality pins the gate-loop randomizeKeys", () => {
     mockTier = "guest";
     const layer = makeLayer({ patternType: "spirograph", paramsCache: {} });
     let patch = null;

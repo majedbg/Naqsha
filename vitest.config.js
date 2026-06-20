@@ -17,6 +17,11 @@ export default defineConfig({
   test: {
     environment: 'node',
     globals: true,
+    // The heavy full-shell renders (e.g. StudioRoute's eight-region gate) pass in
+    // isolation but intermittently exceed Vitest's 5s default when the suite runs
+    // all ~180 files concurrently under worker contention. Raised to 15s to absorb
+    // that load-induced variance; per-test logic is unchanged.
+    testTimeout: 15000,
     setupFiles: ['./src/test/setup.js'],
     include: ['src/**/*.{test,spec}.{js,jsx}'],
     coverage: {

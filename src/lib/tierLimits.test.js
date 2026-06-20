@@ -40,7 +40,10 @@ describe('TIER_LIMITS shape', () => {
     expect(Object.keys(TIER_LIMITS)).toEqual(['guest', 'free', 'pro', 'studio']);
   });
 
-  it('guest tier has expected shape (loosened 2026-06-10)', () => {
+  // WORKSHOP OVERRIDE 2026-06-20: guest patterns/params are unlocked (patterns
+  // null, maxParamsPerPattern Infinity) in tierLimits.js. Un-skip when the gated
+  // hierarchy is restored (grep "WORKSHOP OVERRIDE" across src/).
+  it.skip('guest tier has expected shape (loosened 2026-06-10)', () => {
     const g = TIER_LIMITS.guest;
     expect(Array.isArray(g.patterns)).toBe(true);
     expect(g.maxLayers).toBe(3);
@@ -130,7 +133,9 @@ describe('checkGate: pattern', () => {
     expect(r).toMatchObject({ allowed: true });
   });
 
-  it('guest — disallowed pattern (lissajous not in guest list)', () => {
+  // WORKSHOP OVERRIDE 2026-06-20: guest patterns unlocked (patterns null) — no
+  // pattern is disallowed for guests. Un-skip when gating is restored.
+  it.skip('guest — disallowed pattern (lissajous not in guest list)', () => {
     const r = checkGate('guest', 'pattern', 'lissajous');
     expect(r.allowed).toBe(false);
     expect(r.reason).toBe('Sign in to unlock this pattern');
@@ -258,14 +263,17 @@ describe('checkGate: param', () => {
     expect(r).toMatchObject({ allowed: true });
   });
 
-  it('guest — non-universal param at index exactly 7 disallowed (default cap)', () => {
+  // WORKSHOP OVERRIDE 2026-06-20: guest params unlocked (maxParamsPerPattern
+  // Infinity) — no param index is disallowed. Un-skip when gating is restored.
+  it.skip('guest — non-universal param at index exactly 7 disallowed (default cap)', () => {
     const r = checkGate('guest', 'param', { paramKey: 'amplitude', paramIndex: 7, isUniversal: false });
     expect(r.allowed).toBe(false);
     expect(r.reason).toBe('Sign in to unlock all parameters');
     expect(r.upgradeTarget).toBe('free');
   });
 
-  it('guest — non-universal param above default cap disallowed', () => {
+  // WORKSHOP OVERRIDE 2026-06-20: guest params unlocked. Un-skip when restored.
+  it.skip('guest — non-universal param above default cap disallowed', () => {
     const r = checkGate('guest', 'param', { paramKey: 'phase', paramIndex: 10, isUniversal: false });
     expect(r.allowed).toBe(false);
   });
@@ -280,7 +288,8 @@ describe('checkGate: param', () => {
     expect(r).toMatchObject({ allowed: true });
   });
 
-  it('guest — pattern without override uses default cap of 7', () => {
+  // WORKSHOP OVERRIDE 2026-06-20: guest params unlocked. Un-skip when restored.
+  it.skip('guest — pattern without override uses default cap of 7', () => {
     const r = checkGate('guest', 'param', { paramKey: 'lineSpacing', paramIndex: 7, isUniversal: false, patternType: 'wave' });
     expect(r.allowed).toBe(false);
   });

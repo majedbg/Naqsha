@@ -24,6 +24,7 @@ import {
   listRoster,
   editMember,
   isOrgAdmin,
+  listMyAdminOrgs,
 } from './membershipService';
 
 beforeEach(() => {
@@ -207,6 +208,87 @@ describe('membershipService.isOrgAdmin', () => {
     expect(await isOrgAdmin('org-1', 'u1')).toBe(false);
     _ref.client = null;
     expect(await isOrgAdmin('org-1', 'u1')).toBe(false);
+  });
+});
+
+// ─── listMyAdminOrgs: orgs where the user is an active admin ──────────────────
+// TopNav (Admin tab when admin of ≥1 org) + OrgLauncher (lists admin orgs) both
+// consume this. Query joins org_members → orgs filtered by user_id + is_admin +
+// status='active'; the shared mock returns the matched org_members rows verbatim
+// (the `orgs(*)` select string is ignored), so we seed rows with a nested `orgs`
+// object and the code flattens `r.orgs`.
+describe('membershipService.listMyAdminOrgs', () => {
+  it('returns the flattened orgs for a user with an active admin membership (tracer)', async () => {
+    const seed = {
+      org_members: [
+        {
+          id: 'm1',
+          user_id: 'u1',
+          is_admin: true,
+          status: 'active',
+          orgs: { id: 'org-1', slug: 'acme', name: 'Acme', logo_url: null, accent_color: '#abc' },
+        },
+      ],
+    };
+    _ref.client = createSupabaseMock(seed);
+
+    const orgs = await listMyAdminOrgs('u1');
+
+    expect(orgs).toEqual([
+      { id: 'org-1', slug: 'acme', name: 'Acme', logo_url: null, accent_color: '#abc' },
+    ]);
+  });
+
+  it('excludes non-admin and non-active memberships (filters applied)', async () => {
+    const seed = {
+      org_members: [
+        {
+          id: 'm1',
+          user_id: 'u1',
+          is_admin: true,
+          status: 'active',
+          orgs: { id: 'org-1', slug: 'acme', name: 'Acme' },
+        },
+        {
+          id: 'm2',
+          user_id: 'u1',
+          is_admin: false,
+          status: 'active',
+          orgs: { id: 'org-2', slug: 'beta', name: 'Beta' },
+        },
+        {
+          id: 'm3',
+          user_id: 'u1',
+          is_admin: true,
+          status: 'invited',
+          orgs: { id: 'org-3', slug: 'gamma', name: 'Gamma' },
+        },
+      ],
+    };
+    _ref.client = createSupabaseMock(seed);
+
+    const orgs = await listMyAdminOrgs('u1');
+
+    expect(orgs).toEqual([{ id: 'org-1', slug: 'acme', name: 'Acme' }]);
+  });
+
+  it('returns [] when the user admins no org', async () => {
+    _ref.client = createSupabaseMock({ org_members: [] });
+    expect(await listMyAdminOrgs('u1')).toEqual([]);
+  });
+
+  it('returns [] when supabase is null', async () => {
+    _ref.client = null;
+    expect(await listMyAdminOrgs('u1')).toEqual([]);
+  });
+
+  it('throws when the query errors', async () => {
+    _ref.client = createSupabaseMock({ org_members: [] }).injectError(
+      'org_members',
+      'select',
+      { message: 'rls denied' },
+    );
+    await expect(listMyAdminOrgs('u1')).rejects.toMatchObject({ message: 'rls denied' });
   });
 });
 

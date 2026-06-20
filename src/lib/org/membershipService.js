@@ -61,6 +61,18 @@ export async function removeMember(memberId) {
   if (error) throw error;
 }
 
+export async function listMyAdminOrgs(userId) {
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from('org_members')
+    .select('orgs(*)')
+    .eq('user_id', userId)
+    .eq('is_admin', true)
+    .eq('status', 'active');
+  if (error) throw error;
+  return (data || []).map((row) => row.orgs);
+}
+
 export async function isOrgAdmin(orgId, userId) {
   if (!supabase) return false;
   const { data, error } = await supabase

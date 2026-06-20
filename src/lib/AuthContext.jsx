@@ -6,6 +6,7 @@ import {
   useCallback,
 } from "react";
 import { supabase } from "./supabase";
+import { maybeClaimOnLogin } from "./org/claimOnLogin";
 
 const AuthContext = createContext(null);
 
@@ -140,6 +141,10 @@ export function AuthProvider({ children }) {
     } = supabase.auth.onAuthStateChange(async (event, s) => {
       if (!mounted) return;
       setSession(s);
+
+      // Fire-and-forget membership claim: self-gates on unverified/null sessions,
+      // dedupes per-user, and never throws. Safe to call on every auth event.
+      maybeClaimOnLogin(s);
 
       if (s?.user) {
         const mySeq = ++seq;

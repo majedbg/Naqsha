@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Exported by Naqsha Studio -->
+<svg xmlns="http://www.w3.org/2000/svg" width="120mm" height="120mm" viewBox="0 0 120 120"
+     data-naqsha-export="1">
+  <g id="layer-cut" data-role="cut" stroke="#000000" fill="none">
+    <rect x="10" y="10" width="100" height="100"/>
+  </g>
+  <g id="layer-engrave" data-role="engrave" stroke="#888888" fill="none">
+    <circle cx="60" cy="60" r="30"/>
+  </g>
+</svg>

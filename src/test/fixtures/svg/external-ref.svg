@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
+     width="200" height="200" viewBox="0 0 200 200">
+  <image x="0" y="0" width="200" height="200"
+         href="http://evil.example.com/track.png"
+         xlink:href="http://evil.example.com/track.png"/>
+  <rect x="10" y="10" width="180" height="180" fill="none" stroke="#000000"/>
+</svg>

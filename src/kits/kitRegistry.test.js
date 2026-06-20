@@ -82,6 +82,31 @@ describe('kit registry', () => {
     }
   });
 
+  it('lists the 7 ITP Camp acrylic materials, each with a name, hex color, and image', () => {
+    const kit = getKit(ITP_CAMP_KIT_ID);
+    expect(Array.isArray(kit.materials)).toBe(true);
+    expect(kit.materials).toHaveLength(7);
+    const ids = kit.materials.map((m) => m.id);
+    expect(ids).toEqual([
+      'clear',
+      'green-fluorescent',
+      'turquoise-opaque',
+      'blue-translucent',
+      'aura-iridescent',
+      'gold-mirror',
+      'gotham-black-pearl',
+    ]);
+    for (const m of kit.materials) {
+      expect(typeof m.name).toBe('string');
+      expect(m.name.length).toBeGreaterThan(0);
+      // Representative swatch hex (#RRGGBB) for the selected accent / fallback tint.
+      expect(m.color).toMatch(/^#[0-9A-Fa-f]{6}$/);
+      // Resolved image URL (Vite asset import) — a non-empty string.
+      expect(typeof m.image).toBe('string');
+      expect(m.image.length).toBeGreaterThan(0);
+    }
+  });
+
   it('unknown kit id returns null', () => {
     expect(getKit('does-not-exist')).toBeNull();
     expect(getKit(undefined)).toBeNull();

@@ -10,10 +10,12 @@
 //     id, name,
 //     themeSkin: { theme, tokens },   // named 3rd theme + its palette token map
 //     assetManifest: [{ id, name, svg, altSvg? }],
+//     materials: [{ id, name, color, image }],      // engrave-stock swatches
 //     bedPresets: [{ id, label, width, height }],   // canonical mm
 //   }
 
 import { ITP_CAMP_ASSETS } from './itpCampAssets.js';
+import { ITP_CAMP_MATERIALS } from './itpCampMaterials.js';
 
 export const ITP_CAMP_KIT_ID = 'itp-camp';
 
@@ -44,6 +46,8 @@ const ITP_CAMP_KIT = {
     tokens: ITP_CAMP_PALETTE,
   },
   assetManifest: ITP_CAMP_ASSETS,
+  // Acrylic engrave-stock swatches, shown as a material picker in kit mode.
+  materials: ITP_CAMP_MATERIALS,
   // Two laser beds. Small is confirmed (12 × 24 in). Large is UNCONFIRMED —
   // assumed equal to small for now; its label makes the placeholder obvious.
   bedPresets: [

@@ -273,6 +273,9 @@ export default function Studio() {
   });
   // Floating preset-asset modal open state (mirrors the pattern picker).
   const [kitPresetOpen, setKitPresetOpen] = useState(false);
+  // Selected ITP acrylic material (cosmetic/informational — the stock the keepsake
+  // is cut from). Held here so the choice persists across modal opens.
+  const [selectedMaterialId, setSelectedMaterialId] = useState(null);
   // Click-to-place: picking an asset arms placement mode ({ svg, paths, bbox })
   // instead of dropping the layer at its native ~0,0 (hard to see / grab). The
   // canvas then shows a cursor-following ghost; the click commits it centred.
@@ -1047,6 +1050,8 @@ export default function Studio() {
         kitId={ITP_CAMP_KIT_ID}
         onPick={handleKitPresetPick}
         onClose={() => setKitPresetOpen(false)}
+        selectedMaterialId={selectedMaterialId}
+        onSelectMaterial={(id) => setSelectedMaterialId(id)}
       />
 
       {/* Load modal */}

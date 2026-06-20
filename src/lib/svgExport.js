@@ -9,6 +9,8 @@ import { PPI, MM_PER_IN } from './plotter/constants.js';
 import { resolveOperation } from './operations.js';
 import { realizeVariableWeightElements } from './variableWeight.js';
 import { transformToSVG } from './transform/transformOps.js';
+import { isTextLayer, textNodeFromLayer } from './text/textLayer.js';
+import { TextNode } from './scene/TextNode.js';
 
 const pxToMm = (px) => (px / PPI) * MM_PER_IN;
 
@@ -20,6 +22,21 @@ const pxToMm = (px) => (px / PPI) * MM_PER_IN;
 function wrapLayerTransform(content, layer, canvasW, canvasH) {
   const svgT = transformToSVG(layer?.transform, { x: canvasW / 2, y: canvasH / 2 });
   return svgT ? `<g transform="${svgT}">${content}</g>` : content;
+}
+
+// Text layers export their glyph OUTLINE. The font must be supplied (opts.font)
+// — without it glyphs can't be measured/outlined, so the layer is skipped.
+// Text uses its own bbox-center pivot (NOT the canvas-center wrapLayerTransform
+// patterns use), so toSVGGroup already emits the correctly-pivoted transform.
+function textLayerGroup(layer, font) {
+  if (!font) return '';
+  const data = textNodeFromLayer(layer);
+  if (!data.text || !data.text.trim()) return '';        // empty text → nothing
+  const node = new TextNode({ ...data, font, transform: layer.transform });
+  const local = node.localBBox();
+  const x = data.x || 0, y = data.y || 0;
+  const pivot = { x: x + local.w / 2, y: y + local.h / 2 };
+  return node.toSVGGroup(pivot);
 }
 
 function anyOptEnabled(optimizations) {
@@ -85,7 +102,13 @@ function buildMeta({ metadata, manifest }) {
 // this split; the only change is that the Blob/download side-effect now lives
 // in the separate `downloadSVG`.
 
-export function buildLayerSVG(layer, patternInstance, canvasW, canvasH, { metadata = false, manifest, optimizations } = {}) {
+export function buildLayerSVG(layer, patternInstance, canvasW, canvasH, opts = {}) {
+  const { metadata = false, manifest, optimizations } = opts;
+  if (isTextLayer(layer)) {
+    const placed = textLayerGroup(layer, opts.font);
+    const meta = buildMeta({ metadata: opts.metadata, manifest: opts.manifest });
+    return `${svgOpen(canvasW, canvasH, meta)}\n  <rect width="100%" height="100%" fill="white"/>\n  ${placed}\n</svg>`;
+  }
   const bgRect = layerBgRect(layer, canvasW, canvasH);
   const rawGroup = patternInstance.toSVGGroup(layer.id, layer.color, layer.opacity);
   const group = maybeOptimize(rawGroup, optimizations);
@@ -118,12 +141,13 @@ function variableWeightGroup(layer, instance, profileId) {
   return `<g id="${layer.id}" opacity="${(layer.opacity ?? 100) / 100}">\n${inner}\n  </g>`;
 }
 
-export function buildAllLayersSVG(layers, patternInstances, canvasW, canvasH, includeHidden = false, { metadata = false, manifest, optimizations, profileId } = {}) {
+export function buildAllLayersSVG(layers, patternInstances, canvasW, canvasH, includeHidden = false, { metadata = false, manifest, optimizations, profileId, font } = {}) {
   // Reverse so bottom layers come first in SVG (matching visual order)
   const ordered = [...layers].reverse();
   const groups = ordered
     .filter((l) => includeHidden || l.visible)
     .map((l) => {
+      if (isTextLayer(l)) return textLayerGroup(l, font);
       const instance = patternInstances[l.id];
       if (!instance) return '';
       const bgRect = layerBgRect(l, canvasW, canvasH);

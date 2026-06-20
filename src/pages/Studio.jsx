@@ -33,6 +33,7 @@ import StudioSubmitModal from "../components/org/StudioSubmitModal";
 import useLayers from "../lib/useLayers";
 import useLayerGroups from "../lib/useLayerGroups";
 import { isTextLayer } from "../lib/text/textLayer";
+import { useFont } from "../lib/text/fontRegistry";
 import { useAuth } from "../lib/AuthContext";
 import { useGate } from "../lib/useGate";
 import AuthButton from "../components/AuthButton";
@@ -60,6 +61,8 @@ import { ITP_CAMP_KIT_ID, getKit } from "../kits/kitRegistry";
 export default function Studio() {
   const { loading, user } = useAuth();
   const { limits } = useGate();
+  // Resolved opentype font for exporting text-layer glyph outlines (phase 6).
+  const { font: textFont } = useFont();
   const savedCanvas = loadCanvasState();
 
   // === UI chrome (modals + examples) ===
@@ -796,6 +799,7 @@ export default function Studio() {
     exportLayerSVG(exportLayer(layer), instance, canvasW, canvasH, {
       metadata: limits.svgMetadata,
       profileId: machineProfile,
+      font: textFont,
     });
   };
 
@@ -816,6 +820,8 @@ export default function Studio() {
         // enabled layers (#17 / #4 follow-up). Additive: non-enabled layers are
         // unaffected and export byte-identically.
         profileId: machineProfile,
+        // Resolved font so text layers export their glyph outlines (phase 6).
+        font: textFont,
       }
     );
   };

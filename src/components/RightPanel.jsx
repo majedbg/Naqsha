@@ -13,6 +13,7 @@ import {
 } from "../lib/tools/transformGestures";
 import { ROTATE_OFFSET } from "../lib/transform/handles";
 import { ghostSvg } from "../lib/scene/placement";
+import { useFont } from "../lib/text/fontRegistry";
 
 const IDENTITY = { x: 0, y: 0, rotation: 0, scale: 1 };
 
@@ -123,6 +124,10 @@ export default function RightPanel({
   // (flag-OFF) transform string stays byte-identical.
   const panTransform = externalPan ? `translate(${pan.x}px, ${pan.y}px) ` : "";
 
+  // Resolve the default text font (async; null until loaded). Threaded into
+  // useCanvas so text layers can render their outlines.
+  const { font: textFont } = useFont();
+
   const { patternInstances } = useCanvas(
     containerRef,
     layers,
@@ -130,7 +135,8 @@ export default function RightPanel({
     canvasH,
     bgColor,
     transforms,
-    selectedNodeId
+    selectedNodeId,
+    textFont
   );
 
   // Latest transforms readable inside pointer handlers without stale closures

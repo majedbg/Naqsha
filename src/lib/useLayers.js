@@ -7,6 +7,7 @@ import { migrateLayer } from './migration';
 import { autoLayerName } from './autoLayerName';
 import { operationIdForRole } from './operations';
 import { parseSVGImport } from './svgImport';
+import { defaultTextParams } from './text/textLayer';
 
 // Distinct group id for a Moiré pair (links role A + role B).
 let nextGroupNum = 1;
@@ -221,6 +222,47 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
         paramsCache: {},
         role: 'cut',
         operationId: operationIdForRole('cut'), // default operation = Cut
+        penSlot: (index % 4) + 1,
+        ...(opts.transform ? { transform: opts.transform } : {}),
+      };
+      return [...prev, layer];
+    });
+    return { ok: true, id };
+  }, [cap, layers]);
+
+  // Create a TEXT layer (Option B: text objects are layers, like `import`).
+  // Mirrors addImportedLayer's structure exactly: id generated outside the
+  // updater (survives StrictMode double-invoke, returned for selection),
+  // capacity decided synchronously off live `layers`, returns { ok, id } or
+  // { ok:false, error }. Text defaults to the ENGRAVE role (per the text-tool
+  // plan) and a stable, non-colliding `patternType: 'text'`. `opts.text` seeds
+  // the initial string; `opts.params` overrides persisted defaults; an optional
+  // `opts.transform` seeds the committed transform (used by pointer-create).
+  const addTextLayer = useCallback((opts = {}) => {
+    if (layers.length >= cap) return { ok: false, error: 'Layer limit reached.' };
+
+    const id = genId();
+    setLayers((prev) => {
+      if (prev.length >= cap) return prev; // re-check against live state
+      const index = prev.length;
+      const layer = {
+        id,
+        name: `Text ${index + 1}`,
+        nameIsCustom: false,
+        locked: false,
+        type: 'text',
+        color: '#000000',
+        opacity: 100,
+        visible: true,
+        bgColor: '#ffffff',
+        bgOpacity: 0,
+        patternType: 'text',          // stable, non-colliding (mirrors import)
+        params: defaultTextParams({ text: opts.text ?? '', ...(opts.params || {}) }),
+        seed: 0,
+        randomizeKeys: [],
+        paramsCache: {},
+        role: 'engrave',              // text defaults to ENGRAVE
+        operationId: operationIdForRole('engrave'),
         penSlot: (index % 4) + 1,
         ...(opts.transform ? { transform: opts.transform } : {}),
       };
@@ -599,7 +641,7 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
   }, []);
 
   return {
-    layers, addLayer, addImportedLayer, duplicateLayer, removeLayer, updateLayer, reorderLayers,
+    layers, addLayer, addImportedLayer, addTextLayer, duplicateLayer, removeLayer, updateLayer, reorderLayers,
     changeLayerPattern,
     randomizeLayer, randomizeAll, randomizeLayerParams, randomizeAllParams,
     loadLayerSet, bgColor, setBgColor,

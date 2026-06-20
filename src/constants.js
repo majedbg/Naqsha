@@ -61,7 +61,7 @@ export const PATTERN_TYPES = [
   { id: 'modulegrid', label: 'Module Grid' },
   { id: 'topographic', label: 'Topographic Contours' },
   { id: 'diffgrowth', label: 'Differential Growth' },
-  { id: 'girih', label: 'Islamic Star (Girih)' },
+  { id: 'girih', label: 'Girih' },
   { id: 'moire', label: 'Moiré' },
   { id: 'circlepacking', label: 'Circle Packing' },
   { id: 'dendrite', label: 'Dendrite' },

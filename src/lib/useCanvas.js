@@ -6,6 +6,8 @@ import { PATTERN_CLASSES } from './patterns';
 import ImportedPath from './patterns/ImportedPath';
 import { resolveMoireSource } from './moirePair';
 import { handlesFor } from './transform/handles';
+import { drawTextNode } from './text/drawTextNode';
+import { isTextLayer, textNodeFromLayer } from './text/textLayer';
 
 // Center-pivot node transform shared by render + selection chrome. Matches the
 // SVG `translate(x y) translate(cx cy) rotate scale translate(-cx -cy)` form
@@ -32,7 +34,8 @@ export default function useCanvas(
   canvasH,
   bgColor = '#ffffff',
   transforms = {},
-  selectedNodeId = null
+  selectedNodeId = null,
+  font = null
 ) {
   const p5Ref = useRef(null);
   const debounceRef = useRef(null);
@@ -86,6 +89,18 @@ export default function useCanvas(
           drawCtx, layer.seed, layer.params, canvasW, canvasH, layer.color, layer.opacity
         );
         p.pop();
+        continue;
+      }
+
+      // Text layer (Option B). drawTextNode owns its OWN push/pop and a
+      // TEXT-bbox-center pivot, so it must NOT be wrapped in applyNodeTransform
+      // (which pivots about the CANVAS center) — wrapping would double-transform.
+      // No PatternClass instance is registered (none exists), like orphan-B.
+      // Without a resolved font we can't draw; export is handled in a later phase.
+      if (isTextLayer(layer)) {
+        if (!layer.visible || !font) continue;
+        const nodeData = textNodeFromLayer(layer);
+        drawTextNode(p, nodeData, font, nodeTransforms[layer.id]);
         continue;
       }
 
@@ -196,7 +211,10 @@ export default function useCanvas(
 
     instancesRef.current = newInstances;
     setPatternInstances(newInstances);
-  }, [layers, canvasW, canvasH, bgColor]);
+    // `font` resolves asynchronously (null → Font); it's in the deps so when it
+    // arrives renderAll gets a new identity, the debounce effect re-fires, and
+    // text actually paints. Changes once, so it doesn't churn the param-debounce.
+  }, [layers, canvasW, canvasH, bgColor, font]);
 
   // Initialize p5 instance
   useEffect(() => {

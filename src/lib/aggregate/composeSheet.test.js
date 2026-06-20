@@ -48,6 +48,30 @@ describe('composeSheet — op normalization', () => {
     expect(g.getAttribute('data-op')).toBe(process);
   });
 
+  it.each([
+    ['score', '#0000FF'],
+    ['engrave', '#000000'],
+  ])(
+    'reads the persisted { key, label, op } shape (op=%s)',
+    (op, color) => {
+      const out = composeSheet(
+        [
+          {
+            id: 'p',
+            xMm: 0,
+            yMm: 0,
+            content: '<rect/>',
+            ops: [{ key: '#00f', label: op, op }],
+          },
+        ],
+        { widthMm: 10, heightMm: 10 },
+      );
+      const g = parse(out).querySelector('g[data-submission="p"]');
+      expect(g.getAttribute('data-op')).toBe(op);
+      expect(g.getAttribute('stroke')).toBe(color);
+    },
+  );
+
   it('accepts a bare process string in ops', () => {
     const out = composeSheet(
       [{ id: 'p', xMm: 0, yMm: 0, content: '<rect/>', ops: ['score'] }],

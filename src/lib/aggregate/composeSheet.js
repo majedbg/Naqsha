@@ -22,8 +22,12 @@ function pieceInner(piece) {
 //   cut -> red, score -> blue, engrave -> black. Unknown processes default to cut.
 const OP_STROKE = { cut: '#FF0000', score: '#0000FF', engrave: '#000000' };
 
+// Resolve a single op's process name. Accepts the persisted submission shape
+// (`{ key, label, op }`, where `op` is the process — see SubmitForm.jsx), and
+// stays backward-compatible with a bare string and the legacy `.process` field.
 function processOf(op) {
-  return typeof op === 'string' ? op : op?.process;
+  if (typeof op === 'string') return op;
+  return op?.op ?? op?.process;
 }
 
 // Given a piece's `ops`, return the normalized stroke attributes for its group.

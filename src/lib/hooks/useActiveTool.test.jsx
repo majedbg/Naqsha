@@ -39,6 +39,26 @@ describe("useActiveTool (B6 — active tool + hotkeys)", () => {
     expect(result.current.activeTool).toBe("hand");
   });
 
+  it("Space is spring-loaded: hold → Hand, release → restore the prior tool", () => {
+    const { result } = renderHook(() => useActiveTool({ enabled: true }));
+
+    // Start on a non-Hand tool.
+    act(() => fireEvent.keyDown(window, { key: "t" }));
+    expect(result.current.activeTool).toBe("text");
+
+    // Hold Space → temporary Hand.
+    act(() => fireEvent.keyDown(window, { key: " " }));
+    expect(result.current.activeTool).toBe("hand");
+
+    // Auto-repeat while held must not change the remembered tool.
+    act(() => fireEvent.keyDown(window, { key: " ", repeat: true }));
+    expect(result.current.activeTool).toBe("hand");
+
+    // Release Space → back to Text.
+    act(() => fireEvent.keyUp(window, { key: " " }));
+    expect(result.current.activeTool).toBe("text");
+  });
+
   it("does NOT bind hotkeys when disabled (flag-OFF no-op)", () => {
     const { result } = renderHook(() => useActiveTool({ enabled: false }));
     act(() => {

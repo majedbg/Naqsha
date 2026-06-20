@@ -57,6 +57,28 @@ describe('buildAllLayersSVG (pure)', () => {
     // includeHidden=true → both layer groups present
     expect(both.match(/layer-x/g)).toHaveLength(2);
   });
+
+  // Export-parity (BLOCKING correctness — this app cuts physical material): a
+  // moved/resized/rotated layer must export with the SAME center-pivot transform
+  // useCanvas renders, so the cut lands where the canvas shows it.
+  it('wraps a transformed layer in a center-pivot transform group (matches canvas)', () => {
+    const moved = { ...layer, bgOpacity: 0, transform: { x: 40, y: -10, rotation: 0, scale: 1 } };
+    const out = buildAllLayersSVG([moved], { x: inst }, 384, 384, false, {});
+    // Pure translate → origin form (no pivot translates), wrapping the content.
+    expect(out).toContain('<g transform="translate(40 -10)"><g id="layer-x">');
+  });
+
+  it('emits the center-pivot form for rotate/scale about the canvas center', () => {
+    const spun = { ...layer, bgOpacity: 0, transform: { x: 0, y: 0, rotation: 90, scale: 2 } };
+    const out = buildLayerSVG(spun, inst, 384, 384, {});
+    // translate(cx cy) rotate(90) scale(2) translate(-cx -cy), cx=cy=192.
+    expect(out).toContain('<g transform="translate(192 192) rotate(90) scale(2) translate(-192 -192)">');
+  });
+
+  it('leaves an untransformed layer byte-identical (identity → no wrapper)', () => {
+    const out = buildAllLayersSVG([{ ...layer, transform: { x: 0, y: 0, rotation: 0, scale: 1 } }], { x: inst }, 384, 384, false, {});
+    expect(out).not.toContain('<g transform=');
+  });
 });
 
 describe('downloadSVG (isolated DOM side-effect)', () => {

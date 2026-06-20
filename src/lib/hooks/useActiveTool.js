@@ -1,5 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { DEFAULT_TOOL_ID, resolveToolByKey } from "../tools/toolRegistry";
+
+const isSpaceKey = (key) => key === " " || key === "Spacebar";
 
 // useActiveTool — owns the active-tool state for the pro shell's tool strip and
 // the keyboard shortcuts that switch tools (Lane B / B6, GitHub issue #9).
@@ -23,6 +25,9 @@ function isTextEntryTarget(target) {
 
 export default function useActiveTool({ enabled = false } = {}) {
   const [activeTool, setActiveTool] = useState(DEFAULT_TOOL_ID);
+  // Tool to restore when a spring-loaded Space-to-pan is released. Null when not
+  // currently holding Space for a temporary Hand.
+  const springReturnRef = useRef(null);
 
   useEffect(() => {
     if (!enabled) return undefined;
@@ -33,10 +38,34 @@ export default function useActiveTool({ enabled = false } = {}) {
       if (!toolId) return;
       // Space would otherwise scroll the page; claim it for the hand tool.
       e.preventDefault();
+      // Spring-loaded Hand: HOLD Space to pan, RELEASE to revert to the prior
+      // tool (Figma/Illustrator convention). Auto-repeat keydowns are ignored so
+      // the tool to restore is captured exactly once, at the initial press.
+      if (isSpaceKey(e.key)) {
+        if (e.repeat || springReturnRef.current != null) return;
+        setActiveTool((cur) => {
+          if (cur !== "hand") springReturnRef.current = cur;
+          return "hand";
+        });
+        return;
+      }
+      // A different tool was chosen by key while Space is held — drop the
+      // pending spring-return so releasing Space doesn't yank it back.
+      springReturnRef.current = null;
       setActiveTool(toolId);
     };
+    const onKeyUp = (e) => {
+      if (!isSpaceKey(e.key)) return;
+      const restore = springReturnRef.current;
+      springReturnRef.current = null;
+      if (restore != null) setActiveTool(restore);
+    };
     window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+    };
   }, [enabled]);
 
   return { activeTool, setActiveTool };

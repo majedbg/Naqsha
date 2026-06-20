@@ -183,18 +183,26 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
   // operation. Additive: it never touches existing pattern layers. Returns
   // { ok, error? } so callers (File>Import, drag-drop, paste) can surface a
   // graceful message. Capacity-aware (respects the tier cap, like addLayer).
-  const addImportedLayer = useCallback((svgString) => {
+  // `opts.transform` (optional) seeds the layer's committed transform — used by
+  // click-to-place so a kit/imported asset lands centred under the cursor instead
+  // of at its native ~0,0. Returns the new layer `id` so callers can auto-select
+  // it. File>Import / drag-drop / paste pass no transform (unchanged behaviour);
+  // they have the same 0,0 landing and could adopt placement later — out of scope.
+  const addImportedLayer = useCallback((svgString, opts = {}) => {
     const parsed = parseSVGImport(svgString);
     if (!parsed.ok) return { ok: false, error: parsed.error };
     // Capacity decided synchronously off live `layers` (setLayers is async),
     // mirroring changeLayerPattern's pattern, so the returned outcome is exact.
     if (layers.length >= cap) return { ok: false, error: 'Layer limit reached.' };
 
+    // Generate the id once, outside the updater, so it survives StrictMode's
+    // double-invoke and can be returned to the caller for selection.
+    const id = genId();
     setLayers((prev) => {
       if (prev.length >= cap) return prev; // re-check against live state
       const index = prev.length;
       const layer = {
-        id: genId(),
+        id,
         name: `Imported ${index + 1}`,
         nameIsCustom: false,
         locked: false,
@@ -214,10 +222,11 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
         role: 'cut',
         operationId: operationIdForRole('cut'), // default operation = Cut
         penSlot: (index % 4) + 1,
+        ...(opts.transform ? { transform: opts.transform } : {}),
       };
       return [...prev, layer];
     });
-    return { ok: true };
+    return { ok: true, id };
   }, [cap, layers]);
 
   const duplicateLayer = useCallback((id) => {

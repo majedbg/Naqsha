@@ -8,8 +8,19 @@ import { optimizeGroup } from './plotter/pipeline';
 import { PPI, MM_PER_IN } from './plotter/constants.js';
 import { resolveOperation } from './operations.js';
 import { realizeVariableWeightElements } from './variableWeight.js';
+import { transformToSVG } from './transform/transformOps.js';
 
 const pxToMm = (px) => (px / PPI) * MM_PER_IN;
+
+// Wrap a layer's rendered content in the layer's interactive transform (move /
+// resize / rotate), pivoted about the canvas center — the SAME center-pivot form
+// useCanvas renders with, so the exported (cut) geometry lands exactly where the
+// canvas shows it. Identity transform → transformToSVG returns '' and the
+// content is emitted verbatim (byte-identical to pre-transform exports).
+function wrapLayerTransform(content, layer, canvasW, canvasH) {
+  const svgT = transformToSVG(layer?.transform, { x: canvasW / 2, y: canvasH / 2 });
+  return svgT ? `<g transform="${svgT}">${content}</g>` : content;
+}
 
 function anyOptEnabled(optimizations) {
   if (!optimizations) return false;
@@ -78,10 +89,14 @@ export function buildLayerSVG(layer, patternInstance, canvasW, canvasH, { metada
   const bgRect = layerBgRect(layer, canvasW, canvasH);
   const rawGroup = patternInstance.toSVGGroup(layer.id, layer.color, layer.opacity);
   const group = maybeOptimize(rawGroup, optimizations);
+  // Move/resize/rotate must move bg fill + geometry together (matches the canvas
+  // render, which wraps both in the node transform).
+  const content = `${bgRect ? `${bgRect}\n  ` : ''}${group}`;
+  const placed = wrapLayerTransform(content, layer, canvasW, canvasH);
   const meta = buildMeta({ metadata, manifest });
   return `${svgOpen(canvasW, canvasH, meta)}
   <rect width="100%" height="100%" fill="white"/>
-${bgRect ? `  ${bgRect}\n` : ''}  ${group}
+  ${placed}
 </svg>`;
 }
 
@@ -117,7 +132,8 @@ export function buildAllLayersSVG(layers, patternInstances, canvasW, canvasH, in
       const vwGroup = variableWeightGroup(l, instance, profileId);
       const rawGroup = vwGroup ?? instance.toSVGGroup(l.id, l.color, l.opacity);
       const group = vwGroup ? rawGroup : maybeOptimize(rawGroup, optimizations);
-      return (bgRect ? bgRect + '\n  ' : '') + group;
+      const content = (bgRect ? bgRect + '\n  ' : '') + group;
+      return wrapLayerTransform(content, l, canvasW, canvasH);
     })
     .join('\n  ');
   const meta = buildMeta({ metadata, manifest });

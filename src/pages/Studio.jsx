@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { createPortal } from "react-dom";
 import Inspector from "../components/shell/Inspector";
 import LayerTree from "../components/shell/LayerTree";
@@ -28,6 +28,7 @@ import LayerGroupModal from "../components/LayerGroupModal";
 import CloudSaveModal from "../components/CloudSaveModal";
 import PatternPickerModal from "../components/PatternPickerModal";
 import KitPresetModal from "../components/KitPresetModal";
+import { parseForPlacement, centerTransform } from "../lib/scene/placement";
 import StudioSubmitModal from "../components/org/StudioSubmitModal";
 import useLayers from "../lib/useLayers";
 import useLayerGroups from "../lib/useLayerGroups";
@@ -262,14 +263,10 @@ export default function Studio() {
   });
   // Floating preset-asset modal open state (mirrors the pattern picker).
   const [kitPresetOpen, setKitPresetOpen] = useState(false);
-  // Drop a kit asset through the SAME place-as-artwork import path as File>Import.
-  const handleKitPresetPick = useCallback(
-    (svg) => {
-      if (typeof svg === "string") addImportedLayer(svg);
-      setKitPresetOpen(false);
-    },
-    [addImportedLayer]
-  );
+  // Click-to-place: picking an asset arms placement mode ({ svg, paths, bbox })
+  // instead of dropping the layer at its native ~0,0 (hard to see / grab). The
+  // canvas then shows a cursor-following ghost; the click commits it centred.
+  const [placement, setPlacement] = useState(null);
   // No-leftover-state guard: the enter/exit control is Laser-gated, so if the
   // machine leaves Laser while the kit is active the control would vanish with no
   // way to exit. Auto-exit (restore the snapshot) on any non-laser profile.
@@ -417,6 +414,36 @@ export default function Studio() {
   // RightPanel canvas.
   const canvasView = useCanvasView();
 
+  // Interactive per-layer transform (Select tool: move / resize / rotate).
+  // Committed transforms live on `layer.transform` (so they persist + export
+  // for free). `liveTransform` is the in-progress drag override — held
+  // separately so dragging re-renders the canvas immediately WITHOUT writing
+  // (and re-persisting) the layer on every frame; it's flushed to the layer on
+  // pointer-up. A ref mirrors it so the pointer-up commit reads the latest drag
+  // value without a stale closure.
+  const [liveTransform, setLiveTransform] = useState(null);
+  const liveTransformRef = useRef(null);
+  const handleCanvasMove = useCallback((id, transform) => {
+    const next = { id, transform };
+    liveTransformRef.current = next;
+    setLiveTransform(next);
+  }, []);
+  const handleCanvasCommit = useCallback(() => {
+    const lt = liveTransformRef.current;
+    liveTransformRef.current = null;
+    setLiveTransform(null);
+    if (lt) updateLayer(lt.id, { transform: lt.transform });
+  }, [updateLayer]);
+
+  // Transform map (layerId → transform) the canvas reads for render + hit-test:
+  // each layer's committed transform, with the live drag override on top.
+  const canvasTransforms = useMemo(() => {
+    const m = {};
+    for (const l of layers) if (l.transform) m[l.id] = l.transform;
+    if (liveTransform) m[liveTransform.id] = liveTransform.transform;
+    return m;
+  }, [layers, liveTransform]);
+
   // Pro-shell status bar (B4 / #7). The active machine profile drives the
   // bed-as-artboard dimensions (NOT canvasW/H), so the bed + status-bar bed
   // readout update when the profile changes. Live cursor coords (in the active
@@ -487,6 +514,55 @@ export default function Studio() {
     },
     [addImportedLayer]
   );
+
+  // Picking a kit preset arms placement mode rather than dropping at ~0,0.
+  const handleKitPresetPick = useCallback(
+    (svg) => {
+      setKitPresetOpen(false);
+      if (typeof svg !== "string") return;
+      const prepared = parseForPlacement(svg);
+      if (!prepared.ok) {
+        setImportError(prepared.error || "Could not place this asset.");
+        clearTimeout(importErrorTimer.current);
+        importErrorTimer.current = setTimeout(() => setImportError(null), 4000);
+        return;
+      }
+      setPlacement(prepared);
+    },
+    []
+  );
+
+  // Click-to-place commit: drop the armed asset centred on the canvas point the
+  // user clicked, then auto-select it + switch to the Select tool so it's
+  // immediately draggable/resizable. Capacity failures surface as import errors.
+  const handlePlaceAsset = useCallback(
+    (point) => {
+      if (!placement) return;
+      const transform = centerTransform(placement.bbox, point);
+      const outcome = addImportedLayer(placement.svg, { transform });
+      setPlacement(null);
+      if (!outcome.ok) {
+        setImportError(outcome.error || "Could not place this asset.");
+        clearTimeout(importErrorTimer.current);
+        importErrorTimer.current = setTimeout(() => setImportError(null), 4000);
+        return;
+      }
+      setSelectedLayerId(outcome.id);
+      setActiveTool("select");
+    },
+    [placement, addImportedLayer, setActiveTool]
+  );
+  const handleCancelPlacement = useCallback(() => setPlacement(null), []);
+
+  // Esc cancels an armed placement (mirrors the modal's Esc-to-close).
+  useEffect(() => {
+    if (!placement) return undefined;
+    const onKey = (e) => {
+      if (e.key === "Escape") setPlacement(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [placement]);
 
   // File > Import — open a file picker and read the chosen .svg.
   const handleImportClick = useCallback(() => {
@@ -804,6 +880,16 @@ export default function Studio() {
           onCursorMove={setCursorPos}
           showPlotOverlay={showOverlays}
           appliedOptimizations={appliedOptimizations}
+          activeTool={activeTool}
+          transforms={canvasTransforms}
+          selectedNodeId={selectedLayerId}
+          onSelect={setSelectedLayerId}
+          onMove={handleCanvasMove}
+          onCommit={handleCanvasCommit}
+          onPanBy={canvasView.panBy}
+          placement={placement}
+          onPlaceAsset={handlePlaceAsset}
+          onCancelPlacement={handleCancelPlacement}
         />
 
         {/* Examples gallery (re-homed in #16). Opened from File > Examples;

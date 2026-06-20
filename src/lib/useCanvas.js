@@ -5,16 +5,55 @@ import { P5Adapter } from './patterns/drawingContext';
 import { PATTERN_CLASSES } from './patterns';
 import ImportedPath from './patterns/ImportedPath';
 import { resolveMoireSource } from './moirePair';
+import { handlesFor } from './transform/handles';
 
-export default function useCanvas(containerRef, layers, canvasW, canvasH, bgColor = '#ffffff') {
+// Center-pivot node transform shared by render + selection chrome. Matches the
+// SVG `translate(x y) translate(cx cy) rotate scale translate(-cx -cy)` form
+// emitted by transformToSVG, so canvas-rendered geometry and exported SVG stay
+// byte-consistent. Identity transform → no-op (guarded), so untouched layers
+// render exactly as before. Caller wraps this in p.push()/p.pop().
+function applyNodeTransform(p, t, canvasW, canvasH) {
+  if (!t) return;
+  const moved = t.x || t.y || (t.rotation && t.rotation !== 0) || (t.scale != null && t.scale !== 1);
+  if (!moved) return;
+  const cx = canvasW / 2;
+  const cy = canvasH / 2;
+  p.translate(t.x || 0, t.y || 0);
+  p.translate(cx, cy);
+  if (t.rotation) p.rotate(p.radians(t.rotation));
+  if (t.scale != null && t.scale !== 1) p.scale(t.scale);
+  p.translate(-cx, -cy);
+}
+
+export default function useCanvas(
+  containerRef,
+  layers,
+  canvasW,
+  canvasH,
+  bgColor = '#ffffff',
+  transforms = {},
+  selectedNodeId = null
+) {
   const p5Ref = useRef(null);
   const debounceRef = useRef(null);
+  const rafRef = useRef(null);
   const [patternInstances, setPatternInstances] = useState({});
   const instancesRef = useRef({});
+  // Live transform/selection read inside renderAll WITHOUT entering its dep
+  // array — keeps renderAll's identity stable so the 150ms param-debounce
+  // effect doesn't re-fire on every drag frame. The rAF effect below drives
+  // immediate re-renders when these change.
+  const transformsRef = useRef(transforms);
+  const selectedRef = useRef(selectedNodeId);
+  useEffect(() => {
+    transformsRef.current = transforms;
+    selectedRef.current = selectedNodeId;
+  }, [transforms, selectedNodeId]);
 
   const renderAll = useCallback(() => {
     if (!p5Ref.current) return;
     const p = p5Ref.current;
+    const nodeTransforms = transformsRef.current || {};
     p.clear();
     p.background(bgColor);
 
@@ -35,10 +74,18 @@ export default function useCanvas(containerRef, layers, canvasW, canvasH, bgColo
       if (layer.type === 'import') {
         const instance = new ImportedPath();
         newInstances[layer.id] = instance;
-        const ctx = layer.visible ? drawCtx : noDrawCtx;
+        if (!layer.visible) {
+          instance.generateWithContext(
+            noDrawCtx, layer.seed, layer.params, canvasW, canvasH, layer.color, layer.opacity
+          );
+          continue;
+        }
+        p.push();
+        applyNodeTransform(p, nodeTransforms[layer.id], canvasW, canvasH);
         instance.generateWithContext(
-          ctx, layer.seed, layer.params, canvasW, canvasH, layer.color, layer.opacity
+          drawCtx, layer.seed, layer.params, canvasW, canvasH, layer.color, layer.opacity
         );
+        p.pop();
         continue;
       }
 
@@ -75,6 +122,11 @@ export default function useCanvas(containerRef, layers, canvasW, canvasH, bgColo
         continue;
       }
 
+      // Center-pivot transform (move/resize/rotate). Wraps the layer's bg fill
+      // AND its draw so both move together and match the exported SVG group.
+      p.push();
+      applyNodeTransform(p, nodeTransforms[layer.id], canvasW, canvasH);
+
       // Draw layer background fill if bgOpacity > 0
       if (layer.bgOpacity > 0) {
         const bgAlpha = Math.round((layer.bgOpacity / 100) * 255);
@@ -86,7 +138,62 @@ export default function useCanvas(containerRef, layers, canvasW, canvasH, bgColo
       }
 
       instance.generateWithContext(drawCtx, layer.seed, renderParams, canvasW, canvasH, layer.color, layer.opacity);
+      p.pop();
     }
+
+    // Selection chrome (canvas-drawn): bbox outline + 8 resize handles + 1
+    // rotate handle, drawn INSIDE the node's center-pivot transform so they
+    // rotate/scale WITH the node. Handles are placed at LOCAL bbox coords (full
+    // canvas for a pattern), so the same transform maps them onto the node.
+    // Guarded by layers.find so a stale id (deleted layer) can't throw.
+    const selId = selectedRef.current;
+    if (selId) {
+      const selLayer = layers.find((l) => l.id === selId && l.visible !== false);
+      if (selLayer) {
+        const selBBox = { x: 0, y: 0, w: canvasW, h: canvasH };
+        const cx = canvasW / 2;
+        const cy = canvasH / 2;
+        const t = nodeTransforms[selId] || { x: 0, y: 0, rotation: 0, scale: 1 };
+        p.push();
+        p.translate(t.x || 0, t.y || 0);
+        p.translate(cx, cy);
+        if (t.rotation) p.rotate(p.radians(t.rotation));
+        if (t.scale != null && t.scale !== 1) p.scale(t.scale);
+        p.translate(-cx, -cy);
+
+        // Bbox outline.
+        p.noFill();
+        p.stroke(124, 92, 246); // violet accent
+        p.strokeWeight(1);
+        p.rect(selBBox.x + 0.5, selBBox.y + 0.5, selBBox.w - 1, selBBox.h - 1);
+
+        const handles = handlesFor(selBBox);
+        const rotate = handles.find((h) => h.id === 'rotate');
+        const topCenter = handles.find((h) => h.id === 'n');
+        // Stalk from the top-edge center up to the rotate handle.
+        if (rotate && topCenter) {
+          p.stroke(124, 92, 246);
+          p.strokeWeight(1);
+          p.line(topCenter.x, topCenter.y, rotate.x, rotate.y);
+        }
+
+        const HS = 8; // handle square size (px, local units)
+        p.stroke(124, 92, 246);
+        p.strokeWeight(1);
+        p.fill(255);
+        for (const h of handles) {
+          if (h.type === 'rotate') {
+            p.circle(h.x, h.y, HS);
+          } else {
+            p.rectMode(p.CENTER);
+            p.rect(h.x, h.y, HS, HS);
+            p.rectMode(p.CORNER);
+          }
+        }
+        p.pop();
+      }
+    }
+
     instancesRef.current = newInstances;
     setPatternInstances(newInstances);
   }, [layers, canvasW, canvasH, bgColor]);
@@ -138,6 +245,31 @@ export default function useCanvas(containerRef, layers, canvasW, canvasH, bgColo
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
   }, [layers, canvasW, canvasH, bgColor, renderAll]);
+
+  // Immediate (un-debounced) re-render when transforms or selection change —
+  // throttled to one frame via rAF. Patterns are deterministic by seed, so
+  // re-running generate during a drag is visually stable. Param edits still go
+  // through the 150ms debounce above.
+  useEffect(() => {
+    if (!p5Ref.current) return;
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    rafRef.current = requestAnimationFrame(() => {
+      rafRef.current = null;
+      renderAll();
+    });
+    return () => {
+      if (rafRef.current) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+    };
+    // renderAll deliberately omitted: it changes identity whenever `layers`
+    // change, which would make param edits re-fire this IMMEDIATE path and
+    // bypass the 150ms debounce. During a drag `layers` is unchanged so the
+    // captured renderAll reads correct layers; transform values are read live
+    // from transformsRef inside renderAll.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [transforms, selectedNodeId]);
 
   return { patternInstances };
 }

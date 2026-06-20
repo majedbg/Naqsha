@@ -97,6 +97,21 @@ export default function CanvasChrome({
         height={extentH + RULER}
         style={{ transform: translate }}
       >
+        {/* Machine-bed fill — a muted accent wash beneath everything, sharing the
+            canvas top-left origin. Gives the bed (the machine's reachable area) a
+            distinct tint so it reads as a zone against the canvas + page bg
+            instead of relying on the dashed outline alone. Low opacity keeps it
+            legible over both light and dark backgrounds. */}
+        <rect
+          data-testid="bed-fill"
+          x={RULER + 0.5}
+          y={RULER + 0.5}
+          width={Math.max(0, bedScreenW - 1)}
+          height={Math.max(0, bedScreenH - 1)}
+          fill="#00c9b1"
+          fillOpacity="0.1"
+        />
+
         {/* Design-canvas artboard — solid; the rulers measure this extent. */}
         <rect
           data-testid="canvas-artboard"

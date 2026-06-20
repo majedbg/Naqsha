@@ -11,16 +11,24 @@ import { realizeVariableWeightElements } from './variableWeight.js';
 import { transformToSVG } from './transform/transformOps.js';
 import { isTextLayer, textNodeFromLayer } from './text/textLayer.js';
 import { TextNode } from './scene/TextNode.js';
+import { importLayerPivot } from './scene/placement.js';
 
 const pxToMm = (px) => (px / PPI) * MM_PER_IN;
 
 // Wrap a layer's rendered content in the layer's interactive transform (move /
-// resize / rotate), pivoted about the canvas center — the SAME center-pivot form
-// useCanvas renders with, so the exported (cut) geometry lands exactly where the
-// canvas shows it. Identity transform → transformToSVG returns '' and the
-// content is emitted verbatim (byte-identical to pre-transform exports).
+// resize / rotate), pivoted about the SAME center useCanvas renders with so the
+// exported (cut) geometry lands exactly where the canvas shows it: the canvas
+// center for patterns, but the geometry-bbox center for IMPORT layers (so a
+// scaled/rotated import lands in place, matching its selection box and render).
+// Identity transform → transformToSVG returns '' and the content is emitted
+// verbatim (byte-identical to pre-transform exports); a translate-only transform
+// is pivot-independent, so placed-but-unscaled imports stay byte-stable too.
 function wrapLayerTransform(content, layer, canvasW, canvasH) {
-  const svgT = transformToSVG(layer?.transform, { x: canvasW / 2, y: canvasH / 2 });
+  const pivot =
+    layer?.type === 'import'
+      ? importLayerPivot(layer, canvasW, canvasH)
+      : { x: canvasW / 2, y: canvasH / 2 };
+  const svgT = transformToSVG(layer?.transform, pivot);
   return svgT ? `<g transform="${svgT}">${content}</g>` : content;
 }
 

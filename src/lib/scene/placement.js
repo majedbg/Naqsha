@@ -39,6 +39,48 @@ export function pathsBBox(paths) {
 }
 
 /**
+ * The verbatim `d` strings of an import layer, pulled from `layer.params.pathData`
+ * (tolerates a single string). Mirrors ImportedPath's own extractor so the
+ * measured extent matches what the canvas draws and the SVG exports.
+ * @param {object} layer
+ * @returns {string[]}
+ */
+export function importLayerPaths(layer) {
+  const pd = layer?.params?.pathData;
+  if (Array.isArray(pd)) return pd.filter((d) => typeof d === 'string' && d.trim());
+  if (typeof pd === 'string' && pd.trim()) return [pd];
+  return [];
+}
+
+/**
+ * Tight geometry bbox of an import layer, in canvas units, or null if it has no
+ * parseable geometry. Single source of truth for the selection box, the canvas
+ * render pivot, and the SVG export pivot — so chrome, hit-test, render and export
+ * never drift.
+ * @param {object} layer
+ * @returns {{ x:number, y:number, w:number, h:number } | null}
+ */
+export function importLayerBBox(layer) {
+  return pathsBBox(importLayerPaths(layer));
+}
+
+/**
+ * Pivot (centre) an import layer's transform rotates/scales about: its geometry
+ * bbox centre, so a resize/rotate grows/turns the object IN PLACE. Falls back to
+ * the canvas centre when the layer has no measurable geometry (degrades to the
+ * legacy whole-canvas behaviour rather than producing NaN).
+ * @param {object} layer
+ * @param {number} canvasW
+ * @param {number} canvasH
+ * @returns {{ x:number, y:number }}
+ */
+export function importLayerPivot(layer, canvasW, canvasH) {
+  const bb = importLayerBBox(layer);
+  if (!bb) return { x: canvasW / 2, y: canvasH / 2 };
+  return { x: bb.x + bb.w / 2, y: bb.y + bb.h / 2 };
+}
+
+/**
  * The layer transform that places a bbox's centre at `point` (canvas units).
  * `transform.{x,y}` is an additive canvas-space translate (see svgExport), so the
  * offset is simply `target − current-centre`. Identity rotation/scale.

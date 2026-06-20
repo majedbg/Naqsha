@@ -32,6 +32,7 @@ import { parseForPlacement, centerTransform } from "../lib/scene/placement";
 import StudioSubmitModal from "../components/org/StudioSubmitModal";
 import useLayers from "../lib/useLayers";
 import useLayerGroups from "../lib/useLayerGroups";
+import { isTextLayer } from "../lib/text/textLayer";
 import { useAuth } from "../lib/AuthContext";
 import { useGate } from "../lib/useGate";
 import AuthButton from "../components/AuthButton";
@@ -226,6 +227,11 @@ export default function Studio() {
   const selectedLayerId = selectionExists
     ? selectedLayerIdState
     : layers[0]?.id ?? null;
+
+  // Text edit lifecycle (phase 5). `editingNodeId` names the text layer whose
+  // content is being typed into the on-canvas TextEditOverlay; null = no editor
+  // open. Create opens it; Escape / a tool-switch commits + closes it.
+  const [editingNodeId, setEditingNodeId] = useState(null);
 
   // Switching the machine profile sets the document's active profile AND re-maps
   // the operation library to that profile's process/param/color vocabulary
@@ -556,17 +562,70 @@ export default function Studio() {
   const handleCancelPlacement = useCallback(() => setPlacement(null), []);
 
   // Text tool: RightPanel hands up the create geometry (origin + box + lineMode)
-  // from a click/drag. Spin up an (empty) text layer, select it, and drop back to
-  // the Select tool so it's immediately movable. Editing its content is phase 5.
+  // from a click/drag. Spin up an (empty) text layer, select it, and OPEN the
+  // on-canvas editor (phase 5). The tool deliberately STAYS on 'text' through
+  // create — switching to 'select' here would, via the tool-switch effect below,
+  // immediately exit (and remove) the just-created empty layer. The effect uses
+  // a prev-tool ref so this same-commit (tool='text' + editingNodeId set) does
+  // not count as a switch; a later real switch away from 'text' commits + exits.
   const handleCreateText = useCallback(
     ({ x, y, box, lineMode }) => {
       const outcome = addTextLayer({ params: { x, y, box, lineMode } });
       if (!outcome.ok) return;
       setSelectedLayerId(outcome.id);
-      setActiveTool("select");
+      setEditingNodeId(outcome.id);
     },
-    [addTextLayer, setActiveTool]
+    [addTextLayer]
   );
+
+  // Typing in the overlay writes through to the layer's params.text live (one
+  // setLayers map per keystroke — see useLayers.updateLayer). This is NOT in the
+  // undo history (only operation assignments are snapshotted), so it does not
+  // spam undo; history coalescing for text is a phase 6 concern.
+  const handleEditText = useCallback(
+    (id, text) => {
+      const layer = layers.find((l) => l.id === id);
+      if (!layer) return;
+      updateLayer(id, { params: { ...layer.params, text } });
+    },
+    [layers, updateLayer]
+  );
+
+  // Exit edit (Escape, or a tool switch via the effect below). Removes an
+  // abandoned EMPTY text layer (a create the user typed nothing into), then
+  // returns to the Select tool so the freshly-committed text is movable.
+  const handleExitEdit = useCallback(() => {
+    const id = editingNodeId;
+    setEditingNodeId(null);
+    if (id) {
+      const layer = layers.find((l) => l.id === id);
+      if (layer && isTextLayer(layer) && !(layer.params?.text || "").trim()) {
+        removeLayer(id);
+      }
+    }
+    setActiveTool("select");
+  }, [editingNodeId, layers, removeLayer, setActiveTool]);
+
+  // Re-enter edit for an existing text layer (double-click). Selects it and
+  // opens the editor; the tool is left as-is (double-click works from Select).
+  const handleRequestEdit = useCallback((id) => {
+    setSelectedLayerId(id);
+    setEditingNodeId(id);
+  }, []);
+
+  // Effect-ordering guard: only exit edit on an ACTUAL tool switch away from
+  // 'text' while editing. The create transition keeps tool='text' AND sets
+  // editingNodeId in the same commit, so prev === activeTool there and the body
+  // no-ops — the editor survives create. A later switch (Select/Hand/Zoom)
+  // commits + exits via handleExitEdit.
+  const prevToolRef = useRef(activeTool);
+  useEffect(() => {
+    const prev = prevToolRef.current;
+    prevToolRef.current = activeTool;
+    if (editingNodeId && prev !== activeTool && activeTool !== "text") {
+      handleExitEdit();
+    }
+  }, [activeTool, editingNodeId, handleExitEdit]);
 
   // Esc cancels an armed placement (mirrors the modal's Esc-to-close).
   useEffect(() => {
@@ -905,6 +964,10 @@ export default function Studio() {
           onPlaceAsset={handlePlaceAsset}
           onCancelPlacement={handleCancelPlacement}
           onCreateText={handleCreateText}
+          editingNodeId={editingNodeId}
+          onEditText={handleEditText}
+          onExitEdit={handleExitEdit}
+          onRequestEdit={handleRequestEdit}
         />
 
         {/* Examples gallery (re-homed in #16). Opened from File > Examples;

@@ -5,7 +5,8 @@ import PlotOverlay from "./canvas/PlotOverlay";
 import { cursorToUnit } from "../lib/canvasChrome";
 import { screenToCanvas } from "../lib/canvas/coords";
 import { buildSelectables, pickTopmost } from "../lib/scene/selectables";
-import { textCreateFromDrag } from "../lib/text/textLayer";
+import { textCreateFromDrag, isTextLayer, textNodeFromLayer } from "../lib/text/textLayer";
+import TextEditOverlay from "./canvas/TextEditOverlay";
 import { applyMoveDelta } from "../lib/tools/moveTransform";
 import {
   classifyPointer,
@@ -84,6 +85,16 @@ export default function RightPanel({
   // Text tool: a click/drag over the canvas creates a text layer. The geometry
   // (origin + box + lineMode) is computed by textCreateFromDrag and handed up.
   onCreateText = () => {},
+  // Text edit lifecycle (phase 5). When `editingNodeId` names a text layer, the
+  // on-canvas TextEditOverlay renders over it (inside the scaled box, so it
+  // inherits the zoom transform). `onEditText(id, value)` writes keystrokes up;
+  // `onExitEdit()` commits + closes; `onRequestEdit(id)` re-enters edit (used by
+  // double-click). All default to no-ops so the panel renders unchanged without
+  // the lifecycle wired (mobile / legacy / tests).
+  editingNodeId = null,
+  onEditText = () => {},
+  onExitEdit = () => {},
+  onRequestEdit = () => {},
 }) {
   const containerRef = useRef(null);
   const wrapperRef = useRef(null);
@@ -457,6 +468,27 @@ export default function RightPanel({
     [onCommit, toCanvasPoint, onCreateText]
   );
 
+  // Double-click a TEXT object → enter edit. The preceding pointerdown may have
+  // armed a move (dragRef set, but with moved=false since a dblclick doesn't
+  // drag); we null dragRef so the trailing pointerup commits NOTHING — no
+  // phantom no-op transform. Non-text layers ignore the dblclick.
+  const handleDoubleClick = useCallback(
+    (e) => {
+      if (!selectActive && !textActive) return;
+      const pt = toCanvasPoint(e.clientX, e.clientY);
+      if (!pt) return;
+      const liveTransforms = transformsLiveRef.current || {};
+      const selectables = buildSelectables({ layers, canvasW, canvasH, font: textFont });
+      const id = pickTopmost(pt, selectables, liveTransforms);
+      if (!id) return;
+      const sel = selectables.find((s) => s.id === id);
+      if (sel?.kind !== "text") return; // only text enters edit
+      dragRef.current = null; // cancel any move armed by the preceding pointerdown — NO commit
+      onRequestEdit(id);
+    },
+    [selectActive, textActive, toCanvasPoint, layers, canvasW, canvasH, textFont, onRequestEdit]
+  );
+
   return (
     <div
       ref={wrapperRef}
@@ -493,6 +525,23 @@ export default function RightPanel({
         }}
       >
         <div ref={containerRef} />
+        {/* Text edit overlay (phase 5). Lives INSIDE the scaled canvas box so its
+            canvas-coord left/top/size inherit scale(finalScale) and stay aligned
+            with the drawn glyphs at any zoom. Rendered only when an edit is open,
+            the editing layer still exists + is a text layer, and the font is
+            loaded (it sizes the textarea from the laid-out glyph box). */}
+        {editingNodeId && textFont && (() => {
+          const eLayer = layers.find((l) => l.id === editingNodeId);
+          if (!eLayer || !isTextLayer(eLayer)) return null;
+          return (
+            <TextEditOverlay
+              node={textNodeFromLayer(eLayer)}
+              font={textFont}
+              onEditText={onEditText}
+              onExitEdit={onExitEdit}
+            />
+          );
+        })()}
         {/* Plot preview + overlap overlay (C7 / #15). Sibling of the p5 surface
             inside the scaled wrapper, so it shares the artwork's coordinate
             space and the canvas transform. Gated by the shell's Overlays toggle;
@@ -550,6 +599,7 @@ export default function RightPanel({
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
           onPointerCancel={handlePointerUp}
+          onDoubleClick={handleDoubleClick}
         />
       </div>
 

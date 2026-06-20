@@ -32,6 +32,9 @@ import {
   hasVariableWeight,
   supportsVariableWeight,
 } from "../../lib/variableWeight";
+import { isTextLayer, textNodeFromLayer } from "../../lib/text/textLayer";
+import { useFont } from "../../lib/text/fontRegistry";
+import TextPropertiesPanel from "../TextPropertiesPanel";
 
 // Variable line-weight UI (issue #17, C8). A per-layer "advanced" toggle + bucket
 // count (N) control, shown ONLY for weight-varying patterns on a profile that
@@ -173,10 +176,33 @@ export default function Inspector({
   // the Inspector renders standalone / in tests without a Studio router.
   onVariableWeightChange,
 }) {
+  // Resolved font for the text-properties readouts (cap-height / engrave
+  // warnings). May be null on first paint before useFont resolves — the panel's
+  // helpers all no-op on null, so it renders its controls regardless. Hook lives
+  // at the top of the component (before any early return) per rules-of-hooks.
+  const { font } = useFont();
+
   const layer =
     selectedLayerId != null
       ? layers.find((l) => l.id === selectedLayerId) || null
       : null;
+
+  // Text layers get a dedicated properties panel instead of the pattern param
+  // controls. Edits patch the LAYER's params (Option B): onUpdate receives a
+  // patch of node fields, merged shallowly into layer.params via onUpdateLayer.
+  if (layer && isTextLayer(layer)) {
+    return (
+      <div className="flex flex-col gap-3 p-3" data-testid="inspector-text">
+        <TextPropertiesPanel
+          node={textNodeFromLayer(layer)}
+          font={font}
+          onUpdate={(patch) =>
+            onUpdateLayer(layer.id, { params: { ...layer.params, ...patch } })
+          }
+        />
+      </div>
+    );
+  }
 
   if (!layer) {
     // Neutral document / empty state — single-select drives the inspector, so

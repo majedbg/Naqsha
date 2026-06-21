@@ -233,9 +233,31 @@ export default function MenuBar({
   return (
     <div className="flex h-full items-center gap-2 px-3 bg-paper">
       {/* App name, inline with the menus so the standalone TopNav bar can be
-          dropped on the studio route (reclaims a full row of vertical space). */}
-      <span className="display text-sm font-semibold text-ink tracking-tight select-none mr-1">
-        Naqsha
+          dropped on the studio route (reclaims a full row of vertical space).
+          Hover / focus reveals the name's meaning (the brand story). The tooltip
+          drops DOWN — the label sits at the very top edge, so an upward tooltip
+          would clip off-screen. */}
+      <span
+        className="group/brand relative mr-1"
+        tabIndex={0}
+        aria-label="About the name Naqsha"
+      >
+        <span className="display text-sm font-semibold text-ink tracking-tight select-none cursor-default">
+          Naqsha
+        </span>
+        <span
+          role="tooltip"
+          className="absolute top-full left-0 mt-1.5 hidden group-hover/brand:block group-focus-within/brand:block z-50 w-[340px] px-3 py-2 text-xs leading-relaxed text-ink-soft bg-paper border border-hairline rounded-sm shadow-sm"
+        >
+          <span className="font-semibold text-ink">Naqsha</span> is an Arabic,
+          Persian, and Urdu word from the root <span lang="ar" dir="rtl">نقش</span>{" "}
+          (<span className="italic">naqsh</span>, “to engrave or decorate”) — it
+          names both the <span className="text-ink">pattern</span> (its Arabic
+          sense) and the <span className="text-ink">map or blueprint</span> to
+          make it (its Persian and Urdu sense). That’s exactly what this tool is:
+          a place where a painted, generative design becomes a precise plan a
+          plotter or laser can cut.
+        </span>
       </span>
 
       {/* Top-level menus. */}

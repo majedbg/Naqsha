@@ -1,17 +1,15 @@
 // ToolStrip — the pro shell's left vertical tool strip (Lane B / B6, issue #9).
 //
-// Renders one button per registry tool (Select / Text / Hand / Zoom) plus the
-// fill/stroke (operation) chip at the base. Presentational: the active tool +
-// change handler are passed in (Studio owns the state via useActiveTool), so the
-// same state drives the strip and the contextual control bar.
+// Renders one button per registry tool (Select / Text / Hand / Zoom).
+// Presentational: the active tool + change handler are passed in (Studio owns the
+// state via useActiveTool), so the same state drives the strip and the contextual
+// control bar.
 //
-// Out of scope here: freehand drawing tools (none — decision 6) and the
-// operation picker (#11). The chip renders the current/default operation and its
-// onClick is a stub until #11 wires the picker.
+// Operation (cut/engrave/score) assignment lives per-layer in the layer tree and
+// on the control-bar swatch — not here. (A strip-level chip used to live at the
+// base but was removed: detached from any layer, it read as ambiguous.)
 
-import { useState } from "react";
 import { TOOL_IDS, getTool } from "../../lib/tools/toolRegistry";
-import OperationPicker from "./OperationPicker";
 
 // Minimal inline glyphs (currentColor) so the strip reads without external
 // assets. Keyed by tool id.
@@ -65,59 +63,7 @@ function ToolButton({ tool, active, onClick }) {
   );
 }
 
-// Operation (fill/stroke) chip pinned at the base. Opens the SAME OperationPicker
-// as the control-bar swatch (#11/C2); picks route through onAssignOperation. The
-// menu opens to the RIGHT of the strip (strip is the leftmost column).
-function OperationChip({ operation, operations, onAssignOperation }) {
-  const op = operation ?? { name: "Cut", color: "#e23b3b" };
-  const [open, setOpen] = useState(false);
-  const canPick = Array.isArray(operations) && operations.length > 0;
-
-  return (
-    <div className="relative">
-      <button
-        type="button"
-        aria-label={`Operation: ${op.name}`}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        title={`Operation: ${op.name}`}
-        onClick={() => canPick && setOpen((v) => !v)}
-        className="flex h-9 w-9 items-center justify-center rounded-sm border border-hairline hover:bg-paper-warm transition-colors duration-fast ease-out-quart"
-      >
-        <span
-          data-op-color
-          className="block h-4 w-4 rounded-xs border border-hairline"
-          style={{ backgroundColor: op.color }}
-        />
-      </button>
-      {open && canPick && (
-        <>
-          <div className="fixed inset-0 z-40" aria-hidden="true" onClick={() => setOpen(false)} />
-          <div className="absolute bottom-0 left-full ml-1">
-            <OperationPicker
-              operations={operations}
-              open
-              activeOperationId={operation?.id}
-              onSelect={(operationId) => {
-                onAssignOperation?.(operationId);
-                setOpen(false);
-              }}
-              onClose={() => setOpen(false)}
-            />
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
-export default function ToolStrip({
-  activeTool,
-  onToolChange,
-  operation,
-  operations,
-  onAssignOperation,
-}) {
+export default function ToolStrip({ activeTool, onToolChange }) {
   return (
     <div className="flex h-full flex-col items-center gap-1 py-2">
       <div className="flex flex-col items-center gap-1">
@@ -132,14 +78,6 @@ export default function ToolStrip({
             />
           );
         })}
-      </div>
-
-      <div className="mt-auto">
-        <OperationChip
-          operation={operation}
-          operations={operations}
-          onAssignOperation={onAssignOperation}
-        />
       </div>
     </div>
   );

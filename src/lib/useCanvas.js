@@ -174,7 +174,7 @@ export default function useCanvas(
     // font loads). Guarded by layers.find so a stale id can't throw.
     const selId = selectedRef.current;
     if (selId) {
-      const selLayer = layers.find((l) => l.id === selId && l.visible !== false);
+      const selLayer = layers.find((l) => l.id === selId && l.visible !== false && !l.locked);
       if (selLayer) {
         const sel = buildSelectables({ layers, font, canvasW, canvasH }).find(
           (s) => s.id === selId

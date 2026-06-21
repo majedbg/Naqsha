@@ -145,8 +145,11 @@ export function OperationsPanelRegion({ children, contentRef, className = '' }) 
   // hosted Studio can portal its LightBurn-style operations / cut-settings panel
   // into it (C1 / #10). When omitted, the region renders its placeholder /
   // passed children as before.
+  //
+  // Height is caller-driven (no fixed `h-48`) so the region can sit under the
+  // layer tree in the left column and flex into the space below it.
   return (
-    <Region label="Operations panel" className={`h-48 shrink-0 overflow-auto ${className}`}>
+    <Region label="Operations panel" className={`overflow-auto ${className}`}>
       {contentRef ? <div ref={contentRef} className="h-full" /> : children}
     </Region>
   );
@@ -198,7 +201,24 @@ export default function AppShell({ children }) {
 
       <div className="flex flex-1 min-h-0">
         <ToolStripRegion contentRef={setToolStripNode} />
-        <ObjectTreeRegion contentRef={setObjectTreeNode} />
+
+        {/* Left column: the layer tree on top, the operations / cut-settings
+            panel filling the space beneath it. Objects are few, so the bottom of
+            the left panel is free real estate for the cut prep. Both regions
+            share the Object tree's resizable width (it carries the width style;
+            the operations region stretches to match). */}
+        <div className="flex flex-col shrink-0 min-h-0">
+          {/* Layers size to their content (capped so a long list scrolls rather
+              than crowding out the operations below); operations take the rest. */}
+          <ObjectTreeRegion
+            contentRef={setObjectTreeNode}
+            className="flex-none max-h-[55%]"
+          />
+          <OperationsPanelRegion
+            contentRef={setOperationsNode}
+            className="flex-1 min-h-0 border-t-0"
+          />
+        </div>
 
         {/* The live Studio is hosted here. It reads the slots from context and
             portals the layer tree, param inspector, top menu bar, tool strip,
@@ -221,9 +241,10 @@ export default function AppShell({ children }) {
           </MenuSlotProvider>
         </CanvasRegion>
 
+        {/* Right column: the selection-driven Inspector, now full-height (the
+            operations panel moved under the layer tree on the left). */}
         <div className="flex flex-col w-72 shrink-0 min-h-0">
           <InspectorRegion contentRef={setInspectorNode} />
-          <OperationsPanelRegion contentRef={setOperationsNode} />
         </div>
       </div>
 

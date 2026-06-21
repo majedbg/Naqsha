@@ -26,6 +26,15 @@ describe('buildSelectables', () => {
     });
     expect(sels.map((s) => s.id)).toEqual(['b']);
   });
+
+  it('skips locked layers so clicks fall through to the layer beneath', () => {
+    const sels = buildSelectables({
+      layers: [{ id: 'a', visible: true, locked: true }, { id: 'b', visible: true }],
+      canvasW: W,
+      canvasH: H,
+    });
+    expect(sels.map((s) => s.id)).toEqual(['b']);
+  });
 });
 
 describe('pickTopmost', () => {

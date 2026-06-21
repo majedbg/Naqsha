@@ -4,10 +4,10 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import ToolStrip from "./ToolStrip";
 
 // Issue #9 (Lane B / B6): the left vertical tool strip. Driven by the tool
-// registry / active-tool state; renders Select / Text / Hand / Zoom and a
-// fill/stroke (operation) chip at the base. NO freehand drawing tools.
+// registry / active-tool state; renders Select / Text / Hand / Zoom. NO freehand
+// drawing tools, and NO operation chip (operations are assigned per-layer).
 
-describe("ToolStrip (B6 — tool buttons + operation chip)", () => {
+describe("ToolStrip (B6 — tool buttons)", () => {
   it("renders a button for each of select / text / hand / zoom", () => {
     render(<ToolStrip activeTool="select" onToolChange={vi.fn()} />);
     expect(screen.getByRole("button", { name: /select/i })).toBeInTheDocument();
@@ -35,11 +35,11 @@ describe("ToolStrip (B6 — tool buttons + operation chip)", () => {
     expect(onToolChange).toHaveBeenCalledWith("text");
   });
 
-  it("renders the fill/stroke operation chip at the base", () => {
+  it("does not render an operation chip (operations are per-layer)", () => {
     render(<ToolStrip activeTool="select" onToolChange={vi.fn()} />);
     expect(
-      screen.getByRole("button", { name: /operation|stroke|fill/i })
-    ).toBeInTheDocument();
+      screen.queryByRole("button", { name: /operation|stroke|fill/i })
+    ).not.toBeInTheDocument();
   });
 
   it("does not render any freehand drawing tool", () => {

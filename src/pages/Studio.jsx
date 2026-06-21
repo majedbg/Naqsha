@@ -1131,13 +1131,7 @@ export default function Studio() {
           drives the contextual control bar below. */}
       {toolStripSlot &&
         createPortal(
-          <ToolStrip
-            activeTool={activeTool}
-            onToolChange={setActiveTool}
-            operation={swatchOperation}
-            operations={operations}
-            onAssignOperation={handleSwatchAssign}
-          />,
+          <ToolStrip activeTool={activeTool} onToolChange={setActiveTool} />,
           toolStripSlot
         )}
 

@@ -43,10 +43,12 @@ const IDENTITY = { x: 0, y: 0, rotation: 0, scale: 1 };
  */
 export function buildSelectables({ layers = [], font = null, canvasW, canvasH }) {
   const out = [];
-  // Hidden layers are NOT selectable — a click over a hidden top layer must fall
-  // through to the visible layer beneath it.
+  // Hidden or locked layers are NOT selectable on the canvas — a click over one
+  // must fall through to the visible, unlocked layer beneath it. (Locked layers
+  // remain selectable via the layer tree so they can be unlocked.)
   for (const layer of layers) {
     if (layer.visible === false) continue;
+    if (layer.locked) continue;
 
     if (isTextLayer(layer)) {
       // Not measurable without a resolved font → not selectable yet.

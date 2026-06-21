@@ -85,19 +85,19 @@ describe("Inspector (B3 — selection-driven param inspector)", () => {
       />
     );
     const slider = screen.getByRole("slider", { name: "Particle Count" });
-    fireEvent.change(slider, { target: { value: "1500" } });
+    fireEvent.change(slider, { target: { value: "500" } });
 
     expect(onUpdateSpy).toHaveBeenCalled();
     const [id, patch] = onUpdateSpy.mock.calls[onUpdateSpy.mock.calls.length - 1];
     expect(id).toBe("l1");
-    expect(patch.params.particleCount).toBe(1500);
+    expect(patch.params.particleCount).toBe(500);
     // Siblings preserved through the merge.
     expect(patch.params.stepLength).toBe(DEFAULT_PARAMS.flowfield.stepLength);
 
     // Re-render reflects the new value on the live slider.
     expect(
       screen.getByRole("slider", { name: "Particle Count" })
-    ).toHaveValue("1500");
+    ).toHaveValue("500");
   });
 
   // (c) INTERACTION — changing selection repopulates the inspector.

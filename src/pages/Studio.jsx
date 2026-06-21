@@ -18,6 +18,8 @@ import {
 } from "../components/shell/shellSlots";
 import useActiveTool from "../lib/hooks/useActiveTool";
 import useCanvasView from "../lib/hooks/useCanvasView";
+import useColorView from "../lib/hooks/useColorView";
+import ColorViewControl from "../components/canvas/ColorViewControl";
 import useSvgImport from "../lib/hooks/useSvgImport";
 import ConfirmDialog from "../components/ui/ConfirmDialog";
 import DocumentSetupDialog from "../components/shell/DocumentSetupDialog";
@@ -426,6 +428,12 @@ export default function Studio() {
   // Canvas pan/zoom the Hand/Zoom tools drive, wired into the (shell-hosted)
   // RightPanel canvas.
   const canvasView = useCanvasView();
+
+  // Color-view lens (spec: docs/material-preview-plan.md). Operation (technical
+  // cut/score/engrave colors) vs Material (preview on a real sheet). Preview-only
+  // — feeds the canvas, never export. Materials default to the built-in set (no
+  // org context in Studio yet; org materials drop in later via the same prop).
+  const colorView = useColorView();
 
   // Interactive per-layer transform (Select tool: move / resize / rotate).
   // Committed transforms live on `layer.transform` (so they persist + export
@@ -952,6 +960,7 @@ export default function Studio() {
           // color (each layer draws in its operation's color on laser).
           operations={operations}
           machineProfile={activeProfileId}
+          colorView={colorView.colorView}
           canvasW={canvasW}
           canvasH={canvasH}
           patternInstancesRef={patternInstancesRef}
@@ -981,6 +990,17 @@ export default function Studio() {
           onEditText={handleEditText}
           onExitEdit={handleExitEdit}
           onRequestEdit={handleRequestEdit}
+        />
+
+        {/* Color-view lens switch — bottom-left of the canvas. Operation (technical
+            cut/score/engrave) vs Material (preview on a real sheet). Preview-only. */}
+        <ColorViewControl
+          mode={colorView.mode}
+          material={colorView.material}
+          materials={colorView.materials}
+          needsMaterialChoice={colorView.needsMaterialChoice}
+          onSetMode={colorView.setMode}
+          onSelectMaterial={colorView.selectMaterial}
         />
 
         {/* Examples gallery (re-homed in #16). Opened from File > Examples;

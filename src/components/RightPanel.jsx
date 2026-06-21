@@ -36,6 +36,9 @@ export default function RightPanel({
   // caller that doesn't wire them renders exactly as before.
   operations = [],
   machineProfile = null,
+  // Color-view lens (spec: docs/material-preview-plan.md). Forwarded to useCanvas;
+  // null → operation lens (canvas byte-identical to before). Preview-only.
+  colorView = null,
   canvasW,
   canvasH,
   patternInstancesRef,
@@ -159,7 +162,8 @@ export default function RightPanel({
     selectedNodeId,
     textFont,
     operations,
-    machineProfile
+    machineProfile,
+    colorView
   );
 
   // Latest transforms readable inside pointer handlers without stale closures

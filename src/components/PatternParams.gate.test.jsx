@@ -117,9 +117,9 @@ describe("PatternParams param flow through context", () => {
       />
     );
     const slider = screen.getByRole("slider", { name: "Particle Count" });
-    fireEvent.change(slider, { target: { value: "1500" } });
+    fireEvent.change(slider, { target: { value: "500" } });
     expect(patches.length).toBeGreaterThan(0);
-    expect(patches[patches.length - 1].particleCount).toBe(1500);
+    expect(patches[patches.length - 1].particleCount).toBe(500);
     // The merge preserved siblings.
     expect(patches[patches.length - 1].stepLength).toBe(
       DEFAULT_PARAMS.flowfield.stepLength

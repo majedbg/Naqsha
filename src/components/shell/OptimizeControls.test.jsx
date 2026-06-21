@@ -20,6 +20,12 @@ const INITIAL = {
   reorder: { enabled: false },
 };
 
+// The panel is collapsed by DEFAULT (optimize is a set-once step). Expand it so
+// the body rows render before the existing assertions run.
+function expand() {
+  fireEvent.click(screen.getByRole("button", { name: /optimize/i }));
+}
+
 function renderControls(extra = {}) {
   const props = {
     optimizations: INITIAL,
@@ -29,10 +35,42 @@ function renderControls(extra = {}) {
     ...extra,
   };
   render(<OptimizeControls {...props} />);
+  expand();
   return props;
 }
 
 describe("OptimizeControls — re-homed optimize controls (#16 AC2)", () => {
+  it("is collapsed by default — no rows until the header is clicked", () => {
+    render(
+      <OptimizeControls
+        optimizations={INITIAL}
+        onUpdate={vi.fn()}
+        onApply={vi.fn()}
+        onRevert={vi.fn()}
+      />
+    );
+    expect(screen.queryByTestId("optimize-row-simplify")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /optimize/i }));
+    expect(screen.getByTestId("optimize-row-simplify")).toBeInTheDocument();
+  });
+
+  it("shows an applied-count badge while collapsed so applied state isn't hidden", () => {
+    const applied = {
+      ...INITIAL,
+      simplify: { enabled: true, tolerance: 0.3, appliedTolerance: 0.3 },
+      reorder: { enabled: true },
+    };
+    render(
+      <OptimizeControls
+        optimizations={applied}
+        onUpdate={vi.fn()}
+        onApply={vi.fn()}
+        onRevert={vi.fn()}
+      />
+    );
+    expect(screen.getByText(/2 applied/i)).toBeInTheDocument();
+  });
+
   it("renders a row for each optimization (simplify, merge, reorder)", () => {
     renderControls();
     expect(screen.getByTestId("optimize-row-simplify")).toBeInTheDocument();

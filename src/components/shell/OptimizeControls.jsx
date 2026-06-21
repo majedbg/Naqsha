@@ -19,6 +19,14 @@
 //
 // Match the OperationsPanel's row/header chrome so it sits naturally in the same
 // shell region (Studio portals it as a sibling of OperationsPanel).
+//
+// Collapsible: optimization is a set-once, rarely-touched step, so the panel
+// collapses to a single header bar (collapsed by DEFAULT) — that lets the layer
+// tree above fill the column and keeps the operations panel compact at the
+// bottom. When collapsed, the header shows how many optimizations are applied so
+// the state isn't hidden silently.
+
+import { useState } from "react";
 
 const ROWS = [
   {
@@ -116,28 +124,62 @@ export default function OptimizeControls({
   onApply = () => {},
   onRevert = () => {},
 }) {
+  // Collapsed by default (see header note). Local state — not persisted, matching
+  // the other shell panels.
+  const [open, setOpen] = useState(false);
+  const appliedCount = ROWS.reduce(
+    (n, def) => n + (optimizations?.[def.key]?.enabled ? 1 : 0),
+    0
+  );
+
   return (
     <div
       className="flex flex-col border-t border-hairline"
       data-testid="optimize-controls"
     >
-      <div className="flex shrink-0 items-center border-b border-hairline px-2 py-1">
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls="optimize-body"
+        onClick={() => setOpen((v) => !v)}
+        className="flex shrink-0 items-center gap-1.5 border-b border-hairline px-2 py-1 text-left hover:bg-paper-warm transition-colors"
+      >
+        {/* Disclosure chevron: points right when collapsed, down when open. */}
+        <svg
+          width="9"
+          height="9"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="3"
+          className={`shrink-0 text-ink-soft transition-transform duration-fast ${open ? "rotate-90" : ""}`}
+          aria-hidden="true"
+        >
+          <polyline points="9 6 15 12 9 18" />
+        </svg>
         <span className="text-[10px] font-semibold uppercase tracking-wider text-ink-soft">
           Optimize
         </span>
-      </div>
-      <div className="space-y-1 overflow-auto p-1.5">
-        {ROWS.map((def) => (
-          <OptimizeRow
-            key={def.key}
-            def={def}
-            opt={optimizations?.[def.key] ?? {}}
-            onUpdate={onUpdate}
-            onApply={onApply}
-            onRevert={onRevert}
-          />
-        ))}
-      </div>
+        {!open && appliedCount > 0 && (
+          <span className="ml-auto rounded-xs bg-tone-ok/10 px-1.5 py-0.5 text-[9px] font-medium text-tone-ok">
+            {appliedCount} applied
+          </span>
+        )}
+      </button>
+      {open && (
+        <div id="optimize-body" className="space-y-1 overflow-auto p-1.5">
+          {ROWS.map((def) => (
+            <OptimizeRow
+              key={def.key}
+              def={def}
+              opt={optimizations?.[def.key] ?? {}}
+              onUpdate={onUpdate}
+              onApply={onApply}
+              onRevert={onRevert}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

@@ -89,22 +89,41 @@ export function ObjectTreeRegion({ children, contentRef, className = '' }) {
   // (B2 / #5). When omitted, the region renders its placeholder / passed
   // children as before.
   //
-  // WI-3: the region is user-resizable + persisted. Width is state-driven (no
-  // fixed `w-56`) via inline px style; a thin invisible hit strip straddles the
-  // section's right edge as a resize handle (double-click resets to default).
+  // The region fills its parent column's width; the resizable width + drag
+  // handle live on `LeftColumnRegion` (the whole left panel), not here.
+  return (
+    <Region label="Object tree" className={`shrink-0 overflow-auto ${className}`}>
+      {contentRef ? <div ref={contentRef} className="h-full" /> : children}
+    </Region>
+  );
+}
+
+// The whole left panel: the layer tree on top, the operations / cut-settings
+// panel filling the space beneath it. Both share ONE resizable width — this
+// wrapper carries the width style AND the resize handle on its right edge (the
+// rightmost edge of the entire panel), so a drag resizes the whole column, not
+// just the tree. Width is state-driven + persisted (no fixed class); a thin hit
+// strip straddles the column's right edge (double-click resets to default).
+export function LeftColumnRegion({ objectTreeContentRef, operationsContentRef }) {
   const { width, isDragging, onMouseDown, onDoubleClick } = usePanelWidth();
   return (
-    <Region
-      label="Object tree"
+    <div
+      data-testid="left-panel"
       style={{ width }}
-      className={`shrink-0 overflow-auto ${className}`}
+      className="relative flex flex-col shrink-0 min-h-0"
     >
-      {contentRef ? <div ref={contentRef} className="h-full" /> : children}
+      {/* Layers size to their content (capped so a long list scrolls rather than
+          crowding out the operations below); operations take the rest. */}
+      <ObjectTreeRegion contentRef={objectTreeContentRef} className="flex-none max-h-[55%]" />
+      <OperationsPanelRegion contentRef={operationsContentRef} className="flex-1 min-h-0 border-t-0" />
+
+      {/* Resize handle straddling the column's right edge, spanning the full
+          height so it reads as the edge of the whole panel. */}
       <div
-        data-testid="object-tree-resize"
+        data-testid="left-panel-resize"
         role="separator"
         aria-orientation="vertical"
-        aria-label="Resize object tree"
+        aria-label="Resize left panel"
         onMouseDown={onMouseDown}
         onDoubleClick={onDoubleClick}
         className="absolute top-0 right-0 z-10 h-full w-1.5 translate-x-1/2 cursor-col-resize"
@@ -117,7 +136,7 @@ export function ObjectTreeRegion({ children, contentRef, className = '' }) {
           }`}
         />
       </div>
-    </Region>
+    </div>
   );
 }
 
@@ -204,21 +223,12 @@ export default function AppShell({ children }) {
 
         {/* Left column: the layer tree on top, the operations / cut-settings
             panel filling the space beneath it. Objects are few, so the bottom of
-            the left panel is free real estate for the cut prep. Both regions
-            share the Object tree's resizable width (it carries the width style;
-            the operations region stretches to match). */}
-        <div className="flex flex-col shrink-0 min-h-0">
-          {/* Layers size to their content (capped so a long list scrolls rather
-              than crowding out the operations below); operations take the rest. */}
-          <ObjectTreeRegion
-            contentRef={setObjectTreeNode}
-            className="flex-none max-h-[55%]"
-          />
-          <OperationsPanelRegion
-            contentRef={setOperationsNode}
-            className="flex-1 min-h-0 border-t-0"
-          />
-        </div>
+            the left panel is free real estate for the cut prep. The column is
+            resized as one unit via its right-edge handle (see LeftColumnRegion). */}
+        <LeftColumnRegion
+          objectTreeContentRef={setObjectTreeNode}
+          operationsContentRef={setOperationsNode}
+        />
 
         {/* The live Studio is hosted here. It reads the slots from context and
             portals the layer tree, param inspector, top menu bar, tool strip,

@@ -72,29 +72,34 @@ describe('materialSheetHex', () => {
 });
 
 // ── Stroke colors ────────────────────────────────────────────────────────────
-describe('materialStrokeColor — cut is a contrast-aware contour', () => {
-  it('is dark charcoal on a light sheet', () => {
-    expect(materialStrokeColor('#E6E954', 'lighten', 'cut')).toBe('#1A1A1A');
+describe('materialStrokeColor — every mark tints in the material reaction direction', () => {
+  it('acrylic frosts marks LIGHTER than the sheet (cut included)', () => {
+    const sheet = '#E6E954'; // bright fluorescent green
+    for (const p of ['score', 'engrave', 'cut']) {
+      expect(luminance(materialStrokeColor(sheet, 'lighten', p))).toBeGreaterThan(luminance(sheet));
+    }
   });
-  it('flips to a light edge on a dark sheet', () => {
-    expect(materialStrokeColor('#10130E', 'lighten', 'cut')).toBe('#F2F2F2');
+  it('wood burns marks DARKER than the sheet (cut included)', () => {
+    const sheet = '#6B4A2B'; // walnut plywood
+    for (const p of ['score', 'engrave', 'cut']) {
+      expect(luminance(materialStrokeColor(sheet, 'burn', p))).toBeLessThan(luminance(sheet));
+    }
   });
-});
-
-describe('materialStrokeColor — score/engrave shift by category', () => {
-  it('acrylic score lightens the sheet', () => {
-    const sheet = '#0082CD';
-    expect(luminance(materialStrokeColor(sheet, 'lighten', 'score'))).toBeGreaterThan(luminance(sheet));
-  });
-  it('wood score darkens (burns) the sheet', () => {
-    const sheet = '#D8B988';
-    expect(luminance(materialStrokeColor(sheet, 'burn', 'score'))).toBeLessThan(luminance(sheet));
-  });
-  it('engrave shifts harder than score', () => {
+  it('strength grows score < engrave < cut (frost: brighter)', () => {
     const sheet = '#61DBC2';
     const score = luminance(materialStrokeColor(sheet, 'lighten', 'score'));
     const engrave = luminance(materialStrokeColor(sheet, 'lighten', 'engrave'));
-    expect(engrave).toBeGreaterThan(score); // lighten → engrave is brighter
+    const cut = luminance(materialStrokeColor(sheet, 'lighten', 'cut'));
+    expect(engrave).toBeGreaterThan(score);
+    expect(cut).toBeGreaterThan(engrave);
+  });
+  it('strength grows score < engrave < cut (burn: darker)', () => {
+    const sheet = '#D8B988';
+    const score = luminance(materialStrokeColor(sheet, 'burn', 'score'));
+    const engrave = luminance(materialStrokeColor(sheet, 'burn', 'engrave'));
+    const cut = luminance(materialStrokeColor(sheet, 'burn', 'cut'));
+    expect(engrave).toBeLessThan(score);
+    expect(cut).toBeLessThan(engrave);
   });
 });
 
@@ -134,8 +139,9 @@ describe('resolveCanvasColor — operation mode === resolveExportColor (no regre
 describe('resolveCanvasColor — material mode applies the lens', () => {
   const material = { id: 'g', name: 'Green', type: 'acrylic', hex: '#E6E954', category: 'lighten' };
   const colorView = { mode: 'material', material };
-  it('cut → charcoal on the bright green sheet', () => {
-    expect(resolveCanvasColor(layerWith('op-cut'), { operations: ops, outputMode: 'laser', colorView })).toBe('#1A1A1A');
+  it('cut → a near-white frost on the bright green sheet (not charcoal)', () => {
+    const c = resolveCanvasColor(layerWith('op-cut'), { operations: ops, outputMode: 'laser', colorView });
+    expect(luminance(c)).toBeGreaterThan(luminance('#E6E954'));
   });
   it('score → a lightened green (not the locked blue)', () => {
     const c = resolveCanvasColor(layerWith('op-score'), { operations: ops, outputMode: 'laser', colorView });

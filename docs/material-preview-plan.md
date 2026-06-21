@@ -32,8 +32,14 @@
    materials: `category` from `type` (`/acryl|cast|petg|polyc/`→`lighten`;
    `/ply|wood|mdf|veneer|bamboo/`→`burn`; else `darken`); hex from
    `m.swatchHex ?? NAME_MAP[m.color] ?? '#C9C2B5'`.
-5. **Cut stroke = contrast-aware contour.** `lum(sheet) > 0.4` → `#1A1A1A`
-   (charcoal); else → `#F2F2F2` (light edge). Always visible, incl. dark sheets.
+5. **Cut stroke = strongest material-reaction tint.** (REVISED post-feedback
+   2026-06-21: the original contrast-aware contour — dark on light sheets, light
+   on dark — looked *flipped* to users, e.g. white cut lines on dark walnut, dark
+   lines on bright fluorescent green. Real cut edges char dark on wood and frost
+   light on acrylic, i.e. they tint in the SAME direction as score/engrave, just
+   strongest.) Cut now mixes toward the material extreme at 0.92 (frost→white for
+   acrylic, burn→near-black for wood) — more than engrave (0.72), more than
+   score (0.45). Same MIN_VISIBLE 0.06 fallback.
 6. **Score/engrave = MIX toward a fixed extreme, engrave stronger.** (Revised
    during build: additive lighten + a contrast floor inverted engrave/score
    ordering near the luminance ceiling — e.g. frost on bright fluorescent green.

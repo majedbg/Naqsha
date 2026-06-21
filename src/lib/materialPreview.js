@@ -36,17 +36,17 @@ export const DEFAULT_PREVIEW_MATERIALS = [
 ];
 
 const NEUTRAL_SHEET = '#C9C2B5';
-const CUT_DARK = '#1A1A1A';
-const CUT_LIGHT = '#F2F2F2';
-// Score/engrave are a MIX toward a fixed extreme so engrave (a larger mix) can
-// never cross below score in the mark direction — additive shading + a contrast
-// floor inverted that ordering near the luminance ceiling (e.g. a frost on
-// already-bright fluorescent green). Frost mixes toward white; burn toward a
-// warm near-black.
+// Cut / score / engrave all MIX toward a fixed extreme in the material's reaction
+// direction, so a mark always tints the SAME way the real material reacts: frost
+// (acrylic/plastic) toward white, burn (wood) toward a warm near-black. Mixing
+// toward a fixed extreme is monotonic, so a larger mix can never cross a smaller
+// one — engrave is always more pronounced than score, cut more than engrave.
+// Strength grows with how much material the process removes: score < engrave < cut.
 const FROST_TARGET = '#ffffff';
 const BURN_TARGET = '#0e0a06';
 const MIX_SCORE = 0.45;
 const MIX_ENGRAVE = 0.72;
+const MIX_CUT = 0.92;
 // Below this mark/sheet separation the in-direction mark is effectively
 // invisible (sheet sits at the target extreme — white acrylic / near-black wood);
 // fall back to a faint readable contour instead.
@@ -123,15 +123,14 @@ export function materialSheetHex(m = {}) {
 }
 
 // The stroke color for one process on a given sheet/category. `opColor` is the
-// operation's own export color, used only for the pen (ink) process.
+// operation's own export color, used only for the pen (ink) process. cut, score
+// and engrave all tint toward the material's reaction extreme (frost = white,
+// burn = near-black); cut mixes furthest (it removes the most material — a char
+// edge on wood, a frosted edge on acrylic), then engrave, then score.
 export function materialStrokeColor(sheetHex, category, process, opColor) {
   if (process === 'pen') return opColor || '#000000';
-  if (process === 'cut') return luminance(sheetHex) > 0.4 ? CUT_DARK : CUT_LIGHT;
-  // score / engrave — mix toward the material's extreme (frost = white, burn =
-  // near-black). engrave mixes further, so it is always more pronounced than
-  // score and never crosses it (monotonic in the mix fraction).
   const target = category === 'lighten' ? FROST_TARGET : BURN_TARGET;
-  const t = process === 'engrave' ? MIX_ENGRAVE : MIX_SCORE;
+  const t = process === 'cut' ? MIX_CUT : process === 'engrave' ? MIX_ENGRAVE : MIX_SCORE;
   const mark = mix(sheetHex, target, t);
   if (lumDiff(sheetHex, mark) >= MIN_VISIBLE) return mark;
   // Sheet sits at the target extreme (white acrylic / near-black wood) — the

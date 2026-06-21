@@ -129,6 +129,11 @@ export default function MenuBar({
   kitModeName = "ITP Camp",
   onGenerateAI,
   buildShareState,
+  // Admin entry point (relocated from the now-removed studio TopNav). `showAdmin`
+  // is gated upstream (useShowAdmin); `onOpenAdmin` navigates to /admin. Both come
+  // from the owner (Studio) so MenuBar stays presentational and router-free.
+  showAdmin = false,
+  onOpenAdmin,
 }) {
   // A single "which menu is open" id keeps only one dropdown open at a time and
   // lets clicking another top-level menu switch directly.
@@ -227,6 +232,12 @@ export default function MenuBar({
 
   return (
     <div className="flex h-full items-center gap-2 px-3 bg-paper">
+      {/* App name, inline with the menus so the standalone TopNav bar can be
+          dropped on the studio route (reclaims a full row of vertical space). */}
+      <span className="display text-sm font-semibold text-ink tracking-tight select-none mr-1">
+        Naqsha
+      </span>
+
       {/* Top-level menus. */}
       <nav className="flex items-center gap-0.5" aria-label="Main menu">
         {menus.map((m) => (
@@ -243,6 +254,15 @@ export default function MenuBar({
       {/* Account cluster pinned right — reuse the existing components so each is
           wired to its real behavior with zero reimplementation. */}
       <div className="ml-auto flex items-center gap-xs">
+        {showAdmin && onOpenAdmin && (
+          <button
+            type="button"
+            onClick={onOpenAdmin}
+            className="px-2 py-0.5 text-xs rounded-xs text-ink-soft hover:text-ink hover:bg-paper-warm transition-colors duration-fast ease-out-quart"
+          >
+            Admin
+          </button>
+        )}
         {buildShareState && <ShareLinkButton buildState={buildShareState} />}
         <ThemeToggle />
         <AuthButton />

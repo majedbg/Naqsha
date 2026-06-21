@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { createPortal } from "react-dom";
+import { useNavigate } from "react-router-dom";
 import Inspector from "../components/shell/Inspector";
 import LayerTree from "../components/shell/LayerTree";
 import MenuBar from "../components/shell/MenuBar";
@@ -17,6 +18,7 @@ import {
   useOperationsPanelSlot,
 } from "../components/shell/shellSlots";
 import useActiveTool from "../lib/hooks/useActiveTool";
+import useShowAdmin from "../lib/hooks/useShowAdmin";
 import useCanvasView from "../lib/hooks/useCanvasView";
 import useColorView from "../lib/hooks/useColorView";
 import ColorViewControl from "../components/canvas/ColorViewControl";
@@ -63,6 +65,10 @@ import { ITP_CAMP_KIT_ID, getKit } from "../kits/kitRegistry";
 export default function Studio() {
   const { loading, user } = useAuth();
   const { limits } = useGate();
+  // Admin entry point, relocated into the MenuBar now that TopNav no longer
+  // renders over the studio route (the standalone Naqsha bar was dropped).
+  const navigate = useNavigate();
+  const showAdmin = useShowAdmin();
   // Resolved opentype font for exporting text-layer glyph outlines (phase 6).
   const { font: textFont } = useFont();
   const savedCanvas = loadCanvasState();
@@ -1158,6 +1164,8 @@ export default function Studio() {
               )
             }
             buildShareState={buildShareState}
+            showAdmin={showAdmin}
+            onOpenAdmin={() => navigate("/admin")}
           />,
           menuSlot
         )}

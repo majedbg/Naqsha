@@ -61,9 +61,15 @@ beforeEach(() => {
 });
 
 describe('App integration — TopNav + routes', () => {
-  it('renders the persistent TopNav above the routes', () => {
+  it('does NOT render the standalone TopNav on the studio route (/)', () => {
     renderAt('/');
-    // TopNav is the real component, mounted once above <Routes>.
+    // The studio reclaims that row: its own chrome (MenuBar brand / MobileStudio
+    // header) carries the Naqsha label + Admin, so TopNav opts out of "/".
+    expect(screen.queryByRole('navigation', { name: /primary/i })).not.toBeInTheDocument();
+  });
+
+  it('renders the persistent TopNav on non-studio routes', () => {
+    renderAt('/admin');
     expect(screen.getByRole('navigation', { name: /primary/i })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /naqsha/i })).toBeInTheDocument();
   });

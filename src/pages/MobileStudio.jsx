@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import RightPanel from "../components/RightPanel";
 import Inspector from "../components/shell/Inspector";
 import PatternPickerModal from "../components/PatternPickerModal";
@@ -8,6 +9,7 @@ import ThemeToggle from "../components/ui/ThemeToggle";
 import useLayers from "../lib/useLayers";
 import useCanvasSize, { loadCanvasState } from "../lib/hooks/useCanvasSize";
 import { useGate } from "../lib/useGate";
+import useShowAdmin from "../lib/hooks/useShowAdmin";
 import { exportAllLayersSVG } from "../lib/svgExport";
 import { resolveExportColor } from "../lib/fabrication";
 import { seedOperations } from "../lib/operations";
@@ -28,6 +30,10 @@ import { seedOperations } from "../lib/operations";
 // so a quick mobile export matches the desktop default for the same document.
 export default function MobileStudio() {
   const { limits } = useGate();
+  // Admin entry point, relocated into this header now that TopNav no longer
+  // renders over the studio route.
+  const navigate = useNavigate();
+  const showAdmin = useShowAdmin();
   const savedCanvas = loadCanvasState();
 
   const {
@@ -110,6 +116,15 @@ export default function MobileStudio() {
           Best viewed on desktop
         </span>
         <div className="ml-auto flex items-center gap-2">
+          {showAdmin && (
+            <button
+              type="button"
+              onClick={() => navigate("/admin")}
+              className="px-2 py-0.5 text-xs rounded-xs text-ink-soft hover:text-ink hover:bg-paper-warm transition-colors"
+            >
+              Admin
+            </button>
+          )}
           <ShareLinkButton buildState={buildShareState} />
           <ThemeToggle />
           <AuthButton />

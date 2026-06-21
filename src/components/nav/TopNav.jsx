@@ -1,30 +1,8 @@
-import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { isPlatformAdmin } from '../../lib/org/platformService';
-import { listMyAdminOrgs } from '../../lib/org/membershipService';
-import { useAuth } from '../../lib/AuthContext';
+import useShowAdmin from '../../lib/hooks/useShowAdmin';
 
 export default function TopNav() {
-  const { user } = useAuth();
-  const userId = user?.id;
-  const [showAdmin, setShowAdmin] = useState(false);
-
-  useEffect(() => {
-    let alive = true;
-    Promise.all([isPlatformAdmin(), listMyAdminOrgs(userId)])
-      .then(([platformAdmin, adminOrgs]) => {
-        if (!alive) return;
-        setShowAdmin(platformAdmin || (adminOrgs?.length || 0) > 0);
-      })
-      .catch(() => {
-        // Fail closed: on any gate error, hide the Admin tab rather than
-        // leaving an unhandled rejection.
-        if (alive) setShowAdmin(false);
-      });
-    return () => {
-      alive = false;
-    };
-  }, [userId]);
+  const showAdmin = useShowAdmin();
 
   return (
     <nav aria-label="Primary" className="flex items-center gap-4 px-4 py-2">

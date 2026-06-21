@@ -184,7 +184,7 @@ export default function OperationsPanel({
   const showKitControl = kitAvailable && profileId === "laser";
 
   return (
-    <div className="flex h-full flex-col" data-testid="operations-panel">
+    <div className="flex max-h-full min-h-0 flex-col" data-testid="operations-panel">
       {showKitControl && (
         <div className="flex shrink-0 items-center justify-between border-b border-hairline px-2 py-1.5">
           <span className="text-[10px] font-semibold uppercase tracking-wider text-ink-soft">
@@ -225,7 +225,11 @@ export default function OperationsPanel({
         </button>
       </div>
 
-      <div className="flex-1 overflow-auto p-1.5 space-y-1">
+      {/* flex-auto (basis:auto, NOT flex-1's basis:0 — which collapses to 0 when
+          the region is content-sized) so the list hugs its content and the region
+          shrinks to fit. max-h caps it at ~2.5 operation cards before scrolling;
+          min-h-0 lets it shrink + scroll on a short viewport. */}
+      <div className="flex-auto min-h-0 max-h-60 overflow-auto p-1.5 space-y-1">
         {operations.map((op, i) => (
           <OperationRow
             key={op.id}

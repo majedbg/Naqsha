@@ -30,6 +30,12 @@ const MAX_ZOOM = 5;
 
 export default function RightPanel({
   layers,
+  // The operation library + active machine profile, forwarded to useCanvas so
+  // each layer's canvas stroke matches its export color (operation color on a
+  // laser profile, the layer's own color otherwise). Default to a no-op so any
+  // caller that doesn't wire them renders exactly as before.
+  operations = [],
+  machineProfile = null,
   canvasW,
   canvasH,
   patternInstancesRef,
@@ -151,7 +157,9 @@ export default function RightPanel({
     bgColor,
     transforms,
     selectedNodeId,
-    textFont
+    textFont,
+    operations,
+    machineProfile
   );
 
   // Latest transforms readable inside pointer handlers without stale closures

@@ -90,9 +90,11 @@ export function ObjectTreeRegion({ children, contentRef, className = '' }) {
   // children as before.
   //
   // The region fills its parent column's width; the resizable width + drag
-  // handle live on `LeftColumnRegion` (the whole left panel), not here.
+  // handle live on `LeftColumnRegion` (the whole left panel), not here. No
+  // `shrink-0`: in the left column this region grows to fill (className `grow`)
+  // AND must be able to shrink + scroll when the column is short.
   return (
-    <Region label="Object tree" className={`shrink-0 overflow-auto ${className}`}>
+    <Region label="Object tree" className={`overflow-auto ${className}`}>
       {contentRef ? <div ref={contentRef} className="h-full" /> : children}
     </Region>
   );
@@ -112,10 +114,12 @@ export function LeftColumnRegion({ objectTreeContentRef, operationsContentRef })
       style={{ width }}
       className="relative flex flex-col shrink-0 min-h-0"
     >
-      {/* Layers size to their content (capped so a long list scrolls rather than
-          crowding out the operations below); operations take the rest. */}
-      <ObjectTreeRegion contentRef={objectTreeContentRef} className="flex-none max-h-[55%]" />
-      <OperationsPanelRegion contentRef={operationsContentRef} className="flex-1 min-h-0 border-t-0" />
+      {/* The layer tree GROWS to fill the column (and scrolls internally), so it
+          owns the empty space and pushes operations to the bottom. Operations is
+          flex-initial: it hugs its own content (capped, see OperationsPanel) and
+          docks at the bottom, but can still shrink + scroll on a short viewport. */}
+      <ObjectTreeRegion contentRef={objectTreeContentRef} className="grow min-h-0" />
+      <OperationsPanelRegion contentRef={operationsContentRef} className="min-h-0 border-t-0" />
 
       {/* Resize handle straddling the column's right edge, spanning the full
           height so it reads as the edge of the whole panel. */}
@@ -166,10 +170,18 @@ export function OperationsPanelRegion({ children, contentRef, className = '' }) 
   // passed children as before.
   //
   // Height is caller-driven (no fixed `h-48`) so the region can sit under the
-  // layer tree in the left column and flex into the space below it.
+  // layer tree in the left column and flex into the space below it. The region
+  // hosts BOTH the operations panel and the optimize-controls panel (portaled as
+  // siblings), so it scrolls (`overflow-auto`) to keep the lower one reachable
+  // when the column is short.
+  //
+  // The mount is `max-h-full` (NOT `h-full`): h-full force-fills the region,
+  // inflating its flex-basis to the leftover height so the region never hugs its
+  // content. max-h-full lets the panels' true content height drive the region's
+  // size (so the layer tree above can grow into the freed space).
   return (
     <Region label="Operations panel" className={`overflow-auto ${className}`}>
-      {contentRef ? <div ref={contentRef} className="h-full" /> : children}
+      {contentRef ? <div ref={contentRef} className="max-h-full min-h-0" /> : children}
     </Region>
   );
 }

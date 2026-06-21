@@ -513,7 +513,7 @@ export const PATTERN_PARAM_DEFS = {
     OFFSET_PAD_PARAM,
   ],
   flowfield: [
-    { key: 'particleCount', label: 'Particle Count', min: 100, max: 3000, step: 10, tooltip: 'Number of particles tracing the flow field' },
+    { key: 'particleCount', label: 'Particle Count', min: 20, max: 1000, step: 10, tooltip: 'Number of particles tracing the flow field' },
     { key: 'stepLength', label: 'Step Length', min: 1, max: 20, step: 1, tooltip: 'Distance each particle moves per step' },
     { key: 'noiseScale', label: 'Noise Scale', min: 0.001, max: 0.02, step: 0.001, tooltip: 'Scale of Perlin noise — smaller = smoother' },
     { key: 'curlStrength', label: 'Curl Strength', min: 1, max: 360, step: 1, tooltip: 'Angle multiplier for noise-based direction' },

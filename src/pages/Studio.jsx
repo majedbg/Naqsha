@@ -948,6 +948,10 @@ export default function Studio() {
         )}
         <RightPanel
           layers={layers}
+          // Operation library + active profile → canvas strokes match export
+          // color (each layer draws in its operation's color on laser).
+          operations={operations}
+          machineProfile={activeProfileId}
           canvasW={canvasW}
           canvasH={canvasH}
           patternInstancesRef={patternInstancesRef}
@@ -1115,6 +1119,19 @@ export default function Studio() {
             onRedo={canRedo ? redo : undefined}
             onToggleOverlays={() => setShowOverlays((v) => !v)}
             overlaysOn={showOverlays}
+            // ITP Camp mode as a View toggle (#18) — mirrors the OperationsPanel
+            // control exactly: entering also opens the preset modal. Laser-gated.
+            onToggleKitMode={() => {
+              if (kitMode.active) {
+                kitMode.exit();
+              } else {
+                kitMode.enter();
+                setKitPresetOpen(true);
+              }
+            }}
+            kitModeOn={kitMode.active}
+            kitModeAvailable={activeProfileId === "laser"}
+            kitModeName={getKit(ITP_CAMP_KIT_ID)?.name}
             onGenerateAI={() =>
               handleOpenAIChat(
                 layers.find((l) => l.id === selectedLayerId) || null

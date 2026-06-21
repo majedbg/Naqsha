@@ -10,6 +10,7 @@ import { drawTextNode } from './text/drawTextNode';
 import { isTextLayer, textNodeFromLayer } from './text/textLayer';
 import { importLayerPivot } from './scene/placement';
 import { buildSelectables } from './scene/selectables';
+import { resolveExportColor } from './fabrication';
 
 // Pivoted node transform shared by render + selection chrome. Matches the SVG
 // `translate(x y) translate(cx cy) rotate scale translate(-cx -cy)` form emitted
@@ -38,7 +39,16 @@ export default function useCanvas(
   bgColor = '#ffffff',
   transforms = {},
   selectedNodeId = null,
-  font = null
+  font = null,
+  // The document's operation library + the active machine profile (= export's
+  // `outputMode`). Threaded through so the canvas stroke for each layer is the
+  // SAME color the export emits (resolveExportColor): on a laser profile every
+  // layer draws in its assigned operation's locked convention color (cut=red,
+  // score=blue, engrave=black) rather than an arbitrary per-layer color; on
+  // other profiles the layer's own color is preserved, matching export. Defaults
+  // keep legacy/test callers (no operations) byte-identical to `layer.color`.
+  operations = [],
+  outputMode = null
 ) {
   const p5Ref = useRef(null);
   const debounceRef = useRef(null);
@@ -82,7 +92,7 @@ export default function useCanvas(
         newInstances[layer.id] = instance;
         if (!layer.visible) {
           instance.generateWithContext(
-            noDrawCtx, layer.seed, layer.params, canvasW, canvasH, layer.color, layer.opacity
+            noDrawCtx, layer.seed, layer.params, canvasW, canvasH, resolveExportColor(layer, { operations, outputMode }), layer.opacity
           );
           continue;
         }
@@ -94,7 +104,7 @@ export default function useCanvas(
           applyNodeTransform(p, nodeTransforms[layer.id], piv.x, piv.y);
         }
         instance.generateWithContext(
-          drawCtx, layer.seed, layer.params, canvasW, canvasH, layer.color, layer.opacity
+          drawCtx, layer.seed, layer.params, canvasW, canvasH, resolveExportColor(layer, { operations, outputMode }), layer.opacity
         );
         p.pop();
         continue;
@@ -139,7 +149,7 @@ export default function useCanvas(
           renderParams,
           canvasW,
           canvasH,
-          layer.color,
+          resolveExportColor(layer, { operations, outputMode }),
           layer.opacity
         );
         continue;
@@ -160,7 +170,7 @@ export default function useCanvas(
         p.rect(0, 0, canvasW, canvasH);
       }
 
-      instance.generateWithContext(drawCtx, layer.seed, renderParams, canvasW, canvasH, layer.color, layer.opacity);
+      instance.generateWithContext(drawCtx, layer.seed, renderParams, canvasW, canvasH, resolveExportColor(layer, { operations, outputMode }), layer.opacity);
       p.pop();
     }
 
@@ -227,7 +237,9 @@ export default function useCanvas(
     // `font` resolves asynchronously (null → Font); it's in the deps so when it
     // arrives renderAll gets a new identity, the debounce effect re-fires, and
     // text actually paints. Changes once, so it doesn't churn the param-debounce.
-  }, [layers, canvasW, canvasH, bgColor, font]);
+    // `operations` + `outputMode` are deps so recoloring an operation (or
+    // switching machine profile) re-resolves every layer's stroke and repaints.
+  }, [layers, canvasW, canvasH, bgColor, font, operations, outputMode]);
 
   // Initialize p5 instance
   useEffect(() => {

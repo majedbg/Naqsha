@@ -48,11 +48,11 @@ const MIX_SCORE = 0.45;
 const MIX_ENGRAVE = 0.72;
 const MIX_CUT = 0.92;
 // Below this mark/sheet separation the in-direction mark is effectively
-// invisible (sheet sits at the target extreme — white acrylic / near-black wood);
-// fall back to a faint readable contour instead.
+// invisible — the sheet sits at the reaction extreme (near-white acrylic can't
+// frost lighter; near-black wood can't burn darker). When even the WEAKEST mark
+// can't separate, all marks switch to a strength-scaled shadow etch (see below).
 const MIN_VISIBLE = 0.06;
-const FAINT_ON_LIGHT = '#9AA0A6';
-const FAINT_ON_DARK = '#C9C9C9';
+const SHADOW_SCALE = 0.5;
 
 // Named-color → hex fallback for org materials whose `color` is free text
 // ('clear', 'natural', …) rather than a hex. Keys are lowercased.
@@ -129,13 +129,21 @@ export function materialSheetHex(m = {}) {
 // edge on wood, a frosted edge on acrylic), then engrave, then score.
 export function materialStrokeColor(sheetHex, category, process, opColor) {
   if (process === 'pen') return opColor || '#000000';
-  const target = category === 'lighten' ? FROST_TARGET : BURN_TARGET;
+  const goLighter = category === 'lighten';
+  const target = goLighter ? FROST_TARGET : BURN_TARGET;
   const t = process === 'cut' ? MIX_CUT : process === 'engrave' ? MIX_ENGRAVE : MIX_SCORE;
-  const mark = mix(sheetHex, target, t);
-  if (lumDiff(sheetHex, mark) >= MIN_VISIBLE) return mark;
-  // Sheet sits at the target extreme (white acrylic / near-black wood) — the
-  // in-direction mark vanishes; fall back to a faint but readable contour.
-  return luminance(sheetHex) > 0.5 ? FAINT_ON_LIGHT : FAINT_ON_DARK;
+
+  // Sheet-level decision (not per-process): if even the WEAKEST mark (score)
+  // can't separate from the sheet, the sheet sits at the reaction extreme. Render
+  // EVERY process as a strength-scaled shadow in the opposite direction, so the
+  // etch stays legible and ordered (cut most prominent) instead of one process
+  // flipping to a stray grey while the others stay near-invisible.
+  const weakest = mix(sheetHex, target, MIX_SCORE);
+  if (lumDiff(sheetHex, weakest) < MIN_VISIBLE) {
+    const shadow = goLighter ? '#000000' : '#ffffff';
+    return mix(sheetHex, shadow, t * SHADOW_SCALE);
+  }
+  return mix(sheetHex, target, t);
 }
 
 // ── The single canvas entry point ────────────────────────────────────────────

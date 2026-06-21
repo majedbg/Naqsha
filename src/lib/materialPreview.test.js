@@ -112,6 +112,23 @@ describe('materialStrokeColor — pen + contrast floor', () => {
     const mark = materialStrokeColor(sheet, 'lighten', 'score');
     expect(Math.abs(luminance(sheet) - luminance(mark))).toBeGreaterThanOrEqual(0.06 - 1e-9);
   });
+
+  // The Clear-acrylic case that motivated the per-sheet (not per-process) fallback:
+  // at the frost ceiling every mark must be visible AND ordered cut<engrave<score
+  // in luminance (cut most prominent) — never one stray grey between two whites.
+  it('a near-white acrylic etches a consistent, ordered shadow across processes', () => {
+    const sheet = '#E7E7E7'; // Clear
+    const cut = luminance(materialStrokeColor(sheet, 'lighten', 'cut'));
+    const engrave = luminance(materialStrokeColor(sheet, 'lighten', 'engrave'));
+    const score = luminance(materialStrokeColor(sheet, 'lighten', 'score'));
+    // all darker than the sheet (a legible shadow etch)...
+    for (const m of [cut, engrave, score]) {
+      expect(luminance(sheet) - m).toBeGreaterThanOrEqual(0.06 - 1e-9);
+    }
+    // ...and ordered: cut most prominent (darkest) → score least.
+    expect(cut).toBeLessThan(engrave);
+    expect(engrave).toBeLessThan(score);
+  });
 });
 
 // ── resolveCanvasColor: the byte-identical guarantee ─────────────────────────

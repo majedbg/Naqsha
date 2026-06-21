@@ -46,9 +46,14 @@
    A monotonic mix toward an extreme can't reverse the ordering.)
    - frost (acrylic/lighten): mix toward white — score 0.45, engrave 0.72.
    - burn (wood): mix toward warm near-black `#0E0A06` — score 0.45, engrave 0.72.
-   - If the mark/sheet luminance separation < 0.06 (sheet sits at the extreme:
-     white acrylic / near-black wood) fall back to a faint readable contour
-     (`#9AA0A6` on light sheets, `#C9C9C9` on dark).
+   - **Per-sheet fallback** (revised 2026-06-21 after auditing all 7 defaults —
+     Clear acrylic was the lone break): if even the WEAKEST mark (score) can't
+     reach 0.06 separation, the sheet sits at the reaction extreme (e.g. Clear
+     `#E7E7E7` can't frost lighter). Then ALL processes render as a strength-
+     scaled shadow in the OPPOSITE direction (`mix(sheet, opposite, t·0.5)`),
+     so the etch is legible AND ordered (cut darkest/most prominent). Deciding
+     per-sheet (not per-process) avoids the earlier bug where score flipped to a
+     stray grey while cut/engrave stayed near-white.
 7. **All profiles.** No profile gating. cut/score/engrave use shade rules; `pen`
    keeps `operation.color` (ink sits on the sheet); drag-cutter cut uses the
    contrast-aware contour.

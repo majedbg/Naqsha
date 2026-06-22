@@ -43,7 +43,15 @@ green.**
   shows in-modal success, not MySubmissions); consent copy present; auto-material correct. Fixes applied
   (fix-worker, modal-seam-localized, Studio.jsx untouched): (1) guest success done-state made reachable (guest
   path suppresses the host auto-close so "✓ Submitted" renders); (2) `aria-required`/`aria-invalid` on the guest
-  name input.
+  name input. **Provenance note:** R2's SHIP verdict was rendered on the pre-fix state; the two fixes are
+  verified only by the fix-worker's own added tests (guest done-state reachable; aria attrs flip) and the
+  re-gate, NOT by a second R2 pass. Both are trivial and additive.
+- **Integration seam not exercised live (Q10 deferral):** the full `createGuestSubmission` → live anon RLS →
+  storage upload chain has only ever run piecewise (R1 hand-rolled anon probes proved the policy; B1/B2 code
+  produces the shape; component tests mock the DB). The `split_part(svg_path,'/',1)=org_id::text` WITH CHECK
+  requires SubmitForm to thread the same `orgId` into both `uploadSubmissionSvg` and `createGuestSubmission`
+  with an anon-readable `org_material_id` — traced and holds by construction, but the first live proof is
+  **rehearsal step 2 (first guest submit)**. Treat that as the real integration test, not a formality.
 - **R3 (materials, #28) — all ACs MET.** Seed thickness exact (0 rows at 6.0; 1/4in→5.6 resolution; 0
   name/thickness mismatches), idempotent (`where not exists` on name), full coverage; MaterialAdmin self-fetch +
   standard sizes + conversion correct. No bugs.

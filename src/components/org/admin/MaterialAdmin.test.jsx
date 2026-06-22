@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import MaterialAdmin from './MaterialAdmin.jsx';
 import {
+  listMaterials,
   listOrgMaterials,
   addOrgMaterial,
   toggleOrgMaterial,
@@ -12,6 +13,9 @@ vi.mock('../../../lib/org/materialService');
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Default the global-catalog lister so the component's self-fetch never
+  // rejects in tests that don't care about it. Individual tests override.
+  listMaterials.mockResolvedValue(CATALOG);
 });
 
 const CATALOG = [
@@ -176,5 +180,51 @@ describe('MaterialAdmin', () => {
     fireEvent.click(await screen.findByRole('button', { name: /deactivate/i }));
 
     expect(await screen.findByRole('alert')).toBeInTheDocument();
+  });
+
+  it('loads the global catalog itself via listMaterials() (no catalog prop needed)', async () => {
+    listOrgMaterials.mockResolvedValue([]);
+    listMaterials.mockResolvedValue([
+      { id: 'mat-pmma', name: 'cast PMMA', type: 'acrylic', thickness_mm: 3.0, color: 'clear' },
+    ]);
+
+    // No `catalog` prop — the component must fetch the catalog on its own.
+    render(<MaterialAdmin orgId="org-1" />);
+
+    await waitFor(() => expect(listMaterials).toHaveBeenCalled());
+
+    // The fetched catalog material appears as a selectable option.
+    expect(
+      await screen.findByRole('option', { name: 'cast PMMA' }),
+    ).toBeInTheDocument();
+  });
+
+  it('adds an offering using a chosen STANDARD sheet size (inches→mm)', async () => {
+    listOrgMaterials.mockResolvedValue([]);
+    listMaterials.mockResolvedValue(CATALOG);
+    addOrgMaterial.mockResolvedValue({ id: 'om-new' });
+
+    render(<MaterialAdmin orgId="org-1" />);
+
+    await waitFor(() => expect(listMaterials).toHaveBeenCalled());
+
+    fireEvent.change(await screen.findByLabelText(/material/i), {
+      target: { value: 'mat-ply' },
+    });
+    // Pick the standard 12x18 inch size -> 304.8 x 457.2 mm.
+    fireEvent.change(screen.getByLabelText(/standard sheet size/i), {
+      target: { value: '12x18' },
+    });
+    fireEvent.change(screen.getByLabelText(/price/i), { target: { value: '40' } });
+
+    fireEvent.click(screen.getByRole('button', { name: /add/i }));
+
+    await waitFor(() =>
+      expect(addOrgMaterial).toHaveBeenCalledWith('org-1', 'mat-ply', {
+        sheet_w_mm: 304.8,
+        sheet_h_mm: 457.2,
+        price: 40,
+      }),
+    );
   });
 });

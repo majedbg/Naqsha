@@ -1,20 +1,62 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
+  listMaterials,
   listOrgMaterials,
   addOrgMaterial,
   toggleOrgMaterial,
 } from '../../../lib/org/materialService';
 
+// Standard Canal Plastics sheet sizes (inches). Selecting one fills the
+// sheet_w/h fields in millimetres. Rounded to 0.1mm so the converted values
+// are float-clean (e.g. 12in -> exactly 304.8mm, not 304.7999…).
+const INCH_MM = 25.4;
+const toMm = (inches) => Math.round(inches * INCH_MM * 10) / 10;
+const STANDARD_SHEET_SIZES = [
+  [6, 12],
+  [12, 12],
+  [12, 18],
+  [12, 24],
+  [18, 24],
+  [18, 32],
+  [24, 24],
+  [24, 36],
+  [24, 48],
+  [48, 72],
+  [48, 96],
+].map(([w, h]) => ({
+  key: `${w}x${h}`,
+  label: `${w}″ × ${h}″`,
+  wMm: toMm(w),
+  hMm: toMm(h),
+}));
+
 // `catalog` is the global `materials` catalog (id, name, type, thickness_mm,
-// color). The integrator supplies it as a prop — there is no list-the-global-
-// catalog helper in materialService yet (see report).
-export default function MaterialAdmin({ orgId, catalog = [] }) {
+// color). By default MaterialAdmin fetches it itself via listMaterials();
+// callers (and tests) MAY pass a `catalog` prop to override the fetch.
+export default function MaterialAdmin({ orgId, catalog }) {
   const [rows, setRows] = useState([]);
+  const [fetchedCatalog, setFetchedCatalog] = useState([]);
   const [materialId, setMaterialId] = useState('');
   const [sheetW, setSheetW] = useState('');
   const [sheetH, setSheetH] = useState('');
+  const [sheetSizeKey, setSheetSizeKey] = useState('');
   const [price, setPrice] = useState('');
   const [error, setError] = useState('');
+
+  // Selecting a standard size fills the (mm) width/height fields; choosing
+  // "Custom…" leaves whatever was typed so manual entry still works.
+  function handleStandardSize(key) {
+    setSheetSizeKey(key);
+    const size = STANDARD_SHEET_SIZES.find((s) => s.key === key);
+    if (size) {
+      setSheetW(String(size.wMm));
+      setSheetH(String(size.hMm));
+    }
+  }
+
+  // Prop override wins; otherwise use the self-fetched global catalog.
+  const resolvedCatalog =
+    catalog && catalog.length > 0 ? catalog : fetchedCatalog;
 
   const refresh = useCallback(
     () =>
@@ -23,6 +65,22 @@ export default function MaterialAdmin({ orgId, catalog = [] }) {
         .catch(() => setRows([])),
     [orgId],
   );
+
+  // Load the global catalog ourselves unless the caller overrides via prop.
+  useEffect(() => {
+    if (catalog && catalog.length > 0) return undefined;
+    let active = true;
+    listMaterials()
+      .then((data) => {
+        if (active) setFetchedCatalog(data || []);
+      })
+      .catch(() => {
+        if (active) setFetchedCatalog([]);
+      });
+    return () => {
+      active = false;
+    };
+  }, [catalog]);
 
   useEffect(() => {
     let active = true;
@@ -50,6 +108,7 @@ export default function MaterialAdmin({ orgId, catalog = [] }) {
       setMaterialId('');
       setSheetW('');
       setSheetH('');
+      setSheetSizeKey('');
       setPrice('');
       await refresh();
     } catch (e) {
@@ -83,9 +142,24 @@ export default function MaterialAdmin({ orgId, catalog = [] }) {
             onChange={(e) => setMaterialId(e.target.value)}
           >
             <option value="">Select…</option>
-            {catalog.map((m) => (
+            {resolvedCatalog.map((m) => (
               <option key={m.id} value={m.id}>
                 {m.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="flex flex-col text-xs text-gray-700">
+          Standard sheet size
+          <select
+            className="rounded border border-gray-300 px-2 py-1 text-sm"
+            value={sheetSizeKey}
+            onChange={(e) => handleStandardSize(e.target.value)}
+          >
+            <option value="">Custom…</option>
+            {STANDARD_SHEET_SIZES.map((s) => (
+              <option key={s.key} value={s.key}>
+                {s.label}
               </option>
             ))}
           </select>

@@ -78,7 +78,27 @@ Studio chrome — possible double-nav/overflow, jsdom can't catch. (b) guest pat
 resolution (useOrg/getOrgBySlug) + listActiveOrgMaterials — those anon read policies aren't exercised by mocked tests;
 verify live in rehearsal. [See FINALIZE rehearsal checklist.]
 
-### Finalize
-- [ ] combined post-merge gate on local main
-- [ ] rehearsal checklist doc (#30, draft only)
-- [ ] run report
+### D1 — anon-read RLS gap (migration 007), discovered mid-run, advisor-confirmed in-scope
+Plan GAP (not a Q7↔Q9 conflict): guest entry calls getOrgBySlug (orgs) + listActiveOrgMaterials
+(org_materials + embedded materials) but anon had no SELECT on any → live flow would 404 ("org not found")
++ no material. Q7's "anon never SELECTs" is scoped to the WRITE surface (submissions+storage); reading org
+branding/materials was unaddressed, and #27 AC1/AC8 require it. Fixed RLS-native (Q7-endorsed mechanism).
+- [x] D1 — migration 007: 3 gated anon SELECT policies (orgs open / org_materials active+open /
+      materials referenced-by-active-open). Live test:rls **81 passed (4 files)**. eslint clean.
+- [x] R1b — adversarial anon-READ review → **SECURE, 23/23 attacks blocked**. orgs column exposure all
+      non-sensitive branding; rosters/platform_admins/submissions/embeds all denied; gate enforced live.
+- [x] Committed #27-gap (007) + merged to local main.
+
+### Finalize — COMPLETE
+- [x] Combined post-merge gate on local main: mocked vitest **1579 passed / 0 failed (189 files)**;
+      live **test:rls 81 passed (4 files)**; build OK; lint **10 (=baseline)**. (A concurrent contended run
+      showed 1 StudioRoute timeout-flake; re-run alone = 0 failures — known-flaky, not a regression.)
+- [x] Rehearsal checklist doc (#30, DRAFT only, not executed): docs/brooklyn-spark-REHEARSAL-CHECKLIST.md
+- [x] Run report: docs/brooklyn-spark-RUN-REPORT.md
+
+## Final status
+- #26, #28, #27 (incl. anon-read gap 007): CODE-COMPLETE, green + adversarially reviewed, merged to LOCAL main.
+- RLS **VERIFIED on live Docker** (not the mocked-fallback path). origin NOT pushed (per guardrails).
+- #29 (provision org) + #30 (rehearsal + prod migration repair/deploy): HITL, NOT touched. #30 checklist drafted.
+- NEEDS-HUMAN: prod `migration repair` + `db push` (#30); confirm anon-readable surface on prod; eyeball
+  /o/:slug/create chrome stacking in a browser (R2 NEEDS-BROWSER). Dead-branch `text-feature` prune + origin push left to human.

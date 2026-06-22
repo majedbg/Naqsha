@@ -46,12 +46,20 @@ green.**
   name input. **Provenance note:** R2's SHIP verdict was rendered on the pre-fix state; the two fixes are
   verified only by the fix-worker's own added tests (guest done-state reachable; aria attrs flip) and the
   re-gate, NOT by a second R2 pass. Both are trivial and additive.
-- **Integration seam not exercised live (Q10 deferral):** the full `createGuestSubmission` → live anon RLS →
-  storage upload chain has only ever run piecewise (R1 hand-rolled anon probes proved the policy; B1/B2 code
-  produces the shape; component tests mock the DB). The `split_part(svg_path,'/',1)=org_id::text` WITH CHECK
-  requires SubmitForm to thread the same `orgId` into both `uploadSubmissionSvg` and `createGuestSubmission`
-  with an anon-readable `org_material_id` — traced and holds by construction, but the first live proof is
-  **rehearsal step 2 (first guest submit)**. Treat that as the real integration test, not a formality.
+- **Integration seam — NOW PROVEN LIVE on local Docker (2026-06-22 dry run).** The full chain was driven in a
+  real browser against the local Supabase stack (NOT prod): provisioned a local `brooklyn-spark` org +1 active
+  acrylic offering, `submissions_open=true`; visited `/o/brooklyn-spark` (anon read `orgs` → 200, branded shell)
+  → "Create a design" → org-context Studio → File ▸ Submit to org (guest modal: name required + aria-invalid,
+  email/phone + consent) → review step **auto-selected the single active material** (anon read `org_materials` +
+  embedded `materials` → 200) → hold-to-submit → anon storage upload (200) + anon `POST /submissions` (**201
+  Created**) → in-modal **"✓ Submitted"**. DB readback: guest row `submitted_by=NULL`, `guest_name`/`guest_email`
+  captured, `status=pending`, `material_label` denormalized, and `split_part(svg_path,'/',1)=org_id` **BOUND OK**;
+  storage object present; row visible to the org admin queue. All requests hit `127.0.0.1:54321`. Both R2 fixes
+  (guest done-state reachable; aria-invalid) verified live. **Remaining unproven = PROD only** (migration repair
+  + push) and the physical aggregate→export→engrave — both in #30.
+- **Minor finding (non-blocking) from the dry run:** on `/o/:slug` an anonymous visitor fires
+  `org_members?...user_id=eq.undefined...` → **400** (an admin-nav "am I an admin" probe runs with no user). Benign
+  (nav just omits admin links; guest flow unaffected) but noisy — worth a `if (userId)` guard before that query.
 - **R3 (materials, #28) — all ACs MET.** Seed thickness exact (0 rows at 6.0; 1/4in→5.6 resolution; 0
   name/thickness mismatches), idempotent (`where not exists` on name), full coverage; MaterialAdmin self-fetch +
   standard sizes + conversion correct. No bugs.

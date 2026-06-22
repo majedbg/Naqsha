@@ -626,3 +626,285 @@ live('org/admin RLS', () => {
     expect(after.name).toBe(slug);
   });
 });
+
+// ─── Guest (anon) submission spine — issue #26 (migration 005) ───────────────
+// Anonymous guests may INSERT a submission into an org whose `submissions_open`
+// gate is true, with a guest identity (no submitted_by). They get NO read/
+// update/delete. Anon insert binds the storage path's org folder to the row's
+// org_id, mirroring the member policy. Mutual checks: identity XOR, org gate,
+// path/row binding.
+live('guest (anon) submission RLS', () => {
+  // Open the org's guest gate via service-role (anon can't read/write orgs).
+  async function openOrg(orgId) {
+    const { error } = await service
+      .from('orgs')
+      .update({ submissions_open: true })
+      .eq('id', orgId);
+    if (error) throw error;
+  }
+
+  // A fresh anon client (no Authorization header).
+  function anonClient() {
+    return createClient(serviceUrl, anonKey);
+  }
+
+  // 1. TRACER: anon insert SUCCEEDS when the org gate is open, submitted_by is
+  // null, guest_name is present, and the svg_path folder == org_id.
+  it('lets an anon guest insert into an open org', async () => {
+    const slug = `guest-org-${Date.now()}-${counter++}`;
+    const { orgId, orgMaterialId } = await seedOrg(slug);
+    await openOrg(orgId);
+
+    // No `.select()`: anon has NO read-back policy, so a RETURNING clause would
+    // fail the SELECT side of the insert. Insert, assert no error, then verify
+    // the persisted row via service-role.
+    const anon = anonClient();
+    const { error } = await anon.from('submissions').insert({
+      org_id: orgId,
+      org_material_id: orgMaterialId,
+      source: 'upload',
+      svg_path: `${orgId}/guest.svg`,
+      width_mm: 100,
+      height_mm: 100,
+      guest_name: 'Ada Lovelace',
+      guest_email: 'ada@example.test',
+    });
+
+    expect(error).toBeNull();
+
+    const { data: persisted } = await service
+      .from('submissions')
+      .select('submitted_by,guest_name')
+      .eq('org_id', orgId);
+    expect(persisted).toHaveLength(1);
+    expect(persisted[0].submitted_by).toBeNull();
+    expect(persisted[0].guest_name).toBe('Ada Lovelace');
+  });
+
+  // 2. Anon insert FAILS when the org gate is closed (seedOrg defaults closed).
+  it('denies an anon guest insert when submissions are closed', async () => {
+    const slug = `guest-closed-${Date.now()}-${counter++}`;
+    const { orgId, orgMaterialId } = await seedOrg(slug); // submissions_open=false
+
+    // No `.select()`: a RETURNING clause would mask a WITH-CHECK deny behind the
+    // anon read-deny. Persistence is verified by the service-role readback.
+    const anon = anonClient();
+    const { error } = await anon.from('submissions').insert({
+      org_id: orgId,
+      org_material_id: orgMaterialId,
+      source: 'upload',
+      svg_path: `${orgId}/guest.svg`,
+      width_mm: 100,
+      height_mm: 100,
+      guest_name: 'Grace Hopper',
+    });
+
+    expect(error).not.toBeNull();
+
+    const { data: leaked } = await service
+      .from('submissions')
+      .select('id')
+      .eq('org_id', orgId);
+    expect(leaked ?? []).toHaveLength(0);
+  });
+
+  // 3. Anon insert FAILS when submitted_by is non-null (anon may not claim a
+  // member identity). The anon policy WITH CHECK requires submitted_by IS NULL.
+  it('denies an anon guest insert with a non-null submitted_by', async () => {
+    const slug = `guest-imposter-${Date.now()}-${counter++}`;
+    const { orgId, orgMaterialId } = await seedOrg(slug);
+    await openOrg(orgId);
+    // A real profile id to attach — proves the deny is the policy, not an FK.
+    const victimUid = await createUser(uniqueEmail('victim'));
+
+    const anon = anonClient();
+    const { error } = await anon.from('submissions').insert({
+      org_id: orgId,
+      submitted_by: victimUid,
+      org_material_id: orgMaterialId,
+      source: 'upload',
+      svg_path: `${orgId}/guest.svg`,
+      width_mm: 100,
+      height_mm: 100,
+      guest_name: 'Imposter',
+    });
+
+    expect(error).not.toBeNull();
+    const { data: leaked } = await service
+      .from('submissions')
+      .select('id')
+      .eq('org_id', orgId);
+    expect(leaked ?? []).toHaveLength(0);
+  });
+
+  // 4. Anon insert FAILS when guest_name is missing/null (no identity). The XOR
+  // constraint + the anon policy both require a guest identity.
+  it('denies an anon guest insert with a missing guest_name', async () => {
+    const slug = `guest-noname-${Date.now()}-${counter++}`;
+    const { orgId, orgMaterialId } = await seedOrg(slug);
+    await openOrg(orgId);
+
+    const anon = anonClient();
+    const { error } = await anon.from('submissions').insert({
+      org_id: orgId,
+      org_material_id: orgMaterialId,
+      source: 'upload',
+      svg_path: `${orgId}/guest.svg`,
+      width_mm: 100,
+      height_mm: 100,
+      // no guest_name, no submitted_by
+    });
+
+    expect(error).not.toBeNull();
+
+    const { data: leaked } = await service
+      .from('submissions')
+      .select('id')
+      .eq('org_id', orgId);
+    expect(leaked ?? []).toHaveLength(0);
+  });
+
+  // 5. Anon insert FAILS when the svg_path org-prefix != org_id (path/row
+  // divergence). Mirrors the member-side binding (R1 MEDIUM).
+  it('denies an anon guest insert whose svg_path folder diverges from org_id', async () => {
+    const a = await seedOrg(`guestA-${Date.now()}-${counter++}`);
+    const b = await seedOrg(`guestB-${Date.now()}-${counter++}`);
+    await openOrg(b.orgId);
+
+    const anon = anonClient();
+    // Row org = B (open), path folder = A. Must be denied.
+    const { error } = await anon.from('submissions').insert({
+      org_id: b.orgId,
+      org_material_id: b.orgMaterialId,
+      source: 'upload',
+      svg_path: `${a.orgId}/x.svg`,
+      width_mm: 100,
+      height_mm: 100,
+      guest_name: 'Path Mismatch',
+    });
+
+    expect(error).not.toBeNull();
+    const { data: leaked } = await service
+      .from('submissions')
+      .select('id')
+      .eq('org_id', b.orgId)
+      .eq('svg_path', `${a.orgId}/x.svg`);
+    expect(leaked ?? []).toHaveLength(0);
+  });
+
+  // 6. Anon gets NO read/update/delete on submissions. A denied SELECT/UPDATE/
+  // DELETE under RLS matches zero rows (empty data, no error) — not an error.
+  it('denies anon select, update, and delete on submissions', async () => {
+    const slug = `guest-ro-${Date.now()}-${counter++}`;
+    const { orgId, orgMaterialId } = await seedOrg(slug);
+    await openOrg(orgId);
+    // Seed a guest row via service-role so there's a target to probe.
+    const { data: row, error: seedErr } = await service
+      .from('submissions')
+      .insert({
+        org_id: orgId,
+        org_material_id: orgMaterialId,
+        source: 'upload',
+        svg_path: `${orgId}/seed.svg`,
+        width_mm: 100,
+        height_mm: 100,
+        guest_name: 'Seeded Guest',
+      })
+      .select()
+      .single();
+    expect(seedErr).toBeNull();
+
+    const anon = anonClient();
+
+    const sel = await anon.from('submissions').select('*').eq('id', row.id);
+    expect(sel.data ?? []).toHaveLength(0);
+
+    const upd = await anon
+      .from('submissions')
+      .update({ name: 'hijacked' })
+      .eq('id', row.id)
+      .select();
+    expect(upd.data ?? []).toHaveLength(0);
+
+    const del = await anon
+      .from('submissions')
+      .delete()
+      .eq('id', row.id)
+      .select();
+    expect(del.data ?? []).toHaveLength(0);
+
+    // Ground truth: the row is untouched.
+    const { data: after } = await service
+      .from('submissions')
+      .select('name')
+      .eq('id', row.id)
+      .single();
+    expect(after.name).toBe('Untitled');
+  });
+
+  // 7. XOR identity check rejects BOTH-identity and NEITHER-identity rows.
+  // Tested via SERVICE-ROLE insert (bypasses RLS) so the constraint — not a
+  // policy — is what fails. All other NOT-NULL columns are populated so the
+  // error is the named XOR check, not an incidental NOT-NULL violation.
+  it('rejects both-identity and neither-identity rows via the XOR check', async () => {
+    const slug = `guest-xor-${Date.now()}-${counter++}`;
+    const { orgId, orgMaterialId } = await seedOrg(slug);
+    const uid = await createUser(uniqueEmail('xor'));
+
+    const base = {
+      org_id: orgId,
+      org_material_id: orgMaterialId,
+      source: 'upload',
+      svg_path: `${orgId}/xor.svg`,
+      width_mm: 100,
+      height_mm: 100,
+    };
+
+    // BOTH: submitted_by AND guest_name present.
+    const both = await service
+      .from('submissions')
+      .insert({ ...base, submitted_by: uid, guest_name: 'Both' })
+      .select();
+    expect(both.error).not.toBeNull();
+    expect(both.error.message).toContain('submissions_identity_xor');
+
+    // NEITHER: both null.
+    const neither = await service
+      .from('submissions')
+      .insert({ ...base })
+      .select();
+    expect(neither.error).not.toBeNull();
+    expect(neither.error.message).toContain('submissions_identity_xor');
+  });
+
+  // 8. Anon storage insert into the submissions bucket is allowed for the org
+  // path while open; blocked when closed or wrong-path. Goes through the
+  // storage client (storage.objects is not a PostgREST table).
+  it('allows anon storage upload to an open org path, blocks closed/wrong-path', async () => {
+    const open = await seedOrg(`guest-stor-open-${Date.now()}-${counter++}`);
+    const closed = await seedOrg(`guest-stor-closed-${Date.now()}-${counter++}`);
+    await openOrg(open.orgId);
+
+    const blob = new Blob(['<svg/>'], { type: 'image/svg+xml' });
+
+    const anon = anonClient();
+
+    // Allowed: open org, path folder == org_id.
+    const ok = await anon.storage
+      .from('submissions')
+      .upload(`${open.orgId}/guest-${counter++}.svg`, blob);
+    expect(ok.error).toBeNull();
+
+    // Blocked: closed org.
+    const closedRes = await anon.storage
+      .from('submissions')
+      .upload(`${closed.orgId}/guest-${counter++}.svg`, blob);
+    expect(closedRes.error).not.toBeNull();
+
+    // Blocked: open org id in the row sense, but path folder is the closed org.
+    const wrongPath = await anon.storage
+      .from('submissions')
+      .upload(`${closed.orgId}/sneaky-${counter++}.svg`, blob);
+    expect(wrongPath.error).not.toBeNull();
+  });
+});

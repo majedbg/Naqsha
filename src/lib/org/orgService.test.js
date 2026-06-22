@@ -10,7 +10,7 @@ vi.mock('../supabase', () => ({
   get supabase() { return _ref.client; },
 }));
 
-import { getOrgBySlug } from './orgService';
+import { getOrgBySlug, setSubmissionsOpen } from './orgService';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -36,5 +36,23 @@ describe('orgService.getOrgBySlug', () => {
   it('returns null when supabase is null', async () => {
     _ref.client = null;
     expect(await getOrgBySlug('itp-camp')).toBeNull();
+  });
+});
+
+// ─── setSubmissionsOpen ──────────────────────────────────────────────────────
+describe('orgService.setSubmissionsOpen', () => {
+  it('updates submissions_open and returns the updated row', async () => {
+    const seed = {
+      orgs: [{ id: 'org-1', slug: 'itp-camp', submissions_open: false }],
+    };
+    _ref.client = createSupabaseMock(seed);
+    const row = await setSubmissionsOpen('org-1', true);
+    expect(row).toMatchObject({ id: 'org-1', submissions_open: true });
+    expect(seed.orgs[0].submissions_open).toBe(true);
+  });
+
+  it('returns null when supabase is null', async () => {
+    _ref.client = null;
+    expect(await setSubmissionsOpen('org-1', true)).toBeNull();
   });
 });

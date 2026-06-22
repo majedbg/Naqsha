@@ -1,6 +1,6 @@
 # Org / Admin / Job-Submission MVP — Design Spec
 
-> Grilled 2026-06-19. Status: **design locked, NOT built.** Stack: React 19 SPA + Vite +
+> Grilled 2026-06-19. Status: **design locked.** Audit 2026-06-21: BUILT and MERGED into `main` via merge commit `8378fe4` (through R5). Code on main: `src/lib/org/`, `src/components/org/`, `src/pages/org/`, `src/lib/aggregate/`, migration `supabase/migrations/20250101000004_org_admin.sql`. OPEN (NEEDS-HUMAN, not verifiable from repo): prod DB has only migrations 001–003, so first `supabase db push` from the consolidated `migrations/` dir needs `migration repair`/mark-applied. Stack: React 19 SPA + Vite +
 > Supabase (Postgres + Auth + Storage), Vercel. No TypeScript, no backend server (Supabase only).
 
 ## 1. Problem & goal

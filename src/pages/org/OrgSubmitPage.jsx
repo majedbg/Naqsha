@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link, useParams } from 'react-router-dom';
 import { useOrg } from './OrgContext';
 import { useAuth } from '../../lib/AuthContext';
 import UploadPipeline from '../../components/org/UploadPipeline.jsx';
@@ -14,6 +15,7 @@ import MySubmissions from '../../components/org/MySubmissions.jsx';
 export default function OrgSubmitPage() {
   const { org } = useOrg();
   const { user } = useAuth();
+  const { slug } = useParams();
   const [draft, setDraft] = useState(null);
   const [submitted, setSubmitted] = useState(false);
 
@@ -62,6 +64,16 @@ export default function OrgSubmitPage() {
   return (
     <div className="flex flex-col gap-4 p-4">
       <h1 className="text-lg font-semibold text-gray-900">Submit a design</h1>
+      {/* New (#27): design in-browser instead of uploading a file. Routes into
+          the org-context studio; unauthenticated visitors submit there as guests
+          while members still get their full submit flow. */}
+      <Link
+        to={`/o/${slug}/create`}
+        className="self-start rounded bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800"
+      >
+        Create a design
+      </Link>
+      <p className="text-sm text-gray-500">— or upload an SVG —</p>
       <UploadPipeline onComplete={setDraft} />
     </div>
   );

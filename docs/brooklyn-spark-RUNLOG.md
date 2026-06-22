@@ -53,10 +53,30 @@ Lint baseline (gate target — must stay exactly): **10 problems (6 errors, 4 wa
 - [x] **RLS VERIFIED on live Docker** (RLS_LIVE_AVAILABLE was true). Not mocked. (#26 is NOT the UNVERIFIED fallback path.)
 - [x] Committed slices #26 + #28 on feat/guest-submission; merged to LOCAL main.
 
-### Wave 2 (blocked by A): B (#27 guest e2e)
-- [ ] B1 — service guest branch (src/lib/org/*)
-- [ ] B2 — /o/:slug entry + StudioSubmitModal guest branch
-- [ ] R2 — correctness + a11y review
+### Wave 2 (COMPLETE — green + reviewed): B (#27 guest e2e)
+Architecture (advisor-confirmed): honor Q9 (full Studio entry, NOT the OrgSubmitPage upload path). Q10 bar =
+"wiring exists + seams component-tested," not e2e. New route `/o/:slug/create` mounts the EXISTING Studio wrapped in
+OrgProvider; Studio takes an optional `submitOrg` prop (never calls useOrg() itself — useOrg throws w/o provider);
+org+unauth → StudioSubmitModal guest branch. 3 pre-checks resolved: Studio→modal is localized (3-line edit); no auth
+guard on /o/:slug; AdminQueue keys on row.name so guest rows already render.
+- [x] B1 — `createGuestSubmission` in submissionService (anon insert, NO `.select()`, returns {ok:true}). 9 passed.
+- [x] B2 — guest UI vertical: `/o/:slug/create` route + OrgCreatePage wrapper + "Create a design" CTA;
+      StudioSubmitModal guest branch (name req, email/phone opt, consent line); SubmitForm guest mode (gate requires
+      guest.name not userId; auto-select single active material #AC8; guest done-state = "✓ Submitted", NOT MySubmissions);
+      Studio.jsx 3-line localized threading. 48 owned + 7 regression passed.
+- [x] Orchestrator fix: added OrgCreatePage mock to src/App.jsx's smoke test src/App.test.jsx (B2 correctly STOPPED —
+      not its owned file; new static import pulled the heavy Studio→gifenc chain into the canvas-free smoke). 8 passed.
+- [x] R2 — correctness + a11y → **SHIP after 2 minor fixes** (member path proven byte-identical; 63 passed; no data leak;
+      anon insert select-free confirmed). Fixes applied (fix-worker, modal-seam-localized, Studio.jsx untouched):
+      (1) guest done-state now reachable — guest path suppresses host onSubmitted so the modal shows "✓ Submitted" instead
+      of auto-closing; "Make another" closes via onCancel. (2) aria-required/aria-invalid on guest name input. 48+7 passed.
+- [ ] Wave-2 re-gate after fixes (full vitest / lint / build) — running
+- [ ] commit #27 slice + merge to local main
+
+R2 NEEDS-BROWSER/NEEDS-HUMAN notes (not blocking code, for #30 rehearsal): (a) /o/:slug/create stacks TopNav+OrgShell+
+Studio chrome — possible double-nav/overflow, jsdom can't catch. (b) guest path still relies on anon SELECT for org
+resolution (useOrg/getOrgBySlug) + listActiveOrgMaterials — those anon read policies aren't exercised by mocked tests;
+verify live in rehearsal. [See FINALIZE rehearsal checklist.]
 
 ### Finalize
 - [ ] combined post-merge gate on local main

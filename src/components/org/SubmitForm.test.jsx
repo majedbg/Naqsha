@@ -4,7 +4,10 @@ import { render, screen, act, fireEvent } from '@testing-library/react';
 import SubmitForm from './SubmitForm.jsx';
 import { listActiveOrgMaterials } from '../../lib/org/materialService';
 import { uploadSubmissionSvg, removeSubmissionSvg } from '../../lib/org/uploadService';
-import { createSubmission } from '../../lib/org/submissionService';
+import {
+  createSubmission,
+  createGuestSubmission,
+} from '../../lib/org/submissionService';
 
 vi.mock('../../lib/org/materialService');
 vi.mock('../../lib/org/uploadService');
@@ -439,5 +442,159 @@ describe('SubmitForm', () => {
     expect(onCancel).toHaveBeenCalledTimes(1);
     expect(uploadSubmissionSvg).not.toHaveBeenCalled();
     expect(createSubmission).not.toHaveBeenCalled();
+  });
+
+  // ─── Guest mode (#27): no userId, a `guest` identity prop instead ───────────
+  // (reuses the makeReady / holdToFire helpers defined above)
+
+  it('TRACER (guest): hold-complete calls createGuestSubmission (not createSubmission) with guest identity + org id', async () => {
+    uploadSubmissionSvg.mockResolvedValue('org1/uuid-1.svg');
+    createGuestSubmission.mockResolvedValue({ ok: true });
+    const onSubmitted = vi.fn();
+
+    await renderForm({
+      userId: undefined,
+      guest: { name: 'Ada Lovelace', email: 'ada@x.io', phone: '5551234' },
+      onSubmitted,
+    });
+    makeReady();
+
+    const holdBtn = screen.getByRole('button', { name: /hold to submit/i });
+    expect(holdBtn.disabled).toBe(false);
+    await holdToFire(holdBtn);
+
+    expect(createGuestSubmission).toHaveBeenCalledTimes(1);
+    expect(createSubmission).not.toHaveBeenCalled();
+
+    const arg = createGuestSubmission.mock.calls[0][0];
+    expect(arg.orgId).toBe('org1');
+    expect(arg.guestName).toBe('Ada Lovelace');
+    expect(arg.guestEmail).toBe('ada@x.io');
+    expect(arg.guestPhone).toBe('5551234');
+    // no member-only submitted_by leaks through the guest payload
+    expect(arg.submittedBy).toBeUndefined();
+    expect(arg.orgMaterialId).toBe('om1');
+    expect(arg.svgPath).toBe('org1/uuid-1.svg');
+    expect(onSubmitted).toHaveBeenCalledWith({ ok: true });
+  });
+
+  it('guest: keeps submit gated when the guest name is empty', async () => {
+    await renderForm({ userId: undefined, guest: { name: '   ' } });
+    makeReady();
+    const holdBtn = screen.getByRole('button', { name: /hold to submit/i });
+    expect(holdBtn.disabled).toBe(true);
+    expect(lastHoldProps().disabledReason).toBeTruthy();
+  });
+
+  it('guest: still gated when neither userId nor guest is provided (no anon leak)', async () => {
+    await renderForm({ userId: undefined });
+    makeReady();
+    expect(
+      screen.getByRole('button', { name: /hold to submit/i }).disabled,
+    ).toBe(true);
+  });
+
+  it('guest (AC8): auto-selects the only active material — no picker step needed', async () => {
+    listActiveOrgMaterials.mockResolvedValue([MATERIALS[0]]); // exactly one active
+    await renderForm({
+      userId: undefined,
+      guest: { name: 'Ada' },
+    });
+    // No "Pick a material" gate reason: the single material auto-selected.
+    expect(screen.queryByText(/pick a material/i, { selector: 'li' })).toBeNull();
+    // Its label is shown in the read-only card without entering edit.
+    expect(screen.getByText(/3mm Birch Ply/)).toBeTruthy();
+    expect(
+      screen.getByRole('button', { name: /hold to submit/i }).disabled,
+    ).toBe(false);
+  });
+
+  it('guest: with multiple active materials, falls back to the picker (no auto-select)', async () => {
+    listActiveOrgMaterials.mockResolvedValue(MATERIALS); // two active
+    await renderForm({ userId: undefined, guest: { name: 'Ada' } });
+    expect(
+      screen.getByText(/pick a material/i, { selector: 'li' }),
+    ).toBeTruthy();
+  });
+
+  it('member: a single active material is NOT auto-selected (member path unchanged)', async () => {
+    listActiveOrgMaterials.mockResolvedValue([MATERIALS[0]]);
+    await renderForm(); // member: userId present, no guest
+    expect(
+      screen.getByText(/pick a material/i, { selector: 'li' }),
+    ).toBeTruthy();
+  });
+
+  it('guest: after submit, the done state offers "Make another" (no member submissions list)', async () => {
+    listActiveOrgMaterials.mockResolvedValue([MATERIALS[0]]); // auto-selected
+    uploadSubmissionSvg.mockResolvedValue('org1/uuid-1.svg');
+    createGuestSubmission.mockResolvedValue({ ok: true });
+    const onSubmitted = vi.fn();
+
+    await renderForm({
+      userId: undefined,
+      guest: { name: 'Ada' },
+      onSubmitted,
+    });
+    await holdToFire(screen.getByRole('button', { name: /hold to submit/i }));
+
+    expect(screen.getByRole('status')).toHaveTextContent(/submitted/i);
+    expect(
+      screen.getByRole('button', { name: /make another/i }),
+    ).toBeInTheDocument();
+  });
+
+  // FIX 1 (#27): "Make another" must return the guest to the studio — it fires
+  // the reset callback (onAnother, or onCancel as the fallback the modal wires).
+  it('guest: clicking "Make another" fires the reset callback (onCancel fallback)', async () => {
+    listActiveOrgMaterials.mockResolvedValue([MATERIALS[0]]); // auto-selected
+    uploadSubmissionSvg.mockResolvedValue('org1/uuid-1.svg');
+    createGuestSubmission.mockResolvedValue({ ok: true });
+    const onCancel = vi.fn();
+
+    await renderForm({
+      userId: undefined,
+      guest: { name: 'Ada' },
+      onCancel,
+    });
+    await holdToFire(screen.getByRole('button', { name: /hold to submit/i }));
+
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: /make another/i }));
+    });
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  // FIX 1 (#27): an explicit onAnother takes precedence over onCancel.
+  it('guest: "Make another" prefers onAnother when provided', async () => {
+    listActiveOrgMaterials.mockResolvedValue([MATERIALS[0]]);
+    uploadSubmissionSvg.mockResolvedValue('org1/uuid-1.svg');
+    createGuestSubmission.mockResolvedValue({ ok: true });
+    const onAnother = vi.fn();
+    const onCancel = vi.fn();
+
+    await renderForm({
+      userId: undefined,
+      guest: { name: 'Ada' },
+      onAnother,
+      onCancel,
+    });
+    await holdToFire(screen.getByRole('button', { name: /hold to submit/i }));
+
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: /make another/i }));
+    });
+    expect(onAnother).toHaveBeenCalledTimes(1);
+    expect(onCancel).not.toHaveBeenCalled();
+  });
+
+  it('member: done state stays the plain "✓ Submitted" (no "Make another")', async () => {
+    uploadSubmissionSvg.mockResolvedValue('org1/uuid-1.svg');
+    createSubmission.mockResolvedValue({ id: 'r1' });
+    await renderForm();
+    makeReady();
+    await holdToFire(screen.getByRole('button', { name: /hold to submit/i }));
+    expect(screen.getByRole('status')).toHaveTextContent(/submitted/i);
+    expect(screen.queryByRole('button', { name: /make another/i })).toBeNull();
   });
 });

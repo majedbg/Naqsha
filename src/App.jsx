@@ -7,6 +7,7 @@ import ShareView from './pages/ShareView';
 import AdminPage from './pages/AdminPage';
 import OrgRoute from './pages/org/OrgRoute';
 import OrgSubmitPage from './pages/org/OrgSubmitPage';
+import OrgCreatePage from './pages/org/OrgCreatePage';
 import OrgAdminPage from './pages/org/OrgAdminPage';
 
 // Layout for every route EXCEPT the studio: renders the persistent TopNav above
@@ -33,6 +34,7 @@ export default function App() {
           <Route path="/admin" element={<AdminPage />} />
           <Route path="/o/:slug" element={<OrgRoute />}>
             <Route index element={<OrgSubmitPage />} />
+            <Route path="create" element={<OrgCreatePage />} />
             <Route path="admin" element={<OrgAdminPage />} />
           </Route>
         </Route>

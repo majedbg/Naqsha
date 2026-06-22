@@ -25,12 +25,23 @@ export default function StudioSubmitModal({
   canvasH,
   operations,
   designId = null,
+  // Guest mode (#27): when the studio is hosted in an org context (the
+  // /o/:slug/create route) and there is no signed-in user, this carries the
+  // threaded org. Guests skip membership entirely and submit to this org.
+  submitOrg = null,
   onClose,
   onSubmitted,
 }) {
+  // Guest = no member id but an org was threaded in. Member path is unchanged.
+  const isGuest = !userId && !!submitOrg;
   const [orgs, setOrgs] = useState(null); // null = loading
   const [error, setError] = useState('');
-  const [selectedOrg, setSelectedOrg] = useState(null);
+  const [selectedOrg, setSelectedOrg] = useState(isGuest ? submitOrg : null);
+  // Guest identity (display name required; email/phone optional).
+  const [guestName, setGuestName] = useState('');
+  const [guestEmail, setGuestEmail] = useState('');
+  const [guestPhone, setGuestPhone] = useState('');
+  const [guestConfirmed, setGuestConfirmed] = useState(false);
 
   // What will (and won't) ship — computed once from the snapshot on open.
   const { submit, dropped } = useMemo(
@@ -48,6 +59,8 @@ export default function StudioSubmitModal({
   const [nameConfirmed, setNameConfirmed] = useState(false);
 
   useEffect(() => {
+    // Guests submit to the single threaded org and never touch membership.
+    if (isGuest) return undefined;
     let active = true;
     listMyOrgs(userId)
       .then((rows) => {
@@ -62,7 +75,7 @@ export default function StudioSubmitModal({
     return () => {
       active = false;
     };
-  }, [userId]);
+  }, [userId, isGuest]);
 
   // Snapshot the design SVG on demand (SubmitToOrg calls this once on open).
   const exportSvg = () =>
@@ -76,10 +89,11 @@ export default function StudioSubmitModal({
         </p>
       );
     }
-    if (orgs === null) {
+    // Guests don't load memberships (orgs stays null); skip those gates.
+    if (!isGuest && orgs === null) {
       return <p className="text-sm text-gray-500">Loading…</p>;
     }
-    if (orgs.length === 0) {
+    if (!isGuest && orgs.length === 0) {
       return (
         <p className="text-sm text-gray-600">
           You’re not a member of any organization yet. Ask a workshop admin to
@@ -95,6 +109,73 @@ export default function StudioSubmitModal({
         </p>
       );
     }
+
+    // ── Guest identity step: name required, email/phone optional + consent. ──
+    if (isGuest && !guestConfirmed) {
+      const trimmedGuest = guestName.trim();
+      return (
+        <form
+          className="flex flex-col gap-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (trimmedGuest) setGuestConfirmed(true);
+          }}
+        >
+          <label className="flex flex-col gap-1 text-sm text-gray-700">
+            Your name
+            <input
+              aria-label="Your name"
+              aria-required="true"
+              aria-invalid={!trimmedGuest}
+              className="rounded border border-gray-300 px-2 py-1 text-sm"
+              value={guestName}
+              onChange={(e) => setGuestName(e.target.value)}
+              autoFocus
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-sm text-gray-700">
+            Email (optional)
+            <input
+              aria-label="Email"
+              type="email"
+              className="rounded border border-gray-300 px-2 py-1 text-sm"
+              value={guestEmail}
+              onChange={(e) => setGuestEmail(e.target.value)}
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-sm text-gray-700">
+            Phone (optional)
+            <input
+              aria-label="Phone"
+              type="tel"
+              className="rounded border border-gray-300 px-2 py-1 text-sm"
+              value={guestPhone}
+              onChange={(e) => setGuestPhone(e.target.value)}
+            />
+          </label>
+          <p className="text-xs text-gray-500">
+            We&apos;ll only use your phone to tell you your piece is ready.
+          </p>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              className="rounded border border-gray-300 px-3 py-2 text-sm"
+              onClick={onClose}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="rounded bg-gray-900 px-3 py-2 text-sm text-white disabled:opacity-40"
+              disabled={!trimmedGuest}
+            >
+              Continue
+            </button>
+          </div>
+        </form>
+      );
+    }
+
     if (!selectedOrg) {
       return (
         <div className="flex flex-col gap-2">
@@ -125,7 +206,7 @@ export default function StudioSubmitModal({
       </p>
     );
 
-    if (!nameConfirmed) {
+    if (!isGuest && !nameConfirmed) {
       const trimmed = name.trim();
       return (
         <form
@@ -172,10 +253,24 @@ export default function StudioSubmitModal({
         <SubmitToOrg
           orgId={selectedOrg.id}
           userId={userId}
+          guest={
+            isGuest
+              ? {
+                  name: guestName.trim(),
+                  email: guestEmail.trim(),
+                  phone: guestPhone.trim(),
+                }
+              : null
+          }
           name={name.trim()}
           designId={designId}
           exportSvg={exportSvg}
-          onSubmitted={onSubmitted}
+          // Guests must SEE the in-modal "✓ Submitted" confirmation (kiosk
+          // context), so the host's auto-close onSubmitted is suppressed for
+          // them — SubmitForm still flips to its done-state, the modal stays
+          // open, and "Make another" closes it via onCancel. Members keep the
+          // auto-close (onSubmitted → setUI(false)) exactly as before.
+          onSubmitted={isGuest ? undefined : onSubmitted}
           onCancel={onClose}
         />
       </div>

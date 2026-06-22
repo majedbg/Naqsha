@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { listActiveOrgMaterials } from '../../lib/org/materialService';
 import { uploadSubmissionSvg, removeSubmissionSvg } from '../../lib/org/uploadService';
-import { createSubmission } from '../../lib/org/submissionService';
+import {
+  createSubmission,
+  createGuestSubmission,
+} from '../../lib/org/submissionService';
 import HoldToSubmitButton from './HoldToSubmitButton.jsx';
 
 const OP_LABELS = { cut: 'Cut', score: 'Score', engrave: 'Engrave' };
@@ -45,9 +48,18 @@ export default function SubmitForm({
   draft,
   orgId,
   userId,
+  // Guest mode (#27): when present (and no userId), submit as an anonymous guest
+  // via createGuestSubmission instead of the member createSubmission. Carries the
+  // guest's identity { name, email?, phone? } captured upstream in the modal.
+  guest = null,
+  // Guest done-state "Make another" affordance. Defaults to onCancel so the host
+  // (the studio modal) can return the guest to a fresh submit. Members never see
+  // this — their done-state is the plain success acknowledgement, unchanged.
+  onAnother,
   onSubmitted,
   onCancel,
 }) {
+  const isGuest = !userId && !!guest;
   const [materials, setMaterials] = useState([]);
   const [editing, setEditing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -73,7 +85,13 @@ export default function SubmitForm({
     let active = true;
     listActiveOrgMaterials(orgId)
       .then((rows) => {
-        if (active) setMaterials(rows || []);
+        if (!active) return;
+        const list = rows || [];
+        setMaterials(list);
+        // Guest in-room flow (#27 AC8): with exactly one active material there is
+        // no choice to make, so auto-select it and skip the picker step. Members
+        // always pick explicitly — their path is unchanged.
+        if (isGuest && list.length === 1) setMaterialId(list[0].id);
       })
       .catch(() => {
         if (active) setMaterials([]);
@@ -81,7 +99,7 @@ export default function SubmitForm({
     return () => {
       active = false;
     };
-  }, [orgId]);
+  }, [orgId, isGuest]);
 
   const opGroups = useMemo(() => groupByOp(layers), [layers]);
   const selectedMaterial = materials.find((m) => m.id === materialId) || null;
@@ -106,11 +124,13 @@ export default function SubmitForm({
     layers.forEach((l, i) => {
       if (!l.op) reasons.push(`Tag layer ${i + 1}`);
     });
-    // Guard against an unresolved tenant/user: without these the upload path
-    // would be `undefined/<id>.svg` and RLS would reject the write.
-    if (!orgId || !userId) reasons.push('Preparing your workspace…');
+    // Guard against an unresolved tenant/identity: without these the upload path
+    // would be `undefined/<id>.svg` and RLS would reject the write. In guest mode
+    // there is no userId — the identity is the (required) guest name instead.
+    const identityReady = isGuest ? !!guest?.name?.trim() : !!userId;
+    if (!orgId || !identityReady) reasons.push('Preparing your workspace…');
     return reasons;
-  }, [editing, materialId, sizeConfirmed, layers, orgId, userId]);
+  }, [editing, materialId, sizeConfirmed, layers, orgId, userId, isGuest, guest]);
 
   const ready = gateReasons.length === 0;
 
@@ -156,20 +176,37 @@ export default function SubmitForm({
         svgString: draft.svgClean,
       });
       const ops = layers.map((l) => ({ key: l.key, label: l.label, op: l.op }));
-      const row = await createSubmission({
-        orgId,
-        submittedBy: userId,
-        orgMaterialId: materialId,
-        materialLabel: materialLabel(selectedMaterial),
-        source: draft.source,
-        designId: draft.designId || null,
-        svgPath: uploadedPath,
-        widthMm: draft.widthMm,
-        heightMm: draft.heightMm,
-        ops,
-        name,
-        notes: draft.notes || null,
-      });
+      const row = isGuest
+        ? await createGuestSubmission({
+            orgId,
+            guestName: guest.name,
+            guestEmail: guest.email || null,
+            guestPhone: guest.phone || null,
+            orgMaterialId: materialId,
+            materialLabel: materialLabel(selectedMaterial),
+            source: draft.source,
+            designId: draft.designId || null,
+            svgPath: uploadedPath,
+            widthMm: draft.widthMm,
+            heightMm: draft.heightMm,
+            ops,
+            name,
+            notes: draft.notes || null,
+          })
+        : await createSubmission({
+            orgId,
+            submittedBy: userId,
+            orgMaterialId: materialId,
+            materialLabel: materialLabel(selectedMaterial),
+            source: draft.source,
+            designId: draft.designId || null,
+            svgPath: uploadedPath,
+            widthMm: draft.widthMm,
+            heightMm: draft.heightMm,
+            ops,
+            name,
+            notes: draft.notes || null,
+          });
       setDone(true);
       onSubmitted?.(row);
     } catch (err) {
@@ -295,9 +332,27 @@ export default function SubmitForm({
       </div>
 
       {done ? (
-        <div role="status" className="text-sm font-medium text-emerald-600">
-          ✓ Submitted
-        </div>
+        isGuest ? (
+          <div className="flex items-center gap-3">
+            <span
+              role="status"
+              className="text-sm font-medium text-emerald-600"
+            >
+              ✓ Submitted
+            </span>
+            <button
+              type="button"
+              className="rounded border border-gray-300 px-3 py-2 text-sm"
+              onClick={() => (onAnother || onCancel)?.()}
+            >
+              Make another
+            </button>
+          </div>
+        ) : (
+          <div role="status" className="text-sm font-medium text-emerald-600">
+            ✓ Submitted
+          </div>
+        )
       ) : (
         <div className="flex items-center gap-3">
           {editing ? (

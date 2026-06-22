@@ -62,7 +62,7 @@ import { useTheme } from "../lib/useTheme";
 import useKitMode from "../lib/hooks/useKitMode";
 import { ITP_CAMP_KIT_ID, getKit } from "../kits/kitRegistry";
 
-export default function Studio() {
+export default function Studio({ submitOrg = null } = {}) {
   const { loading, user } = useAuth();
   const { limits } = useGate();
   // Admin entry point, relocated into the MenuBar now that TopNav no longer
@@ -1109,9 +1109,10 @@ export default function Studio() {
         />
       )}
 
-      {showSubmitModal && user && (
+      {showSubmitModal && (user || submitOrg) && (
         <StudioSubmitModal
-          userId={user.id}
+          userId={user?.id}
+          submitOrg={submitOrg}
           layers={layers}
           getPatternInstances={() => patternInstancesRef.current || {}}
           canvasW={canvasW}
@@ -1136,7 +1137,7 @@ export default function Studio() {
             onExamples={() => setUI("showExamples", !showExamples)}
             onImport={handleImportClick}
             onExport={() => handleExportAll(true)}
-            onSubmitToOrg={user ? () => setUI("showSubmitModal", true) : undefined}
+            onSubmitToOrg={user || submitOrg ? () => setUI("showSubmitModal", true) : undefined}
             onSave={handleSaveLayerGroup}
             onSaveToCloud={handleSaveToCloud}
             onOpenCloudDesigns={() => setUI("showCloudModal", true)}

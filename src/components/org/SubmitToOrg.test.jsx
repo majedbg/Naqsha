@@ -4,7 +4,10 @@ import { render, screen, act, fireEvent } from '@testing-library/react';
 import SubmitToOrg from './SubmitToOrg.jsx';
 import { listActiveOrgMaterials } from '../../lib/org/materialService';
 import { uploadSubmissionSvg } from '../../lib/org/uploadService';
-import { createSubmission } from '../../lib/org/submissionService';
+import {
+  createSubmission,
+  createGuestSubmission,
+} from '../../lib/org/submissionService';
 
 // SubmitToOrg renders the REAL SubmitForm; mock only SubmitForm's services so a
 // real submit drive proves the built draft is actually consumable end-to-end.
@@ -136,5 +139,29 @@ describe('SubmitToOrg', () => {
     expect(onCancel).toHaveBeenCalledTimes(1);
     expect(uploadSubmissionSvg).not.toHaveBeenCalled();
     expect(createSubmission).not.toHaveBeenCalled();
+  });
+
+  it('guest: threads the guest identity through so submitting writes via createGuestSubmission', async () => {
+    uploadSubmissionSvg.mockResolvedValue('org1/uuid-1.svg');
+    createGuestSubmission.mockResolvedValue({ ok: true });
+    const onSubmitted = vi.fn();
+
+    await renderSubmit({
+      userId: undefined,
+      guest: { name: 'Grace Hopper', email: '', phone: '' },
+      onSubmitted,
+    });
+    makeReadyAndHold();
+    await holdToFire();
+
+    expect(createGuestSubmission).toHaveBeenCalledTimes(1);
+    expect(createSubmission).not.toHaveBeenCalled();
+    const arg = createGuestSubmission.mock.calls[0][0];
+    expect(arg.guestName).toBe('Grace Hopper');
+    // exact in-app dims + role-derived ops still flow through the built draft
+    expect(arg.widthMm).toBe(100);
+    expect(arg.heightMm).toBe(50);
+    expect(arg.source).toBe('design');
+    expect(onSubmitted).toHaveBeenCalledWith({ ok: true });
   });
 });

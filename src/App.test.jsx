@@ -44,6 +44,9 @@ vi.mock('./pages/org/OrgRoute', () => ({
 vi.mock('./pages/org/OrgSubmitPage', () => ({
   default: () => <div data-testid="org-submit">submit</div>,
 }));
+vi.mock('./pages/org/OrgCreatePage', () => ({
+  default: () => <div data-testid="org-create">create</div>,
+}));
 vi.mock('./pages/org/OrgAdminPage', () => ({
   default: () => <div data-testid="org-admin">org-admin</div>,
 }));

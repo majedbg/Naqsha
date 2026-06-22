@@ -19,6 +19,7 @@ vi.mock('../supabase', () => ({
 
 import {
   createSubmission,
+  createGuestSubmission,
   listMine,
   listForOrg,
   markStatus,
@@ -68,6 +69,81 @@ describe('createSubmission — tracer', () => {
 
     // returns the created row
     expect(row.status).toBe('pending');
+  });
+});
+
+// ─── Guest submission (anon, INSERT-only) ────────────────────────────────────
+// Guest helper for B-lane. The anon role has no SELECT policy, so the impl must
+// NOT chain `.select()` after insert — these tests use a custom mock whose
+// `.select` is an observable spy to prove no read-back is attempted.
+function makeGuestArgs(overrides = {}) {
+  return {
+    orgId: 'org-1',
+    guestName: 'Jane Guest',
+    guestEmail: 'jane@example.com',
+    guestPhone: '555-0100',
+    orgMaterialId: 'om-1',
+    materialLabel: '1/8in clear acrylic',
+    source: 'upload',
+    designId: null,
+    svgPath: 'org-1/guest-1.svg',
+    widthMm: 120,
+    heightMm: 80,
+    ops: { cut: ['layer-1'] },
+    name: 'Guest Job',
+    notes: 'handle with care',
+    ...overrides,
+  };
+}
+
+describe('createGuestSubmission — tracer', () => {
+  it('inserts with submitted_by null + guest_name and never chains .select()', async () => {
+    const selectSpy = vi.fn();
+    const insertSpy = vi.fn(() => ({
+      select: selectSpy,
+      then: (resolve) => resolve({ error: null }),
+    }));
+    _ref.client = { from: vi.fn(() => ({ insert: insertSpy })) };
+
+    const result = await createGuestSubmission(makeGuestArgs());
+
+    expect(insertSpy).toHaveBeenCalledTimes(1);
+    const payload = insertSpy.mock.calls[0][0];
+    expect(payload.submitted_by).toBeNull();
+    expect(payload.guest_name).toBe('Jane Guest');
+    // anon has no SELECT policy — read-back would throw, so it must be absent.
+    expect(selectSpy).not.toHaveBeenCalled();
+    expect(result).toEqual({ ok: true });
+  });
+});
+
+describe('createGuestSubmission — optional contact fields', () => {
+  it('stores guest_email/guest_phone as null when omitted', async () => {
+    const seed = {};
+    _ref.client = createSupabaseMock(seed);
+
+    const args = makeGuestArgs();
+    delete args.guestEmail;
+    delete args.guestPhone;
+    await createGuestSubmission(args);
+
+    const inserted = seed.submissions[0];
+    expect(inserted.guest_email).toBeNull();
+    expect(inserted.guest_phone).toBeNull();
+  });
+});
+
+describe('createGuestSubmission — error + no-client', () => {
+  it('throws when supabase returns an error', async () => {
+    const err = new Error('rls denied');
+    _ref.client = createSupabaseMock({}).injectError('submissions', 'insert', err);
+
+    await expect(createGuestSubmission(makeGuestArgs())).rejects.toThrow('rls denied');
+  });
+
+  it('returns null when there is no supabase client', async () => {
+    _ref.client = null;
+    expect(await createGuestSubmission(makeGuestArgs())).toBeNull();
   });
 });
 

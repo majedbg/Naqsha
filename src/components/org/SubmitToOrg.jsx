@@ -12,6 +12,9 @@ import SubmitForm from './SubmitForm.jsx';
 export default function SubmitToOrg({
   orgId,
   userId,
+  // Guest mode (#27): when provided (and no userId), passed through to SubmitForm
+  // so the submit goes via createGuestSubmission. Member path leaves it null.
+  guest = null,
   exportSvg,
   designId = null,
   name,
@@ -44,6 +47,7 @@ export default function SubmitToOrg({
       draft={draft}
       orgId={orgId}
       userId={userId}
+      guest={guest}
       onSubmitted={onSubmitted}
       onCancel={onCancel}
     />

@@ -908,3 +908,192 @@ live('guest (anon) submission RLS', () => {
     expect(wrongPath.error).not.toBeNull();
   });
 });
+
+// ─── Guest (anon) READS — issue #27 (migration 007) ──────────────────────────
+// The guest Studio entry must resolve, with NO auth, the org branding row and
+// its ACTIVE material offerings (incl. the embedded `materials(*)` join). All
+// three anon SELECT policies are gated on `is_org_accepting_guests`, so closed
+// orgs, inactive offerings, rosters, and submissions stay hidden from anon.
+live('guest (anon) reads RLS', () => {
+  // Open an org's guest gate via service-role (anon can't write orgs).
+  async function openOrg(orgId) {
+    const { error } = await service
+      .from('orgs')
+      .update({ submissions_open: true })
+      .eq('id', orgId);
+    if (error) throw error;
+  }
+
+  // 1. TRACER: anon reads an OPEN org's branding row, and its ACTIVE offering
+  // WITH the embedded `materials(*)` (name/thickness) populated.
+  it('lets anon read an open org and its active offering with embedded material', async () => {
+    const slug = `anonread-${Date.now()}-${counter++}`;
+    const { orgId, materialId } = await seedOrg(slug);
+    await openOrg(orgId);
+
+    const orgRes = await h.anon.from('orgs').select('*').eq('slug', slug);
+    expect(orgRes.error).toBeNull();
+    expect(orgRes.data).toHaveLength(1);
+    expect(orgRes.data[0].id).toBe(orgId);
+
+    const omRes = await h.anon
+      .from('org_materials')
+      .select('*, materials(*)')
+      .eq('org_id', orgId)
+      .eq('is_active', true);
+    expect(omRes.error).toBeNull();
+    expect(omRes.data).toHaveLength(1);
+    expect(omRes.data[0].material_id).toBe(materialId);
+    // The crux: the embedded materials row must be populated (the embed is
+    // filtered by materials' own anon SELECT policy).
+    expect(omRes.data[0].materials).not.toBeNull();
+    expect(omRes.data[0].materials.name).toBe(`mat-${slug}`);
+    expect(omRes.data[0].materials.thickness_mm).toBe(3);
+  });
+
+  // 2. A CLOSED org (submissions_open=false, seedOrg default) is hidden: anon
+  // reads nothing — branding stays private until the gate is opened.
+  it('hides a closed org from anon', async () => {
+    const slug = `anonclosed-${Date.now()}-${counter++}`;
+    const { orgId } = await seedOrg(slug); // submissions_open=false
+
+    const res = await h.anon.from('orgs').select('*').eq('id', orgId);
+    expect(res.error).toBeNull();
+    expect(res.data ?? []).toHaveLength(0);
+  });
+
+  // 3. Anon org_materials reads are gated: a closed org's offering is hidden,
+  // and an INACTIVE offering of an OPEN org is hidden.
+  it('hides org_materials of a closed org and inactive offerings of an open org', async () => {
+    // Closed org: active offering, but gate closed -> hidden.
+    const closed = await seedOrg(`anonom-closed-${Date.now()}-${counter++}`);
+    const closedRes = await h.anon
+      .from('org_materials')
+      .select('*')
+      .eq('org_id', closed.orgId);
+    expect(closedRes.error).toBeNull();
+    expect(closedRes.data ?? []).toHaveLength(0);
+
+    // Open org, but flip its only offering to inactive -> hidden.
+    const open = await seedOrg(`anonom-open-${Date.now()}-${counter++}`);
+    await openOrg(open.orgId);
+    const { error: deErr } = await service
+      .from('org_materials')
+      .update({ is_active: false })
+      .eq('id', open.orgMaterialId);
+    expect(deErr).toBeNull();
+
+    const inactiveRes = await h.anon
+      .from('org_materials')
+      .select('*')
+      .eq('org_id', open.orgId);
+    expect(inactiveRes.error).toBeNull();
+    expect(inactiveRes.data ?? []).toHaveLength(0);
+  });
+
+  // 4. The materials EXISTS gate: a material referenced only by an inactive
+  // offering OR by a closed org is hidden; a material referenced by an active
+  // offering of an open org IS readable.
+  it('gates anon material reads on an active offering of an open org', async () => {
+    // (a) Material referenced only by a CLOSED org's active offering -> hidden.
+    const closed = await seedOrg(`anonmat-closed-${Date.now()}-${counter++}`);
+    const closedMat = await h.anon
+      .from('materials')
+      .select('*')
+      .eq('id', closed.materialId);
+    expect(closedMat.error).toBeNull();
+    expect(closedMat.data ?? []).toHaveLength(0);
+
+    // (b) Material referenced only by an INACTIVE offering of an OPEN org -> hidden.
+    const open = await seedOrg(`anonmat-open-${Date.now()}-${counter++}`);
+    await openOrg(open.orgId);
+    await service
+      .from('org_materials')
+      .update({ is_active: false })
+      .eq('id', open.orgMaterialId);
+    const inactiveMat = await h.anon
+      .from('materials')
+      .select('*')
+      .eq('id', open.materialId);
+    expect(inactiveMat.error).toBeNull();
+    expect(inactiveMat.data ?? []).toHaveLength(0);
+
+    // (c) Positive control: active offering of an open org -> readable.
+    const live2 = await seedOrg(`anonmat-live-${Date.now()}-${counter++}`);
+    await openOrg(live2.orgId);
+    const liveMat = await h.anon
+      .from('materials')
+      .select('*')
+      .eq('id', live2.materialId);
+    expect(liveMat.error).toBeNull();
+    expect(liveMat.data).toHaveLength(1);
+    expect(liveMat.data[0].id).toBe(live2.materialId);
+  });
+
+  // 5. Anon cannot ENUMERATE all orgs: with one open + one closed org seeded,
+  // an unfiltered select returns the open one but NOT the closed one.
+  it('does not let anon enumerate closed orgs', async () => {
+    const open = await seedOrg(`anonenum-open-${Date.now()}-${counter++}`);
+    const closed = await seedOrg(`anonenum-closed-${Date.now()}-${counter++}`);
+    await openOrg(open.orgId);
+
+    const res = await h.anon.from('orgs').select('id');
+    expect(res.error).toBeNull();
+    const ids = (res.data ?? []).map((r) => r.id);
+    expect(ids).toContain(open.orgId);
+    expect(ids).not.toContain(closed.orgId);
+  });
+
+  // 6. REGRESSION: anon still reads NOTHING on org_members, platform_admins,
+  // and submissions — these remain fully closed to anon (no new exposure).
+  it('keeps org_members, platform_admins, and submissions closed to anon', async () => {
+    const slug = `anonclosedtbls-${Date.now()}-${counter++}`;
+    const { orgId, orgMaterialId } = await seedOrg(slug);
+    await openOrg(orgId); // open the gate; closed tables must still be hidden
+    const email = uniqueEmail('member');
+    const uid = await createUser(email);
+    await addMember(orgId, email, uid);
+    const padminEmail = uniqueEmail('padmin');
+    await service.from('platform_admins').insert({ email: padminEmail });
+    const sub = await seedSubmission(orgId, orgMaterialId, uid);
+
+    const members = await h.anon.from('org_members').select('*').eq('org_id', orgId);
+    expect(members.data ?? []).toHaveLength(0);
+
+    const padmins = await h.anon
+      .from('platform_admins')
+      .select('*')
+      .eq('email', padminEmail);
+    expect(padmins.data ?? []).toHaveLength(0);
+
+    const subs = await h.anon.from('submissions').select('*').eq('id', sub.id);
+    expect(subs.data ?? []).toHaveLength(0);
+  });
+
+  // 7. REGRESSION: an authenticated MEMBER still reads their org + org_materials
+  // exactly as before — the anon policies are additive (`to anon`), so the
+  // member's `to authenticated`/member-gated reads are unaffected even when the
+  // org gate is CLOSED (members do not depend on submissions_open).
+  it('still lets an authenticated member read their org and org_materials', async () => {
+    const slug = `anonregress-member-${Date.now()}-${counter++}`;
+    const { orgId, orgMaterialId } = await seedOrg(slug); // gate stays CLOSED
+    const email = uniqueEmail('member');
+    const uid = await createUser(email);
+    await addMember(orgId, email, uid);
+
+    const client = clientFor(uid, email);
+
+    const orgRes = await client.from('orgs').select('*').eq('id', orgId);
+    expect(orgRes.error).toBeNull();
+    expect(orgRes.data).toHaveLength(1);
+    expect(orgRes.data[0].id).toBe(orgId);
+
+    const omRes = await client
+      .from('org_materials')
+      .select('*')
+      .eq('id', orgMaterialId);
+    expect(omRes.error).toBeNull();
+    expect(omRes.data).toHaveLength(1);
+    expect(omRes.data[0].id).toBe(orgMaterialId);
+  });
+});

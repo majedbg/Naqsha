@@ -24,6 +24,8 @@ import { PROFILE_IDS, getProfile } from "../../lib/machineProfiles";
 import OperationPicker from "./OperationPicker";
 import RowMenu from "./RowMenu";
 import ConfirmDialog from "../ui/ConfirmDialog";
+import PanelHeader from "./PanelHeader";
+import { canAddPanel, layersForPanel } from "../../lib/panels";
 
 // Human label for a pattern type (falls back to the raw id for AI / extras /
 // import layers not in the static table).
@@ -168,6 +170,9 @@ function LayerRow({
   onSelect, onUpdateLayer, onReorderLayers, onAssignOperation,
   onDeleteLayer, onDuplicateLayer, onRandomizeLayerParams, onExportLayer,
   menuOpen, onRequestMenu, onCloseMenu,
+  // Drag-assign wiring (grouped tier only). Optional → undefined in flat mode so
+  // React omits the attributes and the row stays byte-identical there.
+  draggable, onDragStartRow,
 }) {
   const move = (to) => {
     if (to < 0 || to >= total) return;
@@ -222,6 +227,8 @@ function LayerRow({
       role="button"
       tabIndex={0}
       aria-pressed={selected}
+      draggable={draggable}
+      onDragStart={onDragStartRow ? (e) => onDragStartRow(e, layer.id) : undefined}
       onClick={() => onSelect(layer.id)}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
@@ -416,6 +423,14 @@ export default function LayerTree({
   // `addDisabled` greys it out at the tier's layer cap.
   onAddLayer,
   addDisabled = false,
+  // Naqsha Panels grouped tier (WI-5). All optional + back-compat: the grouped
+  // tier renders ONLY when `panels` is a non-empty array; otherwise the flat
+  // list above renders unchanged. Handlers are injected (props-driven, no store).
+  panels = [],
+  onAddPanel,
+  onDeletePanel,
+  onUpdatePanel,
+  onAssignLayerToPanel,
   // Responsive (spec §3.2): below a ~240px panel width the host passes
   // `compact` to hide the 🎲 dice. No container-query plugin is installed on this
   // Tailwind v3 build, so the panel width is threaded via this boolean (kept
@@ -424,6 +439,52 @@ export default function LayerTree({
 }) {
   // One row menu open at a time: the tree owns the open-menu layer id (spec §4).
   const [openMenuId, setOpenMenuId] = useState(null);
+
+  // Grouped tier (WI-5). The tree OWNS collapsed state (a Set of panelIds that
+  // persists across re-renders) and the single open substrate editor id (mirrors
+  // openMenuId's one-at-a-time pattern). Grouped tier active iff panels present.
+  const grouped = Array.isArray(panels) && panels.length > 0;
+  const [collapsedPanels, setCollapsedPanels] = useState(() => new Set());
+  const [openPanelEditorId, setOpenPanelEditorId] = useState(null);
+  const toggleCollapsed = (panelId) =>
+    setCollapsedPanels((cur) => {
+      const next = new Set(cur);
+      if (next.has(panelId)) next.delete(panelId);
+      else next.add(panelId);
+      return next;
+    });
+  const toggleEditor = (panelId) =>
+    setOpenPanelEditorId((cur) => (cur === panelId ? null : panelId));
+  // HTML5 DnD: carry the dragged layer id so a PanelHeader drop can reassign it.
+  const onDragStartRow = (e, layerId) => {
+    e.dataTransfer?.setData("text/plain", layerId);
+  };
+
+  // Shared per-row props so grouped + flat rows render identically apart from the
+  // grouped-only drag wiring. `index`/`total` are GLOBAL (full layers array) so
+  // onReorderLayers(from,to) keeps working in grouped mode (a layer never leaves
+  // its panel group — grouping is by panelId, independent of array order).
+  const rowProps = (layer, i) => ({
+    key: layer.id,
+    layer,
+    index: i,
+    total: layers.length,
+    selected: layer.id === selectedLayerId,
+    operations,
+    onSelect: onSelectLayer,
+    onUpdateLayer,
+    onReorderLayers,
+    onAssignOperation,
+    onDeleteLayer,
+    onDuplicateLayer,
+    onRandomizeLayerParams,
+    onExportLayer,
+    compact,
+    menuOpen: openMenuId === layer.id,
+    onRequestMenu: (id) => setOpenMenuId((cur) => (cur === id ? null : id)),
+    onCloseMenu: () => setOpenMenuId(null),
+  });
+
   return (
     <div className="flex h-full flex-col" data-testid="layer-tree">
       {/* Machine-profile selector — pinned at the TOP of the column. */}
@@ -506,28 +567,60 @@ export default function LayerTree({
 
       {/* Layer rows (top = front, matching the legacy panel's ordering). */}
       <div className="flex-1 overflow-auto p-1.5 space-y-0.5">
-        {layers.map((layer, i) => (
-          <LayerRow
-            key={layer.id}
-            layer={layer}
-            index={i}
-            total={layers.length}
-            selected={layer.id === selectedLayerId}
-            operations={operations}
-            onSelect={onSelectLayer}
-            onUpdateLayer={onUpdateLayer}
-            onReorderLayers={onReorderLayers}
-            onAssignOperation={onAssignOperation}
-            onDeleteLayer={onDeleteLayer}
-            onDuplicateLayer={onDuplicateLayer}
-            onRandomizeLayerParams={onRandomizeLayerParams}
-            onExportLayer={onExportLayer}
-            compact={compact}
-            menuOpen={openMenuId === layer.id}
-            onRequestMenu={(id) => setOpenMenuId((cur) => (cur === id ? null : id))}
-            onCloseMenu={() => setOpenMenuId(null)}
-          />
-        ))}
+        {grouped ? (
+          // Grouped tier (WI-5): panels sorted by order ascending, each header
+          // followed (unless collapsed) by its layers via layersForPanel. Rows
+          // carry their GLOBAL index so reorder is unchanged.
+          <>
+            {[...panels]
+              .sort((a, b) => a.order - b.order)
+              .map((panel) => {
+                const panelLayers = layersForPanel(layers, panel.id);
+                const isCollapsed = collapsedPanels.has(panel.id);
+                return (
+                  <div key={panel.id} className="space-y-0.5">
+                    <PanelHeader
+                      panel={panel}
+                      layerCount={panelLayers.length}
+                      collapsed={isCollapsed}
+                      onToggleCollapse={toggleCollapsed}
+                      editorOpen={openPanelEditorId === panel.id}
+                      onToggleEditor={toggleEditor}
+                      canDelete={panels.length > 1}
+                      onUpdatePanel={onUpdatePanel}
+                      onDeletePanel={onDeletePanel}
+                      onAssignLayerToPanel={onAssignLayerToPanel}
+                    />
+                    {!isCollapsed &&
+                      panelLayers.map((layer) => (
+                        <LayerRow
+                          {...rowProps(layer, layers.indexOf(layer))}
+                          draggable
+                          onDragStartRow={onDragStartRow}
+                        />
+                      ))}
+                  </div>
+                );
+              })}
+
+            {/* "+ Add panel" — at the foot of the grouped tier. Disabled at the
+                cap with the documented tooltip. */}
+            {onAddPanel && (
+              <button
+                type="button"
+                aria-label="Add panel"
+                onClick={onAddPanel}
+                disabled={!canAddPanel(panels)}
+                title={!canAddPanel(panels) ? "Max 3 panels per document" : undefined}
+                className="w-full py-2 text-sm rounded border border-dashed border-hairline text-ink-soft hover:text-saffron hover:border-violet disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              >
+                + Add panel
+              </button>
+            )}
+          </>
+        ) : (
+          layers.map((layer, i) => <LayerRow {...rowProps(layer, i)} />)
+        )}
 
         {/* "+ New" add-layer row — sits DIRECTLY under the bottom-most layer (not
             pinned to the column foot) so it reads as "add an object below". Lives

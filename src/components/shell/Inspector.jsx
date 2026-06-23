@@ -35,6 +35,7 @@ import {
 import { isTextLayer, textNodeFromLayer } from "../../lib/text/textLayer";
 import { useFont } from "../../lib/text/fontRegistry";
 import TextPropertiesPanel from "../TextPropertiesPanel";
+import { canProduceField } from "../../lib/fields/fieldRegistry";
 
 // Variable line-weight UI (issue #17, C8). A per-layer "advanced" toggle + bucket
 // count (N) control, shown ONLY for weight-varying patterns on a profile that
@@ -107,10 +108,114 @@ function VariableWeightControls({ layer, profileId, onVariableWeightChange }) {
   );
 }
 
+// Density modulation UI (pattern modulation, slice 2). Shown ONLY for a
+// GrainField layer: it can read a guide layer's scalar field to steer where its
+// grain packs. The "Density guide" dropdown lists every OTHER layer that can
+// produce a field (Chladni layers today, via canProduceField). Selecting one
+// stores the serializable spec on `layer.modulation`; "None" clears it.
+//
+// Edits commit through the SAME onUpdateLayer path the rest of the inspector
+// uses (shallow top-level merge), so they're live-previewed, undoable and
+// autosaved — no separate apply button (human-in-the-loop: preview/apply/revert).
+function ModulationControls({ layer, layers, onUpdateLayer }) {
+  if (layer.patternType !== "grainfield") return null;
+
+  // Candidate sources: every OTHER layer that produces a field. Computed inline
+  // (no useMemo on sub-properties — React Compiler lints that).
+  const sources = (layers || []).filter(
+    (l) => l.id !== layer.id && canProduceField(l)
+  );
+
+  const mod = layer.modulation || null;
+  const sourceId = mod?.sourceLayerId ?? "";
+  const gain = mod?.gain ?? 1;
+  const invert = mod?.invert ?? false;
+
+  const setSource = (id) => {
+    if (!id) {
+      onUpdateLayer(layer.id, { modulation: undefined });
+      return;
+    }
+    onUpdateLayer(layer.id, {
+      modulation: {
+        sourceLayerId: id,
+        channel: "density",
+        gain: 1,
+        bias: 0,
+        invert: false,
+      },
+    });
+  };
+
+  // Always rebuild the spec from the current one — onUpdateLayer is a shallow
+  // top-level merge, so a partial { modulation: { gain } } would drop the rest.
+  const patchMod = (patch) => {
+    onUpdateLayer(layer.id, { modulation: { ...layer.modulation, ...patch } });
+  };
+
+  return (
+    <div className="space-y-1.5 border-t border-hairline pt-3" data-testid="modulation-controls">
+      <h3 className="text-xs font-semibold text-ink-soft uppercase tracking-wider">
+        Modulation
+      </h3>
+
+      <label className="flex items-center gap-2 text-[11px] text-ink-soft">
+        <span className="whitespace-nowrap">Density guide</span>
+        <select
+          data-testid="modulation-source"
+          aria-label="Density guide"
+          value={sourceId}
+          onChange={(e) => setSource(e.target.value)}
+          className="flex-1 rounded-xs border border-hairline bg-paper-warm px-1 py-0.5 text-[11px] text-ink outline-none focus:border-violet"
+        >
+          <option value="">None</option>
+          {sources.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name || s.patternType}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      {sourceId && (
+        <>
+          <label className="flex items-center gap-2 text-[11px] text-ink-soft">
+            <span className="whitespace-nowrap">Gain</span>
+            <input
+              type="range"
+              data-testid="modulation-gain"
+              aria-label="Gain"
+              min={0}
+              max={3}
+              step={0.1}
+              value={gain}
+              onChange={(e) => patchMod({ gain: Number(e.target.value) })}
+              className="flex-1 accent-violet"
+            />
+            <span className="w-8 text-right tabular-nums text-ink num">
+              {gain.toFixed(1)}
+            </span>
+          </label>
+
+          <label className="flex items-center gap-2 text-xs text-ink">
+            <input
+              type="checkbox"
+              data-testid="modulation-invert"
+              checked={invert}
+              onChange={(e) => patchMod({ invert: e.target.checked })}
+            />
+            <span>Invert</span>
+          </label>
+        </>
+      )}
+    </div>
+  );
+}
+
 // The param-editing body for one selected layer. Split into its own component so
 // usePatternCache (a hook) is only called when a layer is actually selected —
 // hooks can't be called conditionally inside Inspector itself.
-function SelectedLayerInspector({ layer, unit, profileId, onUpdateLayer, onChangeLayerPattern, onVariableWeightChange }) {
+function SelectedLayerInspector({ layer, layers, unit, profileId, onUpdateLayer, onChangeLayerPattern, onVariableWeightChange }) {
   // Pattern swap: route through the same cache machine LayerCard uses, applied via
   // the pair-aware onChangeLayerPattern when present (falls back to a plain param
   // update so the component works standalone / in tests without a router).
@@ -155,6 +260,13 @@ function SelectedLayerInspector({ layer, unit, profileId, onUpdateLayer, onChang
         layer={layer}
         profileId={profileId}
         onVariableWeightChange={onVariableWeightChange}
+      />
+
+      {/* Density modulation (pattern modulation, slice 2) — GrainField only. */}
+      <ModulationControls
+        layer={layer}
+        layers={layers}
+        onUpdateLayer={onUpdateLayer}
       />
     </div>
   );
@@ -227,6 +339,7 @@ export default function Inspector({
       // state bleed in the param controls).
       key={layer.id}
       layer={layer}
+      layers={layers}
       unit={unit}
       profileId={profileId}
       onUpdateLayer={onUpdateLayer}

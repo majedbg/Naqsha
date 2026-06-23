@@ -2,6 +2,8 @@ import { useRef, useState, useEffect, useLayoutEffect, useCallback, useMemo } fr
 import useCanvas from "../lib/useCanvas";
 import CanvasChrome from "./canvas/CanvasChrome";
 import PlotOverlay from "./canvas/PlotOverlay";
+import FieldOverlay from "./FieldOverlay";
+import { chladniField } from "../lib/fields/chladniField";
 import { cursorToUnit } from "../lib/canvasChrome";
 import { screenToCanvas } from "../lib/canvas/coords";
 import { buildSelectables, pickTopmost } from "../lib/scene/selectables";
@@ -165,6 +167,24 @@ export default function RightPanel({
     machineProfile,
     colorView
   );
+
+  // --- Field overlay (read-only modulation-field preview) -------------------
+  // First slice of pattern modulation: visualize a guide pattern's underlying
+  // scalar field as a heatmap. Currently sources from a selected Chladni layer.
+  // Local UI state — this is a preview lens, not document data; never exported.
+  const [showField, setShowField] = useState(false);
+  const selField = layers.find(
+    (l) => l.id === selectedNodeId && l.visible !== false
+  );
+  const fieldEligible = selField?.patternType === "chladni";
+  // chladniField() memoizes internally by the field-shaping param VALUES, so
+  // recomputing this each render is cheap: the same grid instance is returned
+  // unless m/n/blend/m2/n2 actually change (no rebuild on drags or unrelated
+  // edits). React Compiler handles component-level memoization.
+  const previewField =
+    showField && fieldEligible
+      ? chladniField(selField.params, { resolution: 128 })
+      : null;
 
   // Latest transforms readable inside pointer handlers without stale closures
   // (the map identity changes on every drag frame; handlers stay stable).
@@ -537,6 +557,17 @@ export default function RightPanel({
         }}
       >
         <div ref={containerRef} />
+        {/* Field overlay — modulation-field heatmap (read-only preview). Sibling
+            of the p5 surface inside the scaled wrapper, so it shares the artwork
+            coordinate space + canvas transform. Null when off or no eligible
+            layer is selected → clean canvas, never exported. */}
+        {previewField && (
+          <FieldOverlay
+            field={previewField}
+            canvasW={canvasW}
+            canvasH={canvasH}
+          />
+        )}
         {/* Text edit overlay (phase 5). Lives INSIDE the scaled canvas box so its
             canvas-coord left/top/size inherit scale(finalScale) and stay aligned
             with the drawn glyphs at any zoom. Rendered only when an edit is open,
@@ -656,6 +687,33 @@ export default function RightPanel({
             className="ml-1 text-paper/70 hover:text-paper transition-colors"
           >
             Cancel <span className="opacity-60">(Esc)</span>
+          </button>
+        </div>
+      )}
+
+      {/* Field overlay toggle — shown only when a Chladni layer is selected
+          (the one eligible field source in this first slice). Stacked above the
+          Background button. Preview lens only; resets nothing on the document. */}
+      {fieldEligible && (
+        <div className="absolute bottom-16 left-4">
+          <button
+            type="button"
+            onClick={() => setShowField((v) => !v)}
+            aria-pressed={showField}
+            className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg border transition-colors shadow-lg ${
+              showField
+                ? "bg-violet text-paper border-violet"
+                : "bg-paper-warm text-ink-soft border-hairline hover:border-ink-soft"
+            }`}
+          >
+            <div
+              className="w-4 h-4 rounded border border-hairline"
+              style={{
+                background:
+                  "linear-gradient(90deg, #116d8a 0%, #f4eee0 50%, #b22a5c 100%)",
+              }}
+            />
+            <span className="text-xs">Field</span>
           </button>
         </div>
       )}

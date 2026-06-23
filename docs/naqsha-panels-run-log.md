@@ -27,7 +27,7 @@ files). Watch the WI-3/WI-4 `svgExport.js` boundary: WI-4 lands first so WI-3 bu
 |----|-------|--------|--------|-----------|-------|
 | WI-1 | Panel model + helpers + persistence + migration | ✅ green | `da21cba` | +35 (1611→1646) | foundation. Seam: `loadLayerSet` not panel-normalized → handle on cloud/example load (WI-2/WI-6). |
 | WI-2 | Cloud config blob: persist + load panels | ✅ green | (this commit) | +5 (1646→1651) | hook gains `panels`+`setPanels` props; load normalizes (also fixes WI-1 loadLayerSet seam for cloud). No new table/RLS. |
-| WI-3 | Per-panel + combined SVG export, ZIP, timestamped | pending | — | — | depends WI-1; +JSZip |
+| WI-3 | Per-panel + combined SVG export, ZIP, timestamped | ✅ green | (this commit) | +10 (1663→1673) | new panelExport.js: pure `buildPanelExportFiles` + `exportPanelsZip` + `formatTimestamp`; reuses buildAllLayersSVG + effectiveVisibleLayers. +jszip ^3.10.1 (lockfile committed). |
 | WI-4 | effectiveVisible wiring into canvas + export | ✅ green | (this commit) | +12 (1651→1663) | useCanvas `panels` param wires effectiveVisible at 4 filter points; new shared `effectiveVisibleLayers` in panels.js. svgExport/buildAllLayersSVG untouched (WI-3-safe). |
 | WI-5 | LayerTree grouped tier (UI) | pending | — | — | depends WI-1 |
 | WI-6 | Mode-gate + Studio wiring | pending | — | — | depends WI-1, WI-5 (solo) |

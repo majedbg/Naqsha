@@ -36,6 +36,8 @@ import { parseForPlacement, centerTransform } from "../lib/scene/placement";
 import StudioSubmitModal from "../components/org/StudioSubmitModal";
 import useLayers from "../lib/useLayers";
 import useLayerGroups from "../lib/useLayerGroups";
+import { addPanel, deletePanel } from "../lib/panels";
+import { exportPanelsZip } from "../lib/panelExport";
 import { isTextLayer } from "../lib/text/textLayer";
 import { useFont } from "../lib/text/fontRegistry";
 import { useAuth } from "../lib/AuthContext";
@@ -159,6 +161,13 @@ export default function Studio({ submitOrg = null } = {}) {
     loadLayerSet,
     bgColor,
     setBgColor,
+    // Naqsha Panels (WI-6). The panel array + setter are owned by useLayers (it
+    // also persists `panels` to `sonoform-panels` and each `layer.panelId` to
+    // `sonoform-layers` automatically). Studio threads them into cloud
+    // persistence (ungated), the canvas (laser-gated), and the LayerTree grouped
+    // tier + per-panel export (laser-gated).
+    panels,
+    setPanels,
   } = useLayers({ persistToLocal: limits.localStorage, maxLayers: limits.maxLayers, getDefaultOperationId });
 
   // Pro-shell Inspector + Object-tree slots (B3 / #6, B2 / #5). Null in the
@@ -708,6 +717,12 @@ export default function Studio({ submitOrg = null } = {}) {
     canvasH,
     presetIndex,
     bgColor,
+    // Panels ride the cloud blob UNGATED (WI-6). localStorage is already ungated
+    // via useLayers; gating the cloud-save panels behind laser would silently
+    // drop `panels` when saving in plotter, breaking dormancy + the cloud
+    // round-trip. Always pass the real array + setter.
+    panels,
+    setPanels,
     loadLayerSet,
     applyCanvasSize,
     markCleanFrom,
@@ -843,6 +858,25 @@ export default function Studio({ submitOrg = null } = {}) {
     );
   };
 
+  // Per-panel ZIP export (Naqsha Panels WI-6, spec §3). Laser-only affordance:
+  // bundles one SVG per VISIBLE panel + a combined SVG into a timestamped ZIP.
+  // Mirrors handleExportAll's option shape; `exportLayer` spreads each layer so
+  // `panelId` survives → `layersForPanel` inside exportPanelsZip partitions
+  // correctly. Leaves the flat handleExportAll path untouched.
+  const handleExportPanelsZip = () => {
+    const mapped = layers.map(exportLayer);
+    exportPanelsZip(panels, mapped, patternInstancesRef.current || {}, canvasW, canvasH, {
+      designName: "untitled",
+      svg: {
+        metadata: limits.svgMetadata,
+        manifest: buildExportManifest(),
+        optimizations: appliedOptimizations,
+        profileId: machineProfile,
+        font: textFont,
+      },
+    });
+  };
+
   const handleSaveLayerGroup = () => {
     setUI("saveName", "");
     setUI("showSaveDialog", true);
@@ -967,6 +1001,10 @@ export default function Studio({ submitOrg = null } = {}) {
           operations={operations}
           machineProfile={activeProfileId}
           colorView={colorView.colorView}
+          // Naqsha Panels (WI-6): laser-gated. Empty in plotter/dragCutter so the
+          // canvas render is byte-identical to today; the real panels fold in
+          // per-panel visibility only in laser mode.
+          panels={activeProfileId === "laser" ? panels : []}
           canvasW={canvasW}
           canvasH={canvasH}
           patternInstancesRef={patternInstancesRef}
@@ -1008,6 +1046,24 @@ export default function Studio({ submitOrg = null } = {}) {
           onSetMode={colorView.setMode}
           onSelectMaterial={colorView.selectMaterial}
         />
+
+        {/* Per-panel ZIP export (Naqsha Panels WI-6, spec §5) — LASER-ONLY. The
+            grouped-tier affordance: bundles one SVG per visible panel + a combined
+            SVG into a timestamped ZIP. Hidden in plotter/dragCutter so the flat
+            export path is the only one there. Stable aria-label so the gate is
+            assertable. */}
+        {activeProfileId === "laser" && (
+          <div className="absolute top-3 right-3 z-20">
+            <button
+              type="button"
+              aria-label="Export panels (ZIP)"
+              onClick={handleExportPanelsZip}
+              className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-paper-warm border border-hairline hover:border-ink-soft transition-colors shadow-lg text-xs text-ink-soft"
+            >
+              Export panels (ZIP)
+            </button>
+          </div>
+        )}
 
         {/* Examples gallery (re-homed in #16). Opened from File > Examples;
             overlays the canvas region (the legacy LeftPanel that used to host it
@@ -1260,6 +1316,29 @@ export default function Studio({ submitOrg = null } = {}) {
             // menu's New. Disabled at the tier's layer cap (addLayer no-ops there).
             onAddLayer={() => setUI("showPatternPicker", true)}
             addDisabled={layers.length >= (limits.maxLayers ?? Infinity)}
+            // Naqsha Panels grouped tier (WI-6, spec §5) — LASER-ONLY. Passing []
+            // in plotter/dragCutter makes LayerTree render the flat list (its
+            // grouped tier renders only when panels.length > 0), so non-laser
+            // profiles are byte-unchanged. The four handlers are passed
+            // unconditionally; they are inert in flat mode (the grouped tier that
+            // calls them isn't rendered).
+            panels={activeProfileId === "laser" ? panels : []}
+            onAddPanel={() => setPanels((p) => addPanel(p))}
+            onAssignLayerToPanel={(layerId, panelId) =>
+              updateLayer(layerId, { panelId })
+            }
+            onUpdatePanel={(id, patch) =>
+              setPanels((p) =>
+                p.map((pn) => (pn.id === id ? { ...pn, ...patch } : pn))
+              )
+            }
+            onDeletePanel={(id, { deleteLayers }) => {
+              const { panels: np, layers: nl } = deletePanel(panels, layers, id, {
+                deleteLayers,
+              });
+              setPanels(np);
+              loadLayerSet(nl);
+            }}
           />,
           objectTreeSlot
         )}

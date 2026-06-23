@@ -53,7 +53,7 @@ describe("GrainField density modulation", () => {
     const baseline = run(BASE_PARAMS);
     const modulated = run({
       ...BASE_PARAMS,
-      modulation: { field, channel: "density", gain: 1 },
+      modulation: { field, channel: "density", amount: 1 },
     });
 
     // Center of mass: where the grain concentrates. A rightward-rising field
@@ -75,7 +75,7 @@ describe("GrainField density modulation", () => {
     const withNull = run({ ...BASE_PARAMS, modulation: null }).inst.svgElements;
     const otherChannel = run({
       ...BASE_PARAMS,
-      modulation: { field, channel: "warp", gain: 1 },
+      modulation: { field, channel: "warp", amount: 1 },
     }).inst.svgElements;
 
     expect(withNull).toEqual(baseline);
@@ -90,7 +90,7 @@ describe("GrainField density modulation", () => {
     const { inst, ctx } = run({
       ...BASE_PARAMS,
       symmetry: 1, // single base copy → one ctx.line per dash
-      modulation: { field, channel: "density", gain: 1.5 },
+      modulation: { field, channel: "density", amount: 1.5 },
     });
 
     const r2 = (n) => n.toFixed(2);

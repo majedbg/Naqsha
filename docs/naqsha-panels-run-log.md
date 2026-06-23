@@ -25,8 +25,8 @@ files). Watch the WI-3/WI-4 `svgExport.js` boundary: WI-4 lands first so WI-3 bu
 
 | WI | Title | Status | Commit | Test delta | Notes |
 |----|-------|--------|--------|-----------|-------|
-| WI-1 | Panel model + helpers + persistence + migration | pending | — | — | foundation (solo) |
-| WI-2 | Cloud config blob: persist + load panels | pending | — | — | depends WI-1 |
+| WI-1 | Panel model + helpers + persistence + migration | ✅ green | `da21cba` | +35 (1611→1646) | foundation. Seam: `loadLayerSet` not panel-normalized → handle on cloud/example load (WI-2/WI-6). |
+| WI-2 | Cloud config blob: persist + load panels | ✅ green | (this commit) | +5 (1646→1651) | hook gains `panels`+`setPanels` props; load normalizes (also fixes WI-1 loadLayerSet seam for cloud). No new table/RLS. |
 | WI-3 | Per-panel + combined SVG export, ZIP, timestamped | pending | — | — | depends WI-1; +JSZip |
 | WI-4 | effectiveVisible wiring into canvas + export | pending | — | — | depends WI-1 |
 | WI-5 | LayerTree grouped tier (UI) | pending | — | — | depends WI-1 |

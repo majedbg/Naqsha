@@ -1,5 +1,6 @@
 import { useState, useCallback } from "react";
 import { saveDesign, loadDesign, saveHistorySnapshot } from "../designService";
+import { normalizePanels } from "../panels";
 
 // Cloud save/load concern extracted from Studio (AR-3A).
 //
@@ -15,6 +16,8 @@ export default function useCloudPersistence({
   canvasH,
   presetIndex,
   bgColor,
+  panels,
+  setPanels,
   loadLayerSet,
   applyCanvasSize,
   markCleanFrom,
@@ -37,7 +40,7 @@ export default function useCloudPersistence({
   const handleSaveToCloud = useCallback(async () => {
     if (!user) return;
     const thumbnail = captureThumbnail();
-    const config = { layers, canvasW, canvasH, presetIndex };
+    const config = { layers, canvasW, canvasH, presetIndex, panels };
     try {
       const design = await saveDesign(
         user.id,
@@ -69,6 +72,7 @@ export default function useCloudPersistence({
     currentDesignId,
     markCleanFrom,
     bgColor,
+    panels,
     limits.historySnapshots,
   ]);
 
@@ -79,15 +83,28 @@ export default function useCloudPersistence({
         const design = await loadDesign(designId, user.id);
         if (!design?.config) return;
         const { layers: savedLayers, canvasW: cw, canvasH: ch } = design.config;
-        if (savedLayers) loadLayerSet(savedLayers);
+        const { panels: normPanels, layers: normLayers } = normalizePanels(
+          design.config.panels,
+          savedLayers || []
+        );
+        if (savedLayers) loadLayerSet(normLayers);
+        setPanels?.(normPanels);
         if (cw && ch) applyCanvasSize(cw, ch);
         setCurrentDesignId(design.id);
-        markCleanFrom(savedLayers || layers, bgColor);
+        markCleanFrom(savedLayers ? normLayers : layers, bgColor);
       } catch (err) {
         console.error("Cloud load failed:", err);
       }
     },
-    [user, loadLayerSet, applyCanvasSize, markCleanFrom, layers, bgColor]
+    [
+      user,
+      loadLayerSet,
+      setPanels,
+      applyCanvasSize,
+      markCleanFrom,
+      layers,
+      bgColor,
+    ]
   );
 
   return {

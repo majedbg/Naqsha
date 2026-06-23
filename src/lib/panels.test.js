@@ -16,6 +16,7 @@ import {
   assignLayerToPanel,
   layersForPanel,
   effectiveVisible,
+  effectiveVisibleLayers,
   normalizePanels,
   loadPanels,
   savePanels,
@@ -165,6 +166,57 @@ describe('panels — effectiveVisible', () => {
   it('undefined panel falls back to layer.visible', () => {
     expect(effectiveVisible({ visible: true }, undefined)).toBe(true);
     expect(effectiveVisible({ visible: false }, undefined)).toBe(false);
+  });
+});
+
+describe('panels — effectiveVisibleLayers (shared export/canvas filter)', () => {
+  it('excludes layers whose panel is hidden', () => {
+    const panels = [{ id: 'p1', visible: false }];
+    const layers = [layer('a', 'p1', true), layer('b', 'p1', true)];
+    expect(effectiveVisibleLayers(layers, panels)).toEqual([]);
+  });
+
+  it('includes a visible layer on a visible panel', () => {
+    const panels = [{ id: 'p1', visible: true }];
+    const layers = [layer('a', 'p1', true)];
+    expect(effectiveVisibleLayers(layers, panels).map((l) => l.id)).toEqual(['a']);
+  });
+
+  it('excludes a visible:false layer even on a visible panel', () => {
+    const panels = [{ id: 'p1', visible: true }];
+    const layers = [layer('a', 'p1', true), layer('b', 'p1', false)];
+    expect(effectiveVisibleLayers(layers, panels).map((l) => l.id)).toEqual(['a']);
+  });
+
+  it('mixes panels: only layers whose own AND panel visibility hold are kept', () => {
+    const panels = [{ id: 'p1', visible: true }, { id: 'p2', visible: false }];
+    const layers = [
+      layer('a', 'p1', true),  // kept
+      layer('b', 'p1', false), // dropped (layer hidden)
+      layer('c', 'p2', true),  // dropped (panel hidden)
+      layer('d', 'p2', false), // dropped (both hidden)
+    ];
+    expect(effectiveVisibleLayers(layers, panels).map((l) => l.id)).toEqual(['a']);
+  });
+
+  it('empty/undefined panels degrade to layer.visible regardless of panelId', () => {
+    const layers = [layer('a', 'p1', true), layer('b', 'p2', false)];
+    expect(effectiveVisibleLayers(layers, []).map((l) => l.id)).toEqual(['a']);
+    expect(effectiveVisibleLayers(layers, undefined).map((l) => l.id)).toEqual(['a']);
+  });
+
+  it('dangling panelId with empty panels is treated as layer.visible', () => {
+    const layers = [layer('a', 'ghost', true), layer('b', 'ghost', false)];
+    expect(effectiveVisibleLayers(layers, []).map((l) => l.id)).toEqual(['a']);
+  });
+
+  it('returns a new array and does not mutate inputs', () => {
+    const panels = [{ id: 'p1', visible: true }];
+    const layers = [layer('a', 'p1', true), layer('b', 'p1', false)];
+    const snapshot = JSON.parse(JSON.stringify(layers));
+    const out = effectiveVisibleLayers(layers, panels);
+    expect(out).not.toBe(layers);
+    expect(layers).toEqual(snapshot);
   });
 });
 

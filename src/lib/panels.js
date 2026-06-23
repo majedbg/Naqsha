@@ -96,6 +96,18 @@ export function effectiveVisible(layer, panel) {
   return panel ? panel.visible && layer.visible : layer.visible;
 }
 
+// WI-4 shared filter: the subset of `layers` that are EFFECTIVELY visible —
+// both the layer and its panel must be visible. This is the single source of
+// truth for visibility filtering used by BOTH the canvas (useCanvas) and the
+// laser export callers (per-panel + combined SVG), so the logic lives in one
+// place. `panels` may be empty/undefined → degrades to `layer.visible` (a layer
+// with a dangling/unknown panelId is treated as having no panel → its own
+// visibility governs). Pure: returns a new array, never mutates.
+export function effectiveVisibleLayers(layers, panels) {
+  const panelById = new Map((Array.isArray(panels) ? panels : []).map((p) => [p.id, p]));
+  return (layers || []).filter((l) => effectiveVisible(l, panelById.get(l.panelId)));
+}
+
 // Load-time normalizer (pure). Three cases, in order:
 //   1. panels absent / empty / non-array → seed [Panel 1] and assign EVERY layer
 //      to it.

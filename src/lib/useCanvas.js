@@ -12,6 +12,7 @@ import { isTextLayer, textNodeFromLayer } from './text/textLayer';
 import { importLayerPivot } from './scene/placement';
 import { buildSelectables } from './scene/selectables';
 import { resolveCanvasColor, sheetBackground } from './materialPreview';
+import { effectiveVisible } from './panels';
 
 // Pivoted node transform shared by render + selection chrome. Matches the SVG
 // `translate(x y) translate(cx cy) rotate scale translate(-cx -cy)` form emitted
@@ -54,7 +55,13 @@ export default function useCanvas(
   // → canvas colors are BYTE-IDENTICAL to before (resolveCanvasColor delegates to
   // resolveExportColor). material mode → the sheet/process preview shading, and
   // the artboard background becomes the material's sheet hex. Export is untouched.
-  colorView = null
+  colorView = null,
+  // WI-4 Naqsha Panels: the panel array. A layer belongs to a panel via
+  // `layer.panelId`; a layer on a HIDDEN panel renders as not-visible (no-draw
+  // adapter) WITHOUT mutating `layer.visible`. Additive + LAST positional arg, so
+  // callers that don't pass it get `[]` → `effectiveVisible` degrades to
+  // `layer.visible` and behaviour is byte-identical to before panels existed.
+  panels = []
 ) {
   const p5Ref = useRef(null);
   const debounceRef = useRef(null);
@@ -85,18 +92,26 @@ export default function useCanvas(
     const drawCtx = new P5Adapter(p, { draw: true });
     const noDrawCtx = new P5Adapter(p, { draw: false });
 
+    // WI-4: panel lookup for effective visibility. Built once per render. A
+    // layer on a hidden panel takes the no-draw path; with no panels (or no
+    // matching panel) effectiveVisible degrades to layer.visible → byte-identical
+    // to before. Never mutates layer.visible or any panel.
+    const panelById = new Map((panels || []).map((pn) => [pn.id, pn]));
+
     const newInstances = {};
     // Render bottom-to-top: last layer in array is bottom, first is top (front)
     // We iterate in reverse so bottom layers paint first
     const renderOrder = [...layers].reverse();
     for (const layer of renderOrder) {
+      // Effective visibility = layer.visible AND its panel.visible (if any).
+      const vis = effectiveVisible(layer, panelById.get(layer.panelId));
       // Imported-path artwork (issue #12) has no generative PatternClass — it's a
       // synthetic instance wrapping parsed SVG path data. Build it from layer
       // data so it both draws on canvas and exports via buildAllLayersSVG.
       if (layer.type === 'import') {
         const instance = new ImportedPath();
         newInstances[layer.id] = instance;
-        if (!layer.visible) {
+        if (!vis) {
           instance.generateWithContext(
             noDrawCtx, layer.seed, layer.params, canvasW, canvasH, resolveCanvasColor(layer, { operations, outputMode, colorView }), layer.opacity
           );
@@ -122,7 +137,7 @@ export default function useCanvas(
       // No PatternClass instance is registered (none exists), like orphan-B.
       // Without a resolved font we can't draw; export is handled in a later phase.
       if (isTextLayer(layer)) {
-        if (!layer.visible || !font) continue;
+        if (!vis || !font) continue;
         const nodeData = textNodeFromLayer(layer);
         drawTextNode(p, nodeData, font, nodeTransforms[layer.id]);
         continue;
@@ -162,7 +177,7 @@ export default function useCanvas(
       const instance = new PatternClass();
       newInstances[layer.id] = instance;
 
-      if (!layer.visible) {
+      if (!vis) {
         // Still generate for SVG export, but don't draw to canvas
         instance.generateWithContext(
           noDrawCtx,
@@ -205,7 +220,9 @@ export default function useCanvas(
     // font loads). Guarded by layers.find so a stale id can't throw.
     const selId = selectedRef.current;
     if (selId) {
-      const selLayer = layers.find((l) => l.id === selId && l.visible !== false && !l.locked);
+      const selLayer = layers.find(
+        (l) => l.id === selId && effectiveVisible(l, panelById.get(l.panelId)) && !l.locked
+      );
       if (selLayer) {
         const sel = buildSelectables({ layers, font, canvasW, canvasH }).find(
           (s) => s.id === selId
@@ -260,7 +277,9 @@ export default function useCanvas(
     // text actually paints. Changes once, so it doesn't churn the param-debounce.
     // `operations` + `outputMode` are deps so recoloring an operation (or
     // switching machine profile) re-resolves every layer's stroke and repaints.
-  }, [layers, canvasW, canvasH, bgColor, font, operations, outputMode, colorView]);
+    // `panels` is a dep so toggling a panel's visibility (new array identity)
+    // gives renderAll a new identity → the debounce effect re-fires and repaints.
+  }, [layers, canvasW, canvasH, bgColor, font, operations, outputMode, colorView, panels]);
 
   // Initialize p5 instance
   useEffect(() => {

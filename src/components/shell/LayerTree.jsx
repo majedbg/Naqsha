@@ -622,21 +622,31 @@ export default function LayerTree({
           layers.map((layer, i) => <LayerRow {...rowProps(layer, i)} />)
         )}
 
-        {/* "+ New" add-layer row — sits DIRECTLY under the bottom-most layer (not
-            pinned to the column foot) so it reads as "add an object below". Lives
-            inside the scrolling rows list and mirrors the legacy LayersSection's
-            dashed "+ Add Layer" affordance; opens the pattern picker (host wires
-            onAddLayer) and is disabled at the tier's layer cap. Only rendered when
-            a handler is given. */}
+        {/* "+ New Layer" add-layer row — sits DIRECTLY under the bottom-most
+            layer (not pinned to the column foot) so it reads as "add an object
+            below". Deliberately mirrors PanelHeader's row chrome (same border /
+            bg-paper-warm / px-1.5 py-1 / gap-1.5, a '+' glyph where the chevron
+            sits, a semibold name) so it reads as an n+1 ghost row at the layers'
+            visual hierarchy — NOT the dashed CTA the "+ Add panel" button uses.
+            Held at reduced opacity to read as a placeholder; full opacity on
+            hover. Opens the pattern picker (host wires onAddLayer); disabled at
+            the tier's layer cap. Only rendered when a handler is given. */}
         {onAddLayer && (
           <button
             type="button"
             aria-label="Add layer"
             onClick={onAddLayer}
             disabled={addDisabled}
-            className="w-full py-2 text-sm rounded border border-dashed border-hairline text-ink-soft hover:text-saffron hover:border-violet disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            className="flex w-full items-center gap-1.5 rounded-xs border border-hairline bg-paper-warm px-1.5 py-1 text-left opacity-60 hover:opacity-100 disabled:opacity-30 disabled:cursor-not-allowed transition-opacity duration-fast"
           >
-            + New Layer
+            {/* '+' glyph — occupies the chevron slot of a panel/layer row. */}
+            <span className="shrink-0 text-ink-soft">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" aria-hidden="true">
+                <line x1="12" y1="5" x2="12" y2="19" />
+                <line x1="5" y1="12" x2="19" y2="12" />
+              </svg>
+            </span>
+            <span className="flex-1 min-w-0 truncate text-xs font-semibold text-ink">New Layer</span>
           </button>
         )}
       </div>

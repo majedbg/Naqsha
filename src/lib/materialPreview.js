@@ -21,9 +21,9 @@
 import { resolveExportColor } from './fabrication.js';
 import { resolveLayerProcess } from './operations.js';
 
-// ── Default material set (no org context in Studio yet). Acrylic hexes reuse the
-// ITP Camp swatch catalog (src/kits/itpCampMaterials.js — same ids, so the
-// control can borrow their photos); two common laser plywoods added. category:
+// ── Default material set (no org context in Studio yet). Acrylic hexes share
+// ids with the acrylic swatch-photo catalog (src/lib/materialSwatches.js) so the
+// control can borrow their photos; two common laser plywoods added. category:
 // 'lighten' (acrylic/plastic frosts) | 'burn' (wood darkens). ──────────────────
 export const DEFAULT_PREVIEW_MATERIALS = [
   { id: 'green-fluorescent', name: 'Green Fluorescent', type: 'acrylic', hex: '#E6E954', category: 'lighten' },

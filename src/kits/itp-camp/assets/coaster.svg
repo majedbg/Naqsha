@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<!-- ITP Camp coaster — 4 × 4 inch = 101.6 × 101.6 mm. Single rounded-square
-     cut outline. viewBox units = mm. -->
-<svg xmlns="http://www.w3.org/2000/svg" width="101.6mm" height="101.6mm" viewBox="0 0 101.6 101.6">
-  <path fill="none" stroke="#000000" stroke-width="0.5"
-        d="M 8 0 L 93.6 0 Q 101.6 0 101.6 8 L 101.6 93.6 Q 101.6 101.6 93.6 101.6 L 8 101.6 Q 0 101.6 0 93.6 L 0 8 Q 0 0 8 0 Z"/>
-</svg>

@@ -171,46 +171,9 @@ export default function OperationsPanel({
   profileId,
   onCommitOperations = () => {},
   onAddOperation = () => {},
-  // ITP Camp kit mode (issue #18, plan §7.3). The enter/exit control lives here
-  // and is surfaced ONLY when the active machine is Laser. Presentational: the
-  // reversible enter/exit lifecycle is owned by Studio (useKitMode).
-  kitAvailable = false,
-  kitActive = false,
-  kitName = "ITP Camp",
-  onEnterKit = () => {},
-  onExitKit = () => {},
 }) {
-  // Laser-gated: the kit is unavailable on plotter / drag-cutter.
-  const showKitControl = kitAvailable && profileId === "laser";
-
   return (
     <div className="flex max-h-full min-h-0 flex-col" data-testid="operations-panel">
-      {showKitControl && (
-        <div className="flex shrink-0 items-center justify-between border-b border-hairline px-2 py-1.5">
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-ink-soft">
-            {kitName} Kit
-          </span>
-          {kitActive ? (
-            <button
-              type="button"
-              aria-label={`Exit ${kitName} Mode`}
-              onClick={onExitKit}
-              className="rounded-xs border border-ink bg-saffron px-2 py-0.5 text-[10px] font-medium text-ink hover:bg-saffron-hover"
-            >
-              Exit {kitName} Mode
-            </button>
-          ) : (
-            <button
-              type="button"
-              aria-label={`Enter ${kitName} Mode`}
-              onClick={onEnterKit}
-              className="rounded-xs border border-hairline bg-paper-warm px-2 py-0.5 text-[10px] text-ink-soft hover:text-ink hover:bg-paper"
-            >
-              Enter {kitName} Mode
-            </button>
-          )}
-        </div>
-      )}
       <div className="flex shrink-0 items-center justify-between border-b border-hairline px-2 py-1">
         <span className="text-[10px] font-semibold uppercase tracking-wider text-ink-soft">
           Operations

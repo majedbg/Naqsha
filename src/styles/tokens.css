@@ -127,45 +127,6 @@
   color-scheme: dark;
 }
 
-/* === ITP Camp kit theme skin (issue #18, Lane C / C9) ===
- *
- * A named THIRD theme beyond light/dark, applied by the ITP Camp kit mode
- * (data-theme="itp-camp"). It re-skins the chrome tokens with the plan-extracted
- * ITP Camp palette (flagged for review, not yet formally signed off):
- *   lime/chartreuse accent #B5E33C · deep teal/slate #2E5C6E · black #000000 ·
- *   soft sage background #D9E2DD · white cards #FFFFFF.
- *
- * Active control = lime fill + black border + black text (the saffron token —
- * the load-bearing interactive fill — becomes lime, and ink becomes black so
- * borders/text read black against lime). Colors are hex so the Tailwind
- * `oklch(from var(--token) …)` alpha helper still resolves (e.g. bg-paper/60).
- * The raw palette is also exposed as --itp-* tokens for kit-specific surfaces.
- */
-[data-theme="itp-camp"] {
-  /* Raw kit palette tokens. */
-  --itp-lime:  #B5E33C;
-  --itp-teal:  #2E5C6E;
-  --itp-black: #000000;
-  --itp-sage:  #D9E2DD;
-  --itp-white: #FFFFFF;
-
-  /* Chrome remap — the UI reskins to the ITP Camp palette. */
-  --paper:        #D9E2DD;   /* soft sage ground */
-  --paper-warm:   #FFFFFF;   /* white cards / inset surfaces */
-  --ink:          #000000;   /* black text + borders */
-  --ink-soft:     #2E5C6E;   /* deep teal secondary text */
-  --hairline:     #2E5C6E;   /* teal hairlines read on sage */
-  --muted:        #C7D4CE;   /* dimmed sage hover wash */
-  --saffron:      #B5E33C;   /* load-bearing interactive fill → lime */
-  --saffron-hover: #A6D62E;  /* slightly deeper lime on hover */
-  --violet:       #2E5C6E;   /* focus ring → deep teal (no violet in kit) */
-  --violet-hover: #26505F;
-
-  --tone-mild:    #B5E33C;
-
-  color-scheme: light;
-}
-
 /* === Reduced motion — rotation and fades collapse to instant transitions ===
  *
  * The slider thumb's square → diamond rotation becomes instantaneous (no

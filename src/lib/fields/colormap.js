@@ -18,6 +18,13 @@ const NEG = { r: 17, g: 109, b: 138 }; // sapphire-teal
 const MID = { r: 244, g: 238, b: 224 }; // parchment
 const POS = { r: 178, g: 42, b: 92 }; // garnet-magenta
 
+// CSS color strings for the three diverging anchors, so UI controls (e.g. the
+// modulation range slider's gradient track) match the field plot exactly without
+// hardcoding literal red/white/blue.
+export const ANCHOR_POS = `rgb(${POS.r}, ${POS.g}, ${POS.b})`; // garnet (+1)
+export const ANCHOR_MID = `rgb(${MID.r}, ${MID.g}, ${MID.b})`; // parchment (0)
+export const ANCHOR_NEG = `rgb(${NEG.r}, ${NEG.g}, ${NEG.b})`; // sapphire (−1)
+
 function lerp(a, b, t) {
   return a + (b - a) * t;
 }

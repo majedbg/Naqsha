@@ -1,6 +1,8 @@
 import { Pattern } from './drawingContext';
 import { applySymmetryDraw } from './symmetryUtils';
 import { warpDisplacement } from '../fields/warp';
+import { makeSimplex } from '../fields/simplexNoise';
+import { fbm } from '../fields/fbm';
 
 /**
  * TopographicContours — nested iso-contour loops of a seeded noise field, drawn
@@ -72,36 +74,16 @@ export default class TopographicContours extends Pattern {
     const baseFreq = noiseScale / longest;
 
     // fBm sampler. Returns an UNnormalized fBm value (~0..1-ish but not exact);
-    // we normalize the whole field afterward by its sampled extent. All ctx.noise
-    // calls flow through here so the call ORDER is a pure function of the grid +
-    // octaves + warp (never of `levels`).
-    const fbm = (wx, wy) => {
-      let wpx = wx;
-      let wpy = wy;
-      // Domain warp: displace the sample point by a low-frequency noise lookup.
-      // warp=0 → no displacement, but we still issue the same number of noise
-      // calls per grid point regardless (calls are unconditional below only when
-      // warp>0, so the call count is stable across a single generate run).
-      if (warp > 0) {
-        const wf = baseFreq * 0.5;
-        const wnx = ctx.noise(wx * wf + 11.3, wy * wf + 4.7);
-        const wny = ctx.noise(wx * wf + 31.7, wy * wf + 71.1);
-        const amp = warp * longest * 0.25;
-        wpx = wx + (wnx - 0.5) * 2 * amp;
-        wpy = wy + (wny - 0.5) * 2 * amp;
-      }
-      let sum = 0;
-      let amp = 1;
-      let freq = baseFreq;
-      let norm = 0;
-      for (let o = 0; o < octCount; o++) {
-        sum += amp * ctx.noise(wpx * freq + 100, wpy * freq + 100);
-        norm += amp;
-        freq *= 2;
-        amp *= 0.5;
-      }
-      return sum / norm; // normalized by amplitude sum → roughly 0..1
-    };
+    // we normalize the whole field afterward by its sampled extent. The noise
+    // source is now a seeded inline Simplex (shared with the topographicField
+    // producer) rather than ctx.noise — an INTENTIONAL one-time appearance
+    // change (PRD D2) so the guide field's iso-lines exactly track the drawn
+    // contours. The octave + domain-warp math is unchanged; it lives in the
+    // shared `fbm()` helper and is a pure function of the grid + octaves + warp
+    // (never of `levels`). One simplex instance is built per generate from seed.
+    const noise2D = makeSimplex(seed);
+    const fbmAt = (wx, wy) =>
+      fbm(noise2D, wx, wy, { baseFreq, octaves: octCount, warp, longest });
 
     // --- 1. Build the full field up front (all noise calls happen here) -------
     const field = new Float64Array(nx * ny);
@@ -111,7 +93,7 @@ export default class TopographicContours extends Pattern {
       const wy = -halfH + j * cellH;
       for (let i = 0; i < nx; i++) {
         const wx = -halfW + i * cellW;
-        const v = fbm(wx, wy);
+        const v = fbmAt(wx, wy);
         field[j * nx + i] = v;
         if (v < fMin) fMin = v;
         if (v > fMax) fMax = v;

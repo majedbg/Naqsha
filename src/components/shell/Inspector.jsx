@@ -43,6 +43,7 @@ import {
 import FieldOverlay from "../FieldOverlay";
 import ShapeCurve from "../ui/ShapeCurve";
 import { channelForTarget } from "../../lib/fields/channelConsumers";
+import { ANCHOR_POS, ANCHOR_MID, ANCHOR_NEG } from "../../lib/fields/colormap";
 
 // Variable line-weight UI (issue #17, C8). A per-layer "advanced" toggle + bucket
 // count (N) control, shown ONLY for weight-varying patterns on a profile that
@@ -120,14 +121,15 @@ function VariableWeightControls({ layer, profileId, onVariableWeightChange }) {
 // canProduceField) — that layer is the GUIDE and owns a `modulator` device that
 // maps OUT to target layers. Layout:
 //   • a heatmap "waveform" readout (the guide's field) at top,
+//   • a two-thumb range slider (device output range) beside the readout,
 //   • device controls (offset / shape / steps) shared by all maps,
-//   • a Targets list — one row per map (name, amount, polarity, unmap) plus an
+//   • a Targets list — one row per map (name, amount, unmap) plus an
 //     "+ Add target" control.
 //
 // Stored schema (on the GUIDE layer):
 //   layer.modulator = {
-//     offset, shape, steps,
-//     maps: [ { targetLayerId, channel:'density', amount, polarity } ]
+//     offset, shape, steps, range: { min, max },
+//     maps: [ { targetLayerId, channel:'density', amount } ]
 //   }
 //
 // Every edit commits through the SAME onUpdateLayer path the rest of the
@@ -145,13 +147,25 @@ function ModulatorDevice({ layer, layers, onUpdateLayer }) {
   const shape = current.shape ?? 0;
   const steps = current.steps ?? 0;
   const maps = Array.isArray(current.maps) ? current.maps : [];
+  // Device-level output range (affine remap of the field's [-1,1] band), replaces
+  // per-map polarity. Default {min:-1,max:1} = identity (attract + repel).
+  const range = {
+    min: current.range?.min ?? -1,
+    max: current.range?.max ?? 1,
+  };
 
-  // Rebuild the whole modulator from the current one on every write.
+  // Rebuild the whole modulator from the current one on every write. `range` MUST
+  // be included or writes that omit it would drop the device range.
   const patchModulator = (patch) => {
     onUpdateLayer(layer.id, {
-      modulator: { offset, shape, steps, maps, ...patch },
+      modulator: { offset, shape, steps, maps, range, ...patch },
     });
   };
+  // Write the full {min,max}, clamping so min ≤ max.
+  const setRangeMin = (v) =>
+    patchModulator({ range: { min: Math.min(v, range.max), max: range.max } });
+  const setRangeMax = (v) =>
+    patchModulator({ range: { min: range.min, max: Math.max(v, range.min) } });
   const setMaps = (nextMaps) => patchModulator({ maps: nextMaps });
 
   // Candidate targets: any layer that consumes a modulation channel —
@@ -180,10 +194,7 @@ function ModulatorDevice({ layer, layers, onUpdateLayer }) {
     // warp). Per-map Amount is the only warp control.
     const target = (layers || []).find((l) => l.id === targetLayerId);
     const channel = channelForTarget(target?.patternType) ?? "density";
-    setMaps([
-      ...maps,
-      { targetLayerId, channel, amount: 1, polarity: "bipolar" },
-    ]);
+    setMaps([...maps, { targetLayerId, channel, amount: 1 }]);
   };
   const removeMap = (targetLayerId) => {
     setMaps(maps.filter((m) => m.targetLayerId !== targetLayerId));
@@ -205,19 +216,72 @@ function ModulatorDevice({ layer, layers, onUpdateLayer }) {
         Modulator
       </h3>
 
-      {/* Field "waveform" readout — the guide's scalar field. The box is
-          relatively-positioned so FieldOverlay (absolute inset-0) fills it. */}
-      <div
-        className="relative overflow-hidden rounded-cell border border-hairline bg-paper"
-        style={{ width: 140, height: 140 }}
-        data-testid="modulator-display"
-      >
-        <FieldOverlay
-          field={fieldForLayer(layer)}
-          canvasW={140}
-          canvasH={140}
-          opacity={1}
-        />
+      {/* Range slider (left) + field plot (right). The two-thumb vertical slider
+          sets modulator.range = {min,max}; the field plot recolors live as the
+          thumbs move (its values are remapped through the same range). */}
+      <div className="flex items-stretch gap-2">
+        {/* Two-thumb vertical range slider, spanning −1…1. Implemented as two
+            native range inputs (testable via fireEvent.change) overlaid on a
+            gradient track that matches the field plot's colormap anchors. */}
+        <div
+          className="flex shrink-0 flex-col items-center justify-between text-[9px] text-ink-soft"
+          data-testid="modulator-range"
+        >
+          <span>max</span>
+          <div
+            className="relative my-1 w-4 flex-1 rounded-xs border border-hairline"
+            style={{
+              background: `linear-gradient(to top, ${ANCHOR_NEG}, ${ANCHOR_MID} 50%, ${ANCHOR_POS})`,
+            }}
+          >
+            <span className="pointer-events-none absolute left-full top-1/2 ml-1 -translate-y-1/2 whitespace-nowrap text-[8px] text-gray-400">
+              neutral
+            </span>
+            {/* Vertical inputs: rotated so the visual top = +1. min/max bounds let
+                jsdom fireEvent.change drive them. */}
+            <input
+              type="range"
+              aria-label="Modulation range max"
+              data-testid="modulator-range-max"
+              min={-1}
+              max={1}
+              step={0.05}
+              value={range.max}
+              onChange={(e) => setRangeMax(Number(e.target.value))}
+              className="absolute inset-0 h-full w-full cursor-pointer appearance-none bg-transparent accent-violet"
+              style={{ writingMode: "vertical-lr", direction: "rtl" }}
+            />
+            <input
+              type="range"
+              aria-label="Modulation range min"
+              data-testid="modulator-range-min"
+              min={-1}
+              max={1}
+              step={0.05}
+              value={range.min}
+              onChange={(e) => setRangeMin(Number(e.target.value))}
+              className="absolute inset-0 h-full w-full cursor-pointer appearance-none bg-transparent accent-violet"
+              style={{ writingMode: "vertical-lr", direction: "rtl" }}
+            />
+          </div>
+          <span>min</span>
+        </div>
+
+        {/* Field "waveform" readout — the guide's scalar field. The box is
+            relatively-positioned so FieldOverlay (absolute inset-0) fills it. */}
+        <div
+          className="relative overflow-hidden rounded-cell border border-hairline bg-paper"
+          style={{ width: 140, height: 140 }}
+          data-testid="modulator-display"
+        >
+          <FieldOverlay
+            field={fieldForLayer(layer)}
+            canvasW={140}
+            canvasH={140}
+            opacity={1}
+            range={range}
+          />
+        </div>
       </div>
 
       {/* Device controls — offset / shape / steps, shared across all maps. */}
@@ -315,34 +379,6 @@ function ModulatorDevice({ layer, layers, onUpdateLayer }) {
                 {(m.amount ?? 1).toFixed(1)}
               </span>
             </label>
-
-            <div
-              className="flex items-center gap-1 text-[11px]"
-              role="group"
-              aria-label="Polarity"
-            >
-              <span className="w-12 whitespace-nowrap text-ink-soft">Polarity</span>
-              {["bipolar", "unipolar"].map((pol) => {
-                const active = (m.polarity ?? "bipolar") === pol;
-                return (
-                  <button
-                    key={pol}
-                    type="button"
-                    data-testid={`modulator-polarity-${pol}`}
-                    aria-pressed={active}
-                    onClick={() => patchMap(m.targetLayerId, { polarity: pol })}
-                    className={[
-                      "flex-1 rounded-xs border px-1 py-0.5 capitalize",
-                      active
-                        ? "border-violet bg-violet/10 text-ink"
-                        : "border-hairline text-ink-soft hover:text-ink",
-                    ].join(" ")}
-                  >
-                    {pol}
-                  </button>
-                );
-              })}
-            </div>
           </div>
         ))}
 

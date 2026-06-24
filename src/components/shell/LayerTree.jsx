@@ -25,7 +25,9 @@ import OperationPicker from "./OperationPicker";
 import RowMenu from "./RowMenu";
 import ConfirmDialog from "../ui/ConfirmDialog";
 import PanelHeader from "./PanelHeader";
+import ModulationRail from "./ModulationRail";
 import { canAddPanel, layersForPanel } from "../../lib/panels";
+import { buildModulationGraph } from "../../lib/fields/modulationGraph";
 
 // Human label for a pattern type (falls back to the raw id for AI / extras /
 // import layers not in the static table).
@@ -173,6 +175,11 @@ function LayerRow({
   // Drag-assign wiring (grouped tier only). Optional → undefined in flat mode so
   // React omits the attributes and the row stays byte-identical there.
   draggable, onDragStartRow,
+  // Modulation rail (WI-8) registers this row's DOM node so the rail can measure
+  // its vertical center. Optional → no-op when the rail isn't mounted.
+  rowRef,
+  // Connection-badge counts (WI-9): outgoing (→N) and incoming (←N) edge counts.
+  outCount = 0, inCount = 0,
 }) {
   const move = (to) => {
     if (to < 0 || to >= total) return;
@@ -223,6 +230,7 @@ function LayerRow({
 
   return (
     <div
+      ref={rowRef}
       data-testid="layer-row"
       role="button"
       tabIndex={0}
@@ -293,6 +301,39 @@ function LayerRow({
           onDoubleClick={(e) => { e.stopPropagation(); beginEdit(); }}
         >
           {layer.name}
+        </span>
+      )}
+
+      {/* Modulation connection badges (WI-9, PRD D6): →N drives N targets;
+          ←N driven by N guides. Each is omitted when its count is 0 so a row
+          with no relationship stays clean. A target driven by >1 guide also
+          surfaces the "N sources · 1 active" stacked affordance (forward-compat
+          with Phase-2b multi-source compute — today only the first is active). */}
+      {outCount > 0 && (
+        <span
+          data-testid="badge-out"
+          title={`Drives ${outCount} ${outCount === 1 ? "layer" : "layers"}`}
+          className="shrink-0 rounded-xs border border-hairline bg-paper-warm px-1 py-0.5 text-[9px] tabular-nums text-ink-soft"
+        >
+          →{outCount}
+        </span>
+      )}
+      {inCount > 0 && (
+        <span
+          data-testid="badge-in"
+          title={`Driven by ${inCount} ${inCount === 1 ? "guide" : "guides"}`}
+          className="shrink-0 rounded-xs border border-hairline bg-paper-warm px-1 py-0.5 text-[9px] tabular-nums text-ink-soft"
+        >
+          ←{inCount}
+        </span>
+      )}
+      {inCount > 1 && (
+        <span
+          data-testid="stacked-sources"
+          title={`${inCount} guides modulate this layer; only the first is active today`}
+          className="shrink-0 rounded-xs bg-muted px-1 py-0.5 text-[9px] text-ink-soft"
+        >
+          {inCount} sources · 1 active
         </span>
       )}
 
@@ -440,6 +481,23 @@ export default function LayerTree({
   // One row menu open at a time: the tree owns the open-menu layer id (spec §4).
   const [openMenuId, setOpenMenuId] = useState(null);
 
+  // Modulation relationship graph (WI-7) → drives the git-graph rail (WI-8) and
+  // the per-row connection badges (WI-9). Recomputed each render from `layers`;
+  // cheap (pure array walk). The rail only mounts / the gutter only reserves
+  // space when there is at least one edge.
+  const graph = buildModulationGraph(layers);
+  const hasEdges = graph.edges.length > 0;
+  // Stable Map<layerId, HTMLElement> the rail reads to measure row centers. A
+  // callback ref per row writes/deletes its node; the Map identity is preserved
+  // across renders so the rail always sees the live nodes.
+  const rowRefsRef = useRef(null);
+  if (rowRefsRef.current === null) rowRefsRef.current = new Map();
+  const rowRefs = rowRefsRef.current;
+  const registerRow = (id) => (node) => {
+    if (node) rowRefs.set(id, node);
+    else rowRefs.delete(id);
+  };
+
   // Grouped tier (WI-5). The tree OWNS collapsed state (a Set of panelIds that
   // persists across re-renders) and the single open substrate editor id (mirrors
   // openMenuId's one-at-a-time pattern). Grouped tier active iff panels present.
@@ -483,6 +541,10 @@ export default function LayerTree({
     menuOpen: openMenuId === layer.id,
     onRequestMenu: (id) => setOpenMenuId((cur) => (cur === id ? null : id)),
     onCloseMenu: () => setOpenMenuId(null),
+    // Modulation rail + badges (WI-8/WI-9).
+    rowRef: registerRow(layer.id),
+    outCount: graph.byGuide.get(layer.id)?.length ?? 0,
+    inCount: graph.byTarget.get(layer.id)?.length ?? 0,
   });
 
   return (
@@ -565,8 +627,23 @@ export default function LayerTree({
         </div>
       )}
 
-      {/* Layer rows (top = front, matching the legacy panel's ordering). */}
-      <div className="flex-1 overflow-auto p-1.5 space-y-0.5">
+      {/* Layer rows (top = front, matching the legacy panel's ordering).
+          `relative` anchors the absolutely-positioned ModulationRail gutter; the
+          18px left padding reserves the rail's lane — but ONLY when there are
+          edges, so a document with no modulation looks byte-identical. */}
+      <div
+        className={`relative flex-1 overflow-auto p-1.5 space-y-0.5${
+          hasEdges ? " pl-[18px]" : ""
+        }`}
+      >
+        {/* The git-graph rail spans the whole rows container (both tiers) so a
+            guide in one panel and a target in another connect through the one
+            continuous gutter (PRD D6). Renders nothing when there are no edges. */}
+        <ModulationRail
+          layers={layers}
+          selectedLayerId={selectedLayerId}
+          rowRefs={rowRefs}
+        />
         {grouped ? (
           // Grouped tier (WI-5): panels sorted by order ascending, each header
           // followed (unless collapsed) by its layers via layersForPanel. Rows

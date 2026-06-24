@@ -22,16 +22,31 @@ export function shapeEase(v, shape) {
   return Math.sign(v) * Math.pow(Math.abs(v), p);
 }
 
+/**
+ * Affine-remap the field's nominal [-1,1] band onto a device-level output
+ * range [min,max]. `[-1,1]` is identity; `[0,1]` is attract-only (output ≥ 0);
+ * `[-1,0]` is repel-only (output ≤ 0). Replaces the old per-map polarity toggle.
+ * @param {number} s - signed field value, normally in [-1,1]
+ * @param {{min:number,max:number}} [range] - floats in [-1,1], min ≤ max
+ * @returns {number}
+ */
+export function applyRange(s, range = { min: -1, max: 1 }) {
+  const min = range?.min ?? -1;
+  const max = range?.max ?? 1;
+  return min + ((s + 1) / 2) * (max - min);
+}
+
 export function modulationTransfer(s, cfg = {}) {
   const {
     amount = 1,
     offset = 0,
-    polarity = "bipolar",
+    range = { min: -1, max: 1 },
     shape = 0,
     steps = 0,
   } = cfg;
-  let v = s + offset;
-  if (polarity === "unipolar") v = v * 0.5 + 0.5;
+  // Transfer chain: field band → attract/repel range → bias → ease → terrace → scale.
+  let v = applyRange(s, range); // field's [-1,1] → [min,max] (replaces polarity)
+  v = v + offset;
   v = shapeEase(v, shape);
   if (steps > 0) v = Math.round(v * steps) / steps; // terrace into bands
   return amount * v;

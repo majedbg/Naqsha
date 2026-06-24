@@ -16,8 +16,8 @@ Branch: `feat/inspector-dock` (off `main` @ `a98da9d`). One line per WI/phase.
 
 | WI | Status | Commit | Test delta | Notes |
 |----|--------|--------|-----------|-------|
-| WI-1 useInspectorDock | pending | — | — | — |
-| WI-2 usePanelHeight | pending | — | — | — |
+| WI-1 useInspectorDock | ✅ green | `dfb2735` | +18 (1715→1733) | imperative writes, no effect; portrait→bottom default; saved pref wins. Verified independently: suite+build green, no mobile touched. |
+| WI-2 usePanelHeight | ✅ green | `061f77e` | +14 (1733→1747) | Y-axis twin of usePanelHeight; top-edge sign `clamp(startH-(clientY-startY))` (drag up grows); persist on mouseup+dblclick only. Verified: suite green, no mobile. |
 | WI-3 InspectorShelf | pending | — | — | — |
 | WI-4 AppShell restructure | pending | — | — | — |
 | WI-5 header dock-toggle/chevron | pending | — | — | — |

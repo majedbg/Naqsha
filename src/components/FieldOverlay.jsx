@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { signedColor } from "../lib/fields/colormap";
+import { applyRange } from "../lib/fields/modulation";
 
 /**
  * FieldOverlay — read-only heatmap of a ScalarField, composited over the p5
@@ -19,8 +20,17 @@ import { signedColor } from "../lib/fields/colormap";
  * @param {number} props.canvasW
  * @param {number} props.canvasH
  * @param {number} [props.opacity=0.85] - overall overlay opacity, 0–1
+ * @param {{min:number,max:number}} [props.range] - device-level output range; each
+ *   sampled value is affine-remapped through it before coloring, so the heatmap
+ *   reflects attract-only ({0,1}, loses blue) / repel-only ({-1,0}, loses red).
  */
-export default function FieldOverlay({ field, canvasW, canvasH, opacity = 0.85 }) {
+export default function FieldOverlay({
+  field,
+  canvasW,
+  canvasH,
+  opacity = 0.85,
+  range = { min: -1, max: 1 },
+}) {
   const ref = useRef(null);
 
   useEffect(() => {
@@ -37,7 +47,7 @@ export default function FieldOverlay({ field, canvasW, canvasH, opacity = 0.85 }
     const img = tctx.createImageData(nx, ny);
     for (let j = 0; j < ny; j++) {
       for (let i = 0; i < nx; i++) {
-        const c = signedColor(field.signedAt(i, j));
+        const c = signedColor(applyRange(field.signedAt(i, j), range));
         const o = (j * nx + i) * 4;
         img.data[o] = c.r;
         img.data[o + 1] = c.g;
@@ -55,7 +65,9 @@ export default function FieldOverlay({ field, canvasW, canvasH, opacity = 0.85 }
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = "high";
     ctx.drawImage(tmp, 0, 0, canvasW, canvasH);
-  }, [field, canvasW, canvasH, opacity]);
+    // Depend on range.min/max (not the object identity) so the heatmap recolors
+    // as the range thumbs move, without re-running on unrelated re-renders.
+  }, [field, canvasW, canvasH, opacity, range.min, range.max]);
 
   return (
     <canvas

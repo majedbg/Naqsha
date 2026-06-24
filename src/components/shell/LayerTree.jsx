@@ -304,6 +304,39 @@ function LayerRow({
         </span>
       )}
 
+      {/* Modulation connection badges (WI-9, PRD D6): →N drives N targets;
+          ←N driven by N guides. Each is omitted when its count is 0 so a row
+          with no relationship stays clean. A target driven by >1 guide also
+          surfaces the "N sources · 1 active" stacked affordance (forward-compat
+          with Phase-2b multi-source compute — today only the first is active). */}
+      {outCount > 0 && (
+        <span
+          data-testid="badge-out"
+          title={`Drives ${outCount} ${outCount === 1 ? "layer" : "layers"}`}
+          className="shrink-0 rounded-xs border border-hairline bg-paper-warm px-1 py-0.5 text-[9px] tabular-nums text-ink-soft"
+        >
+          →{outCount}
+        </span>
+      )}
+      {inCount > 0 && (
+        <span
+          data-testid="badge-in"
+          title={`Driven by ${inCount} ${inCount === 1 ? "guide" : "guides"}`}
+          className="shrink-0 rounded-xs border border-hairline bg-paper-warm px-1 py-0.5 text-[9px] tabular-nums text-ink-soft"
+        >
+          ←{inCount}
+        </span>
+      )}
+      {inCount > 1 && (
+        <span
+          data-testid="stacked-sources"
+          title={`${inCount} guides modulate this layer; only the first is active today`}
+          className="shrink-0 rounded-xs bg-muted px-1 py-0.5 text-[9px] text-ink-soft"
+        >
+          {inCount} sources · 1 active
+        </span>
+      )}
+
       {/* Operation chip (op-swatch) */}
       <OperationChip layer={layer} operations={operations} onAssignOperation={onAssignOperation} />
 

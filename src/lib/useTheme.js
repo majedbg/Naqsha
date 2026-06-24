@@ -2,10 +2,9 @@ import { useCallback, useState } from 'react';
 
 const STORAGE_KEY = 'sonoform-theme';
 
-// The themes Naqsha knows. 'light'/'dark' are the base pair; 'itp-camp' is the
-// named kit theme skin (issue #18) applied by the ITP Camp kit mode. Anything
-// outside this set is coerced to 'light' (paper is the anchor).
-const KNOWN_THEMES = new Set(['light', 'dark', 'itp-camp']);
+// The themes Naqsha knows. 'light'/'dark' are the base pair. Anything outside
+// this set is coerced to 'light' (paper is the anchor).
+const KNOWN_THEMES = new Set(['light', 'dark']);
 
 function readTheme() {
   if (typeof document === 'undefined') return 'light';

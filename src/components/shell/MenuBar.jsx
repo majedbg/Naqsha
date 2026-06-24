@@ -119,15 +119,6 @@ export default function MenuBar({
   onRedo,
   onToggleOverlays,
   overlaysOn = false,
-  // ITP Camp kit mode (#18) as a View toggle. `kitModeAvailable` gates it (the
-  // kit is Laser-only; the OperationsPanel control is gated the same way), so it
-  // renders disabled on non-laser profiles. `onToggleKitMode` enters/exits;
-  // `kitModeOn` reflects the live kit state so the checkmark stays in sync with
-  // the OperationsPanel control (both drive the same kitMode).
-  onToggleKitMode,
-  kitModeOn = false,
-  kitModeAvailable = false,
-  kitModeName = "ITP Camp",
   onGenerateAI,
   buildShareState,
   // Admin entry point (relocated from the now-removed studio TopNav). `showAdmin`
@@ -204,17 +195,6 @@ export default function MenuBar({
           checked: overlaysOn,
           onSelect: onToggleOverlays,
           disabled: !onToggleOverlays,
-        },
-        { separator: true },
-        // ITP Camp mode (#18) — a second entry point to the kit lifecycle (the
-        // OperationsPanel control is the other). Laser-gated: disabled unless
-        // `kitModeAvailable`, since the kit auto-exits off a laser profile.
-        {
-          label: `${kitModeName} mode`,
-          checkable: true,
-          checked: kitModeOn,
-          onSelect: onToggleKitMode,
-          disabled: !onToggleKitMode || !kitModeAvailable,
         },
         // Dock Properties to Bottom (WI-6) — checkable, in sync with the live
         // dockPosition. Only present when a dock provider is mounted (pro shell);

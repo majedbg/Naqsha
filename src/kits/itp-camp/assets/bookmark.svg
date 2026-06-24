@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<!-- ITP Camp bookmark — slim 40 × 150 mm rounded strip with a tassel hole near
-     the top. Outline and tassel hole are SEPARATE subpaths. viewBox = mm. -->
-<svg xmlns="http://www.w3.org/2000/svg" width="40mm" height="150mm" viewBox="0 0 40 150">
-  <path fill="none" stroke="#000000" stroke-width="0.5"
-        d="M 6 0 L 34 0 Q 40 0 40 6 L 40 144 Q 40 150 34 150 L 6 150 Q 0 150 0 144 L 0 6 Q 0 0 6 0 Z"/>
-  <path fill="none" stroke="#000000" stroke-width="0.5"
-        d="M 17 8 a 3 3 0 1 0 6 0 a 3 3 0 1 0 -6 0 Z"/>
-</svg>

@@ -1,8 +1,8 @@
-// Click-to-place geometry for imported / kit assets.
+// Click-to-place geometry for imported assets.
 //
-// A freshly imported SVG draws at its native path coordinates, which for the
-// ITP-Camp kit assets sit at the top-left (~0,0) of the canvas — small and hard
-// to grab. Placement mode lets the user drop the asset under the cursor instead:
+// A freshly imported SVG draws at its native path coordinates, which often sit
+// at the top-left (~0,0) of the canvas — small and hard to grab. Placement mode
+// lets the user drop the asset under the cursor instead:
 // we measure the asset's drawn extent, then translate it so its content centre
 // lands at the click point.
 //

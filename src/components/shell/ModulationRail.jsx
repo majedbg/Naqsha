@@ -59,6 +59,18 @@ export default function ModulationRail({ layers, selectedLayerId, rowRefs }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [layers, selectedLayerId]);
 
+  // Re-measure when the rows container changes height — collapsing/expanding a
+  // panel reflows rows WITHOUT changing `layers` identity, which would otherwise
+  // leave edges at stale y-centers. ResizeObserver is absent in jsdom, so this
+  // is a browser-only refinement (guarded → no-op under test).
+  useLayoutEffect(() => {
+    const el = containerRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => setTick((t) => t + 1));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   if (graph.edges.length === 0) return null;
 
   const container = containerRef.current;

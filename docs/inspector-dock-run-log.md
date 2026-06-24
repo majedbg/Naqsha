@@ -24,4 +24,21 @@ Branch: `feat/inspector-dock` (off `main` @ `a98da9d`). One line per WI/phase.
 | WI-5 header dock-toggle/chevron | ✅ green | `efcb934` | +5 (1767→1772) | DockToggle inside portaled Inspector (consumes context) → visible both modes, right-dock shell byte-unchanged. Toggle names destination; chevron bottom-only (mirrors PanelHeader). Null-safe (no provider → null). Minor: in empty-state branch the header centers rather than top-right — cosmetic. |
 | WI-6 menu/Studio/shortcut | ✅ green | `bacc1e7` | +10 (1772→1782) | MenuBar (portaled) consumes context → checkable "Dock Properties to Bottom" View item. Shortcut Ctrl/Cmd+Alt+P in useInspectorDock (one guarded window listener, e.code KeyP, ignores text-entry, removed on unmount). Menu+header+shortcut converge on one hook's toggleDock. ZERO Studio.jsx edits (advisor: portal-context + listener-in-hook). |
 | Browser proof (§0) | ✅ MET | (live) | — | Playwright @ 768×1024 portrait, cleared storage: smart-default → **bottom**; shelf full-width 768px, height 280; `inspector-shelf-grid` resolved to **2 columns × 360.625px** (≥240 floor); 5 ParamGroups columnized; 5 range sliders render; **no horizontal overflow**; DockToggle header (chevron+glyph) present; collapse → 36px bar observed. Visual: STRUCTURE \| STROKE columns, Pad2D intact, sliders full-width. The load-bearing risk is met live, not assumed. |
-| Phase D docs | ✅ done | `<this commit>` | — | `docs/inspector-dock-FEATURE.md` written (what/why, usage, architecture + portal-context insight + ASCII of both layouts, persistence table, file map, manual QA incl. the live 768px proof, deferred list). |
+| Phase D docs | ✅ done | `f9ecb09` | — | `docs/inspector-dock-FEATURE.md` written (what/why, usage, architecture + portal-context insight + ASCII of both layouts, persistence table, file map, manual QA incl. the live 768px proof, deferred list). |
+
+## Post-build audit notes
+
+- **Stray localStorage values during browser verify — NOT a bug.** Mid-session Playwright showed
+  `ui.inspectorDockCollapsed="true"` + `ui.inspectorDockHeight="428"` (values that require a chevron
+  click + a drag-end). Audited every `persist()` call site: in BOTH hooks persistence is interaction-only
+  — `usePanelHeight` persists only in the `mouseup` handler + `onDoubleClick`; `useInspectorDock` only in
+  `setDockPosition`/`toggleDock`/`toggleCollapsed`. The only effects are listener cleanup + the keydown
+  handler; NO mount/effect/render write path exists (and WI-1/WI-2 unit-test no-write-on-mount). The values
+  were a Playwright harness artifact (a stray synthesized event on the resize handle/chevron), cleared
+  before the canonical proof.
+- **"Byte-unchanged (rule 6)" scope:** holds at the SHELL/column level (the `w-72` right column — what the
+  `AppShell.dock` regression test guards). The right-dock *inspector content* does gain `<DockToggle/>` (spec
+  Q4 wants the header icon in both modes) — that is intended, not a rule-6 violation.
+- **Pre-existing suite flake (not ours):** `AdminPage.test.jsx` (`await findByText` ~1s timeout under
+  parallel load) flaked once during WI-3 and WI-4b verification; passes in isolation + on reruns; unrelated
+  to this feature. A future CI red there is not from this branch.

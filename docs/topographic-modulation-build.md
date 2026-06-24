@@ -113,6 +113,13 @@ relationship routes the gutter.
 
 ---
 
+## Build status
+
+- **Slice 1 (WI-1…WI-6): COMPLETE — 2026-06-24.** Six green commits (`dc0b37f` → `ceaec4b`)
+  on `feat/topographic-modulation`. Full suite **1753 pass / 0 fail / 46 skipped**;
+  `npm run build` succeeds (pre-existing chunk-size warning only). Browser-verify pending.
+- **Slice 2 (WI-7…WI-9): not started.**
+
 ## Test/verify commands
 - `npm test` — vitest unit/component suite.
 - `npm run build` — production build must succeed.

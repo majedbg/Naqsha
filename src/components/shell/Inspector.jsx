@@ -41,6 +41,7 @@ import {
 } from "../../lib/fields/fieldRegistry";
 import FieldOverlay from "../FieldOverlay";
 import ShapeCurve from "../ui/ShapeCurve";
+import { channelForTarget } from "../../lib/fields/channelConsumers";
 
 // Variable line-weight UI (issue #17, C8). A per-layer "advanced" toggle + bucket
 // count (N) control, shown ONLY for weight-varying patterns on a profile that
@@ -152,13 +153,15 @@ function ModulatorDevice({ layer, layers, onUpdateLayer }) {
   };
   const setMaps = (nextMaps) => patchModulator({ maps: nextMaps });
 
-  // Candidate targets: layers modulatable on the 'density' channel — grainfield
-  // layers, excluding the guide itself and any already-mapped target.
+  // Candidate targets: any layer that consumes a modulation channel —
+  // channelForTarget is the single source of truth (grainfield→density;
+  // chladni/topographic/flowfield→warp). Excludes the guide itself and any
+  // already-mapped target.
   const mapped = new Set(maps.map((m) => m.targetLayerId));
   const candidates = (layers || []).filter(
     (l) =>
       l.id !== layer.id &&
-      l.patternType === "grainfield" &&
+      channelForTarget(l.patternType) !== null &&
       !mapped.has(l.id)
   );
 
@@ -169,9 +172,16 @@ function ModulatorDevice({ layer, layers, onUpdateLayer }) {
 
   const addTarget = (targetLayerId) => {
     if (!targetLayerId) return;
+    // Channel is derived from the target's pattern type (single source of
+    // truth): grainfield→'density', chladni/topographic/flowfield→'warp'.
+    // NOTE: warp targets are AMOUNT-ONLY in v1 — the device-level Shape/Steps/
+    // Offset controls do NOT affect them (the transfer chain is deferred for
+    // warp). Per-map Amount is the only warp control.
+    const target = (layers || []).find((l) => l.id === targetLayerId);
+    const channel = channelForTarget(target?.patternType) ?? "density";
     setMaps([
       ...maps,
-      { targetLayerId, channel: "density", amount: 1, polarity: "bipolar" },
+      { targetLayerId, channel, amount: 1, polarity: "bipolar" },
     ]);
   };
   const removeMap = (targetLayerId) => {

@@ -1,5 +1,6 @@
 import { applySymmetryDraw } from './symmetryUtils';
 import { Pattern } from './drawingContext';
+import { warpDisplacement } from '../fields/warp';
 
 export default class FlowField extends Pattern {
   generate(ctx, seed, params, canvasW, canvasH, color, opacity) {
@@ -55,6 +56,27 @@ export default class FlowField extends Pattern {
 
       if (points.length > 1) {
         trails.push(points);
+      }
+    }
+
+    // --- WARP modulation (geometry-build time) --------------------------------
+    // A guide field supplied via params.modulation (channel:'warp') displaces
+    // the final particle-trail vertices along the field gradient, AFTER the
+    // trail-build loop and BEFORE both the SVG-path build and drawBase, so canvas
+    // and SVG warp identically. Unit-domain mapping uses canvasW/2 — NOT the
+    // local halfW/halfH, which are scaled by patternScale. When warpMod is null
+    // the trails are untouched → byte-identical to the unmodulated path.
+    const mod = params?.modulation;
+    const warpMod = mod && mod.channel === 'warp' && mod.field ? mod : null;
+    if (warpMod) {
+      for (const trail of trails) {
+        for (const pt of trail) {
+          const u = (pt.x + canvasW / 2) / canvasW;
+          const v = (pt.y + canvasH / 2) / canvasH;
+          const { dx, dy } = warpDisplacement(warpMod.field, u, v, warpMod);
+          pt.x += dx;
+          pt.y += dy;
+        }
       }
     }
 

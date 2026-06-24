@@ -17,6 +17,7 @@ import { useEffect, useRef, useState } from "react";
 import ShareLinkButton from "../ShareLinkButton";
 import ThemeToggle from "../ui/ThemeToggle";
 import AuthButton from "../AuthButton";
+import { useInspectorDockContext } from "./inspectorDockContext";
 
 // One top-level menu (File, Edit, …) as a click-to-open dropdown. Closes on
 // outside click and on Escape, and after any item is chosen.
@@ -139,6 +140,12 @@ export default function MenuBar({
   // lets clicking another top-level menu switch directly.
   const [openId, setOpenId] = useState(null);
 
+  // Dock state (WI-6) read via context. Studio portals MenuBar inside AppShell's
+  // InspectorDockProvider, so this is non-null on the pro desktop path and null
+  // in the legacy/standalone MenuBar (no provider) — the View menu then renders
+  // byte-unchanged.
+  const dock = useInspectorDockContext();
+
   const menus = [
     {
       label: "File",
@@ -209,6 +216,20 @@ export default function MenuBar({
           onSelect: onToggleKitMode,
           disabled: !onToggleKitMode || !kitModeAvailable,
         },
+        // Dock Properties to Bottom (WI-6) — checkable, in sync with the live
+        // dockPosition. Only present when a dock provider is mounted (pro shell);
+        // omitted entirely in the legacy MenuBar so that path is unchanged.
+        ...(dock
+          ? [
+              { separator: true },
+              {
+                label: "Dock Properties to Bottom",
+                checkable: true,
+                checked: dock.dockPosition === "bottom",
+                onSelect: dock.toggleDock,
+              },
+            ]
+          : []),
       ],
     },
     {

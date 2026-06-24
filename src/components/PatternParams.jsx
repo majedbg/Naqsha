@@ -9,6 +9,8 @@ import { useLayerParams } from "../lib/useLayerParams";
 import UpgradePrompt from "./UpgradePrompt";
 import ParamGroup from "./ParamGroup";
 import ParamRow from "./ui/ParamRow";
+import InspectorShelf from "./shell/InspectorShelf";
+import { useInspectorDockContext } from "./shell/inspectorDockContext";
 
 // PatternParams (AR-3B): reads live params + the toggle/randomize/reset handlers
 // from the LayerParams context (provided at LayerCard) instead of receiving them
@@ -23,6 +25,12 @@ export default function PatternParams() {
   const { patternType, defs, params, defaults, randomizeKeys } =
     useLayerParams();
   const { check, tier } = useGate();
+  // Dock state flows through the portal (WI-4). When docked to the bottom shelf,
+  // the param GROUPS columnize via InspectorShelf (WI-4b). null (legacy / no
+  // provider) ⇒ isBottom=false ⇒ byte-unchanged vertical stack. Hook stays above
+  // the early return so hook order is stable.
+  const dock = useInspectorDockContext();
+  const isBottom = dock?.dockPosition === "bottom";
   if (!defs) return null;
 
   // Build param items with gate checks
@@ -68,6 +76,35 @@ export default function PatternParams() {
   // showIf (presentation-only) never changes the locked count.
   const lockedCount = paramItems.filter((item) => !item.gate.allowed).length;
 
+  // Group elements — byte-identical gate/guest/visibleItems logic to before;
+  // only extracted into an array so it can be conditionally wrapped below.
+  const groupEls = PARAM_GROUPS.map((group) => {
+    const items = grouped[group.id];
+    if (!items || items.length === 0) return null;
+
+    // For guests, skip groups where ALL items are locked
+    if (tier === "guest" && items.every((item) => !item.gate.allowed))
+      return null;
+
+    // For guests, only pass allowed items (locked ones are summarized below)
+    const visibleItems =
+      tier === "guest" ? items.filter((item) => item.gate.allowed) : items;
+
+    if (visibleItems.length === 0) return null;
+
+    return (
+      <ParamGroup
+        key={group.id}
+        group={group}
+        items={visibleItems}
+        randomizeKeys={randomizeKeys}
+        defaults={defaults}
+        params={params}
+        tier={tier}
+      />
+    );
+  });
+
   return (
     <div className="space-y-1.5">
       {/* Featured param — pinned above all groups, ungrouped, always visible */}
@@ -77,32 +114,11 @@ export default function PatternParams() {
         </div>
       )}
 
-      {PARAM_GROUPS.map((group) => {
-        const items = grouped[group.id];
-        if (!items || items.length === 0) return null;
-
-        // For guests, skip groups where ALL items are locked
-        if (tier === "guest" && items.every((item) => !item.gate.allowed))
-          return null;
-
-        // For guests, only pass allowed items (locked ones are summarized below)
-        const visibleItems =
-          tier === "guest" ? items.filter((item) => item.gate.allowed) : items;
-
-        if (visibleItems.length === 0) return null;
-
-        return (
-          <ParamGroup
-            key={group.id}
-            group={group}
-            items={visibleItems}
-            randomizeKeys={randomizeKeys}
-            defaults={defaults}
-            params={params}
-            tier={tier}
-          />
-        );
-      })}
+      {/* Groups — when docked to the bottom shelf they columnize into a
+          fit-to-width grid (InspectorShelf drops the null group-els via
+          React.Children.toArray, making each ParamGroup an atomic grid item).
+          Otherwise: byte-unchanged vertical stack inside this space-y-1.5. */}
+      {isBottom ? <InspectorShelf>{groupEls}</InspectorShelf> : groupEls}
 
       {/* Guest locked summary */}
       {tier === "guest" && lockedCount > 0 && (

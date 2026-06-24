@@ -15,6 +15,9 @@
 
 import { useState } from 'react';
 import usePanelWidth from '../../lib/hooks/usePanelWidth';
+import usePanelHeight from '../../lib/hooks/usePanelHeight';
+import { useInspectorDock } from '../../lib/hooks/useInspectorDock';
+import { InspectorDockProvider } from './inspectorDockContext';
 import {
   InspectorSlotProvider,
   MenuSlotProvider,
@@ -24,6 +27,10 @@ import {
   StatusBarSlotProvider,
   OperationsPanelSlotProvider,
 } from './shellSlots';
+
+// Height of the collapsed bottom-shelf bar (a header-sized strip). When the dock
+// is collapsed, the shelf clips to this so only the (WI-5) inspector header peeks.
+const COLLAPSED_HEIGHT = 36;
 
 // Shared frame for every region: a labeled landmark with a thin solid hairline
 // border so regions read as cleanly delineated in the UI.
@@ -225,6 +232,16 @@ export default function AppShell({ children }) {
   // hosted Studio can portal its operations / cut-settings panel into it.
   const [operationsNode, setOperationsNode] = useState(null);
 
+  // Where the Properties/Inspector panel docks (right rail vs bottom shelf) +
+  // the bottom-shelf collapsed flag (WI-1). When 'bottom', the inspector moves
+  // out of the right column into a full-width resizable shelf below the body.
+  const dock = useInspectorDock();
+  // The bottom shelf's resizable + persisted height (WI-2). Only consumed in the
+  // bottom dock.
+  const shelf = usePanelHeight();
+  const isBottom = dock.dockPosition === 'bottom';
+  const shelfHeight = dock.collapsed ? COLLAPSED_HEIGHT : shelf.height;
+
   return (
     <div className="flex flex-col h-dvh bg-paper">
       <MenuBarRegion contentRef={setMenuNode} />
@@ -244,7 +261,9 @@ export default function AppShell({ children }) {
 
         {/* The live Studio is hosted here. It reads the slots from context and
             portals the layer tree, param inspector, top menu bar, tool strip,
-            and contextual control bar into their regions. */}
+            and contextual control bar into their regions. The InspectorDockProvider
+            wraps `children` so the portaled Inspector (a React descendant through
+            createPortal) can read the dock state with no Studio edit. */}
         <CanvasRegion>
           <MenuSlotProvider value={menuNode}>
             <ToolStripSlotProvider value={toolStripNode}>
@@ -253,7 +272,9 @@ export default function AppShell({ children }) {
                   <StatusBarSlotProvider value={statusBarNode}>
                     <OperationsPanelSlotProvider value={operationsNode}>
                       <InspectorSlotProvider value={inspectorNode}>
-                        {children}
+                        <InspectorDockProvider value={dock}>
+                          {children}
+                        </InspectorDockProvider>
                       </InspectorSlotProvider>
                     </OperationsPanelSlotProvider>
                   </StatusBarSlotProvider>
@@ -264,11 +285,49 @@ export default function AppShell({ children }) {
         </CanvasRegion>
 
         {/* Right column: the selection-driven Inspector, now full-height (the
-            operations panel moved under the layer tree on the left). */}
-        <div className="flex flex-col w-72 shrink-0 min-h-0">
-          <InspectorRegion contentRef={setInspectorNode} />
-        </div>
+            operations panel moved under the layer tree on the left). Only in the
+            right dock; in the bottom dock the inspector moves to the shelf below. */}
+        {!isBottom && (
+          <div className="flex flex-col w-72 shrink-0 min-h-0">
+            <InspectorRegion contentRef={setInspectorNode} />
+          </div>
+        )}
       </div>
+
+      {/* Bottom-shelf dock: a full-width row below the body and above the status
+          bar, hosting the same Inspector mount node (Studio's portal follows it
+          here). Height is the persisted shelf height, or a thin bar when
+          collapsed; overflow-hidden clips the inspector body when collapsed. */}
+      {isBottom && (
+        <div
+          data-testid="inspector-bottom-row"
+          style={{ height: shelfHeight }}
+          className="relative flex w-full shrink-0 overflow-hidden"
+        >
+          {/* Top-edge resize handle (horizontal twin of LeftColumnRegion's). Hidden
+              when collapsed — you can't resize a collapsed bar. */}
+          {!dock.collapsed && (
+            <div
+              data-testid="inspector-shelf-resize"
+              role="separator"
+              aria-orientation="horizontal"
+              aria-label="Resize properties shelf"
+              onMouseDown={shelf.onMouseDown}
+              onDoubleClick={shelf.onDoubleClick}
+              className="absolute top-0 left-0 z-10 w-full h-1.5 -translate-y-1/2 cursor-row-resize"
+            >
+              {/* 1px divider, brightened to accent on hover / during drag. */}
+              <span
+                aria-hidden="true"
+                className={`pointer-events-none absolute left-0 top-1/2 w-full h-px -translate-y-1/2 ${
+                  shelf.isDragging ? 'bg-accent' : 'bg-transparent hover:bg-accent'
+                }`}
+              />
+            </div>
+          )}
+          <InspectorRegion contentRef={setInspectorNode} className="flex-1 min-h-0" />
+        </div>
+      )}
 
       <StatusBarRegion contentRef={setStatusBarNode} />
     </div>

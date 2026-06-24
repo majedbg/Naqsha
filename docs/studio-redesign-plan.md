@@ -1,6 +1,6 @@
 # Studio Redesign Plan — Pro Fab-Tool Layout
 
-> Status: **GRILLED & LOCKED 2026-06-18** (not yet built). Source-of-truth spec for
+> Status: **GRILLED & LOCKED 2026-06-18.** Audit 2026-06-21: issues #4–#18 are BUILT and MERGED into `main` (e.g. `5f39bf8` #18 ITP Camp Kit, `b34b367` #16, `7e8fbd8` #17); #19+ still open per `docs/redesign-run-log.md` ("#18 landed; #19 still needs roster"). Source-of-truth spec for
 > the redesign that takes the app from its current two-pane editor to a full
 > pro vector/fab-tool layout. `/to-issues` runs against this doc; a PRD is
 > generated independently from it. This file is lossless — decisions are recorded

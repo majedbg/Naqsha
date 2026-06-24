@@ -1,6 +1,6 @@
 # Text Tool Port Plan — `text-feature` → `main`
 
-Status: PLAN (awaiting approval). Branch: `feat/text-tool-port` (off `main` @ `dadead3`).
+Status: EXECUTED. Audit 2026-06-21: text subsystem PORTED and MERGED into `main` via PR #25 (`19aa7d5`); `feat/text-tool-port` is a full ancestor of main. (The original `text-feature` branch is still +7/unmerged and is intentionally superseded by this port.) Branch: `feat/text-tool-port` (off `main` @ `dadead3`).
 Foundation checkpoint committed: `5171635` (SVG placement + move/resize transforms, 70/70 green).
 
 ## Why a port, not a merge

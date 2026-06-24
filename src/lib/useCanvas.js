@@ -5,6 +5,7 @@ import { P5Adapter } from './patterns/drawingContext';
 import { PATTERN_CLASSES } from './patterns';
 import ImportedPath from './patterns/ImportedPath';
 import { resolveMoireSource } from './moirePair';
+import { resolveModulationForTarget } from './fields/resolveModulationForTarget';
 import { handlesFor } from './transform/handles';
 import { drawTextNode } from './text/drawTextNode';
 import { isTextLayer, textNodeFromLayer } from './text/textLayer';
@@ -141,6 +142,21 @@ export default function useCanvas(
         const resolved = resolveMoireSource(layer, layers);
         if (!resolved) continue; // orphan B — no instance cached, nothing drawn
         renderParams = { ...resolved.params, moireRole: resolved.moireRole };
+      }
+
+      // Pattern modulation (modulator-centric, Ableton-LFO model): a GUIDE
+      // layer owns a `modulator` device that maps OUT to target layers. For this
+      // layer (the target), resolveModulationForTarget finds a guide whose
+      // modulator.maps point here and merges device-level + per-map controls with
+      // the guide's resolved field into the runtime object GrainField reads as
+      // `params.modulation`. Applied AFTER moiré so a moiré-resolved layer still
+      // receives modulation. CRITICAL: when null we add NO `modulation` key, so an
+      // unmodulated layer stays byte-identical to baseline (and matches its SVG
+      // export). One injection covers BOTH the visible (drawCtx) and hidden
+      // (noDrawCtx) calls below, which share this `renderParams`.
+      const mod = resolveModulationForTarget(layer, layers);
+      if (mod) {
+        renderParams = { ...renderParams, modulation: mod };
       }
 
       const instance = new PatternClass();

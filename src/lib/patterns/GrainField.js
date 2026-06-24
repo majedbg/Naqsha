@@ -1,5 +1,6 @@
 import { applySymmetryDraw } from './symmetryUtils';
 import { Pattern } from './drawingContext';
+import { densityWeight } from '../fields/modulation';
 
 export default class GrainField extends Pattern {
   generate(ctx, seed, params, canvasW, canvasH, color, opacity) {
@@ -16,6 +17,15 @@ export default class GrainField extends Pattern {
 
     const halfW = canvasW / 2;
     const halfH = canvasH / 2;
+
+    // Density modulation (geometry-build time): a guide field supplied via
+    // params.modulation weights the Lloyd centroids so points migrate toward —
+    // and pack denser in — high-field regions. Resolved into a no-op when
+    // absent: the weight is exactly 1, so the accumulation is byte-identical to
+    // the unmodulated path (x*1 === x in IEEE754, summed in the same order).
+    const mod = params.modulation;
+    const densityMod =
+      mod && mod.channel === 'density' && mod.field ? mod : null;
 
     // Step 1 — Lloyd's Relaxation
     ctx.randomSeed(seed);
@@ -38,7 +48,7 @@ export default class GrainField extends Pattern {
       // For each grid cell, find nearest point
       const sumX = new Float64Array(pointCount);
       const sumY = new Float64Array(pointCount);
-      const count = new Uint32Array(pointCount);
+      const count = new Float64Array(pointCount);
 
       for (let gy = 0; gy < gridH; gy++) {
         const cy = -halfH + (gy + 0.5) * res;
@@ -57,9 +67,18 @@ export default class GrainField extends Pattern {
             }
           }
 
-          sumX[bestIdx] += cx;
-          sumY[bestIdx] += cy;
-          count[bestIdx]++;
+          // Density weight for this Voronoi cell. 1 when unmodulated → the
+          // accumulation below is byte-identical to the original.
+          let w = 1;
+          if (densityMod) {
+            const u = (cx + halfW) / canvasW;
+            const v = (cy + halfH) / canvasH;
+            w = densityWeight(densityMod.field.sampleSigned(u, v), densityMod);
+          }
+
+          sumX[bestIdx] += cx * w;
+          sumY[bestIdx] += cy * w;
+          count[bestIdx] += w;
         }
       }
 

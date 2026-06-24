@@ -35,6 +35,13 @@ import {
 import { isTextLayer, textNodeFromLayer } from "../../lib/text/textLayer";
 import { useFont } from "../../lib/text/fontRegistry";
 import TextPropertiesPanel from "../TextPropertiesPanel";
+import {
+  canProduceField,
+  fieldForLayer,
+} from "../../lib/fields/fieldRegistry";
+import FieldOverlay from "../FieldOverlay";
+import ShapeCurve from "../ui/ShapeCurve";
+import { channelForTarget } from "../../lib/fields/channelConsumers";
 
 // Variable line-weight UI (issue #17, C8). A per-layer "advanced" toggle + bucket
 // count (N) control, shown ONLY for weight-varying patterns on a profile that
@@ -107,10 +114,262 @@ function VariableWeightControls({ layer, profileId, onVariableWeightChange }) {
   );
 }
 
+// Modulator device panel (pattern modulation, modulator-centric / Ableton-LFO
+// model). Shown ONLY for a layer that can PRODUCE a field (Chladni today, via
+// canProduceField) — that layer is the GUIDE and owns a `modulator` device that
+// maps OUT to target layers. Layout:
+//   • a heatmap "waveform" readout (the guide's field) at top,
+//   • device controls (offset / shape / steps) shared by all maps,
+//   • a Targets list — one row per map (name, amount, polarity, unmap) plus an
+//     "+ Add target" control.
+//
+// Stored schema (on the GUIDE layer):
+//   layer.modulator = {
+//     offset, shape, steps,
+//     maps: [ { targetLayerId, channel:'density', amount, polarity } ]
+//   }
+//
+// Every edit commits through the SAME onUpdateLayer path the rest of the
+// inspector uses (shallow top-level merge), so it's live-previewed, undoable and
+// autosaved — no separate apply button (human-in-the-loop: preview/apply/revert).
+// Because the merge is shallow, every write spreads the WHOLE current modulator
+// (a partial { modulator: { offset } } would drop maps).
+function ModulatorDevice({ layer, layers, onUpdateLayer }) {
+  if (!canProduceField(layer)) return null;
+
+  // Current device, with defaults filled in (layer.modulator is undefined until
+  // the first edit). Computed inline — no useMemo narrowing (React Compiler).
+  const current = layer.modulator || {};
+  const offset = current.offset ?? 0;
+  const shape = current.shape ?? 0;
+  const steps = current.steps ?? 0;
+  const maps = Array.isArray(current.maps) ? current.maps : [];
+
+  // Rebuild the whole modulator from the current one on every write.
+  const patchModulator = (patch) => {
+    onUpdateLayer(layer.id, {
+      modulator: { offset, shape, steps, maps, ...patch },
+    });
+  };
+  const setMaps = (nextMaps) => patchModulator({ maps: nextMaps });
+
+  // Candidate targets: any layer that consumes a modulation channel —
+  // channelForTarget is the single source of truth (grainfield→density;
+  // chladni/topographic/flowfield→warp). Excludes the guide itself and any
+  // already-mapped target.
+  const mapped = new Set(maps.map((m) => m.targetLayerId));
+  const candidates = (layers || []).filter(
+    (l) =>
+      l.id !== layer.id &&
+      channelForTarget(l.patternType) !== null &&
+      !mapped.has(l.id)
+  );
+
+  const nameFor = (id) => {
+    const l = (layers || []).find((x) => x.id === id);
+    return l ? l.name || l.patternType : id;
+  };
+
+  const addTarget = (targetLayerId) => {
+    if (!targetLayerId) return;
+    // Channel is derived from the target's pattern type (single source of
+    // truth): grainfield→'density', chladni/topographic/flowfield→'warp'.
+    // NOTE: warp targets are AMOUNT-ONLY in v1 — the device-level Shape/Steps/
+    // Offset controls do NOT affect them (the transfer chain is deferred for
+    // warp). Per-map Amount is the only warp control.
+    const target = (layers || []).find((l) => l.id === targetLayerId);
+    const channel = channelForTarget(target?.patternType) ?? "density";
+    setMaps([
+      ...maps,
+      { targetLayerId, channel, amount: 1, polarity: "bipolar" },
+    ]);
+  };
+  const removeMap = (targetLayerId) => {
+    setMaps(maps.filter((m) => m.targetLayerId !== targetLayerId));
+  };
+  const patchMap = (targetLayerId, patch) => {
+    setMaps(
+      maps.map((m) =>
+        m.targetLayerId === targetLayerId ? { ...m, ...patch } : m
+      )
+    );
+  };
+
+  return (
+    <div
+      className="space-y-3 border-t border-hairline pt-3"
+      data-testid="modulator-device"
+    >
+      <h3 className="text-xs font-semibold text-ink-soft uppercase tracking-wider">
+        Modulator
+      </h3>
+
+      {/* Field "waveform" readout — the guide's scalar field. The box is
+          relatively-positioned so FieldOverlay (absolute inset-0) fills it. */}
+      <div
+        className="relative overflow-hidden rounded-cell border border-hairline bg-paper"
+        style={{ width: 140, height: 140 }}
+        data-testid="modulator-display"
+      >
+        <FieldOverlay
+          field={fieldForLayer(layer)}
+          canvasW={140}
+          canvasH={140}
+          opacity={1}
+        />
+      </div>
+
+      {/* Device controls — offset / shape / steps, shared across all maps. */}
+      <div className="space-y-2">
+        <label className="flex items-center gap-2 text-[11px] text-ink-soft">
+          <span className="w-12 whitespace-nowrap">Offset</span>
+          <input
+            type="range"
+            data-testid="modulator-offset"
+            aria-label="Offset"
+            min={-1}
+            max={1}
+            step={0.05}
+            value={offset}
+            onChange={(e) => patchModulator({ offset: Number(e.target.value) })}
+            className="flex-1 accent-violet"
+          />
+          <span className="w-9 text-right tabular-nums text-ink num">
+            {offset.toFixed(2)}
+          </span>
+        </label>
+
+        <ShapeCurve
+          label="Shape"
+          value={shape}
+          onChange={(v) => patchModulator({ shape: v })}
+        />
+
+        <label className="flex items-center gap-2 text-[11px] text-ink-soft">
+          <span className="w-12 whitespace-nowrap">Steps</span>
+          <input
+            type="range"
+            data-testid="modulator-steps"
+            aria-label="Steps"
+            min={0}
+            max={24}
+            step={1}
+            value={steps}
+            onChange={(e) => patchModulator({ steps: Number(e.target.value) })}
+            className="flex-1 accent-violet"
+          />
+          <span className="w-9 text-right tabular-nums text-ink num">
+            {steps}
+          </span>
+        </label>
+      </div>
+
+      {/* Targets list — one row per map. */}
+      <div className="space-y-1.5">
+        <h4 className="text-[11px] font-semibold text-ink-soft uppercase tracking-wider">
+          Targets
+        </h4>
+
+        {maps.length === 0 && (
+          <p className="text-[11px] text-ink-soft/70">No targets mapped.</p>
+        )}
+
+        {maps.map((m) => (
+          <div
+            key={m.targetLayerId}
+            data-testid="modulator-map"
+            className="space-y-1 rounded-cell border border-hairline bg-paper-warm p-2"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span className="truncate text-xs text-ink" title={nameFor(m.targetLayerId)}>
+                {nameFor(m.targetLayerId)}
+              </span>
+              <button
+                type="button"
+                data-testid="modulator-unmap"
+                aria-label={`Unmap ${nameFor(m.targetLayerId)}`}
+                onClick={() => removeMap(m.targetLayerId)}
+                className="shrink-0 rounded-xs px-1 text-xs text-ink-soft hover:text-ink"
+              >
+                ×
+              </button>
+            </div>
+
+            <label className="flex items-center gap-2 text-[11px] text-ink-soft">
+              <span className="w-12 whitespace-nowrap">Amount</span>
+              <input
+                type="range"
+                data-testid="modulator-amount"
+                aria-label="Amount"
+                min={0}
+                max={3}
+                step={0.1}
+                value={m.amount ?? 1}
+                onChange={(e) =>
+                  patchMap(m.targetLayerId, { amount: Number(e.target.value) })
+                }
+                className="flex-1 accent-violet"
+              />
+              <span className="w-9 text-right tabular-nums text-ink num">
+                {(m.amount ?? 1).toFixed(1)}
+              </span>
+            </label>
+
+            <div
+              className="flex items-center gap-1 text-[11px]"
+              role="group"
+              aria-label="Polarity"
+            >
+              <span className="w-12 whitespace-nowrap text-ink-soft">Polarity</span>
+              {["bipolar", "unipolar"].map((pol) => {
+                const active = (m.polarity ?? "bipolar") === pol;
+                return (
+                  <button
+                    key={pol}
+                    type="button"
+                    data-testid={`modulator-polarity-${pol}`}
+                    aria-pressed={active}
+                    onClick={() => patchMap(m.targetLayerId, { polarity: pol })}
+                    className={[
+                      "flex-1 rounded-xs border px-1 py-0.5 capitalize",
+                      active
+                        ? "border-violet bg-violet/10 text-ink"
+                        : "border-hairline text-ink-soft hover:text-ink",
+                    ].join(" ")}
+                  >
+                    {pol}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+
+        {/* Add a target — selecting an option appends a map and resets. */}
+        <select
+          data-testid="modulator-add-target"
+          aria-label="Add target"
+          value=""
+          onChange={(e) => addTarget(e.target.value)}
+          disabled={candidates.length === 0}
+          className="w-full rounded-xs border border-hairline bg-paper-warm px-1 py-0.5 text-[11px] text-ink outline-none focus:border-violet disabled:opacity-50"
+        >
+          <option value="">+ Add target</option>
+          {candidates.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name || c.patternType}
+            </option>
+          ))}
+        </select>
+      </div>
+    </div>
+  );
+}
+
 // The param-editing body for one selected layer. Split into its own component so
 // usePatternCache (a hook) is only called when a layer is actually selected —
 // hooks can't be called conditionally inside Inspector itself.
-function SelectedLayerInspector({ layer, unit, profileId, onUpdateLayer, onChangeLayerPattern, onVariableWeightChange }) {
+function SelectedLayerInspector({ layer, layers, unit, profileId, onUpdateLayer, onChangeLayerPattern, onVariableWeightChange }) {
   // Pattern swap: route through the same cache machine LayerCard uses, applied via
   // the pair-aware onChangeLayerPattern when present (falls back to a plain param
   // update so the component works standalone / in tests without a router).
@@ -155,6 +414,14 @@ function SelectedLayerInspector({ layer, unit, profileId, onUpdateLayer, onChang
         layer={layer}
         profileId={profileId}
         onVariableWeightChange={onVariableWeightChange}
+      />
+
+      {/* Modulator device (pattern modulation, modulator-centric) — shown only
+          for a layer that can produce a field (the guide / Chladni). */}
+      <ModulatorDevice
+        layer={layer}
+        layers={layers}
+        onUpdateLayer={onUpdateLayer}
       />
     </div>
   );
@@ -227,6 +494,7 @@ export default function Inspector({
       // state bleed in the param controls).
       key={layer.id}
       layer={layer}
+      layers={layers}
       unit={unit}
       profileId={profileId}
       onUpdateLayer={onUpdateLayer}

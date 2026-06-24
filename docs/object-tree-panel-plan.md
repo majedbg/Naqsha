@@ -1,7 +1,7 @@
 # Object Tree Panel — Locked Decision Spec
 
 > Source of truth for the object-tree (layer-tree) panel overhaul.
-> Grilled & locked 2026-06-18. Desktop shell only. NOT yet built.
+> Grilled & locked 2026-06-18. Desktop shell only. Audit 2026-06-21: BUILT and MERGED into `main` via PR #23 (`2ecf145`); WI-1..6 complete (resize `AppShell.resize.test.jsx`/WI-3 `cd25f84`, rename+RowMenu `02caad8`/WI-5, auto-naming `useLayers.naming.test.jsx`, lock `9c1ba82`). Components live under `src/components/shell/`.
 > Implementation runbook: `docs/object-tree-panel-ORCHESTRATOR.md`.
 
 ---

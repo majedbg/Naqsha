@@ -1,5 +1,6 @@
 import { applySymmetryDraw, wrapSVGSymmetry } from './symmetryUtils';
 import { Pattern } from './drawingContext';
+import { warpDisplacement } from '../fields/warp';
 
 export default class RecursiveGeometry extends Pattern {
   constructor() {
@@ -84,14 +85,6 @@ export default class RecursiveGeometry extends Pattern {
 
       this._polygons.push({ verts: absVerts, sw });
 
-      const parts = absVerts.map((v, i) =>
-        i === 0
-          ? `M${v.x.toFixed(2)} ${v.y.toFixed(2)}`
-          : `L${v.x.toFixed(2)} ${v.y.toFixed(2)}`
-      );
-      parts.push('Z');
-      this.svgElements.push({ pathD: parts.join(' '), strokeWeight: sw });
-
       if (level > 0) {
         const effScale = getEffectiveScale(level);
         const nextRadius = radius * effScale;
@@ -109,6 +102,38 @@ export default class RecursiveGeometry extends Pattern {
     };
 
     recurse(0, 0, startRadius, 0, clampedDepth);
+
+    // --- WARP modulation (geometry-build time) --------------------------------
+    // A guide field supplied via params.modulation (channel:'warp') displaces the
+    // recursive polygon vertices along the field gradient, AFTER the full recursion
+    // and BEFORE both the SVG-path build and drawBase, so canvas and SVG warp
+    // identically. The geometry is origin-centered (recurse starts at 0,0), so the
+    // unit-domain mapping uses canvasW/2. When warpMod is null the vertices are
+    // untouched → byte-identical to the unmodulated path.
+    const mod = params?.modulation;
+    const warpMod = mod && mod.channel === 'warp' && mod.field ? mod : null;
+    if (warpMod) {
+      for (const poly of this._polygons) {
+        for (const pt of poly.verts) {
+          const u = (pt.x + canvasW / 2) / canvasW;
+          const v = (pt.y + canvasH / 2) / canvasH;
+          const { dx, dy } = warpDisplacement(warpMod.field, u, v, warpMod);
+          pt.x += dx;
+          pt.y += dy;
+        }
+      }
+    }
+
+    // Build SVG path strings from the (possibly warped) polygon vertices.
+    for (const poly of this._polygons) {
+      const parts = poly.verts.map((v, i) =>
+        i === 0
+          ? `M${v.x.toFixed(2)} ${v.y.toFixed(2)}`
+          : `L${v.x.toFixed(2)} ${v.y.toFixed(2)}`
+      );
+      parts.push('Z');
+      this.svgElements.push({ pathD: parts.join(' '), strokeWeight: poly.sw });
+    }
 
     const drawBase = () => {
       ctx.noFill();

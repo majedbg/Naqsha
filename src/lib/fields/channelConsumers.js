@@ -5,7 +5,7 @@
  * map when a target is added.
  *
  *   grainfield → 'density'  (weighted-Lloyd density consumer)
- *   chladni / topographic / flowfield → 'warp'  (vertex-displacement consumers)
+ *   chladni / topographic / flowfield / recursive → 'warp'  (vertex-displacement consumers)
  *   anything else → null  (not a modulation target)
  */
 const CHANNEL_BY_TYPE = {
@@ -13,6 +13,7 @@ const CHANNEL_BY_TYPE = {
   chladni: "warp",
   topographic: "warp",
   flowfield: "warp",
+  recursive: "warp",
 };
 
 /**

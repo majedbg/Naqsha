@@ -22,6 +22,7 @@
 
 import PatternTabs from "../PatternTabs";
 import PatternParams from "../PatternParams";
+import DockToggle from "./DockToggle";
 import usePatternCache from "../../lib/usePatternCache";
 import {
   buildLayerParamsValue,
@@ -393,6 +394,7 @@ function SelectedLayerInspector({ layer, layers, unit, profileId, onUpdateLayer,
 
   return (
     <div className="flex flex-col gap-3 p-3" data-testid="inspector-params">
+      <DockToggle />
       {/* Pattern type + swap control, pinned at the top. */}
       <div className="space-y-1.5">
         <h3 className="text-xs font-semibold text-ink-soft uppercase tracking-wider">
@@ -460,6 +462,7 @@ export default function Inspector({
   if (layer && isTextLayer(layer)) {
     return (
       <div className="flex flex-col gap-3 p-3" data-testid="inspector-text">
+        <DockToggle />
         <TextPropertiesPanel
           node={textNodeFromLayer(layer)}
           font={font}
@@ -479,6 +482,7 @@ export default function Inspector({
         data-testid="inspector-empty"
         className="flex h-full flex-col items-center justify-center gap-1 p-4 text-center"
       >
+        <DockToggle />
         <p className="text-xs font-medium text-ink-soft">No selection</p>
         <p className="text-[11px] text-ink-soft/70">
           Select a layer to edit its parameters.

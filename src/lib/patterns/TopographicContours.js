@@ -1,5 +1,6 @@
 import { Pattern } from './drawingContext';
 import { applySymmetryDraw } from './symmetryUtils';
+import { warpDisplacement } from '../fields/warp';
 
 /**
  * TopographicContours — nested iso-contour loops of a seeded noise field, drawn
@@ -213,6 +214,27 @@ export default class TopographicContours extends Pattern {
       }
 
       stitch(segments, key, allPolylines);
+    }
+
+    // --- WARP modulation (geometry-build time) --------------------------------
+    // A guide field supplied via params.modulation (channel:'warp') displaces
+    // the FINAL contour vertices along the field gradient, AFTER the per-level
+    // marching-squares + stitch loop completes (never on pre-stitch segments —
+    // that would diverge the shared endpoints the exact hash-join relies on)
+    // and BEFORE both the SVG emit and drawBase, so canvas and SVG warp
+    // identically. When warpMod is null the arrays are untouched → byte-identical.
+    const mod = params?.modulation;
+    const warpMod = mod && mod.channel === 'warp' && mod.field ? mod : null;
+    if (warpMod) {
+      for (const poly of allPolylines) {
+        for (const pt of poly) {
+          const u = (pt.x + canvasW / 2) / canvasW;
+          const v = (pt.y + canvasH / 2) / canvasH;
+          const { dx, dy } = warpDisplacement(warpMod.field, u, v, warpMod);
+          pt.x += dx;
+          pt.y += dy;
+        }
+      }
     }
 
     // --- Emit SVG + build draw replay -----------------------------------------

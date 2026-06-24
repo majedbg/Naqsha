@@ -1,6 +1,7 @@
 import { Pattern } from '../drawingContext';
 import { applySymmetryDraw } from '../symmetryUtils';
 import { registerPattern } from '../../patternRegistry';
+import { warpDisplacement } from '../../fields/warp';
 
 /**
  * Chladni — cymatic nodal lines of a vibrating square plate ("sound made
@@ -172,6 +173,27 @@ export default class Chladni extends Pattern {
     }
 
     stitch(segments, key, allPolylines);
+
+    // --- WARP modulation (geometry-build time) --------------------------------
+    // A guide field supplied via params.modulation (channel:'warp') displaces
+    // the FINAL nodal-line vertices along the field gradient, AFTER stitching
+    // (never before — displacing pre-stitch segments would diverge the shared
+    // endpoints the exact hash-join relies on) and BEFORE both the SVG emit and
+    // drawBase, so canvas and SVG warp identically. When warpMod is null the
+    // arrays are untouched → byte-identical to the unmodulated path.
+    const mod = params?.modulation;
+    const warpMod = mod && mod.channel === 'warp' && mod.field ? mod : null;
+    if (warpMod) {
+      for (const poly of allPolylines) {
+        for (const pt of poly) {
+          const u = (pt.x + canvasW / 2) / canvasW;
+          const v = (pt.y + canvasH / 2) / canvasH;
+          const { dx, dy } = warpDisplacement(warpMod.field, u, v, warpMod);
+          pt.x += dx;
+          pt.y += dy;
+        }
+      }
+    }
 
     // --- Emit SVG + build draw replay -----------------------------------------
     const fmt = (val) => (Math.round(val * 100) / 100).toString();

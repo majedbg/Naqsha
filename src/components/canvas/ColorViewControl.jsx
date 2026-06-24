@@ -13,12 +13,12 @@
 
 import { useEffect, useRef, useState } from "react";
 import { materialSheetHex } from "../../lib/materialPreview";
-import { ITP_CAMP_MATERIALS } from "../../kits/itpCampMaterials";
+import { MATERIAL_SWATCHES } from "../../lib/materialSwatches";
 
-// Borrow the ITP swatch PHOTOS by id (same ids as the default acrylics) so a
-// material previews with its real sheet photo where we have one; everything else
-// falls back to a flat hex swatch.
-const PHOTO_BY_ID = Object.fromEntries(ITP_CAMP_MATERIALS.map((m) => [m.id, m.image]));
+// Map swatch PHOTOS by id (same ids as the default acrylics) so a material
+// previews with its real sheet photo where we have one; everything else falls
+// back to a flat hex swatch.
+const PHOTO_BY_ID = Object.fromEntries(MATERIAL_SWATCHES.map((m) => [m.id, m.image]));
 
 const TYPE_LABEL = { acrylic: "Acrylic", plywood: "Plywood" };
 const typeLabel = (t) => TYPE_LABEL[t] || (t ? t[0].toUpperCase() + t.slice(1) : "Other");

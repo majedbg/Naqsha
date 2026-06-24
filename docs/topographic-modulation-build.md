@@ -123,7 +123,18 @@ relationship routes the gutter.
   the plot attract-only (loses blue); only warp/density consumers offered as targets
   (Phyllotaxis excluded); mapping a Flow Field target visibly warps it on canvas through
   the full producer→resolver→consumer path. No new console errors.
-- **Slice 2 (WI-7…WI-9): not started.**
+- **Slice 2 (WI-7…WI-9): COMPLETE — 2026-06-24.** Commits `ddc9d8c` (WI-7 graph),
+  `75d9974` (WI-8 rail), `56921ce` (WI-9 badges), `d38e520` (rail resize hardening). Full
+  suite **1768 pass / 0 fail / 46 skipped**; `npm run build` succeeds. **Browser-verified
+  2026-06-24**: left-gutter bezier edge draws guide→target; `→1`/`←1` badges correct (none
+  on unrelated layers); emphasis `data-emphasis` toggles true only when the guide OR target
+  is selected (false for unrelated); edge stroke tracks polarity — `rgb(178,42,92)` garnet
+  (attract, range≥0) / `rgb(17,109,138)` sapphire (repel, range≤0) / muted taupe (neutral),
+  recoloring live with the range and matching the field-plot/`colormap.js` anchors exactly.
+  Cross-panel routing covered by unit test (default doc has no panels).
+
+**FEATURE COMPLETE (Slices 1+2). Phase 2b multi-source stacking remains PRD-only. Branch
+`feat/topographic-modulation` unmerged.**
 
 ## Test/verify commands
 - `npm test` — vitest unit/component suite.

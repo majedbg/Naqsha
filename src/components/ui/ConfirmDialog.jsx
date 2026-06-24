@@ -17,6 +17,10 @@ export default function ConfirmDialog({
   danger = false,
   onConfirm,
   onCancel,
+  // Optional extra content rendered between the message and the button row
+  // (e.g. a "delete layers too?" checkbox). Undefined → renders nothing, so
+  // every existing caller's markup is byte-identical.
+  children,
 }) {
   const confirmRef = useRef(null);
 
@@ -74,6 +78,7 @@ export default function ConfirmDialog({
             {message}
           </p>
         )}
+        {children}
         <div className="mt-lg flex items-center justify-end gap-xs">
           <button
             onClick={onCancel}

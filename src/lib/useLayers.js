@@ -8,6 +8,7 @@ import { autoLayerName } from './autoLayerName';
 import { operationIdForRole } from './operations';
 import { parseSVGImport } from './svgImport';
 import { defaultTextParams } from './text/textLayer';
+import { normalizePanels, loadPanels, savePanels } from './panels';
 
 // Distinct group id for a Moiré pair (links role A + role B).
 let nextGroupNum = 1;
@@ -89,6 +90,10 @@ function createLayer(index, requestedType) {
     role: 'cut',          // 'cut' | 'score' | 'engrave' — legacy assignment surface
     operationId: operationIdForRole('cut'), // operation-library reference (issue #1)
     penSlot: (index % 4) + 1, // 1..4 — used in plotter output mode
+    // Panel membership (Naqsha Panels WI-1). Born null; the load-time normalizer
+    // assigns it to the first panel. Runtime assignment to a selected panel is
+    // WI-5/6, not here.
+    panelId: null,
   };
 }
 
@@ -131,12 +136,23 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
   // the hard MAX_LAYERS. Existing call sites that don't pass maxLayers keep the
   // old MAX_LAYERS behavior.
   const cap = Math.min(maxLayers ?? MAX_LAYERS, MAX_LAYERS);
-  const [layers, setLayers] = useState(() => {
-    if (persistToLocal) {
-      return loadLayers() ?? [createLayer(0), createLayer(1)];
-    }
-    return [createLayer(0)];
-  });
+
+  // One-time mount init (Naqsha Panels WI-1). Compute the initial layers AND the
+  // normalized panels together via a ref guard, then seed both useStates from
+  // it. This applies the normalizer's CORRECTED layers (so seeded/loaded layers
+  // actually carry a panelId) in the SAME render — no intermediate panelId:null
+  // render and no StrictMode double-init hazard.
+  const initRef = useRef(null);
+  if (initRef.current === null) {
+    const baseLayers = persistToLocal
+      ? (loadLayers() ?? [createLayer(0), createLayer(1)])
+      : [createLayer(0)];
+    const storedPanels = persistToLocal ? loadPanels() : null;
+    initRef.current = normalizePanels(storedPanels, baseLayers);
+  }
+
+  const [layers, setLayers] = useState(initRef.current.layers);
+  const [panels, setPanels] = useState(initRef.current.panels);
 
   // Global background color behind all layers
   const [bgColor, setBgColor] = useState(() => {
@@ -155,10 +171,11 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(layers));
         localStorage.setItem(BG_STORAGE_KEY, bgColor);
+        savePanels(panels); // sonoform-panels (WI-1) rides the same debounce
       } catch { /* storage full or unavailable */ }
     }, 500);
     return () => clearTimeout(saveTimer.current);
-  }, [layers, bgColor]);
+  }, [layers, bgColor, panels]);
 
   // `patternType` optional (from the pattern picker). The `typeof === 'string'`
   // guard means a bare `onClick={addLayer}` (which would pass an event) still
@@ -223,6 +240,7 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
         role: 'cut',
         operationId: operationIdForRole('cut'), // default operation = Cut
         penSlot: (index % 4) + 1,
+        panelId: null, // Panel membership (WI-1); normalizer assigns on load.
         ...(opts.transform ? { transform: opts.transform } : {}),
       };
       return [...prev, layer];
@@ -264,6 +282,7 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
         role: 'engrave',              // text defaults to ENGRAVE
         operationId: operationIdForRole('engrave'),
         penSlot: (index % 4) + 1,
+        panelId: null, // Panel membership (WI-1); normalizer assigns on load.
         ...(opts.transform ? { transform: opts.transform } : {}),
       };
       return [...prev, layer];
@@ -442,6 +461,7 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
           role: 'cut',
           operationId: operationIdForRole('cut'),
           penSlot: ((idx + 1) % 4) + 1,
+          panelId: null, // Panel membership (WI-1); inherited by A via ...src.
           moireRole: 'B',
           moireGroupId: groupId,
         };
@@ -645,5 +665,6 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
     changeLayerPattern,
     randomizeLayer, randomizeAll, randomizeLayerParams, randomizeAllParams,
     loadLayerSet, bgColor, setBgColor,
+    panels, setPanels,
   };
 }

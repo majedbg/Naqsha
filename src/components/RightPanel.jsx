@@ -41,6 +41,12 @@ export default function RightPanel({
   // Color-view lens (spec: docs/material-preview-plan.md). Forwarded to useCanvas;
   // null → operation lens (canvas byte-identical to before). Preview-only.
   colorView = null,
+  // Naqsha Panels (WI-6). Forwarded to useCanvas as its 12th/last positional arg
+  // so per-panel visibility folds into the canvas render. DEFAULTS to [] so every
+  // other caller (ShareView, mobile, tests) is unaffected — empty → behaves
+  // exactly as before. Studio laser-gates this: it passes the real panels only in
+  // laser mode and [] otherwise.
+  panels = [],
   canvasW,
   canvasH,
   patternInstancesRef,
@@ -165,7 +171,8 @@ export default function RightPanel({
     textFont,
     operations,
     machineProfile,
-    colorView
+    colorView,
+    panels
   );
 
   // --- Field overlay (read-only modulation-field preview) -------------------

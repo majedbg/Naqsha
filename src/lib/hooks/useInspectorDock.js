@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 // useInspectorDock — WI-1 of the inspector-dock plan. Owns where the Properties
 // panel docks (right rail vs bottom shelf) and the bottom-shelf collapsed flag.
@@ -85,6 +85,33 @@ export function useInspectorDock() {
       return next;
     });
   }, []);
+
+  // Global shortcut (WI-6): Ctrl/Cmd+Alt+P toggles the dock. AppShell mounts this
+  // hook exactly once, so the window listener is added once app-wide. We match on
+  // e.code === "KeyP" (NOT e.key) because on macOS Alt+P yields a non-ASCII key
+  // ("π"). Text-entry focus is ignored so the combo never steals a keystroke from
+  // an input/textarea/contenteditable. toggleDock is a stable useCallback([]), so
+  // the effect attaches once and writes nothing on mount.
+  useEffect(() => {
+    const onKeyDown = (e) => {
+      if (!((e.ctrlKey || e.metaKey) && e.altKey && e.code === "KeyP")) return;
+
+      const el = e.target || document.activeElement;
+      const tag = el && el.tagName;
+      if (
+        tag === "INPUT" ||
+        tag === "TEXTAREA" ||
+        (el && el.isContentEditable === true)
+      ) {
+        return; // don't hijack text entry
+      }
+
+      e.preventDefault();
+      toggleDock();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [toggleDock]);
 
   return { dockPosition, setDockPosition, toggleDock, collapsed, toggleCollapsed };
 }

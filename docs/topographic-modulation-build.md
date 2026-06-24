@@ -117,7 +117,12 @@ relationship routes the gutter.
 
 - **Slice 1 (WI-1…WI-6): COMPLETE — 2026-06-24.** Six green commits (`dc0b37f` → `ceaec4b`)
   on `feat/topographic-modulation`. Full suite **1753 pass / 0 fail / 46 skipped**;
-  `npm run build` succeeds (pre-existing chunk-size warning only). Browser-verify pending.
+  `npm run build` succeeds (pre-existing chunk-size warning only). **Browser-verified
+  2026-06-24**: Modulator device renders for a topographic layer (field plot = garnet/teal
+  signed heatmap); two-thumb range slider with polarity removed; range→[0,1] live-recolors
+  the plot attract-only (loses blue); only warp/density consumers offered as targets
+  (Phyllotaxis excluded); mapping a Flow Field target visibly warps it on canvas through
+  the full producer→resolver→consumer path. No new console errors.
 - **Slice 2 (WI-7…WI-9): not started.**
 
 ## Test/verify commands

@@ -7,7 +7,11 @@ describe('fieldRegistry.canProduceField', () => {
     expect(canProduceField({ patternType: 'chladni' })).toBe(true);
   });
 
-  it('is false for a non-chladni layer', () => {
+  it('is true for a topographic layer', () => {
+    expect(canProduceField({ patternType: 'topographic' })).toBe(true);
+  });
+
+  it('is false for a non-source layer', () => {
     expect(canProduceField({ patternType: 'grainfield' })).toBe(false);
     expect(canProduceField({ patternType: 'voronoi' })).toBe(false);
   });
@@ -29,7 +33,26 @@ describe('fieldRegistry.fieldForLayer', () => {
     expect(typeof field.sample).toBe('function');
   });
 
-  it('returns null for a non-chladni layer', () => {
+  it('returns a ScalarField for a topographic layer', () => {
+    const field = fieldForLayer({
+      patternType: 'topographic',
+      seed: 7,
+      params: { noiseScale: 2.5, octaves: 3, warp: 0 },
+    });
+    expect(field).toBeInstanceOf(ScalarField);
+    expect(typeof field.sample).toBe('function');
+    expect(field.meta.producer).toBe('topographic');
+  });
+
+  it('flows the layer seed through to the topographic field', () => {
+    const params = { noiseScale: 2.5, octaves: 3, warp: 0 };
+    const a = fieldForLayer({ patternType: 'topographic', seed: 7, params });
+    const b = fieldForLayer({ patternType: 'topographic', seed: 99, params });
+    expect(a).not.toBe(b);
+    expect(Array.from(a.data)).not.toEqual(Array.from(b.data));
+  });
+
+  it('returns null for a non-source layer (grainfield)', () => {
     expect(fieldForLayer({ patternType: 'grainfield', params: {} })).toBe(null);
   });
 

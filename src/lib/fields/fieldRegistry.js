@@ -10,6 +10,7 @@
  * chladniField(), so calling fieldForLayer() repeatedly is cheap.
  */
 import { chladniField } from './chladniField';
+import { topographicField } from './topographicField';
 
 /**
  * Can this layer act as a modulation source (i.e. produce a ScalarField)?
@@ -17,17 +18,24 @@ import { chladniField } from './chladniField';
  * @returns {boolean}
  */
 export function canProduceField(layer) {
-  return layer?.patternType === 'chladni';
+  const t = layer?.patternType;
+  return t === 'chladni' || t === 'topographic';
 }
 
 /**
- * Build (or fetch from cache) the ScalarField a layer produces.
+ * Build (or fetch from cache) the ScalarField a layer produces. Dispatches by
+ * pattern type: chladni → its closed-form standing-wave field; topographic →
+ * the fBm terrain reconstructed from the layer seed (so the guide's iso-lines
+ * track the drawn contours).
  * @param {object} layer
  * @returns {import('./ScalarField').ScalarField | null} field, or null if the
  *   layer produces no field.
  */
 export function fieldForLayer(layer) {
   if (!canProduceField(layer)) return null;
+  if (layer.patternType === 'topographic') {
+    return topographicField(layer.params, { seed: layer.seed, resolution: 128 });
+  }
   return chladniField(layer.params, { resolution: 128 });
 }
 

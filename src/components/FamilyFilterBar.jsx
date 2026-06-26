@@ -34,7 +34,7 @@ export default function FamilyFilterBar({
             // OFF: hairline outline, dimmed text, desaturated dot (handled
             // below via opacity). Inline style carries the dynamic family color
             // (Tailwind can't do arbitrary runtime hex); Tailwind does the rest.
-            className="group flex items-center gap-1.5 rounded-xs border px-2 py-1 text-[11px] font-medium leading-none transition-colors duration-fast ease-out-quart"
+            className="group flex items-center gap-1.5 rounded-xs border px-2 py-1 text-[11px] font-medium leading-none transition-[color,background-color,border-color,transform] duration-fast ease-out-quart motion-safe:active:scale-[0.95]"
             style={
               on
                 ? {
@@ -65,7 +65,7 @@ export default function FamilyFilterBar({
           type="button"
           data-testid="family-select-all"
           onClick={() => onSelectAll && onSelectAll()}
-          className="rounded-xs border border-hairline px-2 py-1 text-[11px] text-ink-soft transition-colors duration-fast ease-out-quart hover:border-violet hover:text-violet"
+          className="rounded-xs border border-hairline px-2 py-1 text-[11px] text-ink-soft transition-[color,border-color,transform] duration-fast ease-out-quart hover:border-violet hover:text-violet motion-safe:active:scale-[0.95]"
         >
           Select all
         </button>
@@ -73,7 +73,7 @@ export default function FamilyFilterBar({
           type="button"
           data-testid="family-clear-all"
           onClick={() => onClearAll && onClearAll()}
-          className="rounded-xs border border-hairline px-2 py-1 text-[11px] text-ink-soft transition-colors duration-fast ease-out-quart hover:border-violet hover:text-violet"
+          className="rounded-xs border border-hairline px-2 py-1 text-[11px] text-ink-soft transition-[color,border-color,transform] duration-fast ease-out-quart hover:border-violet hover:text-violet motion-safe:active:scale-[0.95]"
         >
           Deselect all
         </button>

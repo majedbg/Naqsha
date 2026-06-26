@@ -92,7 +92,7 @@ export default function PatternPickerModal({ open, onClose, onPick }) {
 
   // Shared card factory — same gate/ready/label/symbol resolution for both the
   // Map (size 92) and Grid (size 140) views, so the two never drift.
-  const cardFor = (id, meta, size = 92) => {
+  const cardFor = (id, meta, size = 92, animateIn = false) => {
     const ready = !!getPatternClass(id);
     const gate = check('pattern', id);
     const label = labelFor(id, dynamicTypes);
@@ -108,12 +108,14 @@ export default function PatternPickerModal({ open, onClose, onPick }) {
         lockReason={gate.reason}
         onPick={onPick}
         size={size}
+        animateIn={animateIn}
       />
     );
   };
 
-  // Grid render-prop — reuse cardFor at the larger gallery size.
-  const renderCardGallery = (item) => cardFor(item.id, item.meta, 140);
+  // Grid render-prop — reuse cardFor at the larger gallery size, with the
+  // mount fade+scale enter (Map view passes no animateIn, so it stays static).
+  const renderCardGallery = (item) => cardFor(item.id, item.meta, 140, true);
 
   // Arrow-key roving between the two tabs (nice-to-have over native + aria).
   const onTabKeyDown = (e) => {
@@ -193,7 +195,7 @@ export default function PatternPickerModal({ open, onClose, onPick }) {
             role="tabpanel"
             id="picker-panel-map"
             aria-labelledby="picker-tab-map"
-            className="overflow-auto p-4 flex-1 min-h-0"
+            className="picker-panel-enter overflow-auto p-4 flex-1 min-h-0"
           >
             <PatternTableView cells={cells} custom={custom} cardFor={cardFor} />
           </div>
@@ -202,7 +204,7 @@ export default function PatternPickerModal({ open, onClose, onPick }) {
             role="tabpanel"
             id="picker-panel-grid"
             aria-labelledby="picker-tab-grid"
-            className="flex-1 min-h-0 p-4 flex flex-col"
+            className="picker-panel-enter flex-1 min-h-0 p-4 flex flex-col"
           >
             <PatternGalleryView
               patterns={visiblePatterns}

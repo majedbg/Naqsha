@@ -32,7 +32,7 @@ const EASE = 'cubic-bezier(0.165,0.84,0.44,1)';
 // `size` (px) drives the square box via INLINE style (a Tailwind arbitrary
 // `w-[${size}px]` would not compile) — consistent with the card's other inline
 // styles (transform / border). The Map view passes no size, so it stays 92px.
-export default function PatternCard({ id, meta, symbol, label, ready, locked, lockReason, onPick, size = 92 }) {
+export default function PatternCard({ id, meta, symbol, label, ready, locked, lockReason, onPick, size = 92, animateIn = false }) {
   // Route the family lookup through familyMetaFor so custom patterns
   // (meta.family === 'custom') resolve to the neutral CUSTOM_FAMILY gray instead
   // of the bare '#888' fallback. Real taxonomy families still map to the same
@@ -60,7 +60,7 @@ export default function PatternCard({ id, meta, symbol, label, ready, locked, lo
       title={locked ? (lockReason || 'Locked') : `${label} — ${meta.blurb || ''}`}
       className={`group relative rounded-[5px] border bg-paper overflow-hidden text-left ${
         disabled ? 'cursor-not-allowed' : 'cursor-pointer'
-      }`}
+      }${animateIn ? ' gallery-card-enter' : ''}`}
       style={{
         width: size,
         height: size,

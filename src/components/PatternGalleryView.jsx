@@ -77,14 +77,14 @@ export default function PatternGalleryView({
         {isEmpty ? (
           <div
             data-testid="gallery-empty"
-            className="flex h-full flex-col items-center justify-center gap-3 py-12 text-center"
+            className="anim-fade flex h-full flex-col items-center justify-center gap-3 py-12 text-center"
           >
             <p className="text-[13px] text-ink-soft">No families selected.</p>
             <button
               type="button"
               data-testid="gallery-empty-select-all"
               onClick={() => onSelectAll && onSelectAll()}
-              className="rounded-xs border border-hairline px-3 py-1.5 text-[12px] text-ink-soft transition-colors duration-fast ease-out-quart hover:border-violet hover:text-violet"
+              className="rounded-xs border border-hairline px-3 py-1.5 text-[12px] text-ink-soft transition-[color,border-color,transform] duration-fast ease-out-quart hover:border-violet hover:text-violet motion-safe:active:scale-[0.97]"
             >
               Select all
             </button>

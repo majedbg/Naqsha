@@ -5,7 +5,9 @@
 // the shell's Inspector region and makes it context-sensitive on the current
 // single selection. It does NOT rebuild any controls: it composes the exact same
 // primitives LayerCard composes for its param body —
-//   • PatternTabs              → the pattern-type swap control (pinned at top)
+//   • PatternSelect            → the pattern-type swap control (pinned at top):
+//                                a compact trigger that opens the periodic-table
+//                                grid picker (PatternPickerModal), same as add-layer
 //   • LayerParamsProvider +    → the collapsible, grouped param controls
 //     PatternParams              (PARAM_GROUPS / ParamGroup / ParamRow / Slider …)
 //   • usePatternCache          → the param-caching pattern-switch machine
@@ -20,7 +22,7 @@
 // selected layer; when it resolves to a layer we show its controls, otherwise we
 // show a neutral document/empty state. Multi-select is out of scope (#6).
 
-import PatternTabs from "../PatternTabs";
+import PatternSelect from "../PatternSelect";
 import PatternParams from "../PatternParams";
 import DockToggle from "./DockToggle";
 import usePatternCache from "../../lib/usePatternCache";
@@ -436,7 +438,7 @@ function SelectedLayerInspector({ layer, layers, unit, profileId, onUpdateLayer,
         <h3 className="text-xs font-semibold text-ink-soft uppercase tracking-wider">
           Pattern
         </h3>
-        <PatternTabs active={layer.patternType} onChange={handlePatternChange} />
+        <PatternSelect active={layer.patternType} onChange={handlePatternChange} />
       </div>
 
       {/* Collapsible, grouped param controls (Structure / Scale / Variation /

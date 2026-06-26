@@ -7,8 +7,8 @@
 //
 // Assertions are deliberately about what the code does NOW, verified against the
 // constants (SPATIAL_FORM_ROWS, PATTERN_TAXONOMY, PATTERN_FAMILIES, PATTERN_SYMBOLS).
-import { describe, it, expect } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { describe, it, expect, beforeEach } from "vitest";
+import { render, screen, fireEvent } from "@testing-library/react";
 import PatternPickerModal from "./PatternPickerModal";
 import { vi } from "vitest";
 
@@ -19,8 +19,21 @@ vi.mock("../lib/AuthContext", () => ({
   useAuth: () => ({ tier: "studio" }),
 }));
 
+// The modal now defaults to the Grid view (persisted to localStorage). Clear it
+// between tests so the default ('grid') is deterministic, then switch to the Map
+// tab for the periodic-table assertions below.
+function openOnMapTab(onPick = () => {}) {
+  const utils = render(<PatternPickerModal open onClose={() => {}} onPick={onPick} />);
+  fireEvent.click(screen.getByRole("tab", { name: "Map" }));
+  return utils;
+}
+
 describe("PatternPickerModal — current Map (periodic-table) rendering [characterization]", () => {
   const noop = () => {};
+
+  beforeEach(() => {
+    localStorage.clear();
+  });
 
   it("renders the modal shell with its heading when open", () => {
     render(<PatternPickerModal open onClose={noop} onPick={noop} />);
@@ -31,7 +44,7 @@ describe("PatternPickerModal — current Map (periodic-table) rendering [charact
   });
 
   it("renders a known taxonomy row label (SPATIAL_FORM_ROWS)", () => {
-    render(<PatternPickerModal open onClose={noop} onPick={noop} />);
+    openOnMapTab();
     // 'radial' row → label "Radial / Spiral"; populated by spiral/spirograph etc.,
     // so the row is not hidden as empty.
     expect(screen.getByText("Radial / Spiral")).toBeInTheDocument();
@@ -40,7 +53,7 @@ describe("PatternPickerModal — current Map (periodic-table) rendering [charact
   });
 
   it("renders a known pattern card (spiral) with its symbol and title", () => {
-    render(<PatternPickerModal open onClose={noop} onPick={noop} />);
+    openOnMapTab();
     // Cards carry title "<label> — <blurb>"; spiral is a static (ready) built-in.
     expect(screen.getByTitle(/^Spiral —/)).toBeInTheDocument();
     // Element symbol caption for spiral (PATTERN_SYMBOLS.spiral === 'Sl').
@@ -50,7 +63,7 @@ describe("PatternPickerModal — current Map (periodic-table) rendering [charact
   });
 
   it("renders the bottom legend with family entries (PATTERN_FAMILIES)", () => {
-    render(<PatternPickerModal open onClose={noop} onPick={noop} />);
+    openOnMapTab();
     // Legend lists every family label.
     expect(screen.getByText("Harmonic Curves")).toBeInTheDocument();
     expect(screen.getByText("Waves & Interference")).toBeInTheDocument();

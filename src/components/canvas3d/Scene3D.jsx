@@ -6,7 +6,7 @@
 // Do NOT import this file (or its canvas3d/* siblings) statically from any 2D
 // render-path module. Pure, three-free logic (e.g. cameraFit) lives under
 // src/lib/three3d and stays on the 2D side of the boundary so it can be unit-tested.
-import { useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState, useEffect } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { Selection } from '@react-three/postprocessing';
 import CameraRig from './CameraRig.jsx';
@@ -32,6 +32,10 @@ import {
   EXAG_MIN,
 } from '../../lib/three3d/heightSurface.js';
 import { saveCanvasPng } from '../../lib/three3d/snapshotExport.js';
+import {
+  loadPreview3DSettings,
+  savePreview3DSettings,
+} from '../../lib/three3d/preview3dPersistence.js';
 
 // Placeholder content bounds (S2). Stable identity so CameraRig's zoom-fit effect
 // doesn't re-run every render. Used for height-surface (B, later) + the empty
@@ -93,9 +97,15 @@ export default function Scene3D({
   designName = 'untitled',
 }) {
   const [resetSignal, setResetSignal] = useState(0);
-  // Surface-A stack spacing (D11). Seeded from the `spacing` prop, then owned
-  // locally so the slider drives the geometry. Persistence is S11 (D13).
-  const [spacingMm, setSpacingMm] = useState(() => clampSpacing(spacing));
+  // Persisted view-prefs (D13/S11), read ONCE on mount. Spacing + exaggeration
+  // seed their sliders below; camera is never persisted (always zoom-fits).
+  const persisted = useMemo(() => loadPreview3DSettings(), []);
+  // Surface-A stack spacing (D11). Seeded from the persisted value (falling back
+  // to the `spacing` prop / default), then owned locally so the slider drives the
+  // geometry. Changes are persisted below.
+  const [spacingMm, setSpacingMm] = useState(() =>
+    clampSpacing(persisted.spacing ?? spacing),
+  );
   const keyLightRef = useRef(null);
   // Live WebGL renderer captured at Canvas creation (onCreated) so the "Save
   // image" overlay — which lives OUTSIDE the R3F tree — can read its canvas.
@@ -109,11 +119,27 @@ export default function Scene3D({
   const boundsW = boundsMm?.width;
   const boundsH = boundsMm?.height;
 
-  // Surface-B vertical exaggeration (D10): default ≈ panel-size / 4. Seeded once
-  // from the design bounds, then owned locally so the slider drives the relief.
-  // Persistence is S11 (D13), mirroring the spacing slider.
-  const [exaggerationMm, setExaggerationMm] = useState(() => defaultExaggeration(boundsW));
+  // Surface-B vertical exaggeration (D10): persisted value wins (clamped to the
+  // live bounds-derived max), else the bounds-relative default (≈ panel-size / 4).
+  // Owned locally so the slider drives the relief; changes are persisted below.
   const exagMax = exaggerationMax(boundsW);
+  const [exaggerationMm, setExaggerationMm] = useState(() =>
+    persisted.exaggeration != null
+      ? clampExaggeration(persisted.exaggeration, exagMax)
+      : defaultExaggeration(boundsW),
+  );
+
+  // Persist spacing + exaggeration (D13/S11). Each is gated to the sub-mode that
+  // actually owns its slider: spacing only persists in panel-stack (A), exaggeration
+  // only in height-surface (B). Without the gate, an A session would rewrite the
+  // exaggeration default (the slider it can't even see) over a previously-saved B
+  // value, and vice versa. Own keys, never the document; camera is excluded.
+  useEffect(() => {
+    if (isPanelStack) savePreview3DSettings({ spacing: spacingMm });
+  }, [isPanelStack, spacingMm]);
+  useEffect(() => {
+    if (!isPanelStack) savePreview3DSettings({ exaggeration: exaggerationMm });
+  }, [isPanelStack, exaggerationMm]);
 
   // Surface-B per-target drape toggles (S9, §3.4). Default ALL-ON: a SET of
   // DISABLED targetIds, so newly-added targets light up without re-seeding.
@@ -157,6 +183,10 @@ export default function Scene3D({
       PLACEHOLDER_BOX
     );
   }, [isPanelStack, sheetSpecs, boundsW, boundsH, exaggerationMm]);
+
+  // Surface A degenerate state (§3.1): no visible panels (0 panels, or all panels
+  // hidden) → nothing to stack. Show a hint rather than an unexplained empty scene.
+  const emptyStack = isPanelStack && sheetSpecs.length === 0;
 
   return (
     <div className="absolute inset-0" data-mode={mode} data-focus-field={focusFieldLayerId ?? ''}>
@@ -319,6 +349,17 @@ export default function Scene3D({
           className="absolute bottom-3 right-3 max-w-[16rem] rounded-md border border-white/10 bg-black/40 px-3 py-2 text-xs text-white/60 backdrop-blur"
         >
           This guide has no active modulation targets — showing the field relief only.
+        </div>
+      )}
+
+      {/* Surface-A empty state (§3.1): no visible panels to stack. Centered hint
+          so the dark scene isn't mistaken for a broken/black canvas. */}
+      {emptyStack && (
+        <div
+          data-testid="canvas3d-stack-empty"
+          className="pointer-events-none absolute inset-0 flex items-center justify-center px-6 text-center text-sm text-white/60"
+        >
+          No visible panels to preview — add a panel or unhide one to see the stacked view.
         </div>
       )}
     </div>

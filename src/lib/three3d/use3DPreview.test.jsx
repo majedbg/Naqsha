@@ -1,9 +1,14 @@
 // @vitest-environment jsdom
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { use3DPreview } from './use3DPreview.js';
+import { loadPreview3DSettings } from './preview3dPersistence.js';
 
 describe('use3DPreview', () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
   it('starts off with no focused field', () => {
     const { result } = renderHook(() => use3DPreview());
     expect(result.current.subMode).toBe('off');
@@ -37,5 +42,21 @@ describe('use3DPreview', () => {
     const first = result.current.openPanelStack;
     rerender();
     expect(result.current.openPanelStack).toBe(first);
+  });
+
+  it('persists the last non-off sub-mode to localStorage (D13)', () => {
+    const { result } = renderHook(() => use3DPreview());
+    act(() => result.current.openPanelStack());
+    expect(loadPreview3DSettings().subMode).toBe('panel-stack');
+    act(() => result.current.openHeightSurface('guide-1'));
+    expect(loadPreview3DSettings().subMode).toBe('height-surface');
+  });
+
+  it('closing does NOT overwrite the persisted sub-mode with off', () => {
+    const { result } = renderHook(() => use3DPreview());
+    act(() => result.current.openPanelStack());
+    act(() => result.current.close());
+    // The recorded "last sub-mode" stays panel-stack; off is never stored.
+    expect(loadPreview3DSettings().subMode).toBe('panel-stack');
   });
 });

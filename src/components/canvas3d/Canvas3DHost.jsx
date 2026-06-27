@@ -18,10 +18,12 @@ const Scene3D = lazy(() => import('./Scene3D.jsx'));
  * 2D-side from the snapshot + pattern instances) the scene rasterizes onto sheets.
  * `reliefField` is the Surface-B guide ScalarField (S8), resolved 2D-side from the
  * focus layer and passed across the boundary (ScalarField is three-free).
+ * `drapeTargets` are the guide's ACTIVE modulation-target descriptors (S9),
+ * resolved 2D-side (three-free) for the per-channel drape + toggle checklist.
  *
  * @param {{ mode?: string, focusFieldLayerId?: string|null, snapshot?: object|null,
  *           boundsMm?: {width:number,height:number}, marksByPanel?: object|null,
- *           reliefField?: object|null }} props
+ *           reliefField?: object|null, drapeTargets?: object[] }} props
  */
 export default function Canvas3DHost({
   mode,
@@ -30,6 +32,7 @@ export default function Canvas3DHost({
   boundsMm,
   marksByPanel = null,
   reliefField = null,
+  drapeTargets = [],
 }) {
   return (
     <Suspense
@@ -55,6 +58,7 @@ export default function Canvas3DHost({
         boundsMm={boundsMm}
         marksByPanel={marksByPanel}
         reliefField={reliefField}
+        drapeTargets={drapeTargets}
       />
     </Suspense>
   );

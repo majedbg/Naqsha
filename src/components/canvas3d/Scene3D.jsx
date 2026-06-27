@@ -15,6 +15,7 @@ import EmissiveBloom from './EmissiveBloom.jsx';
 import Sheets from './Sheets.jsx';
 import Marks from './Marks.jsx';
 import Relief from './Relief.jsx';
+import DrapedMarks from './DrapedMarks.jsx';
 import {
   buildSheetSpecs,
   boundsForSheetSpecs,
@@ -85,6 +86,10 @@ export default function Scene3D({
   // Surface B (S8): the guide layer's ScalarField, resolved 2D-side and passed
   // across the boundary (ScalarField is three-free). null for Surface A.
   reliefField = null,
+  // Surface B (S9): the guide's ACTIVE modulation-target descriptors
+  // ({targetId, channel, amount, color, name}), resolved 2D-side by
+  // drape.resolveActiveTargets (three-free) and passed across the boundary.
+  drapeTargets = [],
   designName = 'untitled',
 }) {
   const [resetSignal, setResetSignal] = useState(0);
@@ -109,6 +114,25 @@ export default function Scene3D({
   // Persistence is S11 (D13), mirroring the spacing slider.
   const [exaggerationMm, setExaggerationMm] = useState(() => defaultExaggeration(boundsW));
   const exagMax = exaggerationMax(boundsW);
+
+  // Surface-B per-target drape toggles (S9, §3.4). Default ALL-ON: a SET of
+  // DISABLED targetIds, so newly-added targets light up without re-seeding.
+  // NOT persisted — D13/S11 cover sub-mode/spacing/exaggeration only.
+  const [disabledTargets, setDisabledTargets] = useState(() => new Set());
+  const enabledMap = useMemo(() => {
+    const m = {};
+    for (const t of drapeTargets) m[t.targetId] = !disabledTargets.has(t.targetId);
+    return m;
+  }, [drapeTargets, disabledTargets]);
+  const toggleTarget = (id) =>
+    setDisabledTargets((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const hasTargets = !isPanelStack && reliefField && drapeTargets.length > 0;
+  const emptyDrape = !isPanelStack && reliefField && drapeTargets.length === 0;
 
   // Surface A sheet specs (S4). Memoized on the snapshot + spacing + bounds so the
   // geometry — and the derived fitBox handed to CameraRig — keep stable identity
@@ -168,12 +192,26 @@ export default function Scene3D({
                guide's ScalarField as a vertex-colored terrain (warm/cool =
                attract/repel), lit by the shared environment. Per-channel target
                drape lands in S9. */
-            <Relief
-              field={reliefField}
-              exaggeration={exaggerationMm}
-              width={boundsW}
-              height={boundsH}
-            />
+            <>
+              <Relief
+                field={reliefField}
+                exaggeration={exaggerationMm}
+                width={boundsW}
+                height={boundsH}
+              />
+              {/* Per-channel target drape (S9, §3.4): active targets as thin
+                  emissive LineSegments, one color per target, with per-target
+                  toggles below. warp → in-plane displaced grid; density →
+                  spacing-varied studs. */}
+              <DrapedMarks
+                targets={drapeTargets}
+                enabled={enabledMap}
+                field={reliefField}
+                exaggeration={exaggerationMm}
+                width={boundsW}
+                height={boundsH}
+              />
+            </>
           )}
 
           <EmissiveBloom lights={bloomLights} />
@@ -242,6 +280,46 @@ export default function Scene3D({
           />
           <span className="w-12 tabular-nums text-right">{Math.round(exaggerationMm)} mm</span>
         </label>
+      )}
+
+      {/* Surface-B per-target drape toggle checklist (S9, §3.4): one row per
+          ACTIVE modulation target, colored swatch + on/off checkbox. */}
+      {hasTargets && (
+        <div
+          data-testid="canvas3d-drape-targets"
+          className="absolute bottom-3 right-3 flex max-w-[14rem] flex-col gap-1.5 rounded-md border border-white/10 bg-black/40 px-3 py-2 text-xs font-medium text-white/80 backdrop-blur"
+        >
+          <span className="text-[0.65rem] uppercase tracking-wide text-white/50">Draped targets</span>
+          {drapeTargets.map((t) => (
+            <label key={t.targetId} className="flex cursor-pointer items-center gap-2">
+              <input
+                type="checkbox"
+                checked={enabledMap[t.targetId] !== false}
+                onChange={() => toggleTarget(t.targetId)}
+                className="h-3 w-3 cursor-pointer accent-violet"
+                aria-label={`Toggle drape for ${t.name || t.targetId}`}
+              />
+              <span
+                aria-hidden="true"
+                className="h-2.5 w-2.5 shrink-0 rounded-sm"
+                style={{ backgroundColor: t.color }}
+              />
+              <span className="truncate">{t.name || t.targetId}</span>
+              <span className="ml-auto text-[0.6rem] uppercase text-white/40">{t.channel}</span>
+            </label>
+          ))}
+        </div>
+      )}
+
+      {/* Empty state (§3.4): a guide with NO active modulation targets — relief
+          only + a hint. Distinct from reliefField === null (no field at all). */}
+      {emptyDrape && (
+        <div
+          data-testid="canvas3d-drape-empty"
+          className="absolute bottom-3 right-3 max-w-[16rem] rounded-md border border-white/10 bg-black/40 px-3 py-2 text-xs text-white/60 backdrop-blur"
+        >
+          This guide has no active modulation targets — showing the field relief only.
+        </div>
       )}
     </div>
   );

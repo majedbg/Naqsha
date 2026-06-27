@@ -28,6 +28,10 @@ import Canvas3DHost from "./canvas3d/Canvas3DHost";
 // 3D Surface-A texture path. Imports only 2D-side modules (svgExport/operations/
 // panels), so referencing it here keeps three.js out of the 2D bundle.
 import { buildPanelMarkSVGs } from "../lib/three3d/markTexture";
+// Three-free pure resolver (S9): the guide's ACTIVE modulation-target descriptors
+// for the Surface-B drape. Imports only 2D-side field libs, so it keeps three.js
+// out of the 2D bundle.
+import { resolveActiveTargets } from "../lib/three3d/drape";
 
 const IDENTITY = { x: 0, y: 0, rotation: 0, scale: 1 };
 
@@ -230,6 +234,16 @@ export default function RightPanel({
     if (threeDMode !== "height-surface" || !focusFieldLayerId) return null;
     const guide = (layers || []).find((l) => l.id === focusFieldLayerId);
     return guide ? fieldForLayer(guide) : null;
+  }, [threeDMode, focusFieldLayerId, layers]);
+
+  // Surface B (S9, §3.4): the guide's ACTIVE modulation targets to drape on the
+  // relief, resolved 2D-side (pure, three-free) and passed across the boundary as
+  // plain descriptors. Honors the modulation graph's "first incoming edge wins";
+  // empty when the guide has no active warp/density targets. null unless B is open.
+  const drapeTargets = useMemo(() => {
+    if (threeDMode !== "height-surface" || !focusFieldLayerId) return [];
+    const guide = (layers || []).find((l) => l.id === focusFieldLayerId);
+    return guide ? resolveActiveTargets(guide, layers) : [];
   }, [threeDMode, focusFieldLayerId, layers]);
 
   // --- Field overlay (read-only modulation-field preview) -------------------
@@ -728,6 +742,7 @@ export default function RightPanel({
             boundsMm={{ width: pxToUnit(canvasW, "mm"), height: pxToUnit(canvasH, "mm") }}
             marksByPanel={threeDMarks}
             reliefField={reliefField}
+            drapeTargets={drapeTargets}
           />
         </div>
       )}

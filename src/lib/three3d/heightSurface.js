@@ -36,6 +36,25 @@ function safeSize(sizeMm) {
 }
 
 /**
+ * Map a unit-domain coord (u,v) ∈ [0,1]² + an elevation to a WORLD position on the
+ * relief plane: x across width (centered), z across depth (centered), elevation on Y
+ * (the spec's "Z"). The SINGLE source of truth for the relief's uv→world mapping so
+ * the draped marks (S9, drape.js) seat on the EXACT surface buildHeightmap emits —
+ * any drift here and marks float off the terrain.
+ * @param {number} u
+ * @param {number} v
+ * @param {number} elevation
+ * @param {number} [width=1]
+ * @param {number} [height=1]
+ * @returns {[number, number, number]}
+ */
+export function uvToWorld(u, v, elevation, width = 1, height = 1) {
+  const w = Number.isFinite(width) && width > 0 ? width : 1;
+  const h = Number.isFinite(height) && height > 0 ? height : 1;
+  return [(u - 0.5) * w, Number.isFinite(elevation) ? elevation : 0, (v - 0.5) * h];
+}
+
+/**
  * Default vertical exaggeration ≈ panel-size / 4 (PRD D10). With sampleSigned in
  * [-1,1] this makes the peak relief ±(size/4) over a size-wide plane — a legible
  * terrain that isn't a spike. Non-positive / non-finite size → a sane fallback.
@@ -118,9 +137,10 @@ export function buildHeightmap({ field, exaggeration = 0, width = 1, height = 1,
       const s = field.sampleSigned(u, v); // normalized [-1,1] by max|value|
       const elevation = s * exag;
       const idx = (j * cols + i) * 3;
-      positions[idx] = (u - 0.5) * w; // x across width, centered
-      positions[idx + 1] = elevation; // Y = elevation (spec "Z")
-      positions[idx + 2] = (v - 0.5) * h; // z across depth, centered
+      const [wx, wy, wz] = uvToWorld(u, v, elevation, w, h);
+      positions[idx] = wx; // x across width, centered
+      positions[idx + 1] = wy; // Y = elevation (spec "Z")
+      positions[idx + 2] = wz; // z across depth, centered
       const [cr, cg, cb] = reliefColor(s);
       colors[idx] = cr;
       colors[idx + 1] = cg;

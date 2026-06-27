@@ -14,11 +14,19 @@ const Scene3D = lazy(() => import('./Scene3D.jsx'));
  *
  * `snapshot` is the frozen design snapshot (S3, PRD D14) the scene reads from.
  * `boundsMm` is the design's canvas size in mm (Surface A slab size, S4).
+ * `marksByPanel` is the per-panel, per-process emissive mark SVGs (S5, built
+ * 2D-side from the snapshot + pattern instances) the scene rasterizes onto sheets.
  *
  * @param {{ mode?: string, focusFieldLayerId?: string|null, snapshot?: object|null,
- *           boundsMm?: {width:number,height:number} }} props
+ *           boundsMm?: {width:number,height:number}, marksByPanel?: object|null }} props
  */
-export default function Canvas3DHost({ mode, focusFieldLayerId, snapshot = null, boundsMm }) {
+export default function Canvas3DHost({
+  mode,
+  focusFieldLayerId,
+  snapshot = null,
+  boundsMm,
+  marksByPanel = null,
+}) {
   return (
     <Suspense
       fallback={
@@ -41,6 +49,7 @@ export default function Canvas3DHost({ mode, focusFieldLayerId, snapshot = null,
         focusFieldLayerId={focusFieldLayerId}
         snapshot={snapshot}
         boundsMm={boundsMm}
+        marksByPanel={marksByPanel}
       />
     </Suspense>
   );

@@ -13,6 +13,7 @@ import CameraRig from './CameraRig.jsx';
 import SceneEnvironment from './SceneEnvironment.jsx';
 import EmissiveBloom from './EmissiveBloom.jsx';
 import Sheets from './Sheets.jsx';
+import Marks from './Marks.jsx';
 import { buildSheetSpecs, boundsForSheetSpecs } from '../../lib/three3d/sheetSpecs.js';
 
 // Placeholder content bounds (S2). Stable identity so CameraRig's zoom-fit effect
@@ -43,8 +44,13 @@ const DEFAULT_BOUNDS_MM = { width: 200, height: 200 };
  * from the snapshot's panels (materials per `substrate.kind`, D7). Marks land in
  * S5/S10. Surface B (height-surface) is still the S2 placeholder until S8.
  *
+ * S5 drapes the engraved/cut marks: per-panel, per-process emissive SVGs
+ * (built 2D-side, passed in as `marksByPanel`) are rasterized to CanvasTextures
+ * and floated as emissive mark planes in front of each sheet (texture mode, D3/D6).
+ *
  * @param {{ mode?: string, focusFieldLayerId?: string|null, snapshot?: object|null,
- *           spacing?: number, boundsMm?: {width:number,height:number} }} props
+ *           spacing?: number, boundsMm?: {width:number,height:number},
+ *           marksByPanel?: object }} props
  */
 export default function Scene3D({
   mode = 'panel-stack',
@@ -52,6 +58,7 @@ export default function Scene3D({
   snapshot = null,
   spacing = DEFAULT_SPACING_MM,
   boundsMm = DEFAULT_BOUNDS_MM,
+  marksByPanel = null,
 }) {
   const [resetSignal, setResetSignal] = useState(0);
   const keyLightRef = useRef(null);
@@ -99,9 +106,12 @@ export default function Scene3D({
           <SceneEnvironment ref={keyLightRef} />
 
           {isPanelStack ? (
-            /* Surface A — stacked substrate slabs (S4). Marks (emissive grooves)
-               drape on these in S5/S10. */
-            <Sheets specs={sheetSpecs} />
+            /* Surface A — stacked substrate slabs (S4) + texture-mode emissive
+               marks floated in front of each sheet (S5). Ribbon marks land in S10. */
+            <>
+              <Sheets specs={sheetSpecs} />
+              <Marks specs={sheetSpecs} marksByPanel={marksByPanel ?? {}} />
+            </>
           ) : (
             /* Surface B placeholder until S8: a lit base + a glowing emissive
                marker that proves the selective bloom still works. */

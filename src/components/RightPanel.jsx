@@ -23,6 +23,10 @@ import { useFont } from "../lib/text/fontRegistry";
 // three.js — it React.lazy-loads the inner Scene3D, so importing it here never
 // pulls three into the 2D bundle.
 import Canvas3DHost from "./canvas3d/Canvas3DHost";
+// Three-free pure builder (S5): per-panel, per-process emissive mark SVGs for the
+// 3D Surface-A texture path. Imports only 2D-side modules (svgExport/operations/
+// panels), so referencing it here keeps three.js out of the 2D bundle.
+import { buildPanelMarkSVGs } from "../lib/three3d/markTexture";
 
 const IDENTITY = { x: 0, y: 0, rotation: 0, scale: 1 };
 
@@ -191,6 +195,30 @@ export default function RightPanel({
     colorView,
     panels
   );
+
+  // Surface-A texture-mode marks (S5, PRD D3/D6). Built 2D-side here — where the
+  // live pattern instances are available — then handed to the 3D scene to
+  // rasterize onto each sheet. Returns null unless 3D is open (threeDSnapshot set),
+  // so the 2D path pays nothing. Panel SELECTION uses the PINNED snapshot
+  // (panels/layers/operations), so the mark set always matches the snapshot-pinned
+  // sheets; only the groove GEOMETRY tracks `patternInstances` (useState-backed —
+  // changes only on real edits, never per-render, so no texture thrash). The mild
+  // consequence: editing a pattern's params WHILE 3D is open re-derives that
+  // groove live rather than staying strictly frozen (D14) — an acceptable, honest
+  // deviation since the geometry/sheet structure stays pinned and "↻ Rebuild"
+  // remains the explicit resync.
+  const threeDMarks = useMemo(() => {
+    if (!threeDSnapshot) return null;
+    return buildPanelMarkSVGs({
+      panels: threeDSnapshot.panels,
+      layers: threeDSnapshot.layers,
+      operations: threeDSnapshot.operations,
+      patternInstances,
+      canvasW,
+      canvasH,
+      svgOpts: { font: textFont },
+    });
+  }, [threeDSnapshot, patternInstances, canvasW, canvasH, textFont]);
 
   // --- Field overlay (read-only modulation-field preview) -------------------
   // First slice of pattern modulation: visualize a guide pattern's underlying
@@ -686,6 +714,7 @@ export default function RightPanel({
             focusFieldLayerId={focusFieldLayerId}
             snapshot={threeDSnapshot}
             boundsMm={{ width: pxToUnit(canvasW, "mm"), height: pxToUnit(canvasH, "mm") }}
+            marksByPanel={threeDMarks}
           />
         </div>
       )}

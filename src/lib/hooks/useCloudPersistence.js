@@ -71,7 +71,11 @@ export default function useCloudPersistence({
       setLastSavedAt(Date.now());
       setSaveState("saved");
     } catch (err) {
+      // Surface the failure as observable state instead of swallowing it to the
+      // console — the indicator renders "Couldn't save" + a Retry affordance.
       console.error("Cloud save failed:", err);
+      setSaveError(err);
+      setSaveState("error");
     }
   }, [
     user,

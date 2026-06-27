@@ -79,6 +79,21 @@ describe("useCloudPersistence", () => {
     expect(typeof result.current.lastSavedAt).toBe("number");
   });
 
+  it("save: surfaces a rejected saveDesign as saveState 'error' + saveError (no silent swallow)", async () => {
+    const boom = new Error("network down");
+    saveDesign.mockRejectedValue(boom);
+    const props = baseProps();
+    const { result } = renderHook(() => useCloudPersistence(props));
+
+    await act(async () => {
+      await result.current.handleSaveToCloud();
+    });
+
+    expect(result.current.saveState).toBe("error");
+    expect(result.current.saveError).toBe(boom);
+    expect(result.current.lastSavedAt).toBe(null);
+  });
+
   it("save: writes a history snapshot only when historySnapshots > 0", async () => {
     saveDesign.mockResolvedValue({ id: "design-9" });
 

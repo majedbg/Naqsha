@@ -24,6 +24,13 @@ export default function useCloudPersistence({
   canvasContainerRef,
 }) {
   const [currentDesignId, setCurrentDesignId] = useState(null);
+  // Observable save state (Rec 1). `saveState` ∈ idle|saving|saved|error drives
+  // the inline status indicator; `lastSavedAt` is the success timestamp (the
+  // component formats it). These replace the previously-silent save: success and
+  // failure are now both visible.
+  const [saveState, setSaveState] = useState("idle");
+  const [saveError, setSaveError] = useState(null);
+  const [lastSavedAt, setLastSavedAt] = useState(null);
 
   const captureThumbnail = useCallback(() => {
     const container = canvasContainerRef.current;
@@ -41,6 +48,8 @@ export default function useCloudPersistence({
     if (!user) return;
     const thumbnail = captureThumbnail();
     const config = { layers, canvasW, canvasH, presetIndex, panels };
+    setSaveState("saving");
+    setSaveError(null);
     try {
       const design = await saveDesign(
         user.id,
@@ -59,6 +68,8 @@ export default function useCloudPersistence({
           );
         }
       }
+      setLastSavedAt(Date.now());
+      setSaveState("saved");
     } catch (err) {
       console.error("Cloud save failed:", err);
     }
@@ -112,5 +123,8 @@ export default function useCloudPersistence({
     setCurrentDesignId,
     handleSaveToCloud,
     handleLoadCloudDesign,
+    saveState,
+    saveError,
+    lastSavedAt,
   };
 }

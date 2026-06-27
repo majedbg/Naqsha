@@ -63,6 +63,22 @@ describe("useCloudPersistence", () => {
     expect(result.current.currentDesignId).toBe("design-9");
   });
 
+  it("save: settles saveState to 'saved' and records a numeric lastSavedAt on success", async () => {
+    saveDesign.mockResolvedValue({ id: "design-9" });
+    const props = baseProps();
+    const { result } = renderHook(() => useCloudPersistence(props));
+
+    expect(result.current.saveState).toBe("idle");
+    expect(result.current.lastSavedAt).toBe(null);
+
+    await act(async () => {
+      await result.current.handleSaveToCloud();
+    });
+
+    expect(result.current.saveState).toBe("saved");
+    expect(typeof result.current.lastSavedAt).toBe("number");
+  });
+
   it("save: writes a history snapshot only when historySnapshots > 0", async () => {
     saveDesign.mockResolvedValue({ id: "design-9" });
 

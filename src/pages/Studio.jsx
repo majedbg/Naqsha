@@ -1046,6 +1046,9 @@ export default function Studio({ submitOrg = null } = {}) {
           // sub-mode is active; 'off' → byte-identical 2D path.
           threeDMode={threeD.subMode}
           focusFieldLayerId={threeD.focusFieldLayerId}
+          // In-canvas "✕" exit for the 3D overlay. exit3D closes BOTH Surface A
+          // and Surface B (subMode→'off') and restores the prior 2D view.
+          onClose3D={lensEntry.exit3D}
           // Frozen design snapshot the 3D scene reads from (S3, D14). Consumed by
           // Surface A geometry in later slices; null when 3D is closed.
           threeDSnapshot={lensEntry.snapshot}
@@ -1325,8 +1328,12 @@ export default function Studio({ submitOrg = null } = {}) {
             onChangeLayerPattern={changeLayerPattern}
             onVariableWeightChange={handleVariableWeightChange}
             // "Preview in 3D" (S8) — opens Surface B (modulation height-surface)
-            // focused on this guide layer's field.
+            // focused on this guide layer's field. The button is a TOGGLE: it
+            // reads "Close preview" + closes when THIS guide is the open preview.
             onPreviewField={threeD.openHeightSurface}
+            onClosePreview={lensEntry.exit3D}
+            threeDSubMode={threeD.subMode}
+            threeDFocusLayerId={threeD.focusFieldLayerId}
           />,
           inspectorSlot
         )}

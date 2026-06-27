@@ -20,7 +20,7 @@ function useHarness(initial = { mode: 'material', materialId: 'clear' }) {
   const colorView = { mode, setMode, materialId, setMaterialId };
   const captureDesign = useCallback(() => DESIGN, []);
   const entry = use3DLensEntry({ colorView, threeD, captureDesign });
-  return { entry, subMode: threeD.subMode, mode, materialId };
+  return { entry, threeD, subMode: threeD.subMode, mode, materialId };
 }
 
 describe('use3DLensEntry', () => {
@@ -73,6 +73,23 @@ describe('use3DLensEntry', () => {
     expect(result.current.subMode).toBe('off');
     expect(result.current.mode).toBe('operation');
     expect(result.current.entry.activeLens).toBe('operation');
+  });
+
+  it('exit3D closes Surface B (height-surface) and restores the prior 2D lens', () => {
+    // Surface B is launched via threeD.openHeightSurface (NOT enter3D), so the
+    // close button / Inspector "Close preview" must route through exit3D and
+    // still cleanly return to sub-mode 'off' with the underlying 2D lens intact.
+    const { result } = renderHook(() => useHarness({ mode: 'material', materialId: 'clear' }));
+    act(() => result.current.threeD.openHeightSurface('guide-1'));
+    expect(result.current.subMode).toBe('height-surface');
+    expect(result.current.threeD.focusFieldLayerId).toBe('guide-1');
+
+    act(() => result.current.entry.exit3D());
+    expect(result.current.subMode).toBe('off');
+    expect(result.current.threeD.focusFieldLayerId).toBe(null);
+    // Prior 2D lens preserved by construction (colorView never mutated).
+    expect(result.current.entry.activeLens).toBe('material');
+    expect(result.current.entry.snapshot).toBe(null);
   });
 
   it('selectLens("3d") enters Surface A', () => {

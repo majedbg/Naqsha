@@ -78,4 +78,70 @@ describe("Inspector — Preview in 3D (S8, Surface B launch)", () => {
     // Clicking must not throw even with no handler supplied.
     expect(() => fireEvent.click(screen.getByTestId("modulator-preview-3d"))).not.toThrow();
   });
+
+  it("reads 'Preview in 3D' and opens when no 3D preview is active", () => {
+    const onPreviewField = vi.fn();
+    const onClosePreview = vi.fn();
+    render(
+      <Inspector
+        layers={[makeLayer("guide-1", "chladni", "Guide")]}
+        selectedLayerId="guide-1"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+        onPreviewField={onPreviewField}
+        onClosePreview={onClosePreview}
+        threeDSubMode="off"
+        threeDFocusLayerId={null}
+      />
+    );
+    const btn = screen.getByTestId("modulator-preview-3d");
+    expect(btn).toHaveTextContent("Preview in 3D");
+    fireEvent.click(btn);
+    expect(onPreviewField).toHaveBeenCalledWith("guide-1");
+    expect(onClosePreview).not.toHaveBeenCalled();
+  });
+
+  it("reads 'Close preview' and closes when THIS guide is being previewed in Surface B", () => {
+    const onPreviewField = vi.fn();
+    const onClosePreview = vi.fn();
+    render(
+      <Inspector
+        layers={[makeLayer("guide-1", "chladni", "Guide")]}
+        selectedLayerId="guide-1"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+        onPreviewField={onPreviewField}
+        onClosePreview={onClosePreview}
+        threeDSubMode="height-surface"
+        threeDFocusLayerId="guide-1"
+      />
+    );
+    const btn = screen.getByTestId("modulator-preview-3d");
+    expect(btn).toHaveTextContent("Close preview");
+    fireEvent.click(btn);
+    expect(onClosePreview).toHaveBeenCalledTimes(1);
+    expect(onPreviewField).not.toHaveBeenCalled();
+  });
+
+  it("reads 'Preview in 3D' and re-focuses when a DIFFERENT guide is previewed", () => {
+    const onPreviewField = vi.fn();
+    const onClosePreview = vi.fn();
+    render(
+      <Inspector
+        layers={[makeLayer("guide-1", "chladni", "Guide")]}
+        selectedLayerId="guide-1"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+        onPreviewField={onPreviewField}
+        onClosePreview={onClosePreview}
+        threeDSubMode="height-surface"
+        threeDFocusLayerId="some-other-guide"
+      />
+    );
+    const btn = screen.getByTestId("modulator-preview-3d");
+    expect(btn).toHaveTextContent("Preview in 3D");
+    fireEvent.click(btn);
+    expect(onPreviewField).toHaveBeenCalledWith("guide-1");
+    expect(onClosePreview).not.toHaveBeenCalled();
+  });
 });

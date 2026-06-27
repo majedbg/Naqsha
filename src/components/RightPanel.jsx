@@ -69,6 +69,11 @@ export default function RightPanel({
   // is the Surface-B source guide layer (null for Surface A).
   threeDMode = "off",
   focusFieldLayerId = null,
+  // Close the 3D preview overlay (the in-canvas "✕"). Routes to lensEntry.exit3D
+  // in Studio, closing BOTH Surface A and Surface B back to the prior 2D view.
+  // Defaults to a no-op so non-3D callers (mobile / ShareView / tests) are
+  // unaffected.
+  onClose3D = () => {},
   // Frozen design snapshot for the 3D scene (S3, PRD D14). Plumbed through to the
   // lazy host so Surface A geometry (later slices) reads from a point-in-time copy
   // rather than the live design. Defaults to null — every non-3D caller unaffected.
@@ -743,6 +748,7 @@ export default function RightPanel({
             marksByPanel={threeDMarks}
             reliefField={reliefField}
             drapeTargets={drapeTargets}
+            onClose={onClose3D}
           />
         </div>
       )}

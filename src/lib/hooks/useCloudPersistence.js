@@ -23,6 +23,10 @@ export default function useCloudPersistence({
   applyCanvasSize,
   markCleanFrom,
   canvasContainerRef,
+  // Retry/backoff (Capability C). A transient saveDesign rejection is retried
+  // after each delay (ms) before the failure is surfaced. One element per retry;
+  // [] disables retry (used by the fast unit tests).
+  retryDelays = [400, 1200],
 }) {
   const [currentDesignId, setCurrentDesignId] = useState(null);
   // Observable save state (Rec 1). `saveState` ∈ idle|saving|saved|error drives
@@ -94,13 +98,27 @@ export default function useCloudPersistence({
     setSaveState("saving");
     setSaveError(null);
     try {
-      const design = await saveDesign(
-        user.id,
-        designName,
-        config,
-        thumbnail,
-        currentDesignId
-      );
+      // Retry transient failures with backoff before surfacing 'error'. Stays on
+      // the one save path; saveState stays 'saving' across all attempts.
+      let design;
+      let attempt = 0;
+      for (;;) {
+        try {
+          design = await saveDesign(
+            user.id,
+            designName,
+            config,
+            thumbnail,
+            currentDesignId
+          );
+          break;
+        } catch (err) {
+          if (attempt >= retryDelays.length) throw err;
+          const delay = retryDelays[attempt];
+          attempt += 1;
+          await new Promise((resolve) => setTimeout(resolve, delay));
+        }
+      }
       if (design) {
         setCurrentDesignId(design.id);
         markCleanFrom(layers, bgColor);
@@ -141,6 +159,7 @@ export default function useCloudPersistence({
     bgColor,
     panels,
     limits.historySnapshots,
+    retryDelays,
   ]);
 
   const handleLoadCloudDesign = useCallback(

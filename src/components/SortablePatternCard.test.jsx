@@ -87,6 +87,24 @@ describe("SortablePatternCard", () => {
     expect(onPick).not.toHaveBeenCalled();
   });
 
+  it("renders the violet insertion line on the given edge only when insertionSide is set", () => {
+    // No insertionSide → no line.
+    const { unmount } = harness(
+      ["a"],
+      <SortablePatternCard id="a" meta={META} symbol="Hx" label="Harmonic" ready onPick={() => {}} />,
+    );
+    expect(document.querySelector("[data-insertion-line]")).toBeNull();
+    unmount();
+    // insertionSide="left" → a line on the left edge.
+    harness(
+      ["a"],
+      <SortablePatternCard id="a" meta={META} symbol="Hx" label="Harmonic" ready insertionSide="left" onPick={() => {}} />,
+    );
+    const line = document.querySelector("[data-insertion-line]");
+    expect(line).not.toBeNull();
+    expect(line).toHaveAttribute("data-insertion-line", "left");
+  });
+
   it("locked and not-ready cards render without crashing and are non-draggable", () => {
     // locked
     const { unmount } = harness(

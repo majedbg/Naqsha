@@ -13,7 +13,8 @@
 import { useMemo, useRef, useState } from "react";
 import {
   DndContext,
-  PointerSensor,
+  MouseSensor,
+  TouchSensor,
   KeyboardSensor,
   useSensor,
   useSensors,
@@ -41,6 +42,30 @@ const FAMILY_RANK = (() => {
 
 const rankOf = (key) => (key in FAMILY_RANK ? FAMILY_RANK[key] : Number.MAX_SAFE_INTEGER);
 
+// ── pure drag-geometry helpers (unit-tested; jsdom can't drive real drags) ────
+//
+// Map the drop target through the FULL order (the array the reducer mutates), NOT
+// the visible/filtered subset. Prefer `manualOrder` (what MOVE splices) and fall
+// back to the full materialized order for the rare partial-persist case where the
+// over-target is an id appended beyond a saved manualOrder.
+export function dropIndexFromOver(manualOrder, fullOrderIds, overId) {
+  const i = manualOrder.indexOf(overId);
+  if (i !== -1) return i;
+  return fullOrderIds.indexOf(overId);
+}
+
+// Which gap the insertion line sits in, relative to the over-target card.
+// Dragging an earlier card past a later one → line on the over card's RIGHT edge
+// (insert after); dragging a later card before an earlier one → LEFT edge. null
+// when hovering the dragged card itself or when either id is unknown.
+export function insertionSideFor(orderedIds, activeId, overId) {
+  if (!activeId || !overId || activeId === overId) return null;
+  const a = orderedIds.indexOf(activeId);
+  const o = orderedIds.indexOf(overId);
+  if (a === -1 || o === -1) return null;
+  return a < o ? "right" : "left";
+}
+
 export default function PatternGalleryView({
   patterns = [],
   isOn,
@@ -55,7 +80,7 @@ export default function PatternGalleryView({
   onEnterCustom,
   onResetManual,
   // Slice 6 — dnd-kit drag lifecycle (injected by the modal from the hook).
-  onDragStart, // (visibleIds) => startDrag(sortMode, visibleIds): auto-switch + seed
+  onDragStart, // (fullOrderIds) => startDrag(sortMode, fullOrderIds): auto-switch + seed FULL order
   onDragCancel, // () => cancelDrag(): Escape mid-drag reverts to prior mode
   onReorder, // (activeId, toIndex) => commitDrag: MOVE on drop
   onDraggingChange, // (bool) => modal guards its Escape handler while dragging
@@ -137,13 +162,25 @@ export default function PatternGalleryView({
   const displayItems = isDragging && frozenItemsRef.current ? frozenItemsRef.current : items;
   const orderedIds = useMemo(() => displayItems.map((p) => p.id), [displayItems]);
 
-  // Pointer sensor with an activation distance so a click-to-pick (onPick) does
-  // NOT register as a drag; keyboard sensor for a11y (space to lift, arrows to
-  // move). Touch is covered by pointer events — if iPad testing (slice 7) shows
-  // the grid's vertical scroll being hijacked, swap to MouseSensor + TouchSensor
-  // ({ delay:~200, tolerance:5 }) + KeyboardSensor.
+  // The FULL domain order (all patterns, manualOrder + appended) — used to map a
+  // drop target through the complete order, not the visible/filtered subset.
+  const fullOrderIds = useMemo(() => customItems.map((p) => p.id), [customItems]);
+
+  // Insertion-line state: which over-target card the line hugs, and on which edge
+  // ('left' = insert before / 'right' = insert after). Only set during a drag
+  // (onDragOver); cleared on start/end/cancel. Drives the violet vertical bar.
+  const [overInfo, setOverInfo] = useState(null);
+
+  // Split mouse/touch sensors (slice 7 decision) instead of a single PointerSensor:
+  //   • Mouse — 5px activation distance so a click-to-pick (onPick) is NOT a drag.
+  //   • Touch — a 200ms press DELAY (tolerance 5px) so a quick finger swipe scrolls
+  //     the grid (overflow-y-auto, an iPad target) and a press-and-hold starts the
+  //     drag; a bare PointerSensor with only a distance constraint can't tell a
+  //     scroll-swipe from a drag and hijacks vertical scroll on touch.
+  //   • Keyboard — a11y (space to lift, arrows to move, space to drop).
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(MouseSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 5 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
@@ -153,25 +190,42 @@ export default function PatternGalleryView({
     // must precede onDragStart (which flips sortMode → custom).
     frozenItemsRef.current = displayItems;
     setIsDragging(true);
+    setOverInfo(null);
     onDraggingChange && onDraggingChange(true);
-    // visibleIds = the stable mid-drag set; the hook seeds manualOrder from it.
-    onDragStart && onDragStart(orderedIds);
+    // Seed the domain model from the FULL family-clustered order (not the visible
+    // subset): a filtered Auto-origin drag must keep filtered-off cards in their
+    // original slots. The SortableContext item set stays the frozen visible set —
+    // that's purely the drag UI and is separate from seeding manualOrder.
+    onDragStart && onDragStart(fullOrderIds);
   };
 
   const endDrag = () => {
     setIsDragging(false);
     frozenItemsRef.current = null;
+    setOverInfo(null);
     onDraggingChange && onDraggingChange(false);
+  };
+
+  // Track the current drop gap so the insertion line can render between cards.
+  const handleDragOver = (event) => {
+    const { active, over } = event;
+    const side = over && active ? insertionSideFor(orderedIds, active.id, over.id) : null;
+    const next = side ? { id: over.id, side } : null;
+    setOverInfo((prev) => {
+      if (!prev && !next) return prev;
+      if (prev && next && prev.id === next.id && prev.side === next.side) return prev;
+      return next;
+    });
   };
 
   const handleDragEnd = (event) => {
     const { active, over } = event;
     if (over && active && active.id !== over.id) {
-      // overIndex is exact when the visible set == manualOrder (Custom unfiltered
-      // / Auto all-on). Auto-origin drag + active filter can land slightly off —
-      // flagged for slice 7. Per plan we move id to the over slot's index.
-      const overIndex = orderedIds.indexOf(over.id);
-      if (overIndex !== -1) onReorder && onReorder(active.id, overIndex);
+      // Map the drop target through the FULL order (the array MOVE mutates), via
+      // over.id — correct regardless of any active family filter. Both ids are
+      // real/visible ids; indexOf into the full order is well-defined.
+      const toIndex = dropIndexFromOver(manualOrder, fullOrderIds, over.id);
+      if (toIndex !== -1) onReorder && onReorder(active.id, toIndex);
     }
     endDrag();
   };
@@ -268,6 +322,7 @@ export default function PatternGalleryView({
             sensors={sensors}
             collisionDetection={closestCenter}
             onDragStart={handleDragStart}
+            onDragOver={handleDragOver}
             onDragEnd={handleDragEnd}
             onDragCancel={handleDragCancel}
           >
@@ -279,15 +334,21 @@ export default function PatternGalleryView({
                   justifyContent: "start",
                 }}
               >
-                {/* renderCard contract: `renderCard(item, { dimmed })`. Auto mode
-                    omits opts (dimmed falsy); Custom mode marks off-family cards
-                    dimmed. We render `displayItems` (frozen during a drag) so the
-                    SortableContext item set stays stable mid-gesture. */}
-                {displayItems.map((item) =>
-                  isCustom
-                    ? renderCard(item, { dimmed: isOn ? !isOn(item.familyKey) : false })
-                    : renderCard(item),
-                )}
+                {/* renderCard contract: `renderCard(item, { dimmed, insertionSide })`.
+                    Custom mode marks off-family cards dimmed; both modes forward the
+                    insertion-line side for the current over-target. We render
+                    `displayItems` (frozen during a drag) so the SortableContext item
+                    set stays stable mid-gesture. */}
+                {displayItems.map((item) => {
+                  const insertionSide =
+                    overInfo && overInfo.id === item.id ? overInfo.side : null;
+                  return isCustom
+                    ? renderCard(item, {
+                        dimmed: isOn ? !isOn(item.familyKey) : false,
+                        insertionSide,
+                      })
+                    : renderCard(item, { insertionSide });
+                })}
               </div>
             </SortableContext>
           </DndContext>

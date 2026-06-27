@@ -40,22 +40,24 @@ export default function PatternPickerModal({ open, onClose, onPick }) {
   // While a Grid drag is active, dnd-kit owns Escape (it cancels the drag). The
   // modal must NOT also close on that same Escape. PatternGalleryView reports drag
   // state via onDraggingChange; we stash it in a ref so the Escape effect needn't
-  // re-subscribe. The false-reset is deferred to a microtask so the ref still
-  // reads `true` for the remainder of the Escape event that cancelled the drag
-  // (dnd-kit cancels synchronously and does not stopPropagation), regardless of
-  // whether its document listener runs before or after this window listener.
+  // re-subscribe.
+  //
+  // The guard listens in the CAPTURE phase on window so it runs BEFORE dnd-kit's
+  // (document, bubble-phase) Escape handler — at which point the ref is still
+  // `true`, so we reliably skip the close while letting the event continue down to
+  // dnd-kit to cancel the drag. (A microtask-deferred reset is NOT safe here: a
+  // microtask checkpoint runs between event listeners on different targets, so the
+  // ref could flip to false before a bubble-phase window listener observed it.)
   const draggingRef = useRef(false);
-  const handleDraggingChange = (d) => {
-    if (d) draggingRef.current = true;
-    else queueMicrotask(() => { draggingRef.current = false; });
-  };
+  const handleDraggingChange = (d) => { draggingRef.current = !!d; };
 
-  // Close on Escape (suppressed mid-drag — see above).
+  // Close on Escape (suppressed mid-drag — see above). Capture phase + the
+  // drag guard.
   useEffect(() => {
     if (!open) return;
     const onKey = (e) => { if (e.key === 'Escape' && !draggingRef.current) onClose(); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
   }, [open, onClose]);
 
   // Single source of truth for "what patterns exist" — drives the Grid view AND
@@ -114,7 +116,7 @@ export default function PatternPickerModal({ open, onClose, onPick }) {
   // view (PatternTableView) has no DndContext, so it stays on plain PatternCard.
   // disabled (dimmed||locked||!ready) lives here because locked/ready come from
   // getPatternClass + the gate — info PatternGalleryView doesn't have.
-  const cardFor = (id, meta, size = 92, animateIn = false, dimmed = false, sortable = false) => {
+  const cardFor = (id, meta, size = 92, animateIn = false, dimmed = false, sortable = false, insertionSide = null) => {
     const ready = !!getPatternClass(id);
     const gate = check('pattern', id);
     const label = labelFor(id, dynamicTypes);
@@ -133,6 +135,7 @@ export default function PatternPickerModal({ open, onClose, onPick }) {
         size={size}
         animateIn={animateIn}
         dimmed={dimmed}
+        {...(sortable ? { insertionSide } : null)}
       />
     );
   };
@@ -141,7 +144,7 @@ export default function PatternPickerModal({ open, onClose, onPick }) {
   // mount fade+scale enter (Map view passes no animateIn, so it stays static),
   // and `sortable` so each Grid card is drag-reorderable. Custom sort forwards
   // `opts.dimmed` (off-family cards) through to PatternCard.
-  const renderCardGallery = (item, opts) => cardFor(item.id, item.meta, 140, true, !!opts?.dimmed, true);
+  const renderCardGallery = (item, opts) => cardFor(item.id, item.meta, 140, true, !!opts?.dimmed, true, opts?.insertionSide ?? null);
 
   // Arrow-key roving between the two tabs (nice-to-have over native + aria).
   const onTabKeyDown = (e) => {

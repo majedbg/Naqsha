@@ -1,8 +1,54 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
-import PatternGalleryView from "./PatternGalleryView";
+import PatternGalleryView, {
+  dropIndexFromOver,
+  insertionSideFor,
+} from "./PatternGalleryView";
 import SortablePatternCard from "./SortablePatternCard";
+
+// ── Part-A drop-index mapping + insertion-line side (pure, slice 7) ──────────
+// jsdom can't drive a real dnd-kit drag, so the drop-index math (the subtle
+// Auto+filter correctness fix) and the insertion-line side are proven here as
+// pure functions, mirroring the reducer-test strategy for MOVE.
+describe("dropIndexFromOver (map drop through the FULL order via over.id)", () => {
+  const FULL = ["h1", "h2", "h3", "t1", "t2", "c1"];
+
+  it("indexes the over-target in the full manualOrder (filter-independent)", () => {
+    // Auto+filter: visible set omits t1/t2, but the full order still resolves c1
+    // to its real slot 5 — so a hidden card never loses its position.
+    expect(dropIndexFromOver(FULL, FULL, "c1")).toBe(5);
+    expect(dropIndexFromOver(FULL, FULL, "h1")).toBe(0);
+    expect(dropIndexFromOver(FULL, FULL, "t1")).toBe(3);
+  });
+
+  it("prefers manualOrder; falls back to the full materialized order when absent", () => {
+    // Partial persisted manualOrder (missing a newly-registered id) → fall back.
+    const partial = ["h1", "h2"];
+    const full = ["h1", "h2", "newAI"];
+    expect(dropIndexFromOver(partial, full, "h2")).toBe(1); // from manualOrder
+    expect(dropIndexFromOver(partial, full, "newAI")).toBe(2); // fallback
+  });
+
+  it("returns -1 when the id is in neither order", () => {
+    expect(dropIndexFromOver(FULL, FULL, "nope")).toBe(-1);
+  });
+});
+
+describe("insertionSideFor (which gap the line hugs)", () => {
+  const IDS = ["a", "b", "c", "d"];
+  it("right edge when dragging an earlier card past a later one", () => {
+    expect(insertionSideFor(IDS, "a", "c")).toBe("right");
+  });
+  it("left edge when dragging a later card before an earlier one", () => {
+    expect(insertionSideFor(IDS, "d", "b")).toBe("left");
+  });
+  it("null when hovering the dragged card itself or unknown ids", () => {
+    expect(insertionSideFor(IDS, "b", "b")).toBeNull();
+    expect(insertionSideFor(IDS, "a", "zzz")).toBeNull();
+    expect(insertionSideFor(IDS, null, "b")).toBeNull();
+  });
+});
 
 // Handcrafted patterns spanning two real families (H, T) + custom, in a
 // deliberately INTERLEAVED input order so we can prove the grid clusters by

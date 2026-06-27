@@ -56,4 +56,28 @@ describe("useAutosave", () => {
     });
     expect(save).toHaveBeenCalledTimes(1);
   });
+
+  it("never autosaves while hasDesignId is false, even when dirty", () => {
+    const save = vi.fn(() => Promise.resolve());
+    const { rerender } = renderHook((p) => useAutosave(p), {
+      initialProps: baseProps({ save, hasDesignId: false }),
+    });
+    act(() => {
+      rerender(baseProps({ save, hasDesignId: false, isDirty: () => true }));
+      vi.advanceTimersByTime(5000);
+    });
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it("never autosaves while disabled (guest), even with a design id and dirty", () => {
+    const save = vi.fn(() => Promise.resolve());
+    const { rerender } = renderHook((p) => useAutosave(p), {
+      initialProps: baseProps({ save, enabled: false }),
+    });
+    act(() => {
+      rerender(baseProps({ save, enabled: false, isDirty: () => true }));
+      vi.advanceTimersByTime(5000);
+    });
+    expect(save).not.toHaveBeenCalled();
+  });
 });

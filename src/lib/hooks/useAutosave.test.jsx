@@ -22,7 +22,19 @@ describe("useAutosave", () => {
   afterEach(() => {
     vi.runOnlyPendingTimers();
     vi.useRealTimers();
+    // Reset the jsdom visibility override between tests.
+    Object.defineProperty(document, "visibilityState", {
+      value: "visible",
+      configurable: true,
+    });
   });
+
+  function setHidden() {
+    Object.defineProperty(document, "visibilityState", {
+      value: "hidden",
+      configurable: true,
+    });
+  }
 
   it("autosaves once after debounceMs when enabled, hasDesignId, and dirty", () => {
     const save = vi.fn(() => Promise.resolve());
@@ -112,5 +124,55 @@ describe("useAutosave", () => {
     expect(saveNew).toHaveBeenCalledTimes(1);
     expect(captured).toBe("after"); // saw post-change state
     expect(latestIsDirty).toHaveBeenCalled(); // current isDirty gated the save
+  });
+
+  it("flushes an immediate save on visibilitychange→hidden when dirty", () => {
+    const save = vi.fn(() => Promise.resolve());
+    renderHook(() => useAutosave(baseProps({ save, isDirty: () => true })));
+    act(() => {
+      setHidden();
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    expect(save).toHaveBeenCalledTimes(1); // immediate, no debounce wait
+  });
+
+  it("flushes an immediate save on window blur when dirty", () => {
+    const save = vi.fn(() => Promise.resolve());
+    renderHook(() => useAutosave(baseProps({ save, isDirty: () => true })));
+    act(() => {
+      window.dispatchEvent(new Event("blur"));
+    });
+    expect(save).toHaveBeenCalledTimes(1);
+  });
+
+  it("flushes an immediate save on beforeunload when dirty", () => {
+    const save = vi.fn(() => Promise.resolve());
+    renderHook(() => useAutosave(baseProps({ save, isDirty: () => true })));
+    act(() => {
+      window.dispatchEvent(new Event("beforeunload"));
+    });
+    expect(save).toHaveBeenCalledTimes(1);
+  });
+
+  it("does NOT flush on blur / hidden when clean", () => {
+    const save = vi.fn(() => Promise.resolve());
+    renderHook(() => useAutosave(baseProps({ save, isDirty: () => false })));
+    act(() => {
+      window.dispatchEvent(new Event("blur"));
+      setHidden();
+      document.dispatchEvent(new Event("visibilitychange"));
+      window.dispatchEvent(new Event("beforeunload"));
+    });
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it("ignores visibilitychange while still visible", () => {
+    const save = vi.fn(() => Promise.resolve());
+    renderHook(() => useAutosave(baseProps({ save, isDirty: () => true })));
+    act(() => {
+      // visibilityState stays 'visible' (default) — a tab-show, not a hide.
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    expect(save).not.toHaveBeenCalled();
   });
 });

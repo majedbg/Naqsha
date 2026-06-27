@@ -34,4 +34,26 @@ describe("useAutosave", () => {
     });
     expect(save).toHaveBeenCalledTimes(1);
   });
+
+  it("coalesces rapid changes into exactly one save after the quiet period", () => {
+    const save = vi.fn(() => Promise.resolve());
+    // Each rerender hands a fresh `isDirty` identity, simulating an edit that
+    // re-triggers scheduling (mirrors layers/bgColor changing in the real app).
+    const { rerender } = renderHook((p) => useAutosave(p), {
+      initialProps: baseProps({ save, isDirty: () => true }),
+    });
+
+    for (let i = 0; i < 5; i++) {
+      act(() => {
+        rerender(baseProps({ save, isDirty: () => true }));
+        vi.advanceTimersByTime(500); // each < debounceMs, so the timer keeps resetting
+      });
+    }
+    expect(save).not.toHaveBeenCalled();
+
+    act(() => {
+      vi.advanceTimersByTime(2500); // quiet period elapses after the last change
+    });
+    expect(save).toHaveBeenCalledTimes(1);
+  });
 });

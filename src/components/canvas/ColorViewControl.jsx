@@ -158,8 +158,22 @@ export default function ColorViewControl({
   needsMaterialChoice = false,
   onSetMode = () => {},
   onSelectMaterial = () => {},
+  // 3D preview lens (S3, PRD D1/D2). The always-on Surface A peer of
+  // Operation/Material. `threeDActive` is the DERIVED active-lens flag; while it
+  // is on, neither 2D lens is "checked" (the toggle stays a single-selection
+  // radio) and the material chip/picker are suppressed. Clicking the 3D radio
+  // enters (onEnter3D) when off and exits (onExit3D — restores the prior 2D/lens
+  // state, D14) when on. "↻ Rebuild" re-snapshots the design into the scene.
+  threeDActive = false,
+  onEnter3D = () => {},
+  onExit3D = () => {},
+  onRebuild = () => {},
 }) {
   const [pickerOpen, setPickerOpen] = useState(false);
+
+  // Single-selection radio: in 3D, the 2D lenses read as unchecked.
+  const operationActive = !threeDActive && mode === "operation";
+  const materialActive = !threeDActive && mode === "material";
 
   // Switching to Material with nothing chosen pops the picker — the prompt moment.
   useEffect(() => {
@@ -191,17 +205,36 @@ export default function ColorViewControl({
 
       <div className="flex items-center gap-1 rounded-md border border-hairline bg-paper/95 p-1 shadow-pop backdrop-blur-[2px]">
         <div className="flex items-center gap-0.5" role="radiogroup" aria-label="Color view">
-          <LensButton active={mode === "operation"} onClick={() => onSetMode("operation")}>
+          <LensButton active={operationActive} onClick={() => onSetMode("operation")}>
             Operation
           </LensButton>
-          <LensButton active={mode === "material"} onClick={handleMaterialLens}>
+          <LensButton active={materialActive} onClick={handleMaterialLens}>
             Material
+          </LensButton>
+          {/* Surface A — always-on 3D lens peer (D2). Toggles 3D on/off; exiting
+              restores the prior 2D/lens state (D14). */}
+          <LensButton active={threeDActive} onClick={() => (threeDActive ? onExit3D() : onEnter3D())}>
+            3D
           </LensButton>
         </div>
 
-        {/* Current-sheet chip — only while the Material lens is active. Doubles as
-            the "change material" trigger. */}
-        {mode === "material" && (
+        {/* "↻ Rebuild" — re-snapshots the live design into the (non-reactive) 3D
+            scene (D14). Only meaningful while 3D is up. */}
+        {threeDActive && (
+          <button
+            type="button"
+            aria-label="Rebuild 3D preview"
+            onClick={onRebuild}
+            className="flex items-center gap-1 rounded border border-hairline bg-paper-warm px-1.5 py-0.5 text-[11px] text-ink-soft transition-colors hover:border-ink-soft hover:text-ink"
+          >
+            <span aria-hidden>↻</span>
+            Rebuild
+          </button>
+        )}
+
+        {/* Current-sheet chip — only while the Material lens is active (and not in
+            3D). Doubles as the "change material" trigger. */}
+        {materialActive && (
           <button
             type="button"
             aria-label={material ? `Previewing ${material.name} — change material` : "Choose preview material"}

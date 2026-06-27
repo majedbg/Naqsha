@@ -27,9 +27,13 @@ const PLACEHOLDER_BOX = { min: [-1, -1, -1], max: [1, 1, 1] };
  * selective bloom works); real Surface A (panel-stack) and Surface B
  * (height-surface) geometry land in later slices.
  *
- * @param {{ mode?: string, focusFieldLayerId?: string|null }} props
+ * `snapshot` (S3, PRD D14) is the frozen design snapshot the scene reads from;
+ * accepted here as plumbing — Surface A geometry consumes it in later slices.
+ *
+ * @param {{ mode?: string, focusFieldLayerId?: string|null, snapshot?: object|null }} props
  */
-export default function Scene3D({ mode = 'panel-stack', focusFieldLayerId = null }) {
+// eslint-disable-next-line no-unused-vars -- snapshot is S3 plumbing, consumed by Surface A in S4+
+export default function Scene3D({ mode = 'panel-stack', focusFieldLayerId = null, snapshot = null }) {
   const [resetSignal, setResetSignal] = useState(0);
   const keyLightRef = useRef(null);
   // Stable array so the bloom pass doesn't re-register lights every render.

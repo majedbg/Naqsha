@@ -59,6 +59,10 @@ export default function RightPanel({
   // is the Surface-B source guide layer (null for Surface A).
   threeDMode = "off",
   focusFieldLayerId = null,
+  // Frozen design snapshot for the 3D scene (S3, PRD D14). Plumbed through to the
+  // lazy host so Surface A geometry (later slices) reads from a point-in-time copy
+  // rather than the live design. Defaults to null — every non-3D caller unaffected.
+  threeDSnapshot = null,
   canvasW,
   canvasH,
   patternInstancesRef,
@@ -676,7 +680,11 @@ export default function RightPanel({
           a true no-op so the 2D path is byte-identical and three never loads. */}
       {threeDMode !== "off" && (
         <div data-testid="canvas3d-host" className="absolute inset-0 z-30">
-          <Canvas3DHost mode={threeDMode} focusFieldLayerId={focusFieldLayerId} />
+          <Canvas3DHost
+            mode={threeDMode}
+            focusFieldLayerId={focusFieldLayerId}
+            snapshot={threeDSnapshot}
+          />
         </div>
       )}
 

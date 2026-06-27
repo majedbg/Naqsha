@@ -12,9 +12,12 @@ const Scene3D = lazy(() => import('./Scene3D.jsx'));
  * downloads/initialises, the Suspense fallback shows a "Building preview…"
  * indicator (PRD D14).
  *
- * @param {{ mode?: string, focusFieldLayerId?: string|null }} props
+ * `snapshot` is the frozen design snapshot (S3, PRD D14) the scene reads from;
+ * it is forwarded as plumbing for Surface A geometry in later slices.
+ *
+ * @param {{ mode?: string, focusFieldLayerId?: string|null, snapshot?: object|null }} props
  */
-export default function Canvas3DHost({ mode, focusFieldLayerId }) {
+export default function Canvas3DHost({ mode, focusFieldLayerId, snapshot = null }) {
   return (
     <Suspense
       fallback={
@@ -32,7 +35,7 @@ export default function Canvas3DHost({ mode, focusFieldLayerId }) {
         </div>
       }
     >
-      <Scene3D mode={mode} focusFieldLayerId={focusFieldLayerId} />
+      <Scene3D mode={mode} focusFieldLayerId={focusFieldLayerId} snapshot={snapshot} />
     </Suspense>
   );
 }

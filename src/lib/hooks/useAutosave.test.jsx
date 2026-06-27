@@ -80,4 +80,37 @@ describe("useAutosave", () => {
     });
     expect(save).not.toHaveBeenCalled();
   });
+
+  it("fires the LATEST save (not a stale closure) and consults post-change isDirty", () => {
+    let state = "before";
+    const saveOld = vi.fn(() => Promise.resolve());
+
+    const { rerender } = renderHook((p) => useAutosave(p), {
+      initialProps: baseProps({ save: saveOld, isDirty: () => true }),
+    });
+
+    // State changes; a new save captures the CURRENT state when it runs, and a
+    // fresh isDirty (spy) replaces the old one — all before the timer fires.
+    state = "after";
+    let captured = null;
+    const saveNew = vi.fn(() => {
+      captured = state;
+      return Promise.resolve();
+    });
+    const latestIsDirty = vi.fn(() => true);
+
+    // Commit the edit first (flushes effects → refs adopt saveNew/latestIsDirty
+    // and reschedule), THEN let the quiet period elapse.
+    act(() => {
+      rerender(baseProps({ save: saveNew, isDirty: latestIsDirty }));
+    });
+    act(() => {
+      vi.advanceTimersByTime(2500);
+    });
+
+    expect(saveOld).not.toHaveBeenCalled();
+    expect(saveNew).toHaveBeenCalledTimes(1);
+    expect(captured).toBe("after"); // saw post-change state
+    expect(latestIsDirty).toHaveBeenCalled(); // current isDirty gated the save
+  });
 });

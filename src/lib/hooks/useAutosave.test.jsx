@@ -175,4 +175,32 @@ describe("useAutosave", () => {
     });
     expect(save).not.toHaveBeenCalled();
   });
+
+  it("does not start a second concurrent save while one is in flight", () => {
+    // A save that never settles keeps the in-flight guard latched.
+    const save = vi.fn(() => new Promise(() => {}));
+    renderHook(() => useAutosave(baseProps({ save, isDirty: () => true })));
+
+    act(() => {
+      window.dispatchEvent(new Event("blur")); // flush → save #1 starts
+    });
+    expect(save).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      window.dispatchEvent(new Event("blur")); // still in flight → no save #2
+    });
+    expect(save).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not autosave while a manual save (isSaving) is already running", () => {
+    // Closes the edit→Cmd/Ctrl+S overlap: the shared save path is in flight.
+    const save = vi.fn(() => Promise.resolve());
+    renderHook(() =>
+      useAutosave(baseProps({ save, isSaving: true, isDirty: () => true }))
+    );
+    act(() => {
+      vi.advanceTimersByTime(2500);
+    });
+    expect(save).not.toHaveBeenCalled();
+  });
 });

@@ -59,6 +59,7 @@ import useUIState from "../lib/hooks/useUIState";
 import useOptimizations from "../lib/hooks/useOptimizations";
 import useDesignPersistence from "../lib/hooks/useDesignPersistence";
 import useCloudPersistence from "../lib/hooks/useCloudPersistence";
+import { resolveSaveStatus } from "../lib/saveStatus";
 
 export default function Studio({ submitOrg = null } = {}) {
   const { loading, user } = useAuth();
@@ -663,6 +664,10 @@ export default function Studio({ submitOrg = null } = {}) {
     setCurrentDesignId,
     handleSaveToCloud,
     handleLoadCloudDesign,
+    saveState,
+    lastSavedAt,
+    designName,
+    setDesignName,
   } = useCloudPersistence({
     user,
     limits,
@@ -1152,6 +1157,20 @@ export default function Studio({ submitOrg = null } = {}) {
             buildShareState={buildShareState}
             showAdmin={showAdmin}
             onOpenAdmin={() => navigate("/admin")}
+            // Save-status surface (Rec 1). Collapse the raw signals into a single
+            // {kind,label} via the pure resolver; the indicator formats the
+            // timestamp + offers Retry. Rename routes straight to the hook's
+            // setDesignName (sent as the save `name` on the next save).
+            status={resolveSaveStatus({
+              saving: saveState === "saving",
+              error: saveState === "error",
+              dirty: isDirty(),
+              lastSavedAt,
+            })}
+            lastSavedAt={lastSavedAt}
+            onRetry={handleSaveToCloud}
+            designName={designName}
+            onRenameDesign={setDesignName}
           />,
           menuSlot
         )}

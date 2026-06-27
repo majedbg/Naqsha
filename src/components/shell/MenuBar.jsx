@@ -17,6 +17,7 @@ import { useEffect, useRef, useState } from "react";
 import ShareLinkButton from "../ShareLinkButton";
 import ThemeToggle from "../ui/ThemeToggle";
 import AuthButton from "../AuthButton";
+import SaveStatusIndicator from "./SaveStatusIndicator";
 import { useInspectorDockContext } from "./inspectorDockContext";
 
 // One top-level menu (File, Edit, …) as a click-to-open dropdown. Closes on
@@ -126,6 +127,16 @@ export default function MenuBar({
   // from the owner (Studio) so MenuBar stays presentational and router-free.
   showAdmin = false,
   onOpenAdmin,
+  // Save-status surface (Rec 1) — all OPTIONAL. Supplied only on the pro shell
+  // path where Studio wires useCloudPersistence; the legacy/standalone MenuBar
+  // (no provider) passes none, so this block renders nothing and that path stays
+  // byte-unchanged. MenuBar stays presentational and just forwards these to
+  // <SaveStatusIndicator>.
+  status,
+  lastSavedAt,
+  onRetry,
+  designName,
+  onRenameDesign,
 }) {
   // A single "which menu is open" id keeps only one dropdown open at a time and
   // lets clicking another top-level menu switch directly.
@@ -273,6 +284,19 @@ export default function MenuBar({
           />
         ))}
       </nav>
+
+      {/* Save-status surface (Rec 1). Present only when Studio supplies `status`
+          (pro shell). The editable doc name + status label sit between the menus
+          and the account cluster. Omitted entirely on the legacy path. */}
+      {status && (
+        <SaveStatusIndicator
+          status={status}
+          lastSavedAt={lastSavedAt}
+          onRetry={onRetry}
+          name={designName}
+          onRename={onRenameDesign}
+        />
+      )}
 
       {/* Account cluster pinned right — reuse the existing components so each is
           wired to its real behavior with zero reimplementation. */}

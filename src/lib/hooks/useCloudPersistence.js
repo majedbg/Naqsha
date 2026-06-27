@@ -1,6 +1,7 @@
 import { useState, useCallback } from "react";
 import { saveDesign, loadDesign, saveHistorySnapshot } from "../designService";
 import { normalizePanels } from "../panels";
+import { draftKey, saveDraft, clearDraft } from "../localDraft";
 
 // Cloud save/load concern extracted from Studio (AR-3A).
 //
@@ -60,6 +61,10 @@ export default function useCloudPersistence({
     if (!user) return;
     const thumbnail = captureThumbnail();
     const config = { layers, canvasW, canvasH, presetIndex, panels };
+    // Capture the draft key ONCE from the id at call time, so a failed-then-
+    // succeeded NEW save clears the same ('new') key it wrote — not the
+    // post-success id (Capability B).
+    const key = draftKey(currentDesignId);
     setSaveState("saving");
     setSaveError(null);
     try {
@@ -85,10 +90,15 @@ export default function useCloudPersistence({
       // a failed save keeps the rename pending for the next attempt.
       setNameDirty(false);
       setSaveState("saved");
+      // Cloud is now the source of truth → drop the local safety-net draft.
+      clearDraft(key);
     } catch (err) {
       // Surface the failure as observable state instead of swallowing it to the
       // console — the indicator renders "Couldn't save" + a Retry affordance.
       console.error("Cloud save failed:", err);
+      // Safety net: stash the in-memory doc so the work survives a reload/crash
+      // and can be recovered. Namespaced key — never `sonoform-layers`.
+      saveDraft(key, { config, name: designName, savedAt: Date.now() });
       setSaveError(err);
       setSaveState("error");
     }

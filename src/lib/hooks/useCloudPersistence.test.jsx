@@ -13,6 +13,7 @@ vi.mock("../designService", () => ({
 }));
 
 import useCloudPersistence from "./useCloudPersistence";
+import { draftKey, loadDraft, saveDraft } from "../localDraft";
 
 function makeLayers() {
   return [{ id: "layer-1-aaa", patternType: "spirograph", paramsCache: {} }];
@@ -146,6 +147,39 @@ describe("useCloudPersistence", () => {
       await result.current.handleSaveToCloud();
     });
     expect(saveDesign).not.toHaveBeenCalled();
+  });
+
+  it("draft: a FAILED save stashes {config,name} under the namespaced draft key", async () => {
+    saveDesign.mockRejectedValue(new Error("network down"));
+    const props = baseProps();
+    const { result } = renderHook(() => useCloudPersistence(props));
+
+    act(() => result.current.setDesignName("Mandala"));
+    await act(async () => {
+      await result.current.handleSaveToCloud();
+    });
+
+    // currentDesignId is still null → key namespace is 'new'.
+    const draft = loadDraft(draftKey(null));
+    expect(draft).not.toBe(null);
+    expect(draft.name).toBe("Mandala");
+    expect(draft.config.layers).toEqual(props.layers);
+    expect(typeof draft.savedAt).toBe("number");
+  });
+
+  it("draft: a subsequent SUCCESSFUL save clears the stashed draft", async () => {
+    const props = baseProps();
+    // Pre-seed a draft as if a prior save had failed.
+    saveDraft(draftKey(null), { config: {}, name: "old", savedAt: 1 });
+    saveDesign.mockResolvedValue({ id: "design-9" });
+    const { result } = renderHook(() => useCloudPersistence(props));
+
+    await act(async () => {
+      await result.current.handleSaveToCloud();
+    });
+
+    // Cleared under the key it was written to (the 'new' namespace).
+    expect(loadDraft(draftKey(null))).toBe(null);
   });
 
   it("load: applies the saved layers + dims via applyCanvasSize and marks clean", async () => {

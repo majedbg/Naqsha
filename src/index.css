@@ -149,6 +149,42 @@ input[type="range"]::-moz-range-thumb {
   animation: naqsha-rise var(--motion-medium) var(--ease-out-quart) both;
 }
 
+/* === Pattern picker — Grid gallery motion (slice 8) ===
+ * Tasteful, CSS-only. All durations come from the motion tokens, so they
+ * collapse to 0ms automatically under prefers-reduced-motion (see tokens.css),
+ * with an explicit belt-and-suspenders guard at the bottom of this block.
+ *
+ * IMPORTANT — fill mode is intentionally NOT `both`/`forwards` here. A held end
+ * value would sit above PatternCard's inline hover transform in the cascade and
+ * permanently kill the hover lift + mouseleave reset. With default fill the
+ * transform reverts the instant the enter animation ends, so hover stays intact. */
+@keyframes naqsha-fade-scale {
+  from { opacity: 0; transform: scale(0.96); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+/* A single card easing into the grid — runs once on mount, so only cards that
+ * newly appear (Grid tab opened, or a family toggled back ON) animate; cards
+ * that were already present stay put (React keeps them by `id`). True exit on
+ * unmount is not possible without a motion lib — filtered-out cards just go. */
+.gallery-card-enter {
+  animation: naqsha-fade-scale var(--motion-medium) var(--ease-out-quart);
+}
+
+/* The active tabpanel easing in on mount. Because only one panel is mounted at
+ * a time, this is a fade-IN of the incoming panel — not a true cross-dissolve
+ * (the outgoing panel is already unmounted and cannot fade out). */
+.picker-panel-enter {
+  animation: naqsha-fade var(--motion-fast) var(--ease-out-quart);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gallery-card-enter,
+  .picker-panel-enter {
+    animation: none;
+  }
+}
+
 /* === Mobile panel styles — preserved from original === */
 @media (max-width: 767px) {
   .mobile-panel-content {

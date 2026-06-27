@@ -978,7 +978,14 @@ export default function Studio({ submitOrg = null } = {}) {
   }
 
   return (
-    <div className="flex flex-col h-dvh bg-paper">
+    // Fill the AppShell Canvas <section> that hosts this Studio, NOT the full
+    // viewport. `h-dvh` here forced 100vh even though the section starts ~one
+    // toolbar-row down the page, so the studio overflowed the viewport bottom and
+    // dragged the canvas's bottom chrome (Background / zoom / the 3D-view lens)
+    // off-screen. `h-full min-h-0` makes it fit its container so that row stays in
+    // view. (AppShell:246 / MobileStudio:109 are the real viewport roots and keep
+    // h-dvh.)
+    <div className="flex flex-col h-full min-h-0 bg-paper">
       {/* Hidden file input backing File > Import (issue #12). Click is triggered
           by the menu item; reads the chosen .svg and adds one artwork layer. */}
       <input

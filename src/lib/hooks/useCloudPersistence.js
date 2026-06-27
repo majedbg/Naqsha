@@ -31,6 +31,9 @@ export default function useCloudPersistence({
   const [saveState, setSaveState] = useState("idle");
   const [saveError, setSaveError] = useState(null);
   const [lastSavedAt, setLastSavedAt] = useState(null);
+  // Named documents (Rec 1). The doc name was hardcoded "Untitled"; it is now
+  // editable state sent as the save `name` arg. Default stays "Untitled".
+  const [designName, setDesignName] = useState("Untitled");
 
   const captureThumbnail = useCallback(() => {
     const container = canvasContainerRef.current;
@@ -53,7 +56,7 @@ export default function useCloudPersistence({
     try {
       const design = await saveDesign(
         user.id,
-        "Untitled",
+        designName,
         config,
         thumbnail,
         currentDesignId
@@ -80,6 +83,7 @@ export default function useCloudPersistence({
   }, [
     user,
     captureThumbnail,
+    designName,
     layers,
     canvasW,
     canvasH,
@@ -130,5 +134,7 @@ export default function useCloudPersistence({
     saveState,
     saveError,
     lastSavedAt,
+    designName,
+    setDesignName,
   };
 }

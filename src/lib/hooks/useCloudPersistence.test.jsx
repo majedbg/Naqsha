@@ -112,6 +112,29 @@ describe("useCloudPersistence", () => {
     expect(saveHistorySnapshot).toHaveBeenCalledTimes(1);
   });
 
+  it("save: sends the current designName as the name arg (default 'Untitled', renameable)", async () => {
+    saveDesign.mockResolvedValue({ id: "design-9" });
+    const props = baseProps();
+    const { result } = renderHook(() => useCloudPersistence(props));
+
+    expect(result.current.designName).toBe("Untitled");
+
+    act(() => {
+      result.current.setDesignName("My Mandala");
+    });
+    await act(async () => {
+      await result.current.handleSaveToCloud();
+    });
+
+    expect(saveDesign).toHaveBeenCalledWith(
+      "user-1",
+      "My Mandala",
+      expect.any(Object),
+      null,
+      null
+    );
+  });
+
   it("save: does nothing without a signed-in user", async () => {
     const props = baseProps({ user: null });
     const { result } = renderHook(() => useCloudPersistence(props));

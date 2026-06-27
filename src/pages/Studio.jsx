@@ -64,7 +64,7 @@ import useSaveHotkey from "../lib/hooks/useSaveHotkey";
 import { resolveSaveStatus } from "../lib/saveStatus";
 
 export default function Studio({ submitOrg = null } = {}) {
-  const { loading, user } = useAuth();
+  const { loading, user, signIn } = useAuth();
   const { limits } = useGate();
   // Admin entry point, relocated into the MenuBar now that TopNav no longer
   // renders over the studio route (the standalone Naqsha bar was dropped).
@@ -691,6 +691,13 @@ export default function Studio({ submitOrg = null } = {}) {
     canvasContainerRef,
   });
 
+  // === Guest gating (Rec 3 / A) ===
+  // A guest's Save (menu item or Cmd/Ctrl+S) used to no-op — useCloudPersistence
+  // bails on `!user`. Route that intent to Google sign-in instead. Guest gating
+  // is a UX concern at THIS layer: the hook keeps its `if (!user) return` and its
+  // "does nothing without a signed-in user" test stays valid.
+  const onCloudSaveIntent = user ? handleSaveToCloud : signIn;
+
   // === Autosave + Cmd/Ctrl+S (Rec 2) ===
   // Both are CALLERS of the single save path (handleSaveToCloud), never a second
   // write. The combined dirty trigger ORs layer-dirty with name-dirty; its
@@ -707,8 +714,9 @@ export default function Studio({ submitOrg = null } = {}) {
     save: handleSaveToCloud,
     isSaving: saveState === "saving", // bail if a manual save is already running
   });
-  // Cmd/Ctrl+S works even before the first save (manual checkpoint).
-  useSaveHotkey(handleSaveToCloud);
+  // Cmd/Ctrl+S works even before the first save (manual checkpoint). For a guest
+  // it routes to sign-in via the same intent the MenuBar uses (Rec 3 / A).
+  useSaveHotkey(onCloudSaveIntent);
 
   // Document Setup apply (C6 / #14). Routes the profile half through the SAME
   // handleProfileChange the LayerTree selector uses (so the remap + default-bed
@@ -1164,7 +1172,8 @@ export default function Studio({ submitOrg = null } = {}) {
             onExport={() => handleExportAll(true)}
             onSubmitToOrg={user || submitOrg ? () => setUI("showSubmitModal", true) : undefined}
             onSave={handleSaveLayerGroup}
-            onSaveToCloud={handleSaveToCloud}
+            onSaveToCloud={onCloudSaveIntent}
+            isGuest={!user}
             onOpenCloudDesigns={() => setUI("showCloudModal", true)}
             onDocumentSetup={() => setDocumentSetupOpen(true)}
             onUndo={canUndo ? undo : undefined}

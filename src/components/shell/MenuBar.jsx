@@ -114,6 +114,10 @@ export default function MenuBar({
   onSubmitToOrg,
   onSave,
   onSaveToCloud,
+  // Guest gating (Rec 3 / A) — OPTIONAL. When true, the cloud-save item relabels
+  // to "Sign in to save to cloud" (Studio points onSaveToCloud at signIn for
+  // guests). Omitted on the legacy/standalone path → label stays "Save to cloud".
+  isGuest = false,
   onOpenCloudDesigns,
   onDocumentSetup,
   onUndo,
@@ -173,7 +177,10 @@ export default function MenuBar({
           disabled: !onSubmitToOrg,
         },
         { label: "Save…", onSelect: onSave },
-        { label: "Save to cloud", onSelect: onSaveToCloud },
+        {
+          label: isGuest ? "Sign in to save to cloud" : "Save to cloud",
+          onSelect: onSaveToCloud,
+        },
         { label: "Cloud designs…", onSelect: onOpenCloudDesigns },
       ],
     },

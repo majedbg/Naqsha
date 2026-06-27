@@ -31,12 +31,16 @@ function baseProps(overrides = {}) {
     applyCanvasSize: vi.fn(),
     markCleanFrom: vi.fn(),
     canvasContainerRef: { current: null },
+    // No backoff in these unit tests: a rejected save settles to 'error'
+    // immediately (Capability C retry is exercised in its own test file).
+    retryDelays: [],
     ...overrides,
   };
 }
 
 describe("useCloudPersistence", () => {
   beforeEach(() => {
+    localStorage.clear();
     saveDesign.mockReset();
     loadDesign.mockReset();
     saveHistorySnapshot.mockReset();

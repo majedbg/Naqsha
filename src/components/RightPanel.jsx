@@ -6,6 +6,7 @@ import FieldOverlay from "./FieldOverlay";
 import { chladniField } from "../lib/fields/chladniField";
 import { cursorToUnit } from "../lib/canvasChrome";
 import { screenToCanvas } from "../lib/canvas/coords";
+import { pxToUnit } from "../lib/units";
 import { buildSelectables, pickTopmost } from "../lib/scene/selectables";
 import { textCreateFromDrag, isTextLayer, textNodeFromLayer } from "../lib/text/textLayer";
 import TextEditOverlay from "./canvas/TextEditOverlay";
@@ -684,6 +685,7 @@ export default function RightPanel({
             mode={threeDMode}
             focusFieldLayerId={focusFieldLayerId}
             snapshot={threeDSnapshot}
+            boundsMm={{ width: pxToUnit(canvasW, "mm"), height: pxToUnit(canvasH, "mm") }}
           />
         </div>
       )}

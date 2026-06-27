@@ -12,10 +12,19 @@ import { Selection, Select } from '@react-three/postprocessing';
 import CameraRig from './CameraRig.jsx';
 import SceneEnvironment from './SceneEnvironment.jsx';
 import EmissiveBloom from './EmissiveBloom.jsx';
+import Sheets from './Sheets.jsx';
+import { buildSheetSpecs, boundsForSheetSpecs } from '../../lib/three3d/sheetSpecs.js';
 
 // Placeholder content bounds (S2). Stable identity so CameraRig's zoom-fit effect
-// doesn't re-run every render. Replaced by real per-sub-mode bounds downstream.
+// doesn't re-run every render. Used for height-surface (B, later) + the empty
+// panel-stack state; the real panel-stack box is derived from the sheet specs.
 const PLACEHOLDER_BOX = { min: [-1, -1, -1], max: [1, 1, 1] };
+
+// Default Surface A inter-panel spacing (PRD D11, mm). S6 wires the slider/persist.
+const DEFAULT_SPACING_MM = 12;
+// Default canvas mm-bounds when the host doesn't supply real ones (keeps the
+// scene non-degenerate in isolation; RightPanel passes the true design size).
+const DEFAULT_BOUNDS_MM = { width: 200, height: 200 };
 
 /**
  * Shared R3F scene host (PRD D1/D4/D12): one <Canvas>, one camera rig, one
@@ -30,14 +39,48 @@ const PLACEHOLDER_BOX = { min: [-1, -1, -1], max: [1, 1, 1] };
  * `snapshot` (S3, PRD D14) is the frozen design snapshot the scene reads from;
  * accepted here as plumbing — Surface A geometry consumes it in later slices.
  *
- * @param {{ mode?: string, focusFieldLayerId?: string|null, snapshot?: object|null }} props
+ * S4 builds Surface A (panel-stack): stacked, thickness-extruded substrate slabs
+ * from the snapshot's panels (materials per `substrate.kind`, D7). Marks land in
+ * S5/S10. Surface B (height-surface) is still the S2 placeholder until S8.
+ *
+ * @param {{ mode?: string, focusFieldLayerId?: string|null, snapshot?: object|null,
+ *           spacing?: number, boundsMm?: {width:number,height:number} }} props
  */
-// eslint-disable-next-line no-unused-vars -- snapshot is S3 plumbing, consumed by Surface A in S4+
-export default function Scene3D({ mode = 'panel-stack', focusFieldLayerId = null, snapshot = null }) {
+export default function Scene3D({
+  mode = 'panel-stack',
+  focusFieldLayerId = null,
+  snapshot = null,
+  spacing = DEFAULT_SPACING_MM,
+  boundsMm = DEFAULT_BOUNDS_MM,
+}) {
   const [resetSignal, setResetSignal] = useState(0);
   const keyLightRef = useRef(null);
   // Stable array so the bloom pass doesn't re-register lights every render.
   const bloomLights = useMemo(() => [keyLightRef], []);
+
+  const isPanelStack = mode === 'panel-stack';
+  // Depend on the PRIMITIVE bounds (not the object identity, which the host
+  // recreates every render) so the memo — and CameraRig's fitBox — stay stable.
+  const boundsW = boundsMm?.width;
+  const boundsH = boundsMm?.height;
+
+  // Surface A sheet specs (S4). Memoized on the snapshot + spacing + bounds so the
+  // geometry — and the derived fitBox handed to CameraRig — keep stable identity
+  // across renders (a fresh box each render would re-run zoom-fit every frame).
+  const sheetSpecs = useMemo(() => {
+    if (!isPanelStack || !snapshot) return [];
+    return buildSheetSpecs({
+      panels: snapshot.panels,
+      layers: snapshot.layers,
+      spacing,
+      bounds: { width: boundsW, height: boundsH },
+    });
+  }, [isPanelStack, snapshot, spacing, boundsW, boundsH]);
+
+  const fitBox = useMemo(
+    () => boundsForSheetSpecs(sheetSpecs) ?? PLACEHOLDER_BOX,
+    [sheetSpecs],
+  );
 
   return (
     <div className="absolute inset-0" data-mode={mode} data-focus-field={focusFieldLayerId ?? ''}>
@@ -52,28 +95,34 @@ export default function Scene3D({ mode = 'panel-stack', focusFieldLayerId = null
         {/* Selection must wrap BOTH the EffectComposer and the scene meshes so
             SelectiveBloom and <Select> share one context. */}
         <Selection>
-          <CameraRig fitBox={PLACEHOLDER_BOX} resetSignal={resetSignal} />
+          <CameraRig fitBox={fitBox} resetSignal={resetSignal} />
           <SceneEnvironment ref={keyLightRef} />
 
-          {/* Lit base — NOT in the selection, so it must NOT bloom. */}
-          <mesh position={[0, -0.1, 0]}>
-            <boxGeometry args={[1.5, 0.4, 1.5]} />
-            <meshStandardMaterial color="#6b5bd6" roughness={0.4} metalness={0.1} />
-          </mesh>
-
-          {/* Emissive marker — selected, so it blooms (stands in for engraved/cut
-              grooves in later slices). toneMapped off + intensity > 1 to glow. */}
-          <Select enabled>
-            <mesh position={[0, 0.6, 0]}>
-              <torusKnotGeometry args={[0.35, 0.12, 96, 16]} />
-              <meshStandardMaterial
-                color="#000000"
-                emissive="#ff5a3c"
-                emissiveIntensity={3}
-                toneMapped={false}
-              />
-            </mesh>
-          </Select>
+          {isPanelStack ? (
+            /* Surface A — stacked substrate slabs (S4). Marks (emissive grooves)
+               drape on these in S5/S10. */
+            <Sheets specs={sheetSpecs} />
+          ) : (
+            /* Surface B placeholder until S8: a lit base + a glowing emissive
+               marker that proves the selective bloom still works. */
+            <>
+              <mesh position={[0, -0.1, 0]}>
+                <boxGeometry args={[1.5, 0.4, 1.5]} />
+                <meshStandardMaterial color="#6b5bd6" roughness={0.4} metalness={0.1} />
+              </mesh>
+              <Select enabled>
+                <mesh position={[0, 0.6, 0]}>
+                  <torusKnotGeometry args={[0.35, 0.12, 96, 16]} />
+                  <meshStandardMaterial
+                    color="#000000"
+                    emissive="#ff5a3c"
+                    emissiveIntensity={3}
+                    toneMapped={false}
+                  />
+                </mesh>
+              </Select>
+            </>
+          )}
 
           <EmissiveBloom lights={bloomLights} />
         </Selection>

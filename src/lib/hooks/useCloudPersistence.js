@@ -111,6 +111,13 @@ export default function useCloudPersistence({
         if (cw && ch) applyCanvasSize(cw, ch);
         setCurrentDesignId(design.id);
         markCleanFrom(savedLayers ? normLayers : layers, bgColor);
+        // Adopt the loaded name (guard against undefined so the default holds),
+        // and present the freshly-loaded design as a saved baseline: clear any
+        // stale error so the indicator doesn't read "Couldn't save" post-load.
+        if (design.name) setDesignName(design.name);
+        setSaveError(null);
+        setLastSavedAt(Date.now());
+        setSaveState("saved");
       } catch (err) {
         console.error("Cloud load failed:", err);
       }

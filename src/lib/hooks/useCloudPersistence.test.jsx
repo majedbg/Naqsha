@@ -161,4 +161,47 @@ describe("useCloudPersistence", () => {
     expect(result.current.currentDesignId).toBe("design-7");
     expect(props.markCleanFrom).toHaveBeenCalled();
   });
+
+  it("load: adopts the loaded design's name and settles state to 'saved'", async () => {
+    loadDesign.mockResolvedValue({
+      id: "design-7",
+      name: "Saved Mandala",
+      config: { layers: makeLayers(), canvasW: 640, canvasH: 480 },
+    });
+    const props = baseProps();
+    const { result } = renderHook(() => useCloudPersistence(props));
+
+    await act(async () => {
+      await result.current.handleLoadCloudDesign("design-7");
+    });
+
+    expect(result.current.designName).toBe("Saved Mandala");
+    expect(result.current.saveState).toBe("saved");
+    expect(typeof result.current.lastSavedAt).toBe("number");
+  });
+
+  it("load: keeps the default name when the loaded design has none, and clears a prior error", async () => {
+    saveDesign.mockRejectedValue(new Error("boom"));
+    loadDesign.mockResolvedValue({
+      id: "design-7",
+      config: { layers: makeLayers(), canvasW: 640, canvasH: 480 },
+    });
+    const props = baseProps();
+    const { result } = renderHook(() => useCloudPersistence(props));
+
+    // First a failed save leaves saveState='error'.
+    await act(async () => {
+      await result.current.handleSaveToCloud();
+    });
+    expect(result.current.saveState).toBe("error");
+
+    // Loading must not clobber the default name with undefined, and must clear
+    // the stale error so a successful load doesn't render "Couldn't save".
+    await act(async () => {
+      await result.current.handleLoadCloudDesign("design-7");
+    });
+    expect(result.current.designName).toBe("Untitled");
+    expect(result.current.saveState).toBe("saved");
+    expect(result.current.saveError).toBe(null);
+  });
 });

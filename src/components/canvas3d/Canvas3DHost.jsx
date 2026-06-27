@@ -33,6 +33,8 @@ export default function Canvas3DHost({
   marksByPanel = null,
   reliefField = null,
   drapeTargets = [],
+  // Close the overlay (Studio → RightPanel → here → Scene3D's "✕"). Optional.
+  onClose = null,
 }) {
   return (
     <Suspense
@@ -59,6 +61,7 @@ export default function Canvas3DHost({
         marksByPanel={marksByPanel}
         reliefField={reliefField}
         drapeTargets={drapeTargets}
+        onClose={onClose}
       />
     </Suspense>
   );

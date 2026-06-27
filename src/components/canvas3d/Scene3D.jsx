@@ -95,6 +95,12 @@ export default function Scene3D({
   // drape.resolveActiveTargets (three-free) and passed across the boundary.
   drapeTargets = [],
   designName = 'untitled',
+  // Close the 3D preview overlay. Wired Studio → RightPanel → Canvas3DHost; routes
+  // through lensEntry.exit3D so it cleanly closes BOTH Surface A (panel-stack) and
+  // Surface B (height-surface) back to sub-mode 'off', restoring the prior 2D view.
+  // Surface B is launched from the Inspector (not the lens), so this "✕" is the
+  // in-canvas way out. Optional → the button no-ops when unwired (standalone).
+  onClose = null,
 }) {
   const [resetSignal, setResetSignal] = useState(0);
   // Persisted view-prefs (D13/S11), read ONCE on mount. Spacing + exaggeration
@@ -252,7 +258,11 @@ export default function Scene3D({
         </Selection>
       </Canvas>
 
-      {/* Top-right controls: Reset view (D4) + Save image PNG snapshot (D8). */}
+      {/* Top-right controls: Reset view (D4) + Save image PNG snapshot (D8) +
+          Close (✕). Close is the in-canvas way out of the preview — Surface B is
+          launched from the Inspector (not the lens), so without this there is no
+          way to exit it from the canvas. Routes to onClose (lensEntry.exit3D),
+          which closes BOTH surfaces back to the prior 2D view. */}
       <div className="absolute right-3 top-3 flex gap-2">
         <button
           type="button"
@@ -269,6 +279,16 @@ export default function Scene3D({
           className="rounded-md border border-white/10 bg-black/40 px-2.5 py-1.5 text-xs font-medium text-white/80 backdrop-blur transition hover:bg-black/60 hover:text-white"
         >
           Save image
+        </button>
+        <button
+          type="button"
+          data-testid="canvas3d-close"
+          aria-label="Close 3D preview"
+          title="Close 3D preview"
+          onClick={() => onClose?.()}
+          className="rounded-md border border-white/10 bg-black/40 px-2.5 py-1.5 text-xs font-medium text-white/80 backdrop-blur transition hover:bg-black/60 hover:text-white"
+        >
+          ✕
         </button>
       </div>
 
@@ -294,14 +314,18 @@ export default function Scene3D({
         </label>
       )}
 
-      {/* Surface-B vertical-exaggeration slider (D10): 0…panel-size mm, default
-          ≈ panel-size/4. Height-surface only — the relief height scales live. */}
+      {/* Surface-B vertical-exaggeration ("Amplitude") slider (D10): 0…panel-size
+          mm, default ≈ panel-size/4. Height-surface only — the relief height
+          scales live. Labeled "Amplitude" (the user's term — it stretches the
+          relief in/out); the underlying state is the exaggeration factor. Pinned
+          bottom-LEFT; the per-target drape checklist sits TOP-right so the two can
+          never collide on a narrow panel. */}
       {!isPanelStack && (
         <label
           data-testid="canvas3d-exaggeration"
-          className="absolute bottom-3 left-3 flex items-center gap-2 rounded-md border border-white/10 bg-black/40 px-3 py-2 text-xs font-medium text-white/80 backdrop-blur"
+          className="absolute bottom-3 left-3 z-10 flex items-center gap-2 rounded-md border border-white/10 bg-black/40 px-3 py-2 text-xs font-medium text-white/80 backdrop-blur"
         >
-          <span className="whitespace-nowrap">Height</span>
+          <span className="whitespace-nowrap">Amplitude</span>
           <input
             type="range"
             min={EXAG_MIN}
@@ -310,18 +334,20 @@ export default function Scene3D({
             value={exaggerationMm}
             onChange={(e) => setExaggerationMm(clampExaggeration(Number(e.target.value), exagMax))}
             className="h-1 w-32 cursor-pointer accent-violet"
-            aria-label="Vertical exaggeration in millimetres"
+            aria-label="Relief amplitude in millimetres"
           />
           <span className="w-12 tabular-nums text-right">{Math.round(exaggerationMm)} mm</span>
         </label>
       )}
 
       {/* Surface-B per-target drape toggle checklist (S9, §3.4): one row per
-          ACTIVE modulation target, colored swatch + on/off checkbox. */}
+          ACTIVE modulation target, colored swatch + on/off checkbox. Pinned
+          TOP-right (below the Reset/Save/✕ control row) so it stays clear of the
+          bottom-left Amplitude slider at any panel width. */}
       {hasTargets && (
         <div
           data-testid="canvas3d-drape-targets"
-          className="absolute bottom-3 right-3 flex max-w-[14rem] flex-col gap-1.5 rounded-md border border-white/10 bg-black/40 px-3 py-2 text-xs font-medium text-white/80 backdrop-blur"
+          className="absolute right-3 top-14 z-10 flex max-w-[14rem] flex-col gap-1.5 rounded-md border border-white/10 bg-black/40 px-3 py-2 text-xs font-medium text-white/80 backdrop-blur"
         >
           <span className="text-[0.65rem] uppercase tracking-wide text-white/50">Draped targets</span>
           {drapeTargets.map((t) => (
@@ -350,7 +376,7 @@ export default function Scene3D({
       {emptyDrape && (
         <div
           data-testid="canvas3d-drape-empty"
-          className="absolute bottom-3 right-3 max-w-[16rem] rounded-md border border-white/10 bg-black/40 px-3 py-2 text-xs text-white/60 backdrop-blur"
+          className="absolute right-3 top-14 z-10 max-w-[16rem] rounded-md border border-white/10 bg-black/40 px-3 py-2 text-xs text-white/60 backdrop-blur"
         >
           This guide has no active modulation targets — showing the field relief only.
         </div>

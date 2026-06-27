@@ -62,18 +62,16 @@ export default function useCloudPersistence({
   }, [mountKey]);
 
   const recoverDraft = useCallback(() => {
-    setPendingDraft((draft) => {
-      if (draft) {
-        const cfg = draft.config || {};
-        if (cfg.layers) loadLayerSet(cfg.layers);
-        if (cfg.canvasW && cfg.canvasH)
-          applyCanvasSize(cfg.canvasW, cfg.canvasH);
-        if (draft.name) setDesignName(draft.name);
-        clearDraft(mountKey);
-      }
-      return null;
-    });
-  }, [mountKey, loadLayerSet, applyCanvasSize, setDesignName]);
+    // Read state directly + run side effects OUTSIDE a state updater: under
+    // StrictMode (dev) updaters run twice, which would double-apply the config.
+    if (!pendingDraft) return;
+    const cfg = pendingDraft.config || {};
+    if (cfg.layers) loadLayerSet(cfg.layers);
+    if (cfg.canvasW && cfg.canvasH) applyCanvasSize(cfg.canvasW, cfg.canvasH);
+    if (pendingDraft.name) setDesignName(pendingDraft.name);
+    clearDraft(mountKey);
+    setPendingDraft(null);
+  }, [pendingDraft, mountKey, loadLayerSet, applyCanvasSize, setDesignName]);
 
   const captureThumbnail = useCallback(() => {
     const container = canvasContainerRef.current;
@@ -134,8 +132,11 @@ export default function useCloudPersistence({
       // a failed save keeps the rename pending for the next attempt.
       setNameDirty(false);
       setSaveState("saved");
-      // Cloud is now the source of truth → drop the local safety-net draft.
+      // Cloud is now the source of truth → drop the local safety-net draft AND
+      // dismiss any recovery banner: a successful save means current work is
+      // safe, so an open "Recover?" offer (which would clobber it) must vanish.
       clearDraft(key);
+      setPendingDraft(null);
     } catch (err) {
       // Surface the failure as observable state instead of swallowing it to the
       // console — the indicator renders "Couldn't save" + a Retry affordance.

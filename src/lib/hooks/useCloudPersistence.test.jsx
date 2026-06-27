@@ -217,6 +217,25 @@ describe("useCloudPersistence", () => {
     expect(result.current.pendingDraft).toBe(null);
   });
 
+  it("recovery: a successful save dismisses a shown recovery banner (drops pendingDraft)", async () => {
+    // Guards the data-loss path: if pendingDraft lingered after a clean save, a
+    // later Recover click would clobber the just-saved work with a stale draft.
+    saveDraft(draftKey(null), {
+      config: { layers: makeLayers(), canvasW: 640, canvasH: 480 },
+      name: "Stale",
+      savedAt: 1,
+    });
+    saveDesign.mockResolvedValue({ id: "design-9" });
+    const { result } = renderHook(() => useCloudPersistence(baseProps()));
+    expect(result.current.pendingDraft).not.toBe(null);
+
+    await act(async () => {
+      await result.current.handleSaveToCloud();
+    });
+
+    expect(result.current.pendingDraft).toBe(null);
+  });
+
   it("recovery: discardDraft clears the draft + pendingDraft without applying config", () => {
     saveDraft(draftKey(null), {
       config: { layers: makeLayers(), canvasW: 640, canvasH: 480 },

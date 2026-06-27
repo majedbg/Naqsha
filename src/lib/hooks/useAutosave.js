@@ -29,6 +29,10 @@ export default function useAutosave({
   const isSavingRef = useRef(isSaving);
   const timerRef = useRef(null);
   const inFlightRef = useRef(false);
+  // Holds the latest scheduleSave so runSave's post-save trailing check can
+  // re-arm the debounce without a forward-reference (scheduleSave is defined
+  // after runSave). Refreshed in the per-render ref effect below.
+  const scheduleRef = useRef(null);
 
   // Refresh refs after every render so the debounced/flush callbacks see the
   // current values, never a stale closure. No dep array → runs on each render.
@@ -67,6 +71,17 @@ export default function useAutosave({
       .catch(() => {})
       .finally(() => {
         inFlightRef.current = false;
+        // Trailing save (Rec 3 / C). An edit that landed DURING this save was
+        // never captured by it (and Rec 2 dropped it until the next change).
+        // Re-check gating + dirtiness and re-arm the debounce so it persists.
+        if (
+          enabledRef.current &&
+          hasDesignIdRef.current &&
+          !isSavingRef.current &&
+          isDirtyRef.current()
+        ) {
+          scheduleRef.current?.();
+        }
       });
   }, []);
 
@@ -77,6 +92,11 @@ export default function useAutosave({
       runSave();
     }, debounceMs);
   }, [clearTimer, debounceMs, runSave]);
+
+  // Keep the trailing-save re-arm pointed at the current scheduleSave.
+  useEffect(() => {
+    scheduleRef.current = scheduleSave;
+  }, [scheduleSave]);
 
   // Flush a pending save immediately (still gated/dirty-guarded inside runSave).
   const flush = useCallback(() => {

@@ -192,6 +192,64 @@ describe("useAutosave", () => {
     expect(save).toHaveBeenCalledTimes(1);
   });
 
+  it("trailing save: an edit during an in-flight save fires a follow-up save after it resolves (Rec 3 / C)", async () => {
+    // Rec 2's known limitation: an edit whose timer fires DURING an in-flight
+    // save is dropped until the next change. Trailing save closes it — after a
+    // save resolves, if still dirty, one more autosave is scheduled.
+    let resolveSave;
+    const save = vi.fn(
+      () =>
+        new Promise((r) => {
+          resolveSave = r;
+        })
+    );
+    renderHook(() => useAutosave(baseProps({ save, isDirty: () => true })));
+
+    // Save #1 starts (flush via blur) and stays in flight.
+    act(() => {
+      window.dispatchEvent(new Event("blur"));
+    });
+    expect(save).toHaveBeenCalledTimes(1);
+
+    // The edit that landed during save #1 keeps the doc dirty. Resolve save #1.
+    await act(async () => {
+      resolveSave();
+      await Promise.resolve();
+    });
+
+    // The trailing save was scheduled; let the quiet period elapse → save #2.
+    act(() => {
+      vi.advanceTimersByTime(2500);
+    });
+    expect(save).toHaveBeenCalledTimes(2);
+  });
+
+  it("trailing save: no follow-up when the doc is clean after the save resolves", async () => {
+    let dirty = true;
+    let resolveSave;
+    const save = vi.fn(
+      () =>
+        new Promise((r) => {
+          resolveSave = r;
+        })
+    );
+    renderHook(() => useAutosave(baseProps({ save, isDirty: () => dirty })));
+
+    act(() => {
+      window.dispatchEvent(new Event("blur"));
+    });
+    // Save captured everything; doc is clean by the time it resolves.
+    dirty = false;
+    await act(async () => {
+      resolveSave();
+      await Promise.resolve();
+    });
+    act(() => {
+      vi.advanceTimersByTime(5000);
+    });
+    expect(save).toHaveBeenCalledTimes(1); // no trailing save
+  });
+
   it("does not autosave while a manual save (isSaving) is already running", () => {
     // Closes the edit→Cmd/Ctrl+S overlap: the shared save path is in flight.
     const save = vi.fn(() => Promise.resolve());

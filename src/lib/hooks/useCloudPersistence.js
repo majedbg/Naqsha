@@ -33,7 +33,16 @@ export default function useCloudPersistence({
   const [lastSavedAt, setLastSavedAt] = useState(null);
   // Named documents (Rec 1). The doc name was hardcoded "Untitled"; it is now
   // editable state sent as the save `name` arg. Default stays "Untitled".
-  const [designName, setDesignName] = useState("Untitled");
+  const [designName, setDesignNameState] = useState("Untitled");
+  // Name-dirty (Rec 2). Renaming didn't previously mark the doc unsaved, so a new
+  // name never autosaved. The public `setDesignName` flips this true; a
+  // successful save/load clears it. Studio ORs it into the autosave dirty trigger
+  // and the status indicator so renames both persist and read as "Unsaved".
+  const [nameDirty, setNameDirty] = useState(false);
+  const setDesignName = useCallback((name) => {
+    setDesignNameState(name);
+    setNameDirty(true);
+  }, []);
 
   const captureThumbnail = useCallback(() => {
     const container = canvasContainerRef.current;
@@ -72,6 +81,9 @@ export default function useCloudPersistence({
         }
       }
       setLastSavedAt(Date.now());
+      // The persisted name is now the saved baseline. Cleared only on success so
+      // a failed save keeps the rename pending for the next attempt.
+      setNameDirty(false);
       setSaveState("saved");
     } catch (err) {
       // Surface the failure as observable state instead of swallowing it to the
@@ -114,7 +126,10 @@ export default function useCloudPersistence({
         // Adopt the loaded name (guard against undefined so the default holds),
         // and present the freshly-loaded design as a saved baseline: clear any
         // stale error so the indicator doesn't read "Couldn't save" post-load.
-        if (design.name) setDesignName(design.name);
+        // Use the raw setter so adopting the loaded name doesn't mark it dirty;
+        // the loaded design IS the clean baseline.
+        if (design.name) setDesignNameState(design.name);
+        setNameDirty(false);
         setSaveError(null);
         setLastSavedAt(Date.now());
         setSaveState("saved");
@@ -143,5 +158,6 @@ export default function useCloudPersistence({
     lastSavedAt,
     designName,
     setDesignName,
+    nameDirty,
   };
 }

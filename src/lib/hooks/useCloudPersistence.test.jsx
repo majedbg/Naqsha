@@ -204,4 +204,65 @@ describe("useCloudPersistence", () => {
     expect(result.current.saveState).toBe("saved");
     expect(result.current.saveError).toBe(null);
   });
+
+  it("rename: setDesignName marks the doc name-dirty; a successful save clears it and sends the new name", async () => {
+    saveDesign.mockResolvedValue({ id: "design-9" });
+    const props = baseProps();
+    const { result } = renderHook(() => useCloudPersistence(props));
+
+    expect(result.current.nameDirty).toBe(false);
+
+    act(() => {
+      result.current.setDesignName("Renamed");
+    });
+    expect(result.current.nameDirty).toBe(true);
+
+    await act(async () => {
+      await result.current.handleSaveToCloud();
+    });
+    expect(result.current.nameDirty).toBe(false);
+    expect(saveDesign).toHaveBeenCalledWith(
+      "user-1",
+      "Renamed",
+      expect.any(Object),
+      null,
+      null
+    );
+  });
+
+  it("rename: a failed save keeps name-dirty so the rename isn't silently lost", async () => {
+    saveDesign.mockRejectedValue(new Error("boom"));
+    const props = baseProps();
+    const { result } = renderHook(() => useCloudPersistence(props));
+
+    act(() => {
+      result.current.setDesignName("Renamed");
+    });
+    await act(async () => {
+      await result.current.handleSaveToCloud();
+    });
+
+    expect(result.current.saveState).toBe("error");
+    expect(result.current.nameDirty).toBe(true);
+  });
+
+  it("rename: a successful load clears a pending name-dirty flag", async () => {
+    loadDesign.mockResolvedValue({
+      id: "design-7",
+      name: "Loaded",
+      config: { layers: makeLayers(), canvasW: 640, canvasH: 480 },
+    });
+    const props = baseProps();
+    const { result } = renderHook(() => useCloudPersistence(props));
+
+    act(() => {
+      result.current.setDesignName("Temp");
+    });
+    expect(result.current.nameDirty).toBe(true);
+
+    await act(async () => {
+      await result.current.handleLoadCloudDesign("design-7");
+    });
+    expect(result.current.nameDirty).toBe(false);
+  });
 });

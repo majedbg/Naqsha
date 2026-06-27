@@ -21,6 +21,8 @@ import useActiveTool from "../lib/hooks/useActiveTool";
 import useShowAdmin from "../lib/hooks/useShowAdmin";
 import useCanvasView from "../lib/hooks/useCanvasView";
 import useColorView from "../lib/hooks/useColorView";
+import { use3DPreview } from "../lib/three3d/use3DPreview";
+import { use3DLensEntry } from "../lib/three3d/use3DLensEntry";
 import ColorViewControl from "../components/canvas/ColorViewControl";
 import useSvgImport from "../lib/hooks/useSvgImport";
 import ConfirmDialog from "../components/ui/ConfirmDialog";
@@ -423,6 +425,23 @@ export default function Studio({ submitOrg = null } = {}) {
   // — feeds the canvas, never export. Materials default to the built-in set (no
   // org context in Studio yet; org materials drop in later via the same prop).
   const colorView = useColorView();
+
+  // 3D preview sub-mode state machine (S1, PRD D1). Owns {subMode,
+  // focusFieldLayerId}; the openers are wired to UI entry points in later
+  // slices (lens peer for A; Inspector "Preview in 3D" for B). Threaded into
+  // RightPanel so the lazy three.js host mounts when a sub-mode is active.
+  const threeD = use3DPreview();
+
+  // 3D entry + transition coordinator (S3, PRD D1/D2/D14). Captures the CURRENT
+  // design into a frozen snapshot on enter (and on "↻ Rebuild") — the 3D scene is
+  // snapshot-based, NOT live-reactive. `captureDesign` reads the live design
+  // inputs Surface A needs (layers/panels/operations + active machine profile);
+  // re-created when those change so a fresh enter/rebuild captures the latest.
+  const captureDesign = useCallback(
+    () => ({ layers, panels, operations, machineProfile: activeProfileId }),
+    [layers, panels, operations, activeProfileId],
+  );
+  const lensEntry = use3DLensEntry({ colorView, threeD, captureDesign });
 
   // Interactive per-layer transform (Select tool: move / resize / rotate).
   // Committed transforms live on `layer.transform` (so they persist + export
@@ -1023,6 +1042,13 @@ export default function Studio({ submitOrg = null } = {}) {
           // canvas render is byte-identical to today; the real panels fold in
           // per-panel visibility only in laser mode.
           panels={activeProfileId === "laser" ? panels : []}
+          // 3D preview (S1): mounts the lazy three.js host over the canvas when a
+          // sub-mode is active; 'off' → byte-identical 2D path.
+          threeDMode={threeD.subMode}
+          focusFieldLayerId={threeD.focusFieldLayerId}
+          // Frozen design snapshot the 3D scene reads from (S3, D14). Consumed by
+          // Surface A geometry in later slices; null when 3D is closed.
+          threeDSnapshot={lensEntry.snapshot}
           canvasW={canvasW}
           canvasH={canvasH}
           patternInstancesRef={patternInstancesRef}
@@ -1060,9 +1086,17 @@ export default function Studio({ submitOrg = null } = {}) {
           mode={colorView.mode}
           material={colorView.material}
           materials={colorView.materials}
-          needsMaterialChoice={colorView.needsMaterialChoice}
-          onSetMode={colorView.setMode}
+          // Suppress the material auto-prompt while the 3D lens is up.
+          needsMaterialChoice={colorView.needsMaterialChoice && lensEntry.activeLens !== "3d"}
+          // onSetMode routes through the entry coordinator: picking a 2D lens
+          // while in 3D exits 3D first (D14), then switches the underlying lens.
+          onSetMode={lensEntry.selectLens}
           onSelectMaterial={colorView.selectMaterial}
+          // 3D lens peer (S3, PRD D1/D2/D14).
+          threeDActive={lensEntry.activeLens === "3d"}
+          onEnter3D={lensEntry.enter3D}
+          onExit3D={lensEntry.exit3D}
+          onRebuild={lensEntry.rebuild}
         />
 
         {/* Per-panel ZIP export (Naqsha Panels WI-6, spec §5) — LASER-ONLY. The
@@ -1290,6 +1324,9 @@ export default function Studio({ submitOrg = null } = {}) {
             onUpdateLayer={updateLayer}
             onChangeLayerPattern={changeLayerPattern}
             onVariableWeightChange={handleVariableWeightChange}
+            // "Preview in 3D" (S8) — opens Surface B (modulation height-surface)
+            // focused on this guide layer's field.
+            onPreviewField={threeD.openHeightSurface}
           />,
           inspectorSlot
         )}

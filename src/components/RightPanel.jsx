@@ -4,8 +4,10 @@ import CanvasChrome from "./canvas/CanvasChrome";
 import PlotOverlay from "./canvas/PlotOverlay";
 import FieldOverlay from "./FieldOverlay";
 import { chladniField } from "../lib/fields/chladniField";
+import { fieldForLayer } from "../lib/fields/fieldRegistry";
 import { cursorToUnit } from "../lib/canvasChrome";
 import { screenToCanvas } from "../lib/canvas/coords";
+import { pxToUnit } from "../lib/units";
 import { buildSelectables, pickTopmost } from "../lib/scene/selectables";
 import { textCreateFromDrag, isTextLayer, textNodeFromLayer } from "../lib/text/textLayer";
 import TextEditOverlay from "./canvas/TextEditOverlay";
@@ -18,6 +20,18 @@ import {
 import { ROTATE_OFFSET } from "../lib/transform/handles";
 import { ghostSvg } from "../lib/scene/placement";
 import { useFont } from "../lib/text/fontRegistry";
+// Three-free lazy host for the 3D preview (S1). Canvas3DHost itself imports no
+// three.js — it React.lazy-loads the inner Scene3D, so importing it here never
+// pulls three into the 2D bundle.
+import Canvas3DHost from "./canvas3d/Canvas3DHost";
+// Three-free pure builder (S5): per-panel, per-process emissive mark SVGs for the
+// 3D Surface-A texture path. Imports only 2D-side modules (svgExport/operations/
+// panels), so referencing it here keeps three.js out of the 2D bundle.
+import { buildPanelMarkSVGs } from "../lib/three3d/markTexture";
+// Three-free pure resolver (S9): the guide's ACTIVE modulation-target descriptors
+// for the Surface-B drape. Imports only 2D-side field libs, so it keeps three.js
+// out of the 2D bundle.
+import { resolveActiveTargets } from "../lib/three3d/drape";
 
 const IDENTITY = { x: 0, y: 0, rotation: 0, scale: 1 };
 
@@ -47,6 +61,18 @@ export default function RightPanel({
   // exactly as before. Studio laser-gates this: it passes the real panels only in
   // laser mode and [] otherwise.
   panels = [],
+  // 3D preview (S1, PRD D1). `threeDMode` ∈ {'off','panel-stack','height-surface'}.
+  // When != 'off' the lazy <Canvas3DHost> mounts over the canvas region and the
+  // p5 surface is HIDDEN (visibility, NOT unmounted — p5 state is preserved).
+  // Defaults to 'off' so every other caller (Studio plotter mode, MobileStudio,
+  // ShareView, tests) renders byte-identically to before. `focusFieldLayerId`
+  // is the Surface-B source guide layer (null for Surface A).
+  threeDMode = "off",
+  focusFieldLayerId = null,
+  // Frozen design snapshot for the 3D scene (S3, PRD D14). Plumbed through to the
+  // lazy host so Surface A geometry (later slices) reads from a point-in-time copy
+  // rather than the live design. Defaults to null — every non-3D caller unaffected.
+  threeDSnapshot = null,
   canvasW,
   canvasH,
   patternInstancesRef,
@@ -174,6 +200,51 @@ export default function RightPanel({
     colorView,
     panels
   );
+
+  // Surface-A texture-mode marks (S5, PRD D3/D6). Built 2D-side here — where the
+  // live pattern instances are available — then handed to the 3D scene to
+  // rasterize onto each sheet. Returns null unless 3D is open (threeDSnapshot set),
+  // so the 2D path pays nothing. Panel SELECTION uses the PINNED snapshot
+  // (panels/layers/operations), so the mark set always matches the snapshot-pinned
+  // sheets; only the groove GEOMETRY tracks `patternInstances` (useState-backed —
+  // changes only on real edits, never per-render, so no texture thrash). The mild
+  // consequence: editing a pattern's params WHILE 3D is open re-derives that
+  // groove live rather than staying strictly frozen (D14) — an acceptable, honest
+  // deviation since the geometry/sheet structure stays pinned and "↻ Rebuild"
+  // remains the explicit resync.
+  const threeDMarks = useMemo(() => {
+    if (!threeDSnapshot) return null;
+    return buildPanelMarkSVGs({
+      panels: threeDSnapshot.panels,
+      layers: threeDSnapshot.layers,
+      operations: threeDSnapshot.operations,
+      patternInstances,
+      canvasW,
+      canvasH,
+      svgOpts: { font: textFont },
+    });
+  }, [threeDSnapshot, patternInstances, canvasW, canvasH, textFont]);
+
+  // Surface B (S8): the relief source field. Resolved 2D-side from the focus
+  // guide layer via fieldForLayer (three-free; LRU-cached internally so this is
+  // cheap), then passed across the boundary to the relief mesh. Reads the LIVE
+  // guide layer rather than a frozen snapshot — snapshot-consistency for B is a
+  // later refinement (D14's snapshot concern is Surface A). null unless B is open.
+  const reliefField = useMemo(() => {
+    if (threeDMode !== "height-surface" || !focusFieldLayerId) return null;
+    const guide = (layers || []).find((l) => l.id === focusFieldLayerId);
+    return guide ? fieldForLayer(guide) : null;
+  }, [threeDMode, focusFieldLayerId, layers]);
+
+  // Surface B (S9, §3.4): the guide's ACTIVE modulation targets to drape on the
+  // relief, resolved 2D-side (pure, three-free) and passed across the boundary as
+  // plain descriptors. Honors the modulation graph's "first incoming edge wins";
+  // empty when the guide has no active warp/density targets. null unless B is open.
+  const drapeTargets = useMemo(() => {
+    if (threeDMode !== "height-surface" || !focusFieldLayerId) return [];
+    const guide = (layers || []).find((l) => l.id === focusFieldLayerId);
+    return guide ? resolveActiveTargets(guide, layers) : [];
+  }, [threeDMode, focusFieldLayerId, layers]);
 
   // --- Field overlay (read-only modulation-field preview) -------------------
   // First slice of pattern modulation: visualize a guide pattern's underlying
@@ -553,6 +624,7 @@ export default function RightPanel({
         />
       )}
       <div
+        data-testid="canvas-scaled-box"
         style={{
           width: canvasW,
           height: canvasH,
@@ -561,6 +633,9 @@ export default function RightPanel({
           boxShadow: "7px 7px 25px 2px rgba(0,0,0, 0.5)",
           flexShrink: 0,
           position: "relative",
+          // 3D active → hide the p5 surface without unmounting it (state kept).
+          // 'off' → undefined, so the rendered style is byte-identical to before.
+          visibility: threeDMode !== "off" ? "hidden" : undefined,
         }}
       >
         <div ref={containerRef} />
@@ -652,6 +727,25 @@ export default function RightPanel({
           onDoubleClick={handleDoubleClick}
         />
       </div>
+
+      {/* 3D preview host (S1, PRD D1). Mounts ONLY when a sub-mode is active;
+          covers the whole canvas region (the p5 surface above is visibility-
+          hidden, not unmounted). Canvas3DHost lazy-loads the three.js scene
+          behind a "Building preview…" Suspense fallback. 'off' → not rendered,
+          a true no-op so the 2D path is byte-identical and three never loads. */}
+      {threeDMode !== "off" && (
+        <div data-testid="canvas3d-host" className="absolute inset-0 z-30">
+          <Canvas3DHost
+            mode={threeDMode}
+            focusFieldLayerId={focusFieldLayerId}
+            snapshot={threeDSnapshot}
+            boundsMm={{ width: pxToUnit(canvasW, "mm"), height: pxToUnit(canvasH, "mm") }}
+            marksByPanel={threeDMarks}
+            reliefField={reliefField}
+            drapeTargets={drapeTargets}
+          />
+        </div>
+      )}
 
       {/* Hand-pan overlay — full viewport, OUTSIDE the canvas transform. Hand-pan
           works from screen-space deltas alone, so it needn't sit on the artboard:

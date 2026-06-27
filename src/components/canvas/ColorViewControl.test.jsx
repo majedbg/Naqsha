@@ -65,6 +65,62 @@ function renderWith(props) {
   };
 }
 
+describe("ColorViewControl — 3D lens peer (S3)", () => {
+  it("renders 3D as a third lens peer of Operation/Material", () => {
+    setup();
+    expect(screen.getByRole("radio", { name: "3D" })).toHaveAttribute("aria-checked", "false");
+  });
+
+  it("clicking 3D (inactive) emits onEnter3D and does NOT switch the 2D lens", () => {
+    const onEnter3D = vi.fn();
+    const onSetMode = vi.fn();
+    render(
+      <ColorViewControl
+        mode="operation"
+        materials={MATERIALS}
+        onEnter3D={onEnter3D}
+        onSetMode={onSetMode}
+      />,
+    );
+    fireEvent.click(screen.getByRole("radio", { name: "3D" }));
+    expect(onEnter3D).toHaveBeenCalledTimes(1);
+    expect(onSetMode).not.toHaveBeenCalled();
+  });
+
+  it("when 3D is active, only 3D is checked (Operation/Material are not)", () => {
+    render(<ColorViewControl mode="material" materials={MATERIALS} threeDActive />);
+    expect(screen.getByRole("radio", { name: "3D" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("radio", { name: "Operation" })).toHaveAttribute("aria-checked", "false");
+    expect(screen.getByRole("radio", { name: "Material" })).toHaveAttribute("aria-checked", "false");
+  });
+
+  it("clicking the active 3D lens emits onExit3D (closes 3D, restores prior view)", () => {
+    const onExit3D = vi.fn();
+    render(<ColorViewControl mode="operation" materials={MATERIALS} threeDActive onExit3D={onExit3D} />);
+    fireEvent.click(screen.getByRole("radio", { name: "3D" }));
+    expect(onExit3D).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows a Rebuild affordance only while 3D is active, and it emits onRebuild", () => {
+    const onRebuild = vi.fn();
+    const { rerender } = render(
+      <ColorViewControl mode="operation" materials={MATERIALS} onRebuild={onRebuild} />,
+    );
+    expect(screen.queryByRole("button", { name: /Rebuild/ })).not.toBeInTheDocument();
+    rerender(
+      <ColorViewControl mode="operation" materials={MATERIALS} threeDActive onRebuild={onRebuild} />,
+    );
+    const rebuild = screen.getByRole("button", { name: /Rebuild/ });
+    fireEvent.click(rebuild);
+    expect(onRebuild).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides the material chip while 3D is active even if the underlying lens is material", () => {
+    render(<ColorViewControl mode="material" material={MATERIALS[0]} materials={MATERIALS} threeDActive />);
+    expect(screen.queryByText("Green Fluorescent")).not.toBeInTheDocument();
+  });
+});
+
 describe("ColorViewControl — material picker", () => {
   it("auto-opens with the prompt when a material is needed", () => {
     setup({ mode: "material", material: null, needsMaterialChoice: true });

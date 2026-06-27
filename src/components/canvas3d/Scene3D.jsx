@@ -8,12 +8,13 @@
 // src/lib/three3d and stays on the 2D side of the boundary so it can be unit-tested.
 import { useMemo, useRef, useState } from 'react';
 import { Canvas } from '@react-three/fiber';
-import { Selection, Select } from '@react-three/postprocessing';
+import { Selection } from '@react-three/postprocessing';
 import CameraRig from './CameraRig.jsx';
 import SceneEnvironment from './SceneEnvironment.jsx';
 import EmissiveBloom from './EmissiveBloom.jsx';
 import Sheets from './Sheets.jsx';
 import Marks from './Marks.jsx';
+import Relief from './Relief.jsx';
 import {
   buildSheetSpecs,
   boundsForSheetSpecs,
@@ -22,6 +23,13 @@ import {
   SPACING_MAX,
   SPACING_DEFAULT,
 } from '../../lib/three3d/sheetSpecs.js';
+import {
+  boundsForRelief,
+  defaultExaggeration,
+  exaggerationMax,
+  clampExaggeration,
+  EXAG_MIN,
+} from '../../lib/three3d/heightSurface.js';
 import { saveCanvasPng } from '../../lib/three3d/snapshotExport.js';
 
 // Placeholder content bounds (S2). Stable identity so CameraRig's zoom-fit effect
@@ -74,6 +82,9 @@ export default function Scene3D({
   spacing = DEFAULT_SPACING_MM,
   boundsMm = DEFAULT_BOUNDS_MM,
   marksByPanel = null,
+  // Surface B (S8): the guide layer's ScalarField, resolved 2D-side and passed
+  // across the boundary (ScalarField is three-free). null for Surface A.
+  reliefField = null,
   designName = 'untitled',
 }) {
   const [resetSignal, setResetSignal] = useState(0);
@@ -93,6 +104,12 @@ export default function Scene3D({
   const boundsW = boundsMm?.width;
   const boundsH = boundsMm?.height;
 
+  // Surface-B vertical exaggeration (D10): default ≈ panel-size / 4. Seeded once
+  // from the design bounds, then owned locally so the slider drives the relief.
+  // Persistence is S11 (D13), mirroring the spacing slider.
+  const [exaggerationMm, setExaggerationMm] = useState(() => defaultExaggeration(boundsW));
+  const exagMax = exaggerationMax(boundsW);
+
   // Surface A sheet specs (S4). Memoized on the snapshot + spacing + bounds so the
   // geometry — and the derived fitBox handed to CameraRig — keep stable identity
   // across renders (a fresh box each render would re-run zoom-fit every frame).
@@ -106,10 +123,16 @@ export default function Scene3D({
     });
   }, [isPanelStack, snapshot, spacingMm, boundsW, boundsH]);
 
-  const fitBox = useMemo(
-    () => boundsForSheetSpecs(sheetSpecs) ?? PLACEHOLDER_BOX,
-    [sheetSpecs],
-  );
+  // Camera-fit box: Surface A from the stacked sheets; Surface B (height-surface)
+  // a conservative relief box (width/depth plane × ±exaggeration) so the relief
+  // frames correctly the instant B opens, without needing the field here.
+  const fitBox = useMemo(() => {
+    if (isPanelStack) return boundsForSheetSpecs(sheetSpecs) ?? PLACEHOLDER_BOX;
+    return (
+      boundsForRelief({ width: boundsW, height: boundsH, exaggeration: exaggerationMm }) ??
+      PLACEHOLDER_BOX
+    );
+  }, [isPanelStack, sheetSpecs, boundsW, boundsH, exaggerationMm]);
 
   return (
     <div className="absolute inset-0" data-mode={mode} data-focus-field={focusFieldLayerId ?? ''}>
@@ -141,25 +164,16 @@ export default function Scene3D({
               <Marks specs={sheetSpecs} marksByPanel={marksByPanel ?? {}} />
             </>
           ) : (
-            /* Surface B placeholder until S8: a lit base + a glowing emissive
-               marker that proves the selective bloom still works. */
-            <>
-              <mesh position={[0, -0.1, 0]}>
-                <boxGeometry args={[1.5, 0.4, 1.5]} />
-                <meshStandardMaterial color="#6b5bd6" roughness={0.4} metalness={0.1} />
-              </mesh>
-              <Select enabled>
-                <mesh position={[0, 0.6, 0]}>
-                  <torusKnotGeometry args={[0.35, 0.12, 96, 16]} />
-                  <meshStandardMaterial
-                    color="#000000"
-                    emissive="#ff5a3c"
-                    emissiveIntensity={3}
-                    toneMapped={false}
-                  />
-                </mesh>
-              </Select>
-            </>
+            /* Surface B — modulation height-surface relief (S8, D5/D10): the
+               guide's ScalarField as a vertex-colored terrain (warm/cool =
+               attract/repel), lit by the shared environment. Per-channel target
+               drape lands in S9. */
+            <Relief
+              field={reliefField}
+              exaggeration={exaggerationMm}
+              width={boundsW}
+              height={boundsH}
+            />
           )}
 
           <EmissiveBloom lights={bloomLights} />
@@ -205,6 +219,28 @@ export default function Scene3D({
             aria-label="Inter-panel spacing in millimetres"
           />
           <span className="w-12 tabular-nums text-right">{spacingMm} mm</span>
+        </label>
+      )}
+
+      {/* Surface-B vertical-exaggeration slider (D10): 0…panel-size mm, default
+          ≈ panel-size/4. Height-surface only — the relief height scales live. */}
+      {!isPanelStack && (
+        <label
+          data-testid="canvas3d-exaggeration"
+          className="absolute bottom-3 left-3 flex items-center gap-2 rounded-md border border-white/10 bg-black/40 px-3 py-2 text-xs font-medium text-white/80 backdrop-blur"
+        >
+          <span className="whitespace-nowrap">Height</span>
+          <input
+            type="range"
+            min={EXAG_MIN}
+            max={exagMax}
+            step={1}
+            value={exaggerationMm}
+            onChange={(e) => setExaggerationMm(clampExaggeration(Number(e.target.value), exagMax))}
+            className="h-1 w-32 cursor-pointer accent-violet"
+            aria-label="Vertical exaggeration in millimetres"
+          />
+          <span className="w-12 tabular-nums text-right">{Math.round(exaggerationMm)} mm</span>
         </label>
       )}
     </div>

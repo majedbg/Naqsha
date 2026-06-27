@@ -1243,6 +1243,9 @@ export default function Studio({ submitOrg = null } = {}) {
             onUpdateLayer={updateLayer}
             onChangeLayerPattern={changeLayerPattern}
             onVariableWeightChange={handleVariableWeightChange}
+            // "Preview in 3D" (S8) — opens Surface B (modulation height-surface)
+            // focused on this guide layer's field.
+            onPreviewField={threeD.openHeightSurface}
           />,
           inspectorSlot
         )}

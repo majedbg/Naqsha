@@ -4,6 +4,7 @@ import CanvasChrome from "./canvas/CanvasChrome";
 import PlotOverlay from "./canvas/PlotOverlay";
 import FieldOverlay from "./FieldOverlay";
 import { chladniField } from "../lib/fields/chladniField";
+import { fieldForLayer } from "../lib/fields/fieldRegistry";
 import { cursorToUnit } from "../lib/canvasChrome";
 import { screenToCanvas } from "../lib/canvas/coords";
 import { pxToUnit } from "../lib/units";
@@ -219,6 +220,17 @@ export default function RightPanel({
       svgOpts: { font: textFont },
     });
   }, [threeDSnapshot, patternInstances, canvasW, canvasH, textFont]);
+
+  // Surface B (S8): the relief source field. Resolved 2D-side from the focus
+  // guide layer via fieldForLayer (three-free; LRU-cached internally so this is
+  // cheap), then passed across the boundary to the relief mesh. Reads the LIVE
+  // guide layer rather than a frozen snapshot — snapshot-consistency for B is a
+  // later refinement (D14's snapshot concern is Surface A). null unless B is open.
+  const reliefField = useMemo(() => {
+    if (threeDMode !== "height-surface" || !focusFieldLayerId) return null;
+    const guide = (layers || []).find((l) => l.id === focusFieldLayerId);
+    return guide ? fieldForLayer(guide) : null;
+  }, [threeDMode, focusFieldLayerId, layers]);
 
   // --- Field overlay (read-only modulation-field preview) -------------------
   // First slice of pattern modulation: visualize a guide pattern's underlying
@@ -715,6 +727,7 @@ export default function RightPanel({
             snapshot={threeDSnapshot}
             boundsMm={{ width: pxToUnit(canvasW, "mm"), height: pxToUnit(canvasH, "mm") }}
             marksByPanel={threeDMarks}
+            reliefField={reliefField}
           />
         </div>
       )}

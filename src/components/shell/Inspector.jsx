@@ -139,7 +139,7 @@ function VariableWeightControls({ layer, profileId, onVariableWeightChange }) {
 // autosaved — no separate apply button (human-in-the-loop: preview/apply/revert).
 // Because the merge is shallow, every write spreads the WHOLE current modulator
 // (a partial { modulator: { offset } } would drop maps).
-function ModulatorDevice({ layer, layers, onUpdateLayer }) {
+function ModulatorDevice({ layer, layers, onUpdateLayer, onPreviewField }) {
   if (!canProduceField(layer)) return null;
 
   // Current device, with defaults filled in (layer.modulator is undefined until
@@ -286,6 +286,19 @@ function ModulatorDevice({ layer, layers, onUpdateLayer }) {
         </div>
       </div>
 
+      {/* Preview in 3D (S8, PRD D2/D5) — opens Surface B (the modulation
+          height-surface) focused on THIS guide's field. The relief shows the RAW
+          field (the cause); the device range above is a 2D-readout remap and is
+          deliberately NOT applied to the relief (§3.4). */}
+      <button
+        type="button"
+        data-testid="modulator-preview-3d"
+        onClick={() => onPreviewField?.(layer.id)}
+        className="w-full rounded-xs border border-hairline bg-paper-warm px-2 py-1 text-[11px] font-medium text-ink-soft transition-colors hover:border-violet hover:text-ink"
+      >
+        Preview in 3D
+      </button>
+
       {/* Device controls — offset / shape / steps, shared across all maps. */}
       <div className="space-y-2">
         <label className="flex items-center gap-2 text-[11px] text-ink-soft">
@@ -408,7 +421,7 @@ function ModulatorDevice({ layer, layers, onUpdateLayer }) {
 // The param-editing body for one selected layer. Split into its own component so
 // usePatternCache (a hook) is only called when a layer is actually selected —
 // hooks can't be called conditionally inside Inspector itself.
-function SelectedLayerInspector({ layer, layers, unit, profileId, onUpdateLayer, onChangeLayerPattern, onVariableWeightChange }) {
+function SelectedLayerInspector({ layer, layers, unit, profileId, onUpdateLayer, onChangeLayerPattern, onVariableWeightChange, onPreviewField }) {
   // Pattern swap: route through the same cache machine LayerCard uses, applied via
   // the pair-aware onChangeLayerPattern when present (falls back to a plain param
   // update so the component works standalone / in tests without a router).
@@ -462,6 +475,7 @@ function SelectedLayerInspector({ layer, layers, unit, profileId, onUpdateLayer,
         layer={layer}
         layers={layers}
         onUpdateLayer={onUpdateLayer}
+        onPreviewField={onPreviewField}
       />
     </div>
   );
@@ -482,6 +496,9 @@ export default function Inspector({
   // Per-layer variable-weight change handler (#17, C8). Optional no-op default so
   // the Inspector renders standalone / in tests without a Studio router.
   onVariableWeightChange,
+  // "Preview in 3D" launcher (S8, PRD D2) — opens Surface B focused on the guide
+  // layer's field. Optional; undefined → the ModulatorDevice button no-ops.
+  onPreviewField,
 }) {
   // Resolved font for the text-properties readouts (cap-height / engrave
   // warnings). May be null on first paint before useFont resolves — the panel's
@@ -542,6 +559,7 @@ export default function Inspector({
       onUpdateLayer={onUpdateLayer}
       onChangeLayerPattern={onChangeLayerPattern}
       onVariableWeightChange={onVariableWeightChange}
+      onPreviewField={onPreviewField}
     />
   );
 }

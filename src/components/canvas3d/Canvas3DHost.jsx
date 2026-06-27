@@ -16,9 +16,12 @@ const Scene3D = lazy(() => import('./Scene3D.jsx'));
  * `boundsMm` is the design's canvas size in mm (Surface A slab size, S4).
  * `marksByPanel` is the per-panel, per-process emissive mark SVGs (S5, built
  * 2D-side from the snapshot + pattern instances) the scene rasterizes onto sheets.
+ * `reliefField` is the Surface-B guide ScalarField (S8), resolved 2D-side from the
+ * focus layer and passed across the boundary (ScalarField is three-free).
  *
  * @param {{ mode?: string, focusFieldLayerId?: string|null, snapshot?: object|null,
- *           boundsMm?: {width:number,height:number}, marksByPanel?: object|null }} props
+ *           boundsMm?: {width:number,height:number}, marksByPanel?: object|null,
+ *           reliefField?: object|null }} props
  */
 export default function Canvas3DHost({
   mode,
@@ -26,6 +29,7 @@ export default function Canvas3DHost({
   snapshot = null,
   boundsMm,
   marksByPanel = null,
+  reliefField = null,
 }) {
   return (
     <Suspense
@@ -50,6 +54,7 @@ export default function Canvas3DHost({
         snapshot={snapshot}
         boundsMm={boundsMm}
         marksByPanel={marksByPanel}
+        reliefField={reliefField}
       />
     </Suspense>
   );

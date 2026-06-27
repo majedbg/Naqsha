@@ -193,7 +193,7 @@ export default function ColorViewControl({
   };
 
   return (
-    <div className="absolute bottom-3 left-3 z-20 select-none" data-testid="color-view-control">
+    <div className="absolute bottom-4 left-4 z-20 select-none" data-testid="color-view-control">
       {pickerOpen && (
         <MaterialPopover
           materials={materials}

@@ -802,7 +802,7 @@ export default function RightPanel({
           (the one eligible field source in this first slice). Stacked above the
           Background button. Preview lens only; resets nothing on the document. */}
       {fieldEligible && (
-        <div className="absolute bottom-16 left-4">
+        <div className="absolute bottom-28 left-4">
           <button
             type="button"
             onClick={() => setShowField((v) => !v)}
@@ -825,8 +825,12 @@ export default function RightPanel({
         </div>
       )}
 
-      {/* Background color button — bottom left, aligned with zoom controls */}
-      <div className="absolute bottom-4 left-4">
+      {/* Background color button — bottom left. Stacked ABOVE the canvas's
+          Operation/Material/3D lens control (ColorViewControl, a Studio sibling
+          pinned to bottom-4 left-4), with the Field toggle above this in turn, so
+          the three bottom-left controls form a clean vertical stack instead of
+          overlapping in the corner. */}
+      <div className="absolute bottom-16 left-4">
         <button
           onClick={() => setBgPickerOpen(!bgPickerOpen)}
           className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-paper-warm border border-hairline hover:border-ink-soft transition-colors shadow-lg"

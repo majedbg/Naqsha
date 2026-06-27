@@ -71,6 +71,28 @@ describe("PatternCard", () => {
     expect(onPick).toHaveBeenCalledWith("spiral");
   });
 
+  it("when dimmed: opacity 0.2, pointer-events none, and onPick NOT called on click", () => {
+    const onPick = vi.fn();
+    renderCard({ dimmed: true, onPick });
+    const btn = screen.getByRole("button");
+    expect(btn.style.opacity).toBe("0.2");
+    expect(btn.style.pointerEvents).toBe("none");
+    // jsdom doesn't enforce pointer-events for synthetic clicks, so the onClick
+    // guard is what actually makes a dimmed card inert.
+    fireEvent.click(btn);
+    expect(onPick).not.toHaveBeenCalled();
+  });
+
+  it("when dimmed=false (default): no opacity/pointer-events override and onPick fires", () => {
+    const onPick = vi.fn();
+    renderCard({ onPick });
+    const btn = screen.getByRole("button");
+    expect(btn.style.opacity).toBe("");
+    expect(btn.style.pointerEvents).toBe("");
+    fireEvent.click(btn);
+    expect(onPick).toHaveBeenCalledWith("spiral");
+  });
+
   it("resolves a custom pattern's color via familyMetaFor (neutral gray, not #888)", () => {
     renderCard({
       id: "ai-thing",

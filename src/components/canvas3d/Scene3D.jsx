@@ -244,7 +244,11 @@ export default function Scene3D({
             </>
           )}
 
-          <EmissiveBloom lights={bloomLights} />
+          {/* Surface B keeps a gentler bloom: its only emissive element is the
+              thin drape lines, and a softer pass avoids any glow leaking onto the
+              (now transparent, dimmer) relief. Surface A's marks want the full
+              groove glow. */}
+          <EmissiveBloom lights={bloomLights} intensity={isPanelStack ? 1.4 : 0.6} />
         </Selection>
       </Canvas>
 

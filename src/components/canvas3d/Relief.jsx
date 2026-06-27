@@ -15,9 +15,12 @@ import { buildHeightmap } from '../../lib/three3d/heightSurface.js';
  * this component only marshals them into a BufferGeometry and computes vertex
  * normals so the shared SceneEnvironment lighting (D1/D12) shades the surface.
  *
- * Deliberately NOT wrapped in the bloom <Select> — bloom is emissive-only (D12);
- * the relief is a lit, opaque, vertex-colored surface (DoubleSide so orbiting
- * under it never reveals a black backface).
+ * Deliberately NOT wrapped in the bloom <Select> — bloom is emissive-only (D12).
+ * The relief is a lit, vertex-colored surface rendered TRANSPARENT: the colormap
+ * alpha (a≈0.12 at the neutral midrange → 1 at the saturated lobes) makes flat
+ * regions recede over the dark backdrop so peaks/valleys read, instead of blowing
+ * to flat white. depthWrite stays on so it occludes cleanly (a dim solid, not a
+ * see-through mesh) and DoubleSide keeps backfaces from going black when orbiting.
  *
  * @param {{ field?: import('../../lib/three3d/heightSurface.js').buildHeightmap,
  *           exaggeration?: number, width?: number, height?: number,
@@ -35,7 +38,9 @@ export default function Relief({ field, exaggeration = 0, width = 200, height = 
     if (!g || !meshData) return;
     g.setIndex(new THREE.BufferAttribute(meshData.indices, 1));
     g.setAttribute('position', new THREE.BufferAttribute(meshData.positions, 3));
-    g.setAttribute('color', new THREE.BufferAttribute(meshData.colors, 3));
+    // itemSize 4 = RGBA: the alpha channel drives per-vertex transparency so the
+    // neutral midrange recedes (~12%) and the saturated lobes stay solid.
+    g.setAttribute('color', new THREE.BufferAttribute(meshData.colors, 4));
     g.computeVertexNormals();
     g.attributes.position.needsUpdate = true;
     g.attributes.color.needsUpdate = true;
@@ -48,6 +53,8 @@ export default function Relief({ field, exaggeration = 0, width = 200, height = 
       <bufferGeometry ref={geomRef} />
       <meshStandardMaterial
         vertexColors
+        transparent
+        depthWrite
         side={THREE.DoubleSide}
         roughness={0.85}
         metalness={0}

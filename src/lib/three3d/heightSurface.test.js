@@ -19,13 +19,21 @@ const rampU3 = ScalarField.fromFunction((u) => 3 * u, { nx: 9, ny: 9 });
 const signedField = ScalarField.fromFunction((u) => 2 * u - 1, { nx: 5, ny: 5 });
 
 describe('reliefColor', () => {
-  it('returns an [r,g,b] triple normalized to 0..1', () => {
+  it('returns an [r,g,b,a] quad normalized to 0..1', () => {
     const c = reliefColor(0.5);
-    expect(c).toHaveLength(3);
+    expect(c).toHaveLength(4);
     for (const ch of c) {
       expect(ch).toBeGreaterThanOrEqual(0);
       expect(ch).toBeLessThanOrEqual(1);
     }
+  });
+
+  it('keeps the colormap alpha: neutral ~0.12 (recedes), saturated → ~1 (solid)', () => {
+    expect(reliefColor(0)[3]).toBeCloseTo(0.12, 2); // user ask: white/neutral ≈ 10% opaque
+    expect(reliefColor(1)[3]).toBeCloseTo(1, 2);
+    expect(reliefColor(-1)[3]).toBeCloseTo(1, 2);
+    // monotonic: more saturation → more opaque
+    expect(reliefColor(0.8)[3]).toBeGreaterThan(reliefColor(0.2)[3]);
   });
 
   it('maps 0 to the neutral parchment mid anchor', () => {
@@ -90,7 +98,7 @@ describe('buildHeightmap', () => {
     expect(m.cols).toBe(9);
     expect(m.rows).toBe(9);
     expect(m.positions).toHaveLength(9 * 9 * 3);
-    expect(m.colors).toHaveLength(9 * 9 * 3);
+    expect(m.colors).toHaveLength(9 * 9 * 4); // RGBA per vertex
     // Two triangles per cell, 3 indices each.
     expect(m.indices).toHaveLength(8 * 8 * 6);
   });
@@ -131,7 +139,7 @@ describe('buildHeightmap', () => {
   it('colors each vertex by the diverging colormap of its signed value', () => {
     const m = buildHeightmap({ field: signedField, exaggeration: 5, width: 10, height: 10 });
     const col = (i, j) => {
-      const idx = (j * m.cols + i) * 3;
+      const idx = (j * m.cols + i) * 4;
       return [m.colors[idx], m.colors[idx + 1], m.colors[idx + 2]];
     };
     // i=0 → u=0 → signed −1 → cool (blue > red).

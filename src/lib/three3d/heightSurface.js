@@ -92,13 +92,19 @@ export function clampExaggeration(v, maxV) {
  * Diverging relief color for a SIGNED value s (~[-1,1]): warm (garnet) for
  * positive/attract, cool (sapphire) for negative/repel, neutral parchment at 0.
  * Wraps lib/fields/colormap.signedColor (0–255 + alpha) → an [r,g,b] triple in
- * 0..1 for three.js vertex colors, dropping alpha (the relief is opaque).
+ * 0..1 for three.js vertex colors, KEEPING the colormap's alpha (a ∈ [0,1]).
+ *
+ * The relief is rendered transparent (Relief.jsx) so this alpha makes the neutral
+ * midrange (s≈0 → a≈0.12) recede to ~12% over the dark backdrop while the
+ * saturated attract/repel lobes (|s|→1 → a→1) read as solid peaks/valleys. This
+ * is the SAME alpha ramp the 2D field heatmap uses, so 2D and 3D agree. Dropping
+ * it (the old behavior) blew the surface to flat white and killed the relief read.
  * @param {number} s
- * @returns {[number, number, number]}
+ * @returns {[number, number, number, number]} [r, g, b, a] all in 0..1
  */
 export function reliefColor(s) {
-  const { r, g, b } = signedColor(s);
-  return [r / 255, g / 255, b / 255];
+  const { r, g, b, a } = signedColor(s);
+  return [r / 255, g / 255, b / 255, a];
 }
 
 /**
@@ -126,7 +132,9 @@ export function buildHeightmap({ field, exaggeration = 0, width = 1, height = 1,
   const h = Number.isFinite(height) && height > 0 ? height : 1;
 
   const positions = new Float32Array(cols * rows * 3);
-  const colors = new Float32Array(cols * rows * 3);
+  // RGBA (itemSize 4): the 4th channel is the colormap alpha so the relief can
+  // render transparent — neutral recedes, saturated lobes stay solid.
+  const colors = new Float32Array(cols * rows * 4);
   let minY = Infinity;
   let maxY = -Infinity;
 
@@ -137,14 +145,16 @@ export function buildHeightmap({ field, exaggeration = 0, width = 1, height = 1,
       const s = field.sampleSigned(u, v); // normalized [-1,1] by max|value|
       const elevation = s * exag;
       const idx = (j * cols + i) * 3;
+      const cIdx = (j * cols + i) * 4;
       const [wx, wy, wz] = uvToWorld(u, v, elevation, w, h);
       positions[idx] = wx; // x across width, centered
       positions[idx + 1] = wy; // Y = elevation (spec "Z")
       positions[idx + 2] = wz; // z across depth, centered
-      const [cr, cg, cb] = reliefColor(s);
-      colors[idx] = cr;
-      colors[idx + 1] = cg;
-      colors[idx + 2] = cb;
+      const [cr, cg, cb, ca] = reliefColor(s);
+      colors[cIdx] = cr;
+      colors[cIdx + 1] = cg;
+      colors[cIdx + 2] = cb;
+      colors[cIdx + 3] = ca;
       if (elevation < minY) minY = elevation;
       if (elevation > maxY) maxY = elevation;
     }

@@ -176,11 +176,13 @@ function ModulatorDevice({
       modulator: { offset, shape, steps, maps, range, ...patch },
     });
   };
-  // Write the full {min,max}, clamping so min ≤ max.
+  // Write the full {min,max}. The thumbs may cross: max below min is allowed and
+  // flips polarity (applyRange remaps the field's [-1,1] band onto [min,max], so
+  // an inverted range simply inverts the response). No clamping here.
   const setRangeMin = (v) =>
-    patchModulator({ range: { min: Math.min(v, range.max), max: range.max } });
+    patchModulator({ range: { min: v, max: range.max } });
   const setRangeMax = (v) =>
-    patchModulator({ range: { min: range.min, max: Math.max(v, range.min) } });
+    patchModulator({ range: { min: range.min, max: v } });
   const setMaps = (nextMaps) => patchModulator({ maps: nextMaps });
 
   // Candidate targets: any layer that consumes a modulation channel —
@@ -242,18 +244,23 @@ function ModulatorDevice({
           className="flex shrink-0 flex-col items-center justify-between text-[9px] text-ink-soft"
           data-testid="modulator-range"
         >
-          <span>max</span>
+          {/* Track ends are a fixed +1 / −1 axis — NOT "max"/"min" — because the
+              thumbs can cross (max may sit below min). Thumb COLOR carries the
+              min/max identity instead (garnet = max, sapphire = min). */}
+          <span className="num">+1</span>
           <div
-            className="relative my-1 w-4 flex-1 rounded-xs border border-hairline"
+            className="relative my-1 w-2 flex-1 rounded-xs border border-hairline"
             style={{
               background: `linear-gradient(to top, ${ANCHOR_NEG}, ${ANCHOR_MID} 50%, ${ANCHOR_POS})`,
             }}
           >
-            <span className="pointer-events-none absolute left-full top-1/2 ml-1 -translate-y-1/2 whitespace-nowrap text-[8px] text-gray-400">
+            <span className="pointer-events-none absolute left-full top-1/2 ml-2 -translate-y-1/2 whitespace-nowrap text-[8px] text-gray-400">
               neutral
             </span>
-            {/* Vertical inputs: rotated so the visual top = +1. min/max bounds let
-                jsdom fireEvent.change drive them. */}
+            {/* Two vertical inputs stacked over the track. They are pointer-
+                transparent (.mod-range) so only the triangle thumbs are grabbable
+                — each can be dragged independently and past the other. min/max
+                bounds let jsdom fireEvent.change drive them in tests. */}
             <input
               type="range"
               aria-label="Modulation range max"
@@ -263,7 +270,7 @@ function ModulatorDevice({
               step={0.05}
               value={range.max}
               onChange={(e) => setRangeMax(Number(e.target.value))}
-              className="absolute inset-0 h-full w-full cursor-pointer appearance-none bg-transparent accent-violet"
+              className="mod-range mod-range-max absolute inset-0 h-full w-full"
               style={{ writingMode: "vertical-lr", direction: "rtl" }}
             />
             <input
@@ -275,11 +282,11 @@ function ModulatorDevice({
               step={0.05}
               value={range.min}
               onChange={(e) => setRangeMin(Number(e.target.value))}
-              className="absolute inset-0 h-full w-full cursor-pointer appearance-none bg-transparent accent-violet"
+              className="mod-range mod-range-min absolute inset-0 h-full w-full"
               style={{ writingMode: "vertical-lr", direction: "rtl" }}
             />
           </div>
-          <span>min</span>
+          <span className="num">−1</span>
         </div>
 
         {/* Field "waveform" readout — the guide's scalar field. The box is

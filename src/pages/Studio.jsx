@@ -59,6 +59,8 @@ import useUIState from "../lib/hooks/useUIState";
 import useOptimizations from "../lib/hooks/useOptimizations";
 import useDesignPersistence from "../lib/hooks/useDesignPersistence";
 import useCloudPersistence from "../lib/hooks/useCloudPersistence";
+import useAutosave from "../lib/hooks/useAutosave";
+import useSaveHotkey from "../lib/hooks/useSaveHotkey";
 import { resolveSaveStatus } from "../lib/saveStatus";
 
 export default function Studio({ submitOrg = null } = {}) {
@@ -668,6 +670,7 @@ export default function Studio({ submitOrg = null } = {}) {
     lastSavedAt,
     designName,
     setDesignName,
+    nameDirty,
   } = useCloudPersistence({
     user,
     limits,
@@ -687,6 +690,25 @@ export default function Studio({ submitOrg = null } = {}) {
     markCleanFrom,
     canvasContainerRef,
   });
+
+  // === Autosave + Cmd/Ctrl+S (Rec 2) ===
+  // Both are CALLERS of the single save path (handleSaveToCloud), never a second
+  // write. The combined dirty trigger ORs layer-dirty with name-dirty; its
+  // identity changes whenever layers/bgColor change (isDirty's deps) OR a rename
+  // flips nameDirty, so either re-schedules the debounced autosave.
+  const isDirtyForAutosave = useCallback(
+    () => isDirty() || nameDirty,
+    [isDirty, nameDirty]
+  );
+  useAutosave({
+    enabled: !!user, // signed-in only; guests never autosave
+    hasDesignId: !!currentDesignId, // first save stays explicit
+    isDirty: isDirtyForAutosave,
+    save: handleSaveToCloud,
+    isSaving: saveState === "saving", // bail if a manual save is already running
+  });
+  // Cmd/Ctrl+S works even before the first save (manual checkpoint).
+  useSaveHotkey(handleSaveToCloud);
 
   // Document Setup apply (C6 / #14). Routes the profile half through the SAME
   // handleProfileChange the LayerTree selector uses (so the remap + default-bed
@@ -1164,7 +1186,9 @@ export default function Studio({ submitOrg = null } = {}) {
             status={resolveSaveStatus({
               saving: saveState === "saving",
               error: saveState === "error",
-              dirty: isDirty(),
+              // Name-dirty counts as unsaved too (Rec 2), so a pending rename
+              // reads "Unsaved changes" until it autosaves.
+              dirty: isDirty() || nameDirty,
               lastSavedAt,
             })}
             lastSavedAt={lastSavedAt}

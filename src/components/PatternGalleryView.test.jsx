@@ -17,9 +17,16 @@ const PATTERNS = [
 ];
 
 // Fake renderCard: emits a marker div carrying the item id and family so tests
-// can assert presence + DOM order without rendering the real PatternCard.
-const fakeRenderCard = (item) => (
-  <div data-testid={`card-${item.id}`} data-family={item.familyKey} key={item.id} />
+// can assert presence + DOM order without rendering the real PatternCard. It also
+// captures the optional 2nd arg's `dimmed` flag so the Custom-mode dimming can be
+// asserted without rendering the real PatternCard.
+const fakeRenderCard = (item, opts) => (
+  <div
+    data-testid={`card-${item.id}`}
+    data-family={item.familyKey}
+    data-dimmed={opts?.dimmed ? "true" : "false"}
+    key={item.id}
+  />
 );
 
 function renderGallery(props = {}) {
@@ -90,5 +97,106 @@ describe("PatternGalleryView", () => {
     const btn = screen.getByTestId("gallery-empty-select-all");
     fireEvent.click(btn);
     expect(onSelectAll).toHaveBeenCalledTimes(1);
+  });
+
+  // ── Auto / Custom sort toggle (slice 5) ───────────────────────────────────
+
+  // The clustered Auto order over the FULL set (H<T<custom): h1,h2,h3,t1,t2,c1.
+  const AUTO_ORDER = ["h1", "h2", "h3", "t1", "t2", "c1"];
+
+  it("renders an Auto/Custom segmented control; default Auto with aria-pressed reflecting sortMode", () => {
+    renderGallery(); // default sortMode -> 'auto'
+    const auto = screen.getByTestId("sort-mode-auto");
+    const custom = screen.getByTestId("sort-mode-custom");
+    expect(auto).toHaveAttribute("aria-pressed", "true");
+    expect(custom).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("aria-pressed flips when sortMode='custom'", () => {
+    renderGallery({ sortMode: "custom", manualOrder: AUTO_ORDER });
+    expect(screen.getByTestId("sort-mode-auto")).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByTestId("sort-mode-custom")).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("clicking Custom calls onEnterCustom with the FULL clustered auto-order ids", () => {
+    const onEnterCustom = vi.fn();
+    renderGallery({ onEnterCustom });
+    fireEvent.click(screen.getByTestId("sort-mode-custom"));
+    expect(onEnterCustom).toHaveBeenCalledTimes(1);
+    expect(onEnterCustom).toHaveBeenCalledWith(AUTO_ORDER);
+  });
+
+  it("clicking Auto calls onSetAuto", () => {
+    const onSetAuto = vi.fn();
+    renderGallery({ sortMode: "custom", manualOrder: AUTO_ORDER, onSetAuto });
+    fireEvent.click(screen.getByTestId("sort-mode-auto"));
+    expect(onSetAuto).toHaveBeenCalledTimes(1);
+  });
+
+  it("Reset-order affordance shows ONLY in Custom mode and calls onResetManual with auto-order", () => {
+    const onResetManual = vi.fn();
+    // Auto mode: absent.
+    const { rerender } = renderGallery();
+    expect(screen.queryByTestId("sort-reset-order")).toBeNull();
+    // Custom mode: present + wired.
+    rerender(
+      <PatternGalleryView
+        patterns={PATTERNS}
+        isOn={() => true}
+        onToggle={() => {}}
+        onSelectAll={() => {}}
+        onClearAll={() => {}}
+        renderCard={fakeRenderCard}
+        sortMode="custom"
+        manualOrder={AUTO_ORDER}
+        onResetManual={onResetManual}
+      />
+    );
+    const reset = screen.getByTestId("sort-reset-order");
+    fireEvent.click(reset);
+    expect(onResetManual).toHaveBeenCalledWith(AUTO_ORDER);
+  });
+
+  it("Custom mode renders ALL patterns in manualOrder; leftovers appended in auto-order", () => {
+    // Reversed-ish order that OMITS c1, to prove (a) manualOrder drives order and
+    // (b) the missing id (c1) appends at the end via the auto-order fallback.
+    const manualOrder = ["t2", "t1", "h2", "h1", "h3"];
+    renderGallery({ sortMode: "custom", manualOrder });
+    const ids = screen.getAllByTestId(/^card-/).map((c) => c.getAttribute("data-testid"));
+    expect(ids).toEqual([
+      "card-t2",
+      "card-t1",
+      "card-h2",
+      "card-h1",
+      "card-h3",
+      "card-c1", // omitted from manualOrder → appended last (custom is auto-last)
+    ]);
+  });
+
+  it("Custom mode keeps off-family cards present but DIMMED; on-family normal", () => {
+    renderGallery({
+      sortMode: "custom",
+      manualOrder: AUTO_ORDER,
+      isOn: (key) => key !== "T", // T is filtered off
+    });
+    // T cards still present (slot preserved) but dimmed.
+    expect(screen.getByTestId("card-t1")).toHaveAttribute("data-dimmed", "true");
+    expect(screen.getByTestId("card-t2")).toHaveAttribute("data-dimmed", "true");
+    // On-family cards normal.
+    expect(screen.getByTestId("card-h1")).toHaveAttribute("data-dimmed", "false");
+    expect(screen.getByTestId("card-c1")).toHaveAttribute("data-dimmed", "false");
+  });
+
+  it("Custom mode shows NO empty state even when ALL families are off (everything dimmed)", () => {
+    renderGallery({
+      sortMode: "custom",
+      manualOrder: AUTO_ORDER,
+      isOn: () => false,
+    });
+    expect(screen.queryByTestId("gallery-empty")).toBeNull();
+    // Every card still rendered, all dimmed.
+    const cards = screen.getAllByTestId(/^card-/);
+    expect(cards).toHaveLength(PATTERNS.length);
+    cards.forEach((c) => expect(c).toHaveAttribute("data-dimmed", "true"));
   });
 });

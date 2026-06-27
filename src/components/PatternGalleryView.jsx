@@ -35,7 +35,14 @@ export default function PatternGalleryView({
   onSelectAll,
   onClearAll,
   renderCard,
+  // Slice 5 — Auto/Custom sort. Presentational: the hook drives these.
+  sortMode = "auto",
+  manualOrder = [],
+  onSetAuto,
+  onEnterCustom,
+  onResetManual,
 }) {
+  const isCustom = sortMode === "custom";
   // 1. Families for the pill bar — grouped over the FULL set, counts STATIC.
   //    Ordered by family rank (custom last). Counts never shrink on toggle.
   const families = useMemo(() => {
@@ -61,10 +68,96 @@ export default function PatternGalleryView({
       .map(({ p }) => p);
   }, [patterns, isOn]);
 
-  const isEmpty = gridItems.length === 0;
+  // 3. autoOrderIds — the SAME family-clustered order as the grid, but over the
+  //    FULL (unfiltered) set. This seeds Custom mode (onEnterCustom) and the
+  //    "Reset order" affordance, and is the fallback order for any id missing
+  //    from manualOrder.
+  const autoOrderIds = useMemo(
+    () =>
+      patterns
+        .map((p, i) => ({ p, i }))
+        .sort((a, b) => rankOf(a.p.familyKey) - rankOf(b.p.familyKey) || a.i - b.i)
+        .map(({ p }) => p.id),
+    [patterns],
+  );
+
+  // 4. Custom grid items — ALL patterns ordered by manualOrder; any id missing
+  //    from manualOrder (new/AI patterns) appended in auto/family order. Nothing
+  //    is filtered out here — off-family cards are rendered DIMMED + inert.
+  const customItems = useMemo(() => {
+    const byId = new Map(patterns.map((p) => [p.id, p]));
+    const seen = new Set();
+    const ordered = [];
+    for (const id of manualOrder) {
+      const p = byId.get(id);
+      if (p && !seen.has(id)) {
+        ordered.push(p);
+        seen.add(id);
+      }
+    }
+    for (const id of autoOrderIds) {
+      if (!seen.has(id)) {
+        ordered.push(byId.get(id));
+        seen.add(id);
+      }
+    }
+    return ordered;
+  }, [patterns, manualOrder, autoOrderIds]);
+
+  const items = isCustom ? customItems : gridItems;
+  // Empty state is AUTO-only — Custom never blanks (dimming covers all-off).
+  const showEmpty = !isCustom && gridItems.length === 0;
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
+      <div className="flex flex-wrap items-center gap-2">
+        {/* Auto / Custom segmented control */}
+        <div
+          role="group"
+          aria-label="Sort order"
+          className="flex items-center gap-1"
+        >
+          <button
+            type="button"
+            data-testid="sort-mode-auto"
+            aria-pressed={!isCustom}
+            onClick={() => onSetAuto && onSetAuto()}
+            className={`rounded-xs border px-2.5 py-1 text-[11px] font-medium transition-colors duration-fast ease-out-quart ${
+              !isCustom
+                ? "border-violet text-violet bg-violet/10"
+                : "border-hairline text-ink-soft hover:text-ink hover:border-ink-soft"
+            }`}
+          >
+            Auto
+          </button>
+          <button
+            type="button"
+            data-testid="sort-mode-custom"
+            aria-pressed={isCustom}
+            onClick={() => onEnterCustom && onEnterCustom(autoOrderIds)}
+            className={`rounded-xs border px-2.5 py-1 text-[11px] font-medium transition-colors duration-fast ease-out-quart ${
+              isCustom
+                ? "border-violet text-violet bg-violet/10"
+                : "border-hairline text-ink-soft hover:text-ink hover:border-ink-soft"
+            }`}
+          >
+            Custom
+          </button>
+        </div>
+
+        {/* Reset order — Custom only. */}
+        {isCustom && (
+          <button
+            type="button"
+            data-testid="sort-reset-order"
+            onClick={() => onResetManual && onResetManual(autoOrderIds)}
+            className="rounded-xs border border-hairline px-2 py-1 text-[11px] text-ink-soft transition-[color,border-color,transform] duration-fast ease-out-quart hover:border-violet hover:text-violet motion-safe:active:scale-[0.95]"
+          >
+            Reset order
+          </button>
+        )}
+      </div>
+
       <FamilyFilterBar
         families={families}
         isOn={isOn}
@@ -74,7 +167,7 @@ export default function PatternGalleryView({
       />
 
       <div className="min-h-0 flex-1 overflow-y-auto">
-        {isEmpty ? (
+        {showEmpty ? (
           <div
             data-testid="gallery-empty"
             className="anim-fade flex h-full flex-col items-center justify-center gap-3 py-12 text-center"
@@ -97,7 +190,14 @@ export default function PatternGalleryView({
               justifyContent: "start",
             }}
           >
-            {gridItems.map((item) => renderCard(item))}
+            {/* renderCard contract: `renderCard(item, { dimmed })`. Auto mode
+                omits opts (dimmed falsy); Custom mode marks off-family cards
+                dimmed so the modal forwards it to PatternCard. */}
+            {items.map((item) =>
+              isCustom
+                ? renderCard(item, { dimmed: isOn ? !isOn(item.familyKey) : false })
+                : renderCard(item),
+            )}
           </div>
         )}
       </div>

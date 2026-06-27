@@ -59,7 +59,10 @@ export default function PatternPickerModal({ open, onClose, onPick }) {
 
   // Picker state (view persisted, default 'grid'; filter resets on open). Called
   // UNCONDITIONALLY, before the early return, to keep hook order stable.
-  const { view, setView, isOn, toggle, selectAll, clearAll } = usePatternPicker({ open, familyKeys });
+  const {
+    view, setView, isOn, toggle, selectAll, clearAll,
+    sortMode, manualOrder, setSortMode, enterCustom, resetManual,
+  } = usePatternPicker({ open, familyKeys });
 
   // Place every taxonomy pattern into its (form-row × geom-band) cell for the
   // Map view. Warn on any entry whose form/geom doesn't match a known row/band
@@ -92,7 +95,7 @@ export default function PatternPickerModal({ open, onClose, onPick }) {
 
   // Shared card factory — same gate/ready/label/symbol resolution for both the
   // Map (size 92) and Grid (size 140) views, so the two never drift.
-  const cardFor = (id, meta, size = 92, animateIn = false) => {
+  const cardFor = (id, meta, size = 92, animateIn = false, dimmed = false) => {
     const ready = !!getPatternClass(id);
     const gate = check('pattern', id);
     const label = labelFor(id, dynamicTypes);
@@ -109,13 +112,15 @@ export default function PatternPickerModal({ open, onClose, onPick }) {
         onPick={onPick}
         size={size}
         animateIn={animateIn}
+        dimmed={dimmed}
       />
     );
   };
 
   // Grid render-prop — reuse cardFor at the larger gallery size, with the
   // mount fade+scale enter (Map view passes no animateIn, so it stays static).
-  const renderCardGallery = (item) => cardFor(item.id, item.meta, 140, true);
+  // Custom sort forwards `opts.dimmed` (off-family cards) to PatternCard.
+  const renderCardGallery = (item, opts) => cardFor(item.id, item.meta, 140, true, !!opts?.dimmed);
 
   // Arrow-key roving between the two tabs (nice-to-have over native + aria).
   const onTabKeyDown = (e) => {
@@ -213,6 +218,11 @@ export default function PatternPickerModal({ open, onClose, onPick }) {
               onSelectAll={selectAll}
               onClearAll={clearAll}
               renderCard={renderCardGallery}
+              sortMode={sortMode}
+              manualOrder={manualOrder}
+              onSetAuto={() => setSortMode('auto')}
+              onEnterCustom={enterCustom}
+              onResetManual={resetManual}
             />
           </div>
         )}

@@ -18,6 +18,10 @@ import {
 import { ROTATE_OFFSET } from "../lib/transform/handles";
 import { ghostSvg } from "../lib/scene/placement";
 import { useFont } from "../lib/text/fontRegistry";
+// Three-free lazy host for the 3D preview (S1). Canvas3DHost itself imports no
+// three.js — it React.lazy-loads the inner Scene3D, so importing it here never
+// pulls three into the 2D bundle.
+import Canvas3DHost from "./canvas3d/Canvas3DHost";
 
 const IDENTITY = { x: 0, y: 0, rotation: 0, scale: 1 };
 
@@ -47,6 +51,14 @@ export default function RightPanel({
   // exactly as before. Studio laser-gates this: it passes the real panels only in
   // laser mode and [] otherwise.
   panels = [],
+  // 3D preview (S1, PRD D1). `threeDMode` ∈ {'off','panel-stack','height-surface'}.
+  // When != 'off' the lazy <Canvas3DHost> mounts over the canvas region and the
+  // p5 surface is HIDDEN (visibility, NOT unmounted — p5 state is preserved).
+  // Defaults to 'off' so every other caller (Studio plotter mode, MobileStudio,
+  // ShareView, tests) renders byte-identically to before. `focusFieldLayerId`
+  // is the Surface-B source guide layer (null for Surface A).
+  threeDMode = "off",
+  focusFieldLayerId = null,
   canvasW,
   canvasH,
   patternInstancesRef,
@@ -553,6 +565,7 @@ export default function RightPanel({
         />
       )}
       <div
+        data-testid="canvas-scaled-box"
         style={{
           width: canvasW,
           height: canvasH,
@@ -561,6 +574,9 @@ export default function RightPanel({
           boxShadow: "7px 7px 25px 2px rgba(0,0,0, 0.5)",
           flexShrink: 0,
           position: "relative",
+          // 3D active → hide the p5 surface without unmounting it (state kept).
+          // 'off' → undefined, so the rendered style is byte-identical to before.
+          visibility: threeDMode !== "off" ? "hidden" : undefined,
         }}
       >
         <div ref={containerRef} />
@@ -652,6 +668,17 @@ export default function RightPanel({
           onDoubleClick={handleDoubleClick}
         />
       </div>
+
+      {/* 3D preview host (S1, PRD D1). Mounts ONLY when a sub-mode is active;
+          covers the whole canvas region (the p5 surface above is visibility-
+          hidden, not unmounted). Canvas3DHost lazy-loads the three.js scene
+          behind a "Building preview…" Suspense fallback. 'off' → not rendered,
+          a true no-op so the 2D path is byte-identical and three never loads. */}
+      {threeDMode !== "off" && (
+        <div data-testid="canvas3d-host" className="absolute inset-0 z-30">
+          <Canvas3DHost mode={threeDMode} focusFieldLayerId={focusFieldLayerId} />
+        </div>
+      )}
 
       {/* Hand-pan overlay — full viewport, OUTSIDE the canvas transform. Hand-pan
           works from screen-space deltas alone, so it needn't sit on the artboard:

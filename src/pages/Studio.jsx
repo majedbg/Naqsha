@@ -21,6 +21,7 @@ import useActiveTool from "../lib/hooks/useActiveTool";
 import useShowAdmin from "../lib/hooks/useShowAdmin";
 import useCanvasView from "../lib/hooks/useCanvasView";
 import useColorView from "../lib/hooks/useColorView";
+import { use3DPreview } from "../lib/three3d/use3DPreview";
 import ColorViewControl from "../components/canvas/ColorViewControl";
 import useSvgImport from "../lib/hooks/useSvgImport";
 import ConfirmDialog from "../components/ui/ConfirmDialog";
@@ -420,6 +421,12 @@ export default function Studio({ submitOrg = null } = {}) {
   // — feeds the canvas, never export. Materials default to the built-in set (no
   // org context in Studio yet; org materials drop in later via the same prop).
   const colorView = useColorView();
+
+  // 3D preview sub-mode state machine (S1, PRD D1). Owns {subMode,
+  // focusFieldLayerId}; the openers are wired to UI entry points in later
+  // slices (lens peer for A; Inspector "Preview in 3D" for B). Threaded into
+  // RightPanel so the lazy three.js host mounts when a sub-mode is active.
+  const threeD = use3DPreview();
 
   // Interactive per-layer transform (Select tool: move / resize / rotate).
   // Committed transforms live on `layer.transform` (so they persist + export
@@ -959,6 +966,10 @@ export default function Studio({ submitOrg = null } = {}) {
           // canvas render is byte-identical to today; the real panels fold in
           // per-panel visibility only in laser mode.
           panels={activeProfileId === "laser" ? panels : []}
+          // 3D preview (S1): mounts the lazy three.js host over the canvas when a
+          // sub-mode is active; 'off' → byte-identical 2D path.
+          threeDMode={threeD.subMode}
+          focusFieldLayerId={threeD.focusFieldLayerId}
           canvasW={canvasW}
           canvasH={canvasH}
           patternInstancesRef={patternInstancesRef}

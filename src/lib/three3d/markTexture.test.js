@@ -4,6 +4,7 @@ import {
   treatmentForProcess,
   buildPanelMarkSVGs,
   countSvgPaths,
+  routePanelRenderModes,
   PATH_CAP,
   TEXTURE_DPR_FLOOR,
 } from './markTexture.js';
@@ -111,6 +112,62 @@ describe('countSvgPaths', () => {
     expect(countSvgPaths('<path d="a"/><path d="b"/><rect/>')).toBe(2);
     expect(countSvgPaths('<rect/>')).toBe(0);
     expect(countSvgPaths(null)).toBe(0);
+  });
+});
+
+describe('routePanelRenderModes — D6 per-panel ribbon/texture routing (S10)', () => {
+  // Build a panel's mark-layer list whose total <path> count is `n`.
+  const layersWithPaths = (n) => [{ svg: '<path/>'.repeat(n) }];
+
+  it('routes a small desktop panel to RIBBON (under cap, high DPR)', () => {
+    const out = routePanelRenderModes({ p: layersWithPaths(10) }, { dpr: 2 });
+    expect(out.p).toBe('ribbon');
+  });
+
+  it('routes a panel strictly ABOVE the cap to TEXTURE', () => {
+    const at = routePanelRenderModes({ p: layersWithPaths(PATH_CAP) }, { dpr: 2 });
+    const over = routePanelRenderModes({ p: layersWithPaths(PATH_CAP + 1) }, { dpr: 2 });
+    expect(at.p).toBe('ribbon'); // at cap → still ribbon-eligible
+    expect(over.p).toBe('texture');
+  });
+
+  it('sums path count ACROSS a panel\'s per-process layers when applying the cap', () => {
+    // two layers, neither over cap alone, but together exceed it → texture.
+    const out = routePanelRenderModes(
+      { p: [{ svg: '<path/>'.repeat(800) }, { svg: '<path/>'.repeat(800) }] },
+      { dpr: 2 },
+    );
+    expect(out.p).toBe('texture');
+  });
+
+  it('forces TEXTURE on mobile and below the DPR floor regardless of count', () => {
+    expect(routePanelRenderModes({ p: layersWithPaths(1) }, { isMobile: true }).p).toBe('texture');
+    expect(
+      routePanelRenderModes({ p: layersWithPaths(1) }, { dpr: TEXTURE_DPR_FLOOR - 0.01 }).p,
+    ).toBe('texture');
+  });
+
+  it('keeps <line>/<polyline>-only marks (0 <path>s) ribbon-eligible', () => {
+    const out = routePanelRenderModes(
+      { p: [{ svg: '<line/><line/><polyline/>' }] },
+      { dpr: 2 },
+    );
+    expect(out.p).toBe('ribbon');
+  });
+
+  it('routes EACH panel independently and keys by panelId', () => {
+    const out = routePanelRenderModes(
+      { small: layersWithPaths(5), huge: layersWithPaths(PATH_CAP + 1) },
+      { dpr: 2 },
+    );
+    expect(out).toEqual({ small: 'ribbon', huge: 'texture' });
+  });
+
+  it('tolerates null/empty/malformed input without throwing', () => {
+    expect(routePanelRenderModes()).toEqual({});
+    expect(routePanelRenderModes(null)).toEqual({});
+    expect(routePanelRenderModes({ p: null }, { dpr: 2 })).toEqual({ p: 'ribbon' });
+    expect(routePanelRenderModes({ p: [{}] }, { dpr: 2 })).toEqual({ p: 'ribbon' });
   });
 });
 

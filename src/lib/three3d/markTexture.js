@@ -102,6 +102,38 @@ export function countSvgPaths(svg) {
 }
 
 /**
+ * D6 per-panel render-mode routing for Surface A marks (S10). Given the per-panel
+ * mark layers (buildPanelMarkSVGs output) and the device profile, decide for EACH
+ * panel whether its marks render as true ribbon GEOMETRY (S10, crisp vector) or as
+ * the emissive TEXTURE baseline (S5). A panel routes to texture exactly when
+ * shouldUseTextureMode is true for its total stroke-path count (summed across its
+ * per-process layers) — i.e. mobile, low-DPI, or strictly above the ribbon path
+ * cap. Everything else is ribbon-eligible.
+ *
+ * Path count reuses countSvgPaths (the S5 routing contract): a coarse `<path>`-open
+ * count. Marks emitted only as `<line>`/`<polyline>` (e.g. Grid) count as 0 and so
+ * stay ribbon-eligible — intended: the 1500 cap is an UPPER perf guard, not a floor,
+ * and SVGLoader strokes those element types into ribbons regardless.
+ *
+ * Pure + three-free: stays on the 2D side of the import boundary (the ribbon
+ * geometry builder it gates, canvas3d/ribbonGeometry.js, holds the three import).
+ *
+ * @param {Record<string, Array<{svg?:string}>>} marksByPanel
+ * @param {{ isMobile?:boolean, dpr?:number }} [device]
+ * @returns {Record<string, 'ribbon'|'texture'>}
+ */
+export function routePanelRenderModes(marksByPanel, { isMobile = false, dpr = 2 } = {}) {
+  const out = {};
+  const entries = marksByPanel && typeof marksByPanel === 'object' ? marksByPanel : {};
+  for (const panelId of Object.keys(entries)) {
+    const layers = Array.isArray(entries[panelId]) ? entries[panelId] : [];
+    const pathCount = layers.reduce((n, m) => n + countSvgPaths(m && m.svg), 0);
+    out[panelId] = shouldUseTextureMode({ pathCount, isMobile, dpr }) ? 'texture' : 'ribbon';
+  }
+  return out;
+}
+
+/**
  * Build the per-panel, PER-PROCESS emissive mark layers for Surface A texture mode.
  *
  * For every VISIBLE panel (mirrors panelExport.js / sheetSpecs.js visibility), the

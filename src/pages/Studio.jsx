@@ -671,6 +671,9 @@ export default function Studio({ submitOrg = null } = {}) {
     designName,
     setDesignName,
     nameDirty,
+    pendingDraft,
+    recoverDraft,
+    discardDraft,
   } = useCloudPersistence({
     user,
     limits,
@@ -981,6 +984,32 @@ export default function Studio({ submitOrg = null } = {}) {
             className="absolute top-3 left-1/2 -translate-x-1/2 z-20 bg-paper border border-red-500/50 text-red-500 text-xs rounded-md px-3 py-1.5 shadow-sm"
           >
             {importError}
+          </div>
+        )}
+        {/* Local-draft recovery banner (Rec 3 / B). A signed-in user whose prior
+            cloud save FAILED has their work stashed locally; offer to restore it.
+            Same inline-banner pattern as the import error (no toast system).
+            Gated on `user` to match the "signed-in only" safety-net decision. */}
+        {user && pendingDraft && (
+          <div
+            role="alert"
+            className="absolute top-3 left-1/2 -translate-x-1/2 z-20 flex items-center gap-3 bg-paper border border-hairline text-ink text-xs rounded-md px-3 py-1.5 shadow-sm"
+          >
+            <span>Recover unsaved changes?</span>
+            <button
+              type="button"
+              onClick={recoverDraft}
+              className="px-2 py-0.5 rounded-xs bg-accent text-paper hover:opacity-90 transition-opacity duration-fast"
+            >
+              Recover
+            </button>
+            <button
+              type="button"
+              onClick={discardDraft}
+              className="px-2 py-0.5 rounded-xs text-ink-soft hover:text-ink hover:bg-paper-warm transition-colors duration-fast"
+            >
+              Discard
+            </button>
           </div>
         )}
         <RightPanel

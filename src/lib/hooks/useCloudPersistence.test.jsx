@@ -182,6 +182,57 @@ describe("useCloudPersistence", () => {
     expect(loadDraft(draftKey(null))).toBe(null);
   });
 
+  it("recovery: reads a pre-existing draft for the mount key into pendingDraft", () => {
+    const seeded = {
+      config: { layers: makeLayers(), canvasW: 640, canvasH: 480 },
+      name: "Recovered",
+      savedAt: 5,
+    };
+    saveDraft(draftKey(null), seeded);
+    const { result } = renderHook(() => useCloudPersistence(baseProps()));
+    expect(result.current.pendingDraft).toEqual(seeded);
+  });
+
+  it("recovery: pendingDraft is null when no draft exists", () => {
+    const { result } = renderHook(() => useCloudPersistence(baseProps()));
+    expect(result.current.pendingDraft).toBe(null);
+  });
+
+  it("recovery: recoverDraft applies the draft's config + name, clears it, and drops pendingDraft", () => {
+    const layers = makeLayers();
+    saveDraft(draftKey(null), {
+      config: { layers, canvasW: 640, canvasH: 480 },
+      name: "Recovered",
+      savedAt: 5,
+    });
+    const props = baseProps();
+    const { result } = renderHook(() => useCloudPersistence(props));
+
+    act(() => result.current.recoverDraft());
+
+    expect(props.loadLayerSet).toHaveBeenCalledWith(layers);
+    expect(props.applyCanvasSize).toHaveBeenCalledWith(640, 480);
+    expect(result.current.designName).toBe("Recovered");
+    expect(loadDraft(draftKey(null))).toBe(null);
+    expect(result.current.pendingDraft).toBe(null);
+  });
+
+  it("recovery: discardDraft clears the draft + pendingDraft without applying config", () => {
+    saveDraft(draftKey(null), {
+      config: { layers: makeLayers(), canvasW: 640, canvasH: 480 },
+      name: "Recovered",
+      savedAt: 5,
+    });
+    const props = baseProps();
+    const { result } = renderHook(() => useCloudPersistence(props));
+
+    act(() => result.current.discardDraft());
+
+    expect(props.loadLayerSet).not.toHaveBeenCalled();
+    expect(loadDraft(draftKey(null))).toBe(null);
+    expect(result.current.pendingDraft).toBe(null);
+  });
+
   it("load: applies the saved layers + dims via applyCanvasSize and marks clean", async () => {
     loadDesign.mockResolvedValue({
       id: "design-7",

@@ -1,7 +1,7 @@
 import { useState, useCallback } from "react";
 import { saveDesign, loadDesign, saveHistorySnapshot } from "../designService";
 import { normalizePanels } from "../panels";
-import { draftKey, saveDraft, clearDraft } from "../localDraft";
+import { draftKey, saveDraft, loadDraft, clearDraft } from "../localDraft";
 
 // Cloud save/load concern extracted from Studio (AR-3A).
 //
@@ -44,6 +44,32 @@ export default function useCloudPersistence({
     setDesignNameState(name);
     setNameDirty(true);
   }, []);
+
+  // Recovery (Capability B). On mount, read any draft stashed by a prior failed
+  // save under THIS session's mount key (id is null at mount → the 'new'
+  // namespace). The mount key is frozen via useState so recover/discard clear
+  // the exact key the draft was read from, regardless of any later id change.
+  const [mountKey] = useState(() => draftKey(currentDesignId));
+  const [pendingDraft, setPendingDraft] = useState(() => loadDraft(mountKey));
+
+  const discardDraft = useCallback(() => {
+    clearDraft(mountKey);
+    setPendingDraft(null);
+  }, [mountKey]);
+
+  const recoverDraft = useCallback(() => {
+    setPendingDraft((draft) => {
+      if (draft) {
+        const cfg = draft.config || {};
+        if (cfg.layers) loadLayerSet(cfg.layers);
+        if (cfg.canvasW && cfg.canvasH)
+          applyCanvasSize(cfg.canvasW, cfg.canvasH);
+        if (draft.name) setDesignName(draft.name);
+        clearDraft(mountKey);
+      }
+      return null;
+    });
+  }, [mountKey, loadLayerSet, applyCanvasSize, setDesignName]);
 
   const captureThumbnail = useCallback(() => {
     const container = canvasContainerRef.current;
@@ -169,5 +195,8 @@ export default function useCloudPersistence({
     designName,
     setDesignName,
     nameDirty,
+    pendingDraft,
+    recoverDraft,
+    discardDraft,
   };
 }

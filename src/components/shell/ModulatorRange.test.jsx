@@ -130,7 +130,7 @@ describe("ModulatorDevice — two-thumb range slider (WI-6)", () => {
     expect(patch.modulator.range.max).toBe(1);
   });
 
-  it("clamps so min ≤ max (dragging min above max)", () => {
+  it("allows min above max — thumbs cross to flip polarity (no clamp)", () => {
     const spy = vi.fn();
     render(
       <Harness
@@ -142,16 +142,17 @@ describe("ModulatorDevice — two-thumb range slider (WI-6)", () => {
         onUpdateSpy={spy}
       />
     );
-    // Drag min up to 0.5 — should clamp to the current max (0).
+    // Drag min up past max (0) to 0.5 — allowed; max stays put, range inverts.
     fireEvent.change(screen.getByLabelText("Modulation range min"), {
       target: { value: "0.5" },
     });
     const [, patch] = spy.mock.calls.at(-1);
-    expect(patch.modulator.range.min).toBeLessThanOrEqual(patch.modulator.range.max);
-    expect(patch.modulator.range.min).toBeCloseTo(0);
+    expect(patch.modulator.range.min).toBeCloseTo(0.5);
+    expect(patch.modulator.range.max).toBe(0);
+    expect(patch.modulator.range.min).toBeGreaterThan(patch.modulator.range.max);
   });
 
-  it("clamps so max ≥ min (dragging max below min)", () => {
+  it("allows max below min — thumbs cross to flip polarity (no clamp)", () => {
     const spy = vi.fn();
     render(
       <Harness
@@ -163,12 +164,14 @@ describe("ModulatorDevice — two-thumb range slider (WI-6)", () => {
         onUpdateSpy={spy}
       />
     );
+    // Drag max down past min (0) to -0.5 — allowed; min stays put, range inverts.
     fireEvent.change(screen.getByLabelText("Modulation range max"), {
       target: { value: "-0.5" },
     });
     const [, patch] = spy.mock.calls.at(-1);
-    expect(patch.modulator.range.max).toBeGreaterThanOrEqual(patch.modulator.range.min);
-    expect(patch.modulator.range.max).toBeCloseTo(0);
+    expect(patch.modulator.range.max).toBeCloseTo(-0.5);
+    expect(patch.modulator.range.min).toBe(0);
+    expect(patch.modulator.range.max).toBeLessThan(patch.modulator.range.min);
   });
 
   it("removes the per-map polarity control but keeps amount", () => {

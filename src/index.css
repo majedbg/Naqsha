@@ -126,6 +126,61 @@ input[type="range"]::-moz-range-thumb {
   border: none;
 }
 
+/* === Modulator output-range slider — two vertical thumbs over one track ===
+ * The two thumbs (min, max) share one gradient track and may cross — dragging
+ * max below min flips polarity (handled by applyRange). They are two full-size
+ * <input type="range"> stacked on top of each other, so the inputs MUST be
+ * pointer-transparent: otherwise the topmost one swallows every click, only one
+ * thumb is ever grabbable, and a track-click collapses the range (which is what
+ * made the surface go uniform-magenta). Only the thumbs take pointer events, so
+ * each can be grabbed independently and the bare track is inert.
+ *
+ * Each thumb is a colored triangle (an arrow pointer) clipped from the thumb
+ * box. The box stays ~16px tall for an easy grab target even though the bar is
+ * thin. Colors map to the colormap anchors so identity survives a cross:
+ * max = garnet (+1 anchor), min = sapphire (−1 anchor).
+ *
+ * Selectors are written as `input[type="range"].mod-range…` on purpose: the
+ * generic `input[type="range"]` base rules below have higher specificity than a
+ * bare class, so a plain `.mod-range` would lose the height (collapsing to 4px)
+ * and keep the default ink-square thumb. The qualified selector wins. */
+input[type="range"].mod-range {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 100%; /* fill the 140px track; beats the base 4px height */
+  background: transparent;
+  pointer-events: none; /* track is inert; only the thumbs are interactive */
+}
+input[type="range"].mod-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  pointer-events: auto;
+  width: 14px;
+  height: 16px;
+  border: none;
+  border-radius: 0;
+  background: var(--ink);
+  cursor: grab;
+  /* ▶ — triangle pointing into the bar; marks the value level at its tip. */
+  clip-path: polygon(0 0, 100% 50%, 0 100%);
+}
+input[type="range"].mod-range::-moz-range-thumb {
+  pointer-events: auto;
+  width: 14px;
+  height: 16px;
+  border: none;
+  border-radius: 0;
+  background: var(--ink);
+  cursor: grab;
+  clip-path: polygon(0 0, 100% 50%, 0 100%);
+}
+input[type="range"].mod-range:active::-webkit-slider-thumb { cursor: grabbing; }
+input[type="range"].mod-range-max::-webkit-slider-thumb { background: rgb(178, 42, 92); }  /* garnet (+1) */
+input[type="range"].mod-range-max::-moz-range-thumb     { background: rgb(178, 42, 92); }
+input[type="range"].mod-range-min::-webkit-slider-thumb { background: rgb(17, 109, 138); } /* sapphire (−1) */
+input[type="range"].mod-range-min::-moz-range-thumb     { background: rgb(17, 109, 138); }
+
 /* === Entrance motion — patient fade + rise ===
  * Durations are driven by the motion tokens, so prefers-reduced-motion
  * collapses them to 0ms automatically (the tokens go to 0ms in that mode).

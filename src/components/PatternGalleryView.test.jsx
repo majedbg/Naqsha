@@ -2,6 +2,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import PatternGalleryView from "./PatternGalleryView";
+import SortablePatternCard from "./SortablePatternCard";
 
 // Handcrafted patterns spanning two real families (H, T) + custom, in a
 // deliberately INTERLEAVED input order so we can prove the grid clusters by
@@ -198,5 +199,65 @@ describe("PatternGalleryView", () => {
     const cards = screen.getAllByTestId(/^card-/);
     expect(cards).toHaveLength(PATTERNS.length);
     cards.forEach((c) => expect(c).toHaveAttribute("data-dimmed", "true"));
+  });
+
+  // ── dnd-kit wiring (slice 6) ──────────────────────────────────────────────
+  //
+  // Render-only: jsdom can't drive a real dnd-kit drag (0×0 rects), so MOVE
+  // correctness lives in the slice-3 reducer tests + the slice-7 browser pass.
+  // Here we assert the wiring that renders: cards mount as real sortables inside
+  // the view's DndContext (no crash → context present in BOTH modes), and dimmed/
+  // locked cards are flagged non-draggable.
+  //
+  // A real-ish renderer that builds SortablePatternCards (the production seam), so
+  // useSortable actually runs against the DndContext PatternGalleryView provides.
+  const sortableRenderCard = (item, opts) => (
+    <SortablePatternCard
+      key={item.id}
+      id={item.id}
+      meta={item.meta}
+      symbol="x"
+      label={item.id}
+      ready
+      onPick={() => {}}
+      dimmed={!!opts?.dimmed}
+    />
+  );
+
+  function renderSortable(props = {}) {
+    return render(
+      <PatternGalleryView
+        patterns={PATTERNS}
+        isOn={() => true}
+        onToggle={() => {}}
+        onSelectAll={() => {}}
+        onClearAll={() => {}}
+        renderCard={sortableRenderCard}
+        {...props}
+      />,
+    );
+  }
+
+  it("Auto mode mounts every visible card as a sortable inside a DndContext", () => {
+    renderSortable(); // auto
+    const wraps = document.querySelectorAll("[data-sortable-id]");
+    // All six patterns visible + sortable, none disabled (all on-family, ready).
+    expect(wraps).toHaveLength(PATTERNS.length);
+    wraps.forEach((w) => expect(w).toHaveAttribute("data-disabled", "false"));
+  });
+
+  it("Custom mode mounts all cards as sortables; off-family ones non-draggable (disabled)", () => {
+    renderSortable({
+      sortMode: "custom",
+      manualOrder: AUTO_ORDER,
+      isOn: (key) => key !== "T", // T filtered off → dimmed → disabled
+    });
+    const wraps = document.querySelectorAll("[data-sortable-id]");
+    expect(wraps).toHaveLength(PATTERNS.length);
+    const disabled = [...wraps].filter((w) => w.getAttribute("data-disabled") === "true");
+    // The two T cards are dimmed → non-draggable.
+    expect(disabled).toHaveLength(2);
+    expect(document.querySelector('[data-sortable-id="t1"]')).toHaveAttribute("data-disabled", "true");
+    expect(document.querySelector('[data-sortable-id="h1"]')).toHaveAttribute("data-disabled", "false");
   });
 });

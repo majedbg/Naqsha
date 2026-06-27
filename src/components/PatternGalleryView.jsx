@@ -10,7 +10,20 @@
 //
 // Derivations (families list, filtered+clustered grid) are memoized.
 
-import { useMemo } from "react";
+import { useMemo, useRef, useState } from "react";
+import {
+  DndContext,
+  PointerSensor,
+  KeyboardSensor,
+  useSensor,
+  useSensors,
+  closestCenter,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  rectSortingStrategy,
+  sortableKeyboardCoordinates,
+} from "@dnd-kit/sortable";
 import { PATTERN_FAMILIES } from "../constants";
 import { familyMetaFor } from "../lib/patternCatalog";
 import FamilyFilterBar from "./FamilyFilterBar";
@@ -41,6 +54,11 @@ export default function PatternGalleryView({
   onSetAuto,
   onEnterCustom,
   onResetManual,
+  // Slice 6 — dnd-kit drag lifecycle (injected by the modal from the hook).
+  onDragStart, // (visibleIds) => startDrag(sortMode, visibleIds): auto-switch + seed
+  onDragCancel, // () => cancelDrag(): Escape mid-drag reverts to prior mode
+  onReorder, // (activeId, toIndex) => commitDrag: MOVE on drop
+  onDraggingChange, // (bool) => modal guards its Escape handler while dragging
 }) {
   const isCustom = sortMode === "custom";
   // 1. Families for the pill bar — grouped over the FULL set, counts STATIC.
@@ -105,6 +123,64 @@ export default function PatternGalleryView({
   }, [patterns, manualOrder, autoOrderIds]);
 
   const items = isCustom ? customItems : gridItems;
+
+  // ── dnd-kit drag wiring ───────────────────────────────────────────────────
+  // The SortableContext item set must be STABLE for the duration of a drag (no
+  // layout shift under the pointer). Starting a drag in Auto promotes the session
+  // to Custom, which would otherwise materialize the (previously-hidden) dimmed
+  // cards mid-gesture and change the item set. So we FREEZE the visible items in a
+  // ref at drag-start and render that frozen set until the drag ends; the dimmed
+  // cards materialize naturally on the post-drop re-render (isDragging back to
+  // false → items = customItems).
+  const [isDragging, setIsDragging] = useState(false);
+  const frozenItemsRef = useRef(null);
+  const displayItems = isDragging && frozenItemsRef.current ? frozenItemsRef.current : items;
+  const orderedIds = useMemo(() => displayItems.map((p) => p.id), [displayItems]);
+
+  // Pointer sensor with an activation distance so a click-to-pick (onPick) does
+  // NOT register as a drag; keyboard sensor for a11y (space to lift, arrows to
+  // move). Touch is covered by pointer events — if iPad testing (slice 7) shows
+  // the grid's vertical scroll being hijacked, swap to MouseSensor + TouchSensor
+  // ({ delay:~200, tolerance:5 }) + KeyboardSensor.
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
+  const handleDragStart = () => {
+    // Freeze the CURRENT visible set BEFORE the mode flips, then mark dragging so
+    // the next render keeps rendering the frozen set. Order matters: setIsDragging
+    // must precede onDragStart (which flips sortMode → custom).
+    frozenItemsRef.current = displayItems;
+    setIsDragging(true);
+    onDraggingChange && onDraggingChange(true);
+    // visibleIds = the stable mid-drag set; the hook seeds manualOrder from it.
+    onDragStart && onDragStart(orderedIds);
+  };
+
+  const endDrag = () => {
+    setIsDragging(false);
+    frozenItemsRef.current = null;
+    onDraggingChange && onDraggingChange(false);
+  };
+
+  const handleDragEnd = (event) => {
+    const { active, over } = event;
+    if (over && active && active.id !== over.id) {
+      // overIndex is exact when the visible set == manualOrder (Custom unfiltered
+      // / Auto all-on). Auto-origin drag + active filter can land slightly off —
+      // flagged for slice 7. Per plan we move id to the over slot's index.
+      const overIndex = orderedIds.indexOf(over.id);
+      if (overIndex !== -1) onReorder && onReorder(active.id, overIndex);
+    }
+    endDrag();
+  };
+
+  const handleDragCancel = () => {
+    onDragCancel && onDragCancel(); // Escape revert to prior mode
+    endDrag();
+  };
+
   // Empty state is AUTO-only — Custom never blanks (dimming covers all-off).
   const showEmpty = !isCustom && gridItems.length === 0;
 
@@ -183,22 +259,38 @@ export default function PatternGalleryView({
             </button>
           </div>
         ) : (
-          <div
-            className="grid gap-2"
-            style={{
-              gridTemplateColumns: "repeat(auto-fill, minmax(140px, 140px))",
-              justifyContent: "start",
-            }}
+          // DndContext + SortableContext wrap the grid in BOTH modes: a drag can
+          // only start on an element that is already a sortable, so the auto-switch
+          // (drag while in Auto → Custom) needs every card sortable even in Auto.
+          // "Auto vs Custom" is purely the display ORDER + whether a drag promoted
+          // the session. The modal's renderCard builds SortablePatternCards.
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragStart={handleDragStart}
+            onDragEnd={handleDragEnd}
+            onDragCancel={handleDragCancel}
           >
-            {/* renderCard contract: `renderCard(item, { dimmed })`. Auto mode
-                omits opts (dimmed falsy); Custom mode marks off-family cards
-                dimmed so the modal forwards it to PatternCard. */}
-            {items.map((item) =>
-              isCustom
-                ? renderCard(item, { dimmed: isOn ? !isOn(item.familyKey) : false })
-                : renderCard(item),
-            )}
-          </div>
+            <SortableContext items={orderedIds} strategy={rectSortingStrategy}>
+              <div
+                className="grid gap-2"
+                style={{
+                  gridTemplateColumns: "repeat(auto-fill, minmax(140px, 140px))",
+                  justifyContent: "start",
+                }}
+              >
+                {/* renderCard contract: `renderCard(item, { dimmed })`. Auto mode
+                    omits opts (dimmed falsy); Custom mode marks off-family cards
+                    dimmed. We render `displayItems` (frozen during a drag) so the
+                    SortableContext item set stays stable mid-gesture. */}
+                {displayItems.map((item) =>
+                  isCustom
+                    ? renderCard(item, { dimmed: isOn ? !isOn(item.familyKey) : false })
+                    : renderCard(item),
+                )}
+              </div>
+            </SortableContext>
+          </DndContext>
         )}
       </div>
     </div>

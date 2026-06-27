@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   PATTERN_TYPES,
   PATTERN_TAXONOMY,
@@ -13,6 +13,7 @@ import { getVisiblePatterns } from '../lib/patternCatalog';
 import { useGate } from '../lib/useGate';
 import usePatternPicker from '../lib/hooks/usePatternPicker';
 import PatternCard from './PatternCard';
+import SortablePatternCard from './SortablePatternCard';
 import PatternTableView from './PatternTableView';
 import PatternGalleryView from './PatternGalleryView';
 
@@ -36,10 +37,23 @@ export default function PatternPickerModal({ open, onClose, onPick }) {
 
   useEffect(() => onRegistryChange(() => setDynamicTypes([...getDynamicTypes()])), []);
 
-  // Close on Escape.
+  // While a Grid drag is active, dnd-kit owns Escape (it cancels the drag). The
+  // modal must NOT also close on that same Escape. PatternGalleryView reports drag
+  // state via onDraggingChange; we stash it in a ref so the Escape effect needn't
+  // re-subscribe. The false-reset is deferred to a microtask so the ref still
+  // reads `true` for the remainder of the Escape event that cancelled the drag
+  // (dnd-kit cancels synchronously and does not stopPropagation), regardless of
+  // whether its document listener runs before or after this window listener.
+  const draggingRef = useRef(false);
+  const handleDraggingChange = (d) => {
+    if (d) draggingRef.current = true;
+    else queueMicrotask(() => { draggingRef.current = false; });
+  };
+
+  // Close on Escape (suppressed mid-drag — see above).
   useEffect(() => {
     if (!open) return;
-    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    const onKey = (e) => { if (e.key === 'Escape' && !draggingRef.current) onClose(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [open, onClose]);
@@ -62,6 +76,7 @@ export default function PatternPickerModal({ open, onClose, onPick }) {
   const {
     view, setView, isOn, toggle, selectAll, clearAll,
     sortMode, manualOrder, setSortMode, enterCustom, resetManual,
+    startDrag, cancelDrag, commitDrag,
   } = usePatternPicker({ open, familyKeys });
 
   // Place every taxonomy pattern into its (form-row × geom-band) cell for the
@@ -95,12 +110,17 @@ export default function PatternPickerModal({ open, onClose, onPick }) {
 
   // Shared card factory — same gate/ready/label/symbol resolution for both the
   // Map (size 92) and Grid (size 140) views, so the two never drift.
-  const cardFor = (id, meta, size = 92, animateIn = false, dimmed = false) => {
+  // `sortable` swaps PatternCard → SortablePatternCard for the Grid only. The Map
+  // view (PatternTableView) has no DndContext, so it stays on plain PatternCard.
+  // disabled (dimmed||locked||!ready) lives here because locked/ready come from
+  // getPatternClass + the gate — info PatternGalleryView doesn't have.
+  const cardFor = (id, meta, size = 92, animateIn = false, dimmed = false, sortable = false) => {
     const ready = !!getPatternClass(id);
     const gate = check('pattern', id);
     const label = labelFor(id, dynamicTypes);
+    const Card = sortable ? SortablePatternCard : PatternCard;
     return (
-      <PatternCard
+      <Card
         key={id}
         id={id}
         meta={meta}
@@ -118,9 +138,10 @@ export default function PatternPickerModal({ open, onClose, onPick }) {
   };
 
   // Grid render-prop — reuse cardFor at the larger gallery size, with the
-  // mount fade+scale enter (Map view passes no animateIn, so it stays static).
-  // Custom sort forwards `opts.dimmed` (off-family cards) to PatternCard.
-  const renderCardGallery = (item, opts) => cardFor(item.id, item.meta, 140, true, !!opts?.dimmed);
+  // mount fade+scale enter (Map view passes no animateIn, so it stays static),
+  // and `sortable` so each Grid card is drag-reorderable. Custom sort forwards
+  // `opts.dimmed` (off-family cards) through to PatternCard.
+  const renderCardGallery = (item, opts) => cardFor(item.id, item.meta, 140, true, !!opts?.dimmed, true);
 
   // Arrow-key roving between the two tabs (nice-to-have over native + aria).
   const onTabKeyDown = (e) => {
@@ -223,6 +244,10 @@ export default function PatternPickerModal({ open, onClose, onPick }) {
               onSetAuto={() => setSortMode('auto')}
               onEnterCustom={enterCustom}
               onResetManual={resetManual}
+              onDragStart={(ids) => startDrag(sortMode, ids)}
+              onDragCancel={cancelDrag}
+              onReorder={commitDrag}
+              onDraggingChange={handleDraggingChange}
             />
           </div>
         )}

@@ -3,7 +3,11 @@ import {
   buildSheetSpecs,
   materialDescriptorForSubstrate,
   boundsForSheetSpecs,
+  clampSpacing,
   DEFAULT_SUBSTRATE,
+  SPACING_MIN,
+  SPACING_MAX,
+  SPACING_DEFAULT,
 } from './sheetSpecs.js';
 
 const BOUNDS = { width: 200, height: 150 };
@@ -152,6 +156,44 @@ describe('buildSheetSpecs — degenerate & frozen inputs', () => {
     expect(() => buildSheetSpecs({ panels, layers: [], spacing: 5, bounds: BOUNDS })).not.toThrow();
     const specs = buildSheetSpecs({ panels, layers: [], spacing: 5, bounds: BOUNDS });
     expect(specs.map((s) => s.order)).toEqual([0, 1, 2]);
+  });
+});
+
+describe('spacing slider contract (S6, PRD D11)', () => {
+  it('exposes the 0–60mm range with a 12mm default', () => {
+    expect(SPACING_MIN).toBe(0);
+    expect(SPACING_MAX).toBe(60);
+    expect(SPACING_DEFAULT).toBe(12);
+  });
+
+  it('clampSpacing keeps in-range values untouched', () => {
+    expect(clampSpacing(0)).toBe(0);
+    expect(clampSpacing(12)).toBe(12);
+    expect(clampSpacing(60)).toBe(60);
+  });
+
+  it('clampSpacing clamps below 0 and above 60', () => {
+    expect(clampSpacing(-5)).toBe(0);
+    expect(clampSpacing(99)).toBe(60);
+  });
+
+  it('clampSpacing falls back to the 12mm default for non-finite input', () => {
+    expect(clampSpacing(NaN)).toBe(SPACING_DEFAULT);
+    expect(clampSpacing(undefined)).toBe(SPACING_DEFAULT);
+  });
+
+  it('the clamped spacing drives the z-layout: gap of 0 packs sheets flush, 60 spreads them', () => {
+    const panels = [panel(0), panel(1)]; // both thickness 3
+    const zAt = (g) =>
+      buildSheetSpecs({ panels, layers: [], spacing: clampSpacing(g), bounds: BOUNDS }).map(
+        (s) => s.zOffset,
+      );
+    // gap 0 → sheet1 center = 3 + 3/2 = 4.5
+    expect(zAt(0)).toEqual([1.5, 4.5]);
+    // clamped-from-over-max (99 → 60) → sheet1 center = 3 + 60 + 3/2 = 64.5
+    expect(zAt(99)).toEqual([1.5, 64.5]);
+    // default 12 → sheet1 center = 3 + 12 + 3/2 = 16.5
+    expect(zAt(SPACING_DEFAULT)).toEqual([1.5, 16.5]);
   });
 });
 

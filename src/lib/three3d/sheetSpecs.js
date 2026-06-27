@@ -25,6 +25,24 @@ import { effectiveVisible } from '../panels.js';
 /** Mirrors panels.js createPanel defaults so a partial/absent substrate still builds. */
 export const DEFAULT_SUBSTRATE = { kind: 'acrylic', thickness: 3, color: '#cccccc' };
 
+// Inter-panel spacing slider contract (PRD D11, S6): mm units (1 world unit = 1 mm),
+// range 0–60mm, default 12mm. The slider drives buildSheetSpecs' `spacing` arg.
+export const SPACING_MIN = 0;
+export const SPACING_MAX = 60;
+export const SPACING_DEFAULT = 12;
+
+/**
+ * Clamp a spacing value (mm) into the D11 slider range [0, 60]. Non-finite input
+ * (NaN/undefined from a stray slider event) falls back to the 12mm default so the
+ * stack never collapses into an undefined gap.
+ * @param {number} mm
+ * @returns {number}
+ */
+export function clampSpacing(mm) {
+  if (!Number.isFinite(mm)) return SPACING_DEFAULT;
+  return Math.min(SPACING_MAX, Math.max(SPACING_MIN, mm));
+}
+
 // Acrylic ≈ 1.49 ior (PMMA), low roughness for clean transmission (D7).
 const ACRYLIC_IOR = 1.49;
 const ACRYLIC_ROUGHNESS = 0.15;

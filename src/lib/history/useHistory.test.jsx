@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import useHistory from "./useHistory";
 
@@ -137,5 +137,101 @@ describe("history/useHistory — pure engine (record/undo/redo/clear/seed)", () 
     act(() => hook.result.current.undo());
     act(() => hook.result.current.redo());
     expect(box.doc).toEqual({ n: 0, nested: { tag: "A" } });
+  });
+});
+
+describe("history/useHistory — coalescing (S2)", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it("I4 — a multi-frame gesture produces exactly ONE past entry", () => {
+    const { hook, box } = setup();
+    act(() => hook.result.current.beginCoalesce()); // pointerdown: capture pre-gesture {n:0}
+    // 60 frames of drag: each frame mutates the doc and calls record(),
+    // but record() is suppressed while a coalesce window is open.
+    for (let f = 1; f <= 60; f++) {
+      act(() => {
+        hook.result.current.record();
+        box.doc = { n: f };
+      });
+    }
+    act(() => hook.result.current.endCoalesce()); // pointerup: commit ONE entry
+    expect(box.doc).toEqual({ n: 60 });
+    expect(hook.result.current.canUndo).toBe(true);
+
+    act(() => hook.result.current.undo()); // single undo restores pre-gesture
+    expect(box.doc).toEqual({ n: 0, nested: { tag: "A" } });
+    expect(hook.result.current.canUndo).toBe(false);
+  });
+
+  it("two quick DISCRETE edits are NOT merged (two entries)", () => {
+    const { hook, box, edit } = setup();
+    edit({ n: 1 });
+    edit({ n: 2 });
+    act(() => hook.result.current.undo());
+    expect(box.doc).toEqual({ n: 1 });
+    act(() => hook.result.current.undo());
+    expect(box.doc).toEqual({ n: 0, nested: { tag: "A" } });
+  });
+
+  it("idle timeout (400ms) auto-closes a typing burst into one entry", () => {
+    const { hook, box } = setup();
+    // Each keystroke opens-or-rearms the idle window and mutates the doc.
+    act(() => {
+      hook.result.current.beginCoalesce({ idleMs: 400 });
+      box.doc = { n: 1 };
+    });
+    act(() => {
+      hook.result.current.beginCoalesce({ idleMs: 400 }); // re-arm
+      box.doc = { n: 2 };
+    });
+    expect(hook.result.current.canUndo).toBe(false); // still pending, nothing committed
+    act(() => vi.advanceTimersByTime(400)); // idle → commit one entry
+    expect(hook.result.current.canUndo).toBe(true);
+    act(() => hook.result.current.undo());
+    expect(box.doc).toEqual({ n: 0, nested: { tag: "A" } });
+  });
+
+  it("re-arming the idle timer keeps a continuous burst as one entry", () => {
+    const { hook } = setup();
+    act(() => hook.result.current.beginCoalesce({ idleMs: 400 }));
+    act(() => vi.advanceTimersByTime(200));
+    act(() => hook.result.current.beginCoalesce({ idleMs: 400 })); // reset at 200ms
+    act(() => vi.advanceTimersByTime(300)); // 300 < 400 since reset — not closed
+    expect(hook.result.current.canUndo).toBe(false);
+    act(() => vi.advanceTimersByTime(100)); // now 400ms since last keystroke
+    expect(hook.result.current.canUndo).toBe(true);
+  });
+
+  it("endCoalesce (blur/Enter) closes immediately and cancels the idle timer", () => {
+    const { hook } = setup();
+    act(() => hook.result.current.beginCoalesce({ idleMs: 400 }));
+    act(() => hook.result.current.endCoalesce()); // blur/Enter
+    expect(hook.result.current.canUndo).toBe(true);
+    // The pending timer must be dead — advancing it must NOT commit a 2nd entry.
+    act(() => vi.advanceTimersByTime(1000));
+    act(() => hook.result.current.undo());
+    expect(hook.result.current.canUndo).toBe(false);
+  });
+
+  it("endCoalesce with no open window is a no-op", () => {
+    const { hook } = setup();
+    act(() => hook.result.current.endCoalesce());
+    expect(hook.result.current.canUndo).toBe(false);
+  });
+
+  it("beginCoalesce is idempotent — re-open does not re-capture the baseline", () => {
+    const { hook, box } = setup();
+    act(() => {
+      hook.result.current.beginCoalesce(); // captures {n:0}
+      box.doc = { n: 1 };
+    });
+    act(() => {
+      hook.result.current.beginCoalesce(); // already open — must NOT capture {n:1}
+      box.doc = { n: 2 };
+    });
+    act(() => hook.result.current.endCoalesce());
+    act(() => hook.result.current.undo());
+    expect(box.doc).toEqual({ n: 0, nested: { tag: "A" } }); // restores original baseline
   });
 });

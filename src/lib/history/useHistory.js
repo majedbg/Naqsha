@@ -34,6 +34,14 @@ export default function useHistory({ capture, restore, limit = 50 } = {}) {
   // (the refs lint rule forbids render-phase access, not handler access).
   const modelRef = useRef({ past: [], future: [] });
 
+  // Coalescing (§5). An OPEN window holds ONE pre-gesture snapshot; intermediate
+  // record()s are absorbed into it, so a 60-frame drag or a typing burst commits
+  // a single entry (invariant I4). `timer` drives the 400ms idle auto-close for
+  // text bursts; gesture paths (slider/canvas drag) just begin on pointerdown
+  // and end on pointerup with no timer.
+  const pendingRef = useRef({ open: false, snapshot: null });
+  const timerRef = useRef(null);
+
   // Render-facing mirror. publish() copies the derived enablement flags into
   // state to trigger a re-render; render never reads modelRef.
   const [view, setView] = useState({ canUndo: false, canRedo: false });
@@ -52,18 +60,62 @@ export default function useHistory({ capture, restore, limit = 50 } = {}) {
     restoreRef.current = restore;
   });
 
-  // record() — capture-BEFORE-change. Snapshot the pre-edit document, push it to
-  // `past`, clear `future` (no branching). Enforce the depth cap by dropping the
-  // OLDEST entries first (invariant I8). Call this immediately before the
-  // mutation runs.
+  // Push a pre-edit snapshot onto `past` as one entry: clear `future` (no
+  // branching) and enforce the depth cap by dropping the OLDEST first (I8).
+  const commitEntry = useCallback(
+    (snapshot) => {
+      const m = modelRef.current;
+      let past = [...m.past, snapshot];
+      if (past.length > limit) past = past.slice(past.length - limit);
+      modelRef.current = { past, future: [] };
+      publish();
+    },
+    [limit, publish]
+  );
+
+  // record() — capture-BEFORE-change. Snapshot the pre-edit document and commit
+  // it as one entry. Call this immediately before the mutation runs. While a
+  // coalesce window is OPEN, record() is SUPPRESSED — the intermediate change is
+  // absorbed into the open entry (so a drag/typing burst stays one entry, I4).
   const record = useCallback(() => {
-    const m = modelRef.current;
-    const snapshot = captureRef.current();
-    let past = [...m.past, snapshot];
-    if (past.length > limit) past = past.slice(past.length - limit);
-    modelRef.current = { past, future: [] };
-    publish();
-  }, [limit, publish]);
+    if (pendingRef.current.open) return;
+    commitEntry(captureRef.current());
+  }, [commitEntry]);
+
+  // endCoalesce() — close the open window, committing its single pre-gesture
+  // snapshot. The 400ms idle timer AND an explicit blur/Enter both call this;
+  // it cancels any pending timer and is a no-op when no window is open.
+  const endCoalesce = useCallback(() => {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    const pending = pendingRef.current;
+    if (!pending.open) return;
+    pendingRef.current = { open: false, snapshot: null };
+    commitEntry(pending.snapshot);
+  }, [commitEntry]);
+
+  // beginCoalesce() — open a coalesce window, capturing the pre-gesture snapshot
+  // ONCE (idempotent: re-opening an already-open window does NOT re-capture, so
+  // the baseline stays the true pre-gesture state). Pass `{ idleMs }` for text
+  // bursts to (re)arm an idle auto-close; gesture paths omit it and close
+  // explicitly on pointerup.
+  const beginCoalesce = useCallback(
+    (opts = {}) => {
+      if (!pendingRef.current.open) {
+        pendingRef.current = { open: true, snapshot: captureRef.current() };
+      }
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+      if (opts.idleMs) {
+        timerRef.current = setTimeout(() => endCoalesce(), opts.idleMs);
+      }
+    },
+    [endCoalesce]
+  );
 
   const undo = useCallback(() => {
     const m = modelRef.current;
@@ -93,13 +145,25 @@ export default function useHistory({ capture, restore, limit = 50 } = {}) {
     publish();
   }, [publish]);
 
+  // Drop any open coalesce window + pending idle timer. Called from clear/seed
+  // so a load/profile-switch mid-gesture can't leave a dangling pre-gesture
+  // snapshot that later commits against the NEW document.
+  const resetCoalesce = useCallback(() => {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    pendingRef.current = { open: false, snapshot: null };
+  }, []);
+
   // clear() — empty both stacks WITHOUT recording or restoring. Used on
   // design-load / draft-restore / new-doc / machine-profile switch (lifecycle
   // §6); the previous document's snapshots must never be reachable (I5/I9).
   const clear = useCallback(() => {
+    resetCoalesce();
     modelRef.current = { past: [], future: [] };
     publish();
-  }, [publish]);
+  }, [publish, resetCoalesce]);
 
   // seed() — establish a fresh baseline. Identical to clear() for the live
   // model (present is always reconstructed via capture()); kept as a distinct
@@ -107,12 +171,24 @@ export default function useHistory({ capture, restore, limit = 50 } = {}) {
   // "discard prior history." Persistence (S8) restores the seed snapshot before
   // calling this.
   const seed = useCallback(() => {
+    resetCoalesce();
     modelRef.current = { past: [], future: [] };
     publish();
-  }, [publish]);
+  }, [publish, resetCoalesce]);
+
+  // Cancel a pending idle timer on unmount so it can't fire into a torn-down
+  // tree (a setState-after-unmount warning / stray commit).
+  useEffect(
+    () => () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    },
+    []
+  );
 
   return {
     record,
+    beginCoalesce,
+    endCoalesce,
     undo,
     redo,
     clear,

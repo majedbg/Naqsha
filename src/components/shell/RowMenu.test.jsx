@@ -148,6 +148,95 @@ describe("RowMenu (WI-4 — per-row overflow popper)", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  it("renders a 'Clear all layers' item between Download and Delete when onClearLayers is provided", () => {
+    renderMenu({ onClearLayers: () => {} });
+    const menu = screen.getByRole("menu");
+    const items = within(menu).getAllByRole("menuitem");
+    expect(items).toHaveLength(5);
+    expect(items[0]).toHaveTextContent(/rename/i);
+    expect(items[1]).toHaveTextContent(/duplicate/i);
+    expect(items[2]).toHaveTextContent(/download/i);
+    expect(items[3]).toHaveTextContent(/clear all layers/i);
+    expect(items[4]).toHaveTextContent(/delete/i);
+    // Clear all layers is NOT destructive — Delete stays the sole danger item.
+    expect(items[3].className).not.toMatch(/text-tone-strong/);
+    // Divider still separates the clear-layers item from Delete.
+    expect(within(menu).getByRole("separator")).toBeInTheDocument();
+  });
+
+  it("fires onClearLayers AND closes when Clear all layers is clicked", () => {
+    const onClearLayers = vi.fn();
+    const onClose = vi.fn();
+    renderMenu({ onClearLayers, onClose });
+    fireEvent.click(screen.getByRole("menuitem", { name: /clear all layers/i }));
+    expect(onClearLayers).toHaveBeenCalledTimes(1);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("marks the Clear all layers item aria-disabled (with disabled styling) and ignores activation when clearLayersDisabled is set", () => {
+    const onClearLayers = vi.fn();
+    const onClose = vi.fn();
+    renderMenu({ onClearLayers, onClose, clearLayersDisabled: true });
+    const item = screen.getByRole("menuitem", { name: /clear all layers/i });
+    expect(item).toHaveAttribute("aria-disabled", "true");
+    // Disabled styling: dimmed and no hover affordance.
+    expect(item.className).toMatch(/opacity-40/);
+    expect(item.className).not.toMatch(/hover:/);
+    fireEvent.click(item);
+    expect(onClearLayers).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("uses a custom clearLayersLabel when provided", () => {
+    renderMenu({ onClearLayers: () => {}, clearLayersLabel: "Wipe layers" });
+    expect(
+      screen.getByRole("menuitem", { name: /wipe layers/i })
+    ).toBeInTheDocument();
+  });
+
+  it("does NOT set aria-disabled on the Clear all layers item by default", () => {
+    renderMenu({ onClearLayers: () => {} });
+    const item = screen.getByRole("menuitem", { name: /clear all layers/i });
+    expect(item).not.toHaveAttribute("aria-disabled");
+  });
+
+  it("arrow nav traverses past a disabled Clear all layers item and Enter still activates an enabled item", () => {
+    const onClearLayers = vi.fn();
+    const onDelete = vi.fn();
+    const onClose = vi.fn();
+    renderMenu({ onClearLayers, onDelete, onClose, clearLayersDisabled: true });
+    const menu = screen.getByRole("menu");
+    const items = within(menu).getAllByRole("menuitem");
+    // Rename → Duplicate → Download → Clear all layers (disabled) → Delete.
+    fireEvent.keyDown(menu, { key: "ArrowDown" }); // Duplicate
+    fireEvent.keyDown(menu, { key: "ArrowDown" }); // Download
+    fireEvent.keyDown(menu, { key: "ArrowDown" }); // Clear all layers (disabled)
+    expect(document.activeElement).toBe(items[3]);
+    // Enter on the disabled item is a no-op (no callback, menu stays open).
+    fireEvent.keyDown(menu, { key: "Enter" });
+    expect(onClearLayers).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    // Arrows move past it to Delete, and Enter there still fires.
+    fireEvent.keyDown(menu, { key: "ArrowDown" }); // Delete
+    expect(document.activeElement).toBe(items[4]);
+    fireEvent.keyDown(menu, { key: "Enter" });
+    expect(onDelete).toHaveBeenCalledTimes(1);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the order Rename · Duplicate · Download · — · Delete when onClearLayers is absent (regression)", () => {
+    renderMenu();
+    const menu = screen.getByRole("menu");
+    const items = within(menu).getAllByRole("menuitem");
+    expect(items).toHaveLength(4);
+    expect(items.map((i) => i.textContent)).toEqual([
+      "Rename",
+      "Duplicate",
+      "Download",
+      "Delete",
+    ]);
+  });
+
   it("flips DOWNWARD by default (top-full, opens below the trigger)", () => {
     renderMenu();
     const menu = screen.getByRole("menu");

@@ -8,10 +8,16 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
   MAX_PANELS,
   SUBSTRATE_KINDS,
+  SUBSTRATE_PRESETS,
   PANELS_STORAGE_KEY,
   createPanel,
   canAddPanel,
   addPanel,
+  presetLabel,
+  duplicatePanel,
+  canDuplicatePanel,
+  clearPanelLayers,
+  canClearPanelLayers,
   deletePanel,
   assignLayerToPanel,
   layersForPanel,
@@ -30,6 +36,34 @@ describe('panels — constants', () => {
     expect(MAX_PANELS).toBe(3);
     expect(SUBSTRATE_KINDS).toEqual(['acrylic', 'plywood', 'mdf', 'cardstock', 'other']);
     expect(PANELS_STORAGE_KEY).toBe('sonoform-panels');
+  });
+});
+
+describe('panels — SUBSTRATE_PRESETS', () => {
+  it('exposes the 5 confirmed substrate presets in order', () => {
+    expect(SUBSTRATE_PRESETS).toEqual([
+      { kind: 'acrylic', thickness: 3 },
+      { kind: 'acrylic', thickness: 5 },
+      { kind: 'plywood', thickness: 4 },
+      { kind: 'mdf', thickness: 3 },
+      { kind: 'cardstock', thickness: 1 },
+    ]);
+  });
+});
+
+describe('panels — presetLabel', () => {
+  it('formats a preset as "<kind> · <thickness>mm"', () => {
+    expect(presetLabel({ kind: 'acrylic', thickness: 3 })).toBe('acrylic · 3mm');
+    expect(presetLabel({ kind: 'plywood', thickness: 4 })).toBe('plywood · 4mm');
+  });
+  it('labels every SUBSTRATE_PRESETS entry with the `·` separator', () => {
+    expect(SUBSTRATE_PRESETS.map(presetLabel)).toEqual([
+      'acrylic · 3mm',
+      'acrylic · 5mm',
+      'plywood · 4mm',
+      'mdf · 3mm',
+      'cardstock · 1mm',
+    ]);
   });
 });
 
@@ -90,6 +124,186 @@ describe('panels — addPanel', () => {
     const full = [createPanel(0), createPanel(1), createPanel(2)];
     const out = addPanel(full);
     expect(out).toBe(full); // reference equality — no-op at cap
+  });
+
+  it('with a substrate preset, merges it over the default substrate', () => {
+    const a = [createPanel(0)];
+    const b = addPanel(a, { kind: 'plywood', thickness: 4 });
+    expect(b.length).toBe(2);
+    expect(b[1].substrate.kind).toBe('plywood');
+    expect(b[1].substrate.thickness).toBe(4);
+    // color falls back to the default substrate color (partial preset merge).
+    expect(typeof b[1].substrate.color).toBe('string');
+    expect(b[1].order).toBe(1);
+  });
+
+  it('returns the SAME reference at cap even when a substrate is given', () => {
+    const full = [createPanel(0), createPanel(1), createPanel(2)];
+    expect(addPanel(full, { kind: 'mdf', thickness: 3 })).toBe(full);
+  });
+});
+
+describe('panels — duplicatePanel', () => {
+  // A fuller layer stand-in carrying the fields cloneLayer touches.
+  const fullLayer = (id, panelId, over = {}) => ({
+    id,
+    panelId,
+    name: 'L',
+    nameIsCustom: false,
+    patternType: 'spirograph',
+    visible: true,
+    params: { a: 1, nested: { x: 1 } },
+    randomizeKeys: ['a'],
+    paramsCache: { k: { v: 2 } },
+    ...over,
+  });
+
+  it('appends a panel: substrate deep-copied, order next, name "<name> copy", fresh id', () => {
+    const src = createPanel(0, { name: 'Top', substrate: { kind: 'plywood', thickness: 4, color: '#abc' } });
+    const panels = [src];
+    const layers = [];
+    const out = duplicatePanel(panels, layers, src.id);
+    expect(out.panels.length).toBe(2);
+    const np = out.panels[1];
+    expect(np.name).toBe('Top copy');
+    expect(np.order).toBe(1);
+    expect(np.id).not.toBe(src.id);
+    expect(np.substrate).toEqual(src.substrate);
+    expect(np.substrate).not.toBe(src.substrate); // deep copy, fresh ref
+  });
+
+  it('deep-copies the source panel layers with fresh ids + new panelId', () => {
+    const src = createPanel(0);
+    const other = createPanel(1);
+    const panels = [src, other];
+    const layers = [
+      fullLayer('a', src.id),
+      fullLayer('b', other.id),
+      fullLayer('c', src.id),
+    ];
+    const out = duplicatePanel(panels, layers, src.id);
+    const np = out.panels[out.panels.length - 1];
+    // original 3 layers preserved + 2 clones (a, c) appended.
+    expect(out.layers.length).toBe(5);
+    const clones = out.layers.slice(3);
+    expect(clones.every((l) => l.panelId === np.id)).toBe(true);
+    const cloneIds = clones.map((l) => l.id);
+    // fresh, unique, and distinct from source ids
+    expect(new Set(cloneIds).size).toBe(2);
+    expect(cloneIds).not.toContain('a');
+    expect(cloneIds).not.toContain('c');
+    // deep-copied params / paramsCache (fresh refs)
+    expect(clones[0].params).not.toBe(layers[0].params);
+    expect(clones[0].paramsCache).not.toBe(layers[0].paramsCache);
+    expect(clones[0].randomizeKeys).not.toBe(layers[0].randomizeKeys);
+    expect(clones[0].params).toEqual(layers[0].params);
+  });
+
+  it('layer naming: custom → "<name> copy" (stays custom); auto → recomputed auto-name', () => {
+    const src = createPanel(0);
+    const panels = [src];
+    const layers = [
+      fullLayer('cust', src.id, { name: 'My Layer', nameIsCustom: true, patternType: 'spirograph' }),
+      fullLayer('auto', src.id, { name: 'Pattern (Sg)', nameIsCustom: false, patternType: 'spirograph' }),
+      fullLayer('imp', src.id, { name: 'Imported 1', nameIsCustom: false, patternType: 'import' }),
+    ];
+    const out = duplicatePanel(panels, layers, src.id);
+    const clones = out.layers.slice(3);
+    const byOriginalOrder = clones; // appended in source order
+    expect(byOriginalOrder[0].name).toBe('My Layer copy');
+    expect(byOriginalOrder[0].nameIsCustom).toBe(true);
+    expect(byOriginalOrder[1].name).toBe('Pattern (Sg)'); // recomputed auto, no "copy"
+    expect(byOriginalOrder[1].nameIsCustom).toBe(false);
+    // symbol-less auto type keeps its deliberate name (no degrade to "Layer N")
+    expect(byOriginalOrder[2].name).toBe('Imported 1');
+    expect(byOriginalOrder[2].nameIsCustom).toBe(false);
+  });
+
+  it('unknown id → no-op, inputs returned unchanged (same refs)', () => {
+    const src = createPanel(0);
+    const panels = [src];
+    const layers = [fullLayer('a', src.id)];
+    const out = duplicatePanel(panels, layers, 'ghost');
+    expect(out.panels).toBe(panels);
+    expect(out.layers).toBe(layers);
+  });
+
+  it('at MAX_PANELS cap → no-op (same refs)', () => {
+    const a = createPanel(0);
+    const panels = [a, createPanel(1), createPanel(2)];
+    const layers = [fullLayer('x', a.id)];
+    const out = duplicatePanel(panels, layers, a.id);
+    expect(out.panels).toBe(panels);
+    expect(out.layers).toBe(layers);
+  });
+
+  it('does not mutate the inputs', () => {
+    const src = createPanel(0);
+    const panels = [src];
+    const layers = [fullLayer('a', src.id)];
+    const panelsSnap = JSON.parse(JSON.stringify(panels));
+    const layersSnap = JSON.parse(JSON.stringify(layers));
+    duplicatePanel(panels, layers, src.id);
+    expect(panels).toEqual(panelsSnap);
+    expect(layers).toEqual(layersSnap);
+  });
+});
+
+describe('panels — canDuplicatePanel', () => {
+  it('false at the panel cap (cannot add another panel)', () => {
+    const a = createPanel(0);
+    const full = [a, createPanel(1), createPanel(2)];
+    const layers = [layer('x', a.id)];
+    expect(canDuplicatePanel(full, layers, a.id, 50)).toBe(false);
+  });
+
+  it('false when copying the panel layers would exceed the layer cap', () => {
+    const a = createPanel(0);
+    const panels = [a];
+    const layers = [layer('x', a.id), layer('y', a.id)];
+    // 2 existing + 2 copied = 4 > cap 3 → false
+    expect(canDuplicatePanel(panels, layers, a.id, 3)).toBe(false);
+  });
+
+  it('true when under both caps', () => {
+    const a = createPanel(0);
+    const panels = [a];
+    const layers = [layer('x', a.id), layer('y', a.id)];
+    // 2 existing + 2 copied = 4 <= cap 4 → true
+    expect(canDuplicatePanel(panels, layers, a.id, 4)).toBe(true);
+  });
+});
+
+describe('panels — clearPanelLayers', () => {
+  it('removes every layer on the given panel, returns a new array', () => {
+    const layers = [layer('a', 'p1'), layer('b', 'p2'), layer('c', 'p1')];
+    const out = clearPanelLayers(layers, 'p1');
+    expect(out.map((l) => l.id)).toEqual(['b']);
+    expect(out).not.toBe(layers);
+  });
+
+  it('does not mutate the input', () => {
+    const layers = [layer('a', 'p1'), layer('b', 'p2')];
+    const snap = JSON.parse(JSON.stringify(layers));
+    clearPanelLayers(layers, 'p1');
+    expect(layers).toEqual(snap);
+  });
+});
+
+describe('panels — canClearPanelLayers', () => {
+  it('false when the panel has no layers', () => {
+    const layers = [layer('a', 'p1')];
+    expect(canClearPanelLayers(layers, 'p2')).toBe(false);
+  });
+
+  it('false when clearing would leave the document with 0 layers', () => {
+    const layers = [layer('a', 'p1'), layer('b', 'p1')];
+    expect(canClearPanelLayers(layers, 'p1')).toBe(false);
+  });
+
+  it('true when the panel has layers and others remain afterward', () => {
+    const layers = [layer('a', 'p1'), layer('b', 'p2')];
+    expect(canClearPanelLayers(layers, 'p1')).toBe(true);
   });
 });
 

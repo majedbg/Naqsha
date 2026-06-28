@@ -53,7 +53,6 @@ import ShareLinkButton from "../components/ShareLinkButton";
 import { resolveExportColor } from "../lib/fabrication";
 import { seedOperations, addOperation, resolveOperation } from "../lib/operations";
 import { remapOperationsToProfile, defaultBedSize, profileProcesses, defaultMachineParams } from "../lib/machineProfiles";
-import useOperationsHistory from "../lib/hooks/useOperationsHistory";
 import useHistory from "../lib/history/useHistory";
 import { createDocumentIO } from "../lib/history/documentSnapshot";
 import { syncWeightBand, supportsVariableWeight, isBandOperation } from "../lib/variableWeight";
@@ -182,6 +181,24 @@ export default function Studio({ submitOrg = null } = {}) {
     flushEdit(); // close any open param burst as its own entry first
     historyRef.current?.record();
   }, [flushEdit]);
+  // recordBatch(fn) folds MULTIPLE slice mutations into ONE undo entry by wrapping
+  // fn in a coalesce window — used where a single user action touches two slices
+  // (e.g. variable-weight: a layer patch AND the operation band). Any record()
+  // the inner mutators fire is absorbed into the open window, so undo reverts the
+  // whole action atomically.
+  const recordBatch = useCallback((fn) => {
+    const api = historyRef.current;
+    if (!api || restoringRef.current) {
+      fn();
+      return;
+    }
+    api.beginCoalesce();
+    try {
+      fn();
+    } finally {
+      api.endCoalesce();
+    }
+  }, []);
 
   // === Layers ===
   // NOTE: useLayers also exposes the per-row randomize-seed handler
@@ -265,31 +282,28 @@ export default function Studio({ submitOrg = null } = {}) {
     },
     [updateLayer]
   );
-  const {
-    operations,
-    commitOperations,
-    commitAssignment,
-    undo,
-    redo,
-    resetHistory,
-    canUndo,
-    canRedo,
-  } = useOperationsHistory({
-    initialOperations: seedOperations(),
-    captureAssignments,
-    restoreAssignments,
-  });
+  // The operation library is now PLAIN Studio state — its undo/redo (and
+  // assignment's) is absorbed into the unified history engine below (S5). Seeded
+  // byte-identically (seedOperations(), same ids/colors) so export stays stable.
+  // commitOperations records one discrete entry then applies the library mapper
+  // (recolor / reorder / add / remove / param-edit); the pre-edit snapshot
+  // includes operations via getOperations, so undo restores the prior library.
+  // captureAssignments/restoreAssignments (above) now feed createDocumentIO.
+  const [operations, setOperations] = useState(() => seedOperations());
+  const commitOperations = useCallback(
+    (mapper) => {
+      recordStructural();
+      setOperations((ops) => mapper(ops));
+    },
+    [recordStructural]
+  );
 
   // === Unified app-wide undo/redo: the engine (undo-history-plan §3) ===
-  // A single whole-document snapshot stack over ALL slices. The engine owns no
-  // document state — it is handed one symmetric capture/restore pair built from
-  // each slice's live getters + bulk setters (createDocumentIO).
-  //
-  // Transition note (S4): the legacy useOperationsHistory above is still the
-  // KEYBOUND undo until S5 lands the absorb together with the global keybinding
-  // (S6), so this engine is wired and RECORDING but not yet user-reachable.
-  // `restoreOperations` bridges through the legacy hook's non-recording
-  // `resetHistory` until S5 gives operations a Studio-owned bulk setter.
+  // A single whole-document snapshot stack over ALL slices — the ONLY undo/redo
+  // in the app (the old per-slice useOperationsHistory was absorbed in S5). The
+  // engine owns no document state; it is handed one symmetric capture/restore
+  // pair built from each slice's live getters + bulk setters (createDocumentIO),
+  // with `restoreOperations` writing the plain `operations` state above.
   const panelsRef = useRef(panels);
   const bgColorRef = useRef(bgColor);
   const operationsRef = useRef(operations);
@@ -317,7 +331,7 @@ export default function Studio({ submitOrg = null } = {}) {
         loadLayerSet,
         setPanels,
         setBgColor,
-        restoreOperations: resetHistory, // transitional; replaced in S5
+        restoreOperations: setOperations, // plain non-recording setter (S5)
         restoreAssignments,
         restoreCanvas,
       }),
@@ -331,7 +345,6 @@ export default function Studio({ submitOrg = null } = {}) {
       loadLayerSet,
       setPanels,
       setBgColor,
-      resetHistory,
       restoreAssignments,
       restoreCanvas,
     ]
@@ -353,6 +366,9 @@ export default function Studio({ submitOrg = null } = {}) {
   useEffect(() => {
     historyRef.current = history;
   });
+  // The unified engine now drives ALL undo/redo (menu, toolbar, ⌘Z). undo/redo
+  // are stable; canUndo/canRedo re-render the enablement state.
+  const { undo, redo, canUndo, canRedo } = history;
 
   // bgColor user edits record a (coalesced) entry — the picker can fire rapidly
   // during a drag, so it rides the same idle-coalesce path as a slider. Loads
@@ -389,11 +405,11 @@ export default function Studio({ submitOrg = null } = {}) {
   // (laser locks cut/score/engrave colors; plotter/drag leave them editable).
   // Keep the legacy `outputMode` in sync for the laser/plotter pair so the
   // export path (which still reads it) follows the selector.
-  // Switching the machine profile is NOT undoable (out of #10's scope, and a
-  // pre-remap snapshot's colors/params no longer fit the new profile — so
-  // cross-profile undo is semantically broken). Route the remap through the
-  // history hook's non-recording `resetHistory`, which replaces the library and
-  // CLEARS the undo/redo stacks.
+  // Switching the machine profile is NOT undoable (a pre-remap snapshot's
+  // colors/params no longer fit the new profile — cross-profile undo is
+  // semantically broken). The remap replaces the library via setOperations and
+  // then clears the whole history (history.clear()), preserving the old
+  // resetHistory-on-profile-switch semantics (I9).
   // Bed-as-artboard is OVERRIDABLE document state (C6 / #14): seeded from the
   // active profile's defaultBed, switched back to that default whenever the
   // machine profile changes (inside handleProfileChange — the single profile
@@ -428,11 +444,15 @@ export default function Studio({ submitOrg = null } = {}) {
       // line weight) must DROP any band rows entirely, so switching to it hides
       // the feature instead of leaking orphan band rows into the panel (#17).
       const remapped = remapOperationsToProfile(operations, nextProfileId);
-      resetHistory(
+      setOperations(
         supportsVariableWeight(nextProfileId)
           ? remapped
           : remapped.filter((o) => !isBandOperation(o))
       );
+      // Profile switch is NOT undoable (I9): a pre-remap snapshot's colors/params
+      // no longer fit the new profile, so clear the whole history (preserves the
+      // old resetHistory-on-profile-switch semantics).
+      historyRef.current?.clear();
       // Mirror the laser/plotter profile into the persisted `outputMode` so the
       // chosen profile round-trips through the `sonoform-canvas` localStorage
       // blob and `activeProfileId` re-seeds from it on next load. This is now a
@@ -443,7 +463,7 @@ export default function Studio({ submitOrg = null } = {}) {
         setOutputMode(nextProfileId);
       }
     },
-    [setOutputMode, resetHistory, operations]
+    [setOutputMode, operations]
   );
 
   // === Operations-panel edit handlers (C1 / #10) — all routed through history.
@@ -463,24 +483,22 @@ export default function Studio({ submitOrg = null } = {}) {
 
   // Variable line-weight toggle / N control (C8 / #17). Stores the per-layer
   // `variableWeight = { enabled, n }` AND syncs the operation library's band rows
-  // in ONE handler (the only place that owns both updateLayer and
-  // commitOperations) — never in an effect, matching useOperationsHistory's
-  // "recording is imperative" contract. Enable/disable/N-change all route here:
-  // syncWeightBand strips this layer's old band and (when enabled on a supported
-  // profile) appends a fresh N-row band, so changing N re-buckets live.
+  // in ONE handler — never in an effect (recording is imperative). The two slice
+  // mutations are wrapped in recordBatch so they form a SINGLE undo entry: the
+  // layer patch and the band sync revert together. syncWeightBand strips this
+  // layer's old band and (when enabled on a supported profile) appends a fresh
+  // N-row band, so changing N re-buckets live. setOperations is used directly
+  // here (not commitOperations) so it doesn't open a second history entry.
   const handleVariableWeightChange = useCallback(
     (layerId, { enabled, n }) => {
-      updateLayer(layerId, { variableWeight: { enabled, n } });
-      commitOperations((ops) =>
-        syncWeightBand(ops, {
-          layerId,
-          profileId: activeProfileId,
-          enabled,
-          n,
-        })
-      );
+      recordBatch(() => {
+        updateLayer(layerId, { variableWeight: { enabled, n } });
+        setOperations((ops) =>
+          syncWeightBand(ops, { layerId, profileId: activeProfileId, enabled, n })
+        );
+      });
     },
-    [updateLayer, commitOperations, activeProfileId]
+    [recordBatch, updateLayer, activeProfileId]
   );
 
   // The inspector edits the selected layer — EXCEPT for a Moiré role-B layer,
@@ -495,16 +513,16 @@ export default function Studio({ submitOrg = null } = {}) {
     )?.id ?? selectedLayerId;
 
   // === Operation assignment (C2 / #11) — the stroke/operation picker ===
-  // Assigning a layer's operationId is routed through #10's `commitAssignment`
-  // so it is genuinely undoable/redoable (the snapshot captures the prior
-  // {layerId: operationId} map; undo restores it via updateLayer). The LayerTree
-  // row chip assigns its OWN row's layer.
+  // Assigning a layer's operationId is a normal layer edit, so it records through
+  // updateLayer's own history hook (a coalesced entry keyed by layer+operationId;
+  // the pre-edit snapshot's assignments restore on undo). The LayerTree row chip
+  // assigns its OWN row's layer.
   const assignOperationToLayer = useCallback(
     (layerId, operationId) => {
       if (!layerId) return;
-      commitAssignment(() => updateLayer(layerId, { operationId }));
+      updateLayer(layerId, { operationId });
     },
-    [commitAssignment, updateLayer]
+    [updateLayer]
   );
 
   // The control-bar swatch + tool-strip base chip share one handler. With a layer
@@ -620,12 +638,12 @@ export default function Studio({ submitOrg = null } = {}) {
   // the undo/redo keyboard shortcut so ⌘Z never hijacks the legacy layout.
   const operationsPanelSlot = useOperationsPanelSlot();
 
-  // ⌘Z / ⇧⌘Z (Ctrl on non-mac) drive the operation-library + assignment history,
-  // bound only on the pro-shell path and ignored while typing into a text field
-  // (the operations panel's number inputs) so editing a param never triggers an
-  // undo. Mirrors the useActiveTool({enabled}) gate.
+  // ⌘Z / ⇧⌘Z (Ctrl on non-mac) drive the unified app-wide undo/redo (D4): bound
+  // GLOBALLY in every shell now that history covers the whole document, not just
+  // the operation library. Guarded while focus is in a text field so native
+  // text-cursor undo survives and editing a param never triggers a doc undo.
+  // `undo`/`redo` are stable engine callbacks, so this binds once.
   useEffect(() => {
-    if (!operationsPanelSlot) return undefined;
     const isTextEntry = (t) => {
       if (!t) return false;
       const tag = t.tagName;
@@ -646,7 +664,7 @@ export default function Studio({ submitOrg = null } = {}) {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [operationsPanelSlot, undo, redo]);
+  }, [undo, redo]);
 
   const { groups, saveGroup, deleteGroup, renameGroup } = useLayerGroups();
   const patternInstancesRef = useRef({});

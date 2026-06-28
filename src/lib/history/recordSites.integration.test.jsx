@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import useLayers from "../useLayers";
 import useHistory from "./useHistory";
 
@@ -48,13 +48,31 @@ function useWired() {
     recordStructural,
   });
 
+  // Operations slice (mirrors S5: plain Studio state, commitOperations records a
+  // discrete entry then applies the mapper; restoreOperations is setOperations).
+  const [operations, setOperations] = useState([{ id: "op-cut", color: "#FF0000" }]);
+  const operationsRef = useRef(operations);
+  useEffect(() => {
+    operationsRef.current = operations;
+  }, [operations]);
+  const commitOperations = useCallback(
+    (mapper) => {
+      recordStructural();
+      setOperations((ops) => mapper(ops));
+    },
+    [recordStructural]
+  );
+
   const layersRef = useRef(layersApi.layers);
   useEffect(() => {
     layersRef.current = layersApi.layers;
   }, [layersApi.layers]);
 
   const capture = useCallback(
-    () => ({ layers: structuredClone(layersRef.current) }),
+    () => ({
+      layers: structuredClone(layersRef.current),
+      operations: structuredClone(operationsRef.current),
+    }),
     []
   );
   // restore replays via loadLayerSet AND a per-layer updateLayer (mirroring
@@ -68,6 +86,7 @@ function useWired() {
         for (const l of s.layers) {
           layersApi.updateLayer(l.id, { operationId: l.operationId });
         }
+        setOperations(s.operations);
       } finally {
         restoringRef.current = false;
       }
@@ -80,7 +99,7 @@ function useWired() {
     historyRef.current = history;
   });
 
-  return { layersApi, history };
+  return { layersApi, history, operations, commitOperations };
 }
 
 function firstLayer(result) {
@@ -170,5 +189,35 @@ describe("S4 record sites — real async path", () => {
     expect(result.current.history.canRedo).toBe(true);
     act(() => result.current.history.redo());
     expect(firstLayer(result).opacity).toBe(30);
+  });
+
+  it("commitOperations is undoable (operations absorbed into the unified engine)", () => {
+    const { result } = renderHook(() => useWired());
+    expect(result.current.operations[0].color).toBe("#FF0000");
+    act(() =>
+      result.current.commitOperations((ops) =>
+        ops.map((o) => (o.id === "op-cut" ? { ...o, color: "#123456" } : o))
+      )
+    );
+    expect(result.current.operations[0].color).toBe("#123456");
+    act(() => result.current.history.undo());
+    expect(result.current.operations[0].color).toBe("#FF0000");
+    act(() => result.current.history.redo());
+    expect(result.current.operations[0].color).toBe("#123456");
+  });
+
+  it("I9 — clear() (profile-switch semantics) drops all history", () => {
+    const { result } = renderHook(() => useWired());
+    const id = firstLayer(result).id;
+    act(() => result.current.layersApi.updateLayer(id, { opacity: 70 }));
+    act(() =>
+      result.current.commitOperations((ops) =>
+        ops.map((o) => ({ ...o, color: "#000000" }))
+      )
+    );
+    expect(result.current.history.canUndo).toBe(true);
+    act(() => result.current.history.clear()); // profile switch
+    expect(result.current.history.canUndo).toBe(false);
+    expect(result.current.history.canRedo).toBe(false);
   });
 });

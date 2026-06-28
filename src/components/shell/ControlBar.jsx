@@ -80,6 +80,44 @@ function OperationSwatch({ operation, operations, onAssignOperation }) {
   );
 }
 
+// Undo / Redo (undo-history-plan §9 / D10). Lives FAR-LEFT in its own group,
+// divider-separated from the tool-specific clusters because undo/redo apply
+// across every tool (select / move / rotate / resize / text), not just the
+// active one. Disabled state binds to canUndo/canRedo; tooltips show the
+// shortcut. The handlers are the unified history engine's undo/redo.
+function UndoRedoGroup({ onUndo, onRedo, canUndo, canRedo }) {
+  const btn =
+    "rounded-xs px-1.5 py-0.5 text-[13px] leading-none text-ink-soft hover:bg-paper-warm hover:text-ink transition-colors duration-fast ease-out-quart disabled:opacity-30 disabled:cursor-default disabled:hover:bg-transparent disabled:hover:text-ink-soft";
+  return (
+    <div
+      role="group"
+      aria-label="History"
+      className="flex items-center gap-0.5 rounded-sm border border-hairline p-0.5"
+    >
+      <button
+        type="button"
+        aria-label="Undo"
+        title="Undo (⌘Z)"
+        disabled={!canUndo}
+        onClick={() => onUndo?.()}
+        className={btn}
+      >
+        ⤺
+      </button>
+      <button
+        type="button"
+        aria-label="Redo"
+        title="Redo (⇧⌘Z)"
+        disabled={!canRedo}
+        onClick={() => onRedo?.()}
+        className={btn}
+      >
+        ⤻
+      </button>
+    </div>
+  );
+}
+
 function AlignGroup() {
   return (
     <div
@@ -254,6 +292,10 @@ export default function ControlBar({
   operation,
   operations,
   onAssignOperation,
+  onUndo,
+  onRedo,
+  canUndo = false,
+  canRedo = false,
   view,
 }) {
   // Decide which contextual cluster to show (decision 9). Text -> text controls;
@@ -274,6 +316,15 @@ export default function ControlBar({
 
   return (
     <div className="flex h-full items-center gap-3 px-3">
+      {/* Undo/Redo — far-left, its own group, divider-separated from the
+          tool-specific controls (they apply across all tools). */}
+      <UndoRedoGroup
+        onUndo={onUndo}
+        onRedo={onRedo}
+        canUndo={canUndo}
+        canRedo={canRedo}
+      />
+      <div aria-hidden="true" className="h-4 w-px bg-hairline" />
       {context}
       <div className="ml-auto">
         <OperationSwatch

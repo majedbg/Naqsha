@@ -89,6 +89,25 @@ describe('buildRibbonGeometry — merged emissive ribbon', () => {
     expect(max.y).toBeLessThan(6.5);
   });
 
+  it('SCALES a px viewBox onto the mm plane frame (the 3D-oversize fix)', () => {
+    // The real mark SVGs declare mm width/height but a 96-PPI px viewBox, and the
+    // path data is in px. Here the viewBox (200×100 px) is 10× the target frame
+    // (20×10 mm) — exactly the production px→mm ratio. A stroke spanning the full
+    // viewBox width must land in the [-10, +10] mm frame, NOT at px magnitude.
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="20mm" height="10mm" viewBox="0 0 200 100">
+      <path d="M0 0 L200 0" stroke="#fff" fill="none" stroke-width="2"/>
+    </svg>`;
+    const g = buildRibbonGeometry(svg, { width: 20, height: 10 });
+    g.computeBoundingBox();
+    const { min, max } = g.boundingBox;
+    // Centered + sized to the mm frame. Pre-fix (no scale) this spanned ~0..200,
+    // recentered to ~-10..190 — the giant, off-panel ribbon the user saw.
+    expect(min.x).toBeCloseTo(-10, 0);
+    expect(max.x).toBeCloseTo(10, 0);
+    // Y-flip preserved: SVG top (y=0) → world top (+height/2 = +5).
+    expect((min.y + max.y) / 2).toBeCloseTo(5, 0);
+  });
+
   it('leaves geometry in raw SVG space when width/height are omitted', () => {
     // Same top stroke, no transform: SVG y≈0 stays near y=0 (NOT lifted to +h/2).
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="10">

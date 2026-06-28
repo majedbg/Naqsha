@@ -100,6 +100,26 @@ export default function useCanvasSize({ savedCanvas, activeTab } = {}) {
     setPresetIndex(matchIdx >= 0 ? matchIdx : PRESET_SIZES.length - 1);
   }, []);
 
+  // === Unified history seam (undo-history-plan §3.2) ===
+  // captureCanvas/restoreCanvas are the bulk get/set the document snapshot uses
+  // for the canvas slice. Capture reads the LIVE values (recreated when they
+  // change); restore writes every field through the existing setters in one
+  // synchronous pass. Symmetric by construction — every field captured is
+  // restored — so the round-trip is a no-op (invariant I1).
+  const captureCanvas = useCallback(
+    () => ({ w: canvasW, h: canvasH, unit, margin, presetIndex, outputMode }),
+    [canvasW, canvasH, unit, margin, presetIndex, outputMode]
+  );
+  const restoreCanvas = useCallback((c) => {
+    if (!c) return;
+    setCanvasW(c.w);
+    setCanvasH(c.h);
+    setUnit(c.unit);
+    setMargin(c.margin);
+    setPresetIndex(c.presetIndex);
+    setOutputMode(c.outputMode);
+  }, []);
+
   // Bed dimensions in mm for the export manifest. Single-sourced via PX_PER_MM
   // (pxToUnit) instead of the old inline `canvasW / 96 * 25.4` magic numbers.
   const bedWmm = pxToUnit(canvasW, "mm").toFixed(1);
@@ -122,6 +142,8 @@ export default function useCanvasSize({ savedCanvas, activeTab } = {}) {
     handlePresetChange,
     handleCustomChange,
     applyCanvasSize,
+    captureCanvas,
+    restoreCanvas,
     bedWmm,
     bedHmm,
   };

@@ -8,7 +8,7 @@
 // src/lib/three3d and stays on the 2D side of the boundary so it can be unit-tested.
 import { useMemo, useRef, useState, useEffect } from 'react';
 import { Canvas } from '@react-three/fiber';
-import { Selection } from '@react-three/postprocessing';
+import { useBloomSelectionStore, BloomSelectionContext } from './bloomSelection.js';
 import CameraRig from './CameraRig.jsx';
 import SceneEnvironment from './SceneEnvironment.jsx';
 import EmissiveBloom from './EmissiveBloom.jsx';
@@ -102,6 +102,12 @@ export default function Scene3D({
   // to the substrate's intrinsic descriptor (today's behavior).
   selectedMaterial = null,
   designName = 'untitled',
+  // Close the 3D preview overlay. Wired Studio → RightPanel → Canvas3DHost; routes
+  // through lensEntry.exit3D so it cleanly closes BOTH Surface A (panel-stack) and
+  // Surface B (height-surface) back to sub-mode 'off', restoring the prior 2D view.
+  // Surface B is launched from the Inspector (not the lens), so this "✕" is the
+  // in-canvas way out. Optional → the button no-ops when unwired (standalone).
+  onClose = null,
 }) {
   const [resetSignal, setResetSignal] = useState(0);
   // Persisted view-prefs (D13/S11), read ONCE on mount. Spacing + exaggeration
@@ -119,6 +125,10 @@ export default function Scene3D({
   const glRef = useRef(null);
   // Stable array so the bloom pass doesn't re-register lights every render.
   const bloomLights = useMemo(() => [keyLightRef], []);
+  // Bloom selection store (replaces the looping postprocessing <Selection>/<Select>
+  // — see bloomSelection.jsx). Emissive marks/drape lines register via useBloomRef;
+  // `bloomSelection` (membership-stable) feeds SelectiveBloom's `selection` prop.
+  const { selection: bloomSelection, register: registerBloom } = useBloomSelectionStore();
 
   const isPanelStack = mode === 'panel-stack';
   // Depend on the PRIMITIVE bounds (not the object identity, which the host
@@ -141,11 +151,18 @@ export default function Scene3D({
   // only in height-surface (B). Without the gate, an A session would rewrite the
   // exaggeration default (the slider it can't even see) over a previously-saved B
   // value, and vice versa. Own keys, never the document; camera is excluded.
+  // Debounced (250ms): a slider drag fires this effect per tick, and each
+  // savePreview3DSettings does a synchronous getItem+parse+stringify+setItem. Only
+  // the settled value needs persisting, so coalesce the drag into one write.
   useEffect(() => {
-    if (isPanelStack) savePreview3DSettings({ spacing: spacingMm });
+    if (!isPanelStack) return undefined;
+    const id = setTimeout(() => savePreview3DSettings({ spacing: spacingMm }), 250);
+    return () => clearTimeout(id);
   }, [isPanelStack, spacingMm]);
   useEffect(() => {
-    if (!isPanelStack) savePreview3DSettings({ exaggeration: exaggerationMm });
+    if (isPanelStack) return undefined;
+    const id = setTimeout(() => savePreview3DSettings({ exaggeration: exaggerationMm }), 250);
+    return () => clearTimeout(id);
   }, [isPanelStack, exaggerationMm]);
 
   // Surface-B per-target drape toggles (S9, §3.4). Default ALL-ON: a SET of
@@ -213,17 +230,29 @@ export default function Scene3D({
         data-focus-field={focusFieldLayerId ?? ''}
         dpr={[1, 2]}
         camera={{ position: [3, 3, 4], fov: 50, near: 0.01, far: 1000 }}
+        // Render on demand, not continuously: the scene is static except during
+        // user interaction. OrbitControls (enableDamping) calls invalidate() while
+        // it moves and through the damping tail, and MeshTransmissionMaterial
+        // invalidates while its buffer needs refreshing — so acrylic + damping still
+        // update, but an idle scene stops re-rendering (no constant GPU load/heat).
+        frameloop="demand"
         style={{ width: '100%', height: '100%' }}
         // preserveDrawingBuffer keeps the last COMPOSITED frame (post-bloom /
         // transmission) readable so the "Save image" PNG (D8) isn't black.
         gl={{ preserveDrawingBuffer: true }}
         onCreated={({ gl }) => {
           glRef.current = gl;
+          // Surface-A ribbon marks crop to the sheet rectangle via per-material
+          // clipping planes (Marks.jsx useSheetClipPlanes); local clipping must be
+          // enabled on the renderer for those planes to take effect.
+          gl.localClippingEnabled = true;
         }}
       >
-        {/* Selection must wrap BOTH the EffectComposer and the scene meshes so
-            SelectiveBloom and <Select> share one context. */}
-        <Selection>
+        {/* The bloom provider wraps the scene meshes so emissive marks/drape lines
+            can register into the selection (replaces postprocessing's looping
+            <Selection>/<Select> — see bloomSelection.jsx). The collected
+            `bloomSelection` is handed to EmissiveBloom's `selection` prop below. */}
+        <BloomSelectionContext.Provider value={registerBloom}>
           <CameraRig fitBox={fitBox} resetSignal={resetSignal} />
           <SceneEnvironment ref={keyLightRef} />
 
@@ -265,11 +294,19 @@ export default function Scene3D({
               thin drape lines, and a softer pass avoids any glow leaking onto the
               (now transparent, dimmer) relief. Surface A's marks want the full
               groove glow. */}
-          <EmissiveBloom lights={bloomLights} intensity={isPanelStack ? 1.4 : 0.6} />
-        </Selection>
+          <EmissiveBloom
+            lights={bloomLights}
+            intensity={isPanelStack ? 1.4 : 0.6}
+            selection={bloomSelection}
+          />
+        </BloomSelectionContext.Provider>
       </Canvas>
 
-      {/* Top-right controls: Reset view (D4) + Save image PNG snapshot (D8). */}
+      {/* Top-right controls: Reset view (D4) + Save image PNG snapshot (D8) +
+          Close (✕). Close is the in-canvas way out of the preview — Surface B is
+          launched from the Inspector (not the lens), so without this there is no
+          way to exit it from the canvas. Routes to onClose (lensEntry.exit3D),
+          which closes BOTH surfaces back to the prior 2D view. */}
       <div className="absolute right-3 top-3 flex gap-2">
         <button
           type="button"
@@ -286,6 +323,16 @@ export default function Scene3D({
           className="rounded-md border border-white/10 bg-black/40 px-2.5 py-1.5 text-xs font-medium text-white/80 backdrop-blur transition hover:bg-black/60 hover:text-white"
         >
           Save image
+        </button>
+        <button
+          type="button"
+          data-testid="canvas3d-close"
+          aria-label="Close 3D preview"
+          title="Close 3D preview"
+          onClick={() => onClose?.()}
+          className="rounded-md border border-white/10 bg-black/40 px-2.5 py-1.5 text-xs font-medium text-white/80 backdrop-blur transition hover:bg-black/60 hover:text-white"
+        >
+          ✕
         </button>
       </div>
 
@@ -311,14 +358,18 @@ export default function Scene3D({
         </label>
       )}
 
-      {/* Surface-B vertical-exaggeration slider (D10): 0…panel-size mm, default
-          ≈ panel-size/4. Height-surface only — the relief height scales live. */}
+      {/* Surface-B vertical-exaggeration ("Amplitude") slider (D10): 0…panel-size
+          mm, default ≈ panel-size/4. Height-surface only — the relief height
+          scales live. Labeled "Amplitude" (the user's term — it stretches the
+          relief in/out); the underlying state is the exaggeration factor. Pinned
+          bottom-LEFT; the per-target drape checklist sits TOP-right so the two can
+          never collide on a narrow panel. */}
       {!isPanelStack && (
         <label
           data-testid="canvas3d-exaggeration"
-          className="absolute bottom-3 left-3 flex items-center gap-2 rounded-md border border-white/10 bg-black/40 px-3 py-2 text-xs font-medium text-white/80 backdrop-blur"
+          className="absolute bottom-3 left-3 z-10 flex items-center gap-2 rounded-md border border-white/10 bg-black/40 px-3 py-2 text-xs font-medium text-white/80 backdrop-blur"
         >
-          <span className="whitespace-nowrap">Height</span>
+          <span className="whitespace-nowrap">Amplitude</span>
           <input
             type="range"
             min={EXAG_MIN}
@@ -327,18 +378,20 @@ export default function Scene3D({
             value={exaggerationMm}
             onChange={(e) => setExaggerationMm(clampExaggeration(Number(e.target.value), exagMax))}
             className="h-1 w-32 cursor-pointer accent-violet"
-            aria-label="Vertical exaggeration in millimetres"
+            aria-label="Relief amplitude in millimetres"
           />
           <span className="w-12 tabular-nums text-right">{Math.round(exaggerationMm)} mm</span>
         </label>
       )}
 
       {/* Surface-B per-target drape toggle checklist (S9, §3.4): one row per
-          ACTIVE modulation target, colored swatch + on/off checkbox. */}
+          ACTIVE modulation target, colored swatch + on/off checkbox. Pinned
+          TOP-right (below the Reset/Save/✕ control row) so it stays clear of the
+          bottom-left Amplitude slider at any panel width. */}
       {hasTargets && (
         <div
           data-testid="canvas3d-drape-targets"
-          className="absolute bottom-3 right-3 flex max-w-[14rem] flex-col gap-1.5 rounded-md border border-white/10 bg-black/40 px-3 py-2 text-xs font-medium text-white/80 backdrop-blur"
+          className="absolute right-3 top-14 z-10 flex max-w-[14rem] flex-col gap-1.5 rounded-md border border-white/10 bg-black/40 px-3 py-2 text-xs font-medium text-white/80 backdrop-blur"
         >
           <span className="text-[0.65rem] uppercase tracking-wide text-white/50">Draped targets</span>
           {drapeTargets.map((t) => (
@@ -367,7 +420,7 @@ export default function Scene3D({
       {emptyDrape && (
         <div
           data-testid="canvas3d-drape-empty"
-          className="absolute bottom-3 right-3 max-w-[16rem] rounded-md border border-white/10 bg-black/40 px-3 py-2 text-xs text-white/60 backdrop-blur"
+          className="absolute right-3 top-14 z-10 max-w-[16rem] rounded-md border border-white/10 bg-black/40 px-3 py-2 text-xs text-white/60 backdrop-blur"
         >
           This guide has no active modulation targets — showing the field relief only.
         </div>

@@ -96,8 +96,8 @@ describe('useLayers — panels (WI-1)', () => {
         { id: 'panel-1-rt', name: 'RT', substrate: { kind: 'mdf', thickness: 6, color: '#cccccc' }, visible: true, order: 0 },
       ];
       act(() => result.current.setPanels(nextPanels));
-      // Flush the 500ms debounced persistence effect.
-      act(() => vi.advanceTimersByTime(600));
+      // Flush the 3000ms debounced persistence effect (undo-history-plan §10).
+      act(() => vi.advanceTimersByTime(3100));
       unmount();
 
       expect(JSON.parse(localStorage.getItem(PANELS_STORAGE_KEY))).toEqual(nextPanels);

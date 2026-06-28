@@ -55,17 +55,23 @@ export default function Sheets({ specs = [], appearance = null }) {
             {/* boxGeometry args = [x=width, y=height, z=thickness] */}
             <boxGeometry args={[w, h, spec.thickness]} />
             {mat.mode === 'transmission' ? (
+              // transmissionSampler (main's perf fix): all acrylic sheets sample ONE
+              // shared scene buffer instead of each rendering the whole scene into its
+              // own FBO every frame — the biggest per-frame GPU win for the acrylic
+              // stack (kills the bloom freeze / steady-state cost). Values stay
+              // archetype-driven (S4 resolveSheetMaterial), so clear vs translucent vs
+              // fluorescent keep distinct transmission/tint/roughness/ior.
               <MeshTransmissionMaterial
+                transmissionSampler
                 color={mat.color}
                 ior={mat.ior}
                 roughness={mat.roughness}
                 thickness={spec.thickness}
                 transmission={mat.transmission}
-                samples={6}
-                resolution={256}
+                samples={4}
+                resolution={128}
                 anisotropy={0.1}
                 chromaticAberration={0.02}
-                backside
               />
             ) : mat.mode === 'physical' ? (
               /* Pearlescent nacre (S4, §3.2): opaque + a clearcoat sheen, which

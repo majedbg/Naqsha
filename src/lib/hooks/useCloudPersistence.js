@@ -23,6 +23,15 @@ export default function useCloudPersistence({
   applyCanvasSize,
   markCleanFrom,
   canvasContainerRef,
+  // Tier-2 cloud history persistence (undo-history-plan §7, S9). The undo/redo
+  // tail travels embedded in the design `config`, but ONLY on a MANUAL save —
+  // `getHistoryTail()` returns the tail (history.exportTail()) and is read solely
+  // when `handleSaveToCloud({ manual: true })` is called. Autosave (the no-arg
+  // call) never embeds it, so frequent writes stay lean. `importHistoryTail` is
+  // invoked AFTER a cloud load with the embedded `config.history`, to install it
+  // through the rails (validateTail → importTail); null/mismatch silently drops.
+  getHistoryTail = null,
+  importHistoryTail = null,
   // Retry/backoff (Capability C). A transient saveDesign rejection is retried
   // after each delay (ms) before the failure is surfaced. One element per retry;
   // [] disables retry (used by the fast unit tests).
@@ -85,10 +94,20 @@ export default function useCloudPersistence({
     }
   }, [canvasContainerRef]);
 
-  const handleSaveToCloud = useCallback(async () => {
+  const handleSaveToCloud = useCallback(async ({ manual = false } = {}) => {
     if (!user) return;
     const thumbnail = captureThumbnail();
     const config = { layers, canvasW, canvasH, presetIndex, panels };
+    // Tier-2 (S9): embed the undo/redo tail in the SAVED design config on MANUAL
+    // save only (⌘S / Save button → `{ manual: true }`). Autosave's no-arg call
+    // leaves `manual` false, so the high-frequency writes never carry the tail.
+    // `designConfig` (history-embedded) goes to saveDesign alone — the history-
+    // free `config` is reused for the pro `saveHistorySnapshot` and the failed-
+    // save draft so neither inherits the tail.
+    const designConfig =
+      manual && getHistoryTail
+        ? { ...config, history: getHistoryTail() }
+        : config;
     // Capture the draft key ONCE from the id at call time, so a failed-then-
     // succeeded NEW save clears the same ('new') key it wrote — not the
     // post-success id (Capability B).
@@ -105,7 +124,7 @@ export default function useCloudPersistence({
           design = await saveDesign(
             user.id,
             designName,
-            config,
+            designConfig,
             thumbnail,
             currentDesignId
           );
@@ -161,6 +180,7 @@ export default function useCloudPersistence({
     panels,
     limits.historySnapshots,
     retryDelays,
+    getHistoryTail,
   ]);
 
   const handleLoadCloudDesign = useCallback(
@@ -189,6 +209,12 @@ export default function useCloudPersistence({
         setSaveError(null);
         setLastSavedAt(Date.now());
         setSaveState("saved");
+        // Tier-2 import (S9). loadLayerSet above is the document-LOAD seam
+        // (Studio's loadDocumentLayers), which already cleared history; now
+        // best-effort install the embedded tail on top through the rails
+        // (validateTail → importTail). A version/checksum mismatch silently
+        // drops it and keeps the document — the required safe failure mode.
+        importHistoryTail?.(design.config.history);
       } catch (err) {
         console.error("Cloud load failed:", err);
       }
@@ -201,6 +227,7 @@ export default function useCloudPersistence({
       markCleanFrom,
       layers,
       bgColor,
+      importHistoryTail,
     ]
   );
 

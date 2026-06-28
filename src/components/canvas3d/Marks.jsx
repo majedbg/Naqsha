@@ -5,9 +5,9 @@
 // on the 2D side.
 import { useEffect, useMemo, useState } from 'react';
 import * as THREE from 'three';
-import { Select } from '@react-three/postprocessing';
 import { routePanelRenderModes } from '../../lib/three3d/markTexture.js';
 import { buildRibbonGeometry } from './ribbonGeometry.js';
+import { useBloomRef } from './bloomSelection.js';
 
 /**
  * Surface A marks (S5 texture baseline + S10 ribbon enhancement, PRD D3/D6, §3.1).
@@ -30,10 +30,13 @@ import { buildRibbonGeometry } from './ribbonGeometry.js';
  * (depth score) — cut glows strongest, then engrave, then score (D3). Hue
  * (cut≈red / score≈blue / engrave≈neutral) is the texture tint / the ribbon emissive.
  *
- * Bloom (D12): every mark layer is wrapped in <Select enabled> so the
- * selection-gated SelectiveBloom (EmissiveBloom.jsx) glows ONLY the marks — never
- * the transmissive sheet. Texture marks have a TRANSPARENT field and ribbons are bare
- * stroke geometry, so only groove pixels exist in the bloom buffer.
+ * Bloom (D12): every mark mesh registers into the bloom selection via a stable ref
+ * (useBloomRef, bloomSelection.jsx) so the selection-gated SelectiveBloom
+ * (EmissiveBloom.jsx) glows ONLY the marks — never the transmissive sheet. (This
+ * replaces the @react-three/postprocessing <Select>/<Selection> context, whose
+ * self-retriggering effect froze the tab — see bloomSelection.jsx.) Texture marks
+ * have a TRANSPARENT field and ribbons are bare stroke geometry, so only groove
+ * pixels exist in the bloom buffer.
  */
 
 // High-DPI raster cap (px) on the longest texture edge — keeps marks crisp under
@@ -41,8 +44,45 @@ import { buildRibbonGeometry } from './ribbonGeometry.js';
 const MAX_TEXTURE_EDGE = 2048;
 // Global emissive multiplier; the per-process depth score scales it per plane.
 const BASE_EMISSIVE = 2.4;
-// Tiny z step so stacked per-process planes (and the sheet face) never z-fight.
+// Tiny z step (mm) so stacked per-process planes layer in a stable order.
 const Z_EPSILON = 0.05;
+// Base lift (mm) floating every mark just off the sheet's front face so the
+// emissive marks are not coplanar with the acrylic surface. Imperceptible at the
+// design scale (sub-mm against ~100s-of-mm panels) but it physically pulls the
+// marks out of the slab. polygonOffset (below) is the actual z-fight guarantee —
+// it biases depth in depth-buffer space so the mark wins the test regardless of
+// camera distance, where a fixed mm lift alone is fragile under the wide near/far
+// range. The two together: marks sit outside the model AND never shimmer.
+const SURFACE_LIFT = 0.2;
+// Decal-style depth bias: negative factor/units pull the mark toward the camera in
+// depth-buffer space so it beats the coplanar sheet face without moving geometry.
+const POLYGON_OFFSET_FACTOR = -2;
+const POLYGON_OFFSET_UNITS = -2;
+
+/**
+ * Four world-space clipping planes bounding the centered sheet rectangle
+ * [-w/2, w/2] × [-h/2, h/2] (mm). Ribbon geometry is parsed straight from the mark
+ * SVG, which can carry path points OUTSIDE the canvas viewBox (e.g. a spirograph
+ * whose loops spill past the sheet) — texture mode is implicitly cropped because the
+ * raster only paints inside the viewBox, but ribbons are not. These planes crop the
+ * ribbon (and its bloom halo) to the physical sheet, matching texture mode. World
+ * space (not view space) so the crop tracks the sheet as the camera orbits; sheets
+ * are xy-centered on the origin (boundsForSheetSpecs), so plane constants are ±half.
+ * Requires gl.localClippingEnabled = true (set in Scene3D onCreated).
+ */
+function useSheetClipPlanes(w, h) {
+  return useMemo(() => {
+    if (!w || !h) return undefined;
+    const hw = w / 2;
+    const hh = h / 2;
+    return [
+      new THREE.Plane(new THREE.Vector3(1, 0, 0), hw), // keep x ≥ -w/2
+      new THREE.Plane(new THREE.Vector3(-1, 0, 0), hw), // keep x ≤ w/2
+      new THREE.Plane(new THREE.Vector3(0, 1, 0), hh), // keep y ≥ -h/2
+      new THREE.Plane(new THREE.Vector3(0, -1, 0), hh), // keep y ≤ h/2
+    ];
+  }, [w, h]);
+}
 
 /**
  * Rasterize an SVG string to a THREE.CanvasTexture (async via an <img>). Returns
@@ -99,12 +139,14 @@ function useSvgTexture(svg) {
  */
 function MarkPlane({ svg, intensity, size, z }) {
   const texture = useSvgTexture(svg);
+  // Opt this emissive plane into the SelectiveBloom selection (D12) without the
+  // looping <Select> wrapper — see bloomSelection.jsx.
+  const bloomRef = useBloomRef();
   const [w = 0, h = 0] = size || [];
   if (!texture || !w || !h) return null;
   return (
-    <Select enabled>
-      <mesh position={[0, 0, z]}>
-        <planeGeometry args={[w, h]} />
+    <mesh ref={bloomRef} position={[0, 0, z]}>
+      <planeGeometry args={[w, h]} />
         {/* color black so the lit diffuse contributes nothing; `map` carries the
             alpha (transparent field), `emissiveMap` carries the glow, scaled by the
             process depth score so the depth ORDER holds across planes (D3). */}
@@ -116,12 +158,16 @@ function MarkPlane({ svg, intensity, size, z }) {
           emissiveIntensity={BASE_EMISSIVE * (intensity ?? 1)}
           transparent
           depthWrite={false}
+          // Bias depth toward the camera so the (coplanar, depthWrite-false) mark
+          // wins the test against the sheet face — kills the surface shimmer.
+          polygonOffset
+          polygonOffsetFactor={POLYGON_OFFSET_FACTOR}
+          polygonOffsetUnits={POLYGON_OFFSET_UNITS}
           toneMapped={false}
           roughness={1}
           metalness={0}
         />
-      </mesh>
-    </Select>
+    </mesh>
   );
 }
 
@@ -140,15 +186,21 @@ function RibbonMesh({ svg, tint, intensity, size, z, fallback }) {
     () => (svg && w && h ? buildRibbonGeometry(svg, { width: w, height: h }) : null),
     [svg, w, h],
   );
+  // Crop the ribbon (and its bloom halo) to the sheet rectangle — ribbon geometry,
+  // unlike the viewBox-cropped texture raster, carries any path points that spill
+  // past the canvas (e.g. spirograph loops larger than the sheet).
+  const clippingPlanes = useSheetClipPlanes(w, h);
+  // Opt this emissive ribbon into the SelectiveBloom selection (D12) without the
+  // looping <Select> wrapper — see bloomSelection.jsx.
+  const bloomRef = useBloomRef();
   // Ribbon geometry IS uploaded to the GPU once meshed → dispose on change/unmount.
   useEffect(() => () => geometry?.dispose?.(), [geometry]);
   if (!geometry) return fallback ?? null;
   return (
-    <Select enabled>
-      {/* color black so lit diffuse contributes nothing; the glow is pure emissive
-          in the process tint, scaled by the depth score so the cut>engrave>score
-          order holds. DoubleSide because the SVG→world Y-flip reverses winding. */}
-      <mesh position={[0, 0, z]} geometry={geometry}>
+    /* color black so lit diffuse contributes nothing; the glow is pure emissive in
+       the process tint, scaled by the depth score so the cut>engrave>score order
+       holds. DoubleSide because the SVG→world Y-flip reverses winding. */
+    <mesh ref={bloomRef} position={[0, 0, z]} geometry={geometry}>
         <meshStandardMaterial
           color="#000000"
           emissive={tint || '#ffffff'}
@@ -156,11 +208,16 @@ function RibbonMesh({ svg, tint, intensity, size, z, fallback }) {
           toneMapped={false}
           side={THREE.DoubleSide}
           depthWrite={false}
+          clippingPlanes={clippingPlanes}
+          // Same decal depth-bias as the texture marks (see MarkPlane): keep the
+          // ribbon off the acrylic face in the depth test at any camera distance.
+          polygonOffset
+          polygonOffsetFactor={POLYGON_OFFSET_FACTOR}
+          polygonOffsetUnits={POLYGON_OFFSET_UNITS}
           roughness={1}
           metalness={0}
         />
-      </mesh>
-    </Select>
+    </mesh>
   );
 }
 
@@ -200,7 +257,9 @@ export default function Marks({ specs = [], marksByPanel = {} }) {
         return marks
           .filter((m) => m.svg)
           .map((m, i) => {
-            const z = front + Z_EPSILON * (i + 1);
+            // Lift clear of the face (SURFACE_LIFT), then a tiny per-process step so
+            // stacked processes keep a stable front-to-back order (cut/engrave/score).
+            const z = front + SURFACE_LIFT + Z_EPSILON * i;
             const plane = (
               <MarkPlane svg={m.svg} intensity={m.intensity} size={spec.size} z={z} />
             );

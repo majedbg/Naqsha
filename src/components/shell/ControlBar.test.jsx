@@ -83,6 +83,57 @@ describe("ControlBar (B6 — contextual, swaps by tool)", () => {
     ).toBeInTheDocument();
   });
 
+  it("renders undo/redo in their own far-left History group", () => {
+    render(<ControlBar activeTool="select" hasSelection={false} docInfo={docInfo} />);
+    const group = screen.getByRole("group", { name: /history/i });
+    expect(within(group).getByRole("button", { name: /undo/i })).toBeInTheDocument();
+    expect(within(group).getByRole("button", { name: /redo/i })).toBeInTheDocument();
+  });
+
+  it("undo/redo fire their handlers when enabled", () => {
+    const onUndo = vi.fn();
+    const onRedo = vi.fn();
+    render(
+      <ControlBar
+        activeTool="select"
+        hasSelection={false}
+        docInfo={docInfo}
+        onUndo={onUndo}
+        onRedo={onRedo}
+        canUndo
+        canRedo
+      />
+    );
+    fireEvent.click(screen.getByRole("button", { name: /undo/i }));
+    expect(onUndo).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: /redo/i }));
+    expect(onRedo).toHaveBeenCalledTimes(1);
+  });
+
+  it("undo/redo are disabled (and inert) when !canUndo / !canRedo", () => {
+    const onUndo = vi.fn();
+    const onRedo = vi.fn();
+    render(
+      <ControlBar
+        activeTool="select"
+        hasSelection={false}
+        docInfo={docInfo}
+        onUndo={onUndo}
+        onRedo={onRedo}
+        canUndo={false}
+        canRedo={false}
+      />
+    );
+    const undo = screen.getByRole("button", { name: /undo/i });
+    const redo = screen.getByRole("button", { name: /redo/i });
+    expect(undo).toBeDisabled();
+    expect(redo).toBeDisabled();
+    fireEvent.click(undo);
+    fireEvent.click(redo);
+    expect(onUndo).not.toHaveBeenCalled();
+    expect(onRedo).not.toHaveBeenCalled();
+  });
+
   it("outline toggle flips its label/state when clicked", () => {
     render(<ControlBar activeTool="text" hasSelection={false} docInfo={docInfo} />);
     const toggle = screen.getByRole("button", { name: /outline|single.?line/i });

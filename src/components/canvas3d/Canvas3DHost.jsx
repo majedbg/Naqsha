@@ -39,6 +39,8 @@ export default function Canvas3DHost({
   reliefField = null,
   drapeTargets = [],
   selectedMaterial = null,
+  // Close the overlay (Studio → RightPanel → here → Scene3D's "✕"). Optional.
+  onClose = null,
 }) {
   return (
     <Suspense
@@ -66,6 +68,7 @@ export default function Canvas3DHost({
         reliefField={reliefField}
         drapeTargets={drapeTargets}
         selectedMaterial={selectedMaterial}
+        onClose={onClose}
       />
     </Suspense>
   );

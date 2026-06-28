@@ -42,6 +42,7 @@ import {
   canProduceField,
   fieldForLayer,
 } from "../../lib/fields/fieldRegistry";
+import { previewButtonState } from "../../lib/three3d/previewButtonState";
 import FieldOverlay from "../FieldOverlay";
 import ShapeCurve from "../ui/ShapeCurve";
 import { channelForTarget } from "../../lib/fields/channelConsumers";
@@ -139,7 +140,19 @@ function VariableWeightControls({ layer, profileId, onVariableWeightChange }) {
 // autosaved — no separate apply button (human-in-the-loop: preview/apply/revert).
 // Because the merge is shallow, every write spreads the WHOLE current modulator
 // (a partial { modulator: { offset } } would drop maps).
-function ModulatorDevice({ layer, layers, onUpdateLayer, onPreviewField }) {
+function ModulatorDevice({
+  layer,
+  layers,
+  onUpdateLayer,
+  onPreviewField,
+  // 3D preview (Surface B) toggle state. When the height-surface preview is open
+  // FOR THIS guide layer, the "Preview in 3D" button flips to "Close preview" and
+  // its click closes the preview (onClosePreview) instead of opening it. Optional
+  // so the Inspector still renders standalone / in legacy callers.
+  threeDSubMode,
+  threeDFocusLayerId,
+  onClosePreview,
+}) {
   if (!canProduceField(layer)) return null;
 
   // Current device, with defaults filled in (layer.modulator is undefined until
@@ -163,11 +176,13 @@ function ModulatorDevice({ layer, layers, onUpdateLayer, onPreviewField }) {
       modulator: { offset, shape, steps, maps, range, ...patch },
     });
   };
-  // Write the full {min,max}, clamping so min ≤ max.
+  // Write the full {min,max}. The thumbs may cross: max below min is allowed and
+  // flips polarity (applyRange remaps the field's [-1,1] band onto [min,max], so
+  // an inverted range simply inverts the response). No clamping here.
   const setRangeMin = (v) =>
-    patchModulator({ range: { min: Math.min(v, range.max), max: range.max } });
+    patchModulator({ range: { min: v, max: range.max } });
   const setRangeMax = (v) =>
-    patchModulator({ range: { min: range.min, max: Math.max(v, range.min) } });
+    patchModulator({ range: { min: range.min, max: v } });
   const setMaps = (nextMaps) => patchModulator({ maps: nextMaps });
 
   // Candidate targets: any layer that consumes a modulation channel —
@@ -229,18 +244,23 @@ function ModulatorDevice({ layer, layers, onUpdateLayer, onPreviewField }) {
           className="flex shrink-0 flex-col items-center justify-between text-[9px] text-ink-soft"
           data-testid="modulator-range"
         >
-          <span>max</span>
+          {/* Track ends are a fixed +1 / −1 axis — NOT "max"/"min" — because the
+              thumbs can cross (max may sit below min). Thumb COLOR carries the
+              min/max identity instead (garnet = max, sapphire = min). */}
+          <span className="num">+1</span>
           <div
-            className="relative my-1 w-4 flex-1 rounded-xs border border-hairline"
+            className="relative my-1 w-2 flex-1 rounded-xs border border-hairline"
             style={{
               background: `linear-gradient(to top, ${ANCHOR_NEG}, ${ANCHOR_MID} 50%, ${ANCHOR_POS})`,
             }}
           >
-            <span className="pointer-events-none absolute left-full top-1/2 ml-1 -translate-y-1/2 whitespace-nowrap text-[8px] text-gray-400">
+            <span className="pointer-events-none absolute left-full top-1/2 ml-2 -translate-y-1/2 whitespace-nowrap text-[8px] text-gray-400">
               neutral
             </span>
-            {/* Vertical inputs: rotated so the visual top = +1. min/max bounds let
-                jsdom fireEvent.change drive them. */}
+            {/* Two vertical inputs stacked over the track. They are pointer-
+                transparent (.mod-range) so only the triangle thumbs are grabbable
+                — each can be dragged independently and past the other. min/max
+                bounds let jsdom fireEvent.change drive them in tests. */}
             <input
               type="range"
               aria-label="Modulation range max"
@@ -250,7 +270,7 @@ function ModulatorDevice({ layer, layers, onUpdateLayer, onPreviewField }) {
               step={0.05}
               value={range.max}
               onChange={(e) => setRangeMax(Number(e.target.value))}
-              className="absolute inset-0 h-full w-full cursor-pointer appearance-none bg-transparent accent-violet"
+              className="mod-range mod-range-max absolute inset-0 h-full w-full"
               style={{ writingMode: "vertical-lr", direction: "rtl" }}
             />
             <input
@@ -262,11 +282,11 @@ function ModulatorDevice({ layer, layers, onUpdateLayer, onPreviewField }) {
               step={0.05}
               value={range.min}
               onChange={(e) => setRangeMin(Number(e.target.value))}
-              className="absolute inset-0 h-full w-full cursor-pointer appearance-none bg-transparent accent-violet"
+              className="mod-range mod-range-min absolute inset-0 h-full w-full"
               style={{ writingMode: "vertical-lr", direction: "rtl" }}
             />
           </div>
-          <span>min</span>
+          <span className="num">−1</span>
         </div>
 
         {/* Field "waveform" readout — the guide's scalar field. The box is
@@ -289,15 +309,36 @@ function ModulatorDevice({ layer, layers, onUpdateLayer, onPreviewField }) {
       {/* Preview in 3D (S8, PRD D2/D5) — opens Surface B (the modulation
           height-surface) focused on THIS guide's field. The relief shows the RAW
           field (the cause); the device range above is a 2D-readout remap and is
-          deliberately NOT applied to the relief (§3.4). */}
-      <button
-        type="button"
-        data-testid="modulator-preview-3d"
-        onClick={() => onPreviewField?.(layer.id)}
-        className="w-full rounded-xs border border-hairline bg-paper-warm px-2 py-1 text-[11px] font-medium text-ink-soft transition-colors hover:border-violet hover:text-ink"
-      >
-        Preview in 3D
-      </button>
+          deliberately NOT applied to the relief (§3.4). Acts as a TOGGLE: while
+          THIS guide's preview is open the button reads "Close preview" and closes
+          it (so there's a way out of Surface B, which is launched here, not from
+          the lens). previewButtonState is the pure (tested) decision. */}
+      {(() => {
+        const pv = previewButtonState({
+          subMode: threeDSubMode,
+          focusLayerId: threeDFocusLayerId,
+          layerId: layer.id,
+        });
+        return (
+          <button
+            type="button"
+            data-testid="modulator-preview-3d"
+            aria-pressed={pv.previewingThis}
+            onClick={() =>
+              pv.action === "close"
+                ? onClosePreview?.()
+                : onPreviewField?.(layer.id)
+            }
+            className={`w-full rounded-xs border px-2 py-1 text-[11px] font-medium transition-colors ${
+              pv.previewingThis
+                ? "border-violet bg-violet/10 text-ink"
+                : "border-hairline bg-paper-warm text-ink-soft hover:border-violet hover:text-ink"
+            }`}
+          >
+            {pv.label}
+          </button>
+        );
+      })()}
 
       {/* Device controls — offset / shape / steps, shared across all maps. */}
       <div className="space-y-2">
@@ -421,7 +462,7 @@ function ModulatorDevice({ layer, layers, onUpdateLayer, onPreviewField }) {
 // The param-editing body for one selected layer. Split into its own component so
 // usePatternCache (a hook) is only called when a layer is actually selected —
 // hooks can't be called conditionally inside Inspector itself.
-function SelectedLayerInspector({ layer, layers, unit, profileId, onUpdateLayer, onChangeLayerPattern, onVariableWeightChange, onPreviewField }) {
+function SelectedLayerInspector({ layer, layers, unit, profileId, onUpdateLayer, onChangeLayerPattern, onVariableWeightChange, onPreviewField, onClosePreview, threeDSubMode, threeDFocusLayerId }) {
   // Pattern swap: route through the same cache machine LayerCard uses, applied via
   // the pair-aware onChangeLayerPattern when present (falls back to a plain param
   // update so the component works standalone / in tests without a router).
@@ -476,6 +517,9 @@ function SelectedLayerInspector({ layer, layers, unit, profileId, onUpdateLayer,
         layers={layers}
         onUpdateLayer={onUpdateLayer}
         onPreviewField={onPreviewField}
+        onClosePreview={onClosePreview}
+        threeDSubMode={threeDSubMode}
+        threeDFocusLayerId={threeDFocusLayerId}
       />
     </div>
   );
@@ -499,6 +543,13 @@ export default function Inspector({
   // "Preview in 3D" launcher (S8, PRD D2) — opens Surface B focused on the guide
   // layer's field. Optional; undefined → the ModulatorDevice button no-ops.
   onPreviewField,
+  // Close handler for the 3D preview (Surface B). Wired to the same exit path the
+  // canvas "✕" / lens uses. Optional; undefined → the "Close preview" branch no-ops.
+  onClosePreview,
+  // Live 3D sub-mode + focused guide id, so the ModulatorDevice button can flip to
+  // "Close preview" when THIS guide is being previewed. Optional (legacy/tests).
+  threeDSubMode,
+  threeDFocusLayerId,
 }) {
   // Resolved font for the text-properties readouts (cap-height / engrave
   // warnings). May be null on first paint before useFont resolves — the panel's
@@ -560,6 +611,9 @@ export default function Inspector({
       onChangeLayerPattern={onChangeLayerPattern}
       onVariableWeightChange={onVariableWeightChange}
       onPreviewField={onPreviewField}
+      onClosePreview={onClosePreview}
+      threeDSubMode={threeDSubMode}
+      threeDFocusLayerId={threeDFocusLayerId}
     />
   );
 }

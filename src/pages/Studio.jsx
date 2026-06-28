@@ -56,6 +56,7 @@ import { remapOperationsToProfile, defaultBedSize, profileProcesses, defaultMach
 import useHistory from "../lib/history/useHistory";
 import { createDocumentIO } from "../lib/history/documentSnapshot";
 import { readTail, writeTail, validateTail } from "../lib/history/persist";
+import { isTextEntryTarget } from "../lib/history/typingGuard";
 import { syncWeightBand, supportsVariableWeight, isBandOperation } from "../lib/variableWeight";
 import { findMoirePartnerA } from "../lib/moirePair";
 import useCanvasSize, { loadCanvasState } from "../lib/hooks/useCanvasSize";
@@ -685,24 +686,16 @@ export default function Studio({ submitOrg = null } = {}) {
 
   // ⌘Z / ⇧⌘Z (Ctrl on non-mac) drive the unified app-wide undo/redo (D4): bound
   // GLOBALLY in every shell now that history covers the whole document, not just
-  // the operation library. Guarded while focus is in a text field so native
-  // text-cursor undo survives and editing a param never triggers a doc undo.
-  // `undo`/`redo` are stable engine callbacks, so this binds once.
+  // the operation library. Guarded only while focus is in a genuine TEXT-ENTRY
+  // surface (isTextEntryTarget) so native text-cursor undo survives — a focused
+  // range slider / checkbox / select has no native undo and must let ⌘Z reach
+  // the document history. `undo`/`redo` are stable engine callbacks, so this
+  // binds once.
   useEffect(() => {
-    const isTextEntry = (t) => {
-      if (!t) return false;
-      const tag = t.tagName;
-      return (
-        tag === "INPUT" ||
-        tag === "TEXTAREA" ||
-        tag === "SELECT" ||
-        t.isContentEditable
-      );
-    };
     const onKeyDown = (e) => {
       if (e.key !== "z" && e.key !== "Z") return;
       if (!(e.metaKey || e.ctrlKey)) return;
-      if (isTextEntry(e.target)) return;
+      if (isTextEntryTarget(e.target)) return;
       e.preventDefault();
       if (e.shiftKey) redo();
       else undo();

@@ -4,12 +4,16 @@ import {
   edgeIntensity,
   fresnelFactor,
   edgeMaskForBox,
+  normalize3,
+  keyLightDirection,
+  sideEmissive,
 } from './edgeGlow.js';
 
 // Unit axes used throughout (the real callers pass normalized world directions).
 const X = [1, 0, 0];
 const Y = [0, 1, 0];
 const Z = [0, 0, 1];
+const NEG_X = [-1, 0, 0];
 const NEG_Y = [0, -1, 0];
 
 describe('dot3', () => {
@@ -104,5 +108,85 @@ describe('edgeMaskForBox', () => {
     const m = edgeMaskForBox([Math.SQRT1_2, Math.SQRT1_2, 0], Z);
     expect(m).toBeGreaterThanOrEqual(0);
     expect(m).toBeLessThanOrEqual(1);
+  });
+});
+
+describe('normalize3', () => {
+  it('returns a unit-length vector for a non-axis input', () => {
+    const n = normalize3([3, 0, 4]); // length 5
+    expect(n[0]).toBeCloseTo(0.6, 6);
+    expect(n[1]).toBe(0);
+    expect(n[2]).toBeCloseTo(0.8, 6);
+    const len = Math.hypot(n[0], n[1], n[2]);
+    expect(len).toBeCloseTo(1, 6);
+  });
+
+  it('leaves an already-unit axis unchanged', () => {
+    expect(normalize3(Y)).toEqual(Y);
+  });
+
+  it('returns a zero vector for a zero input (no NaN/division blow-up)', () => {
+    expect(normalize3([0, 0, 0])).toEqual([0, 0, 0]);
+  });
+});
+
+describe('keyLightDirection', () => {
+  it('points FROM the target TOWARD the light (normalized)', () => {
+    // Light directly above the origin → the incidence direction is +Y.
+    expect(keyLightDirection([0, 10, 0])).toEqual([0, 1, 0]);
+  });
+
+  it('defaults the target to the origin and normalizes the offset', () => {
+    const d = keyLightDirection([4, 6, 5]); // sqrt(16+36+25)=sqrt(77)
+    const inv = 1 / Math.sqrt(77);
+    expect(d[0]).toBeCloseTo(4 * inv, 6);
+    expect(d[1]).toBeCloseTo(6 * inv, 6);
+    expect(d[2]).toBeCloseTo(5 * inv, 6);
+  });
+
+  it('honors an explicit target (direction is position − target)', () => {
+    // Light at [0,5,0] aimed at [0,2,0] → toward-light dir is +Y.
+    expect(keyLightDirection([0, 5, 0], [0, 2, 0])).toEqual([0, 1, 0]);
+  });
+
+  it('is the SIGN that makes the lit face out-glow the shadowed one', () => {
+    // Guards against the classic position↔target sign flip: a light overhead
+    // (+Y) must make the +Y side face brighter than the −Y side face.
+    const L = keyLightDirection([0, 10, 0]);
+    const up = sideEmissive(L, Y, Z, 6);
+    const down = sideEmissive(L, NEG_Y, Z, 6);
+    expect(up).toBeGreaterThan(down);
+    expect(down).toBe(0);
+  });
+});
+
+describe('sideEmissive', () => {
+  it('combines incidence (dot) with the side-face mask', () => {
+    // +X side under a light along +X, stacking on Z: dot=1, mask=1 → edgeGain.
+    expect(sideEmissive(X, X, Z, 5)).toBe(5);
+  });
+
+  it('is zero on a top/bottom face even under full incidence', () => {
+    // A +Z face is a STACKED face (mask 0), so it must never glow regardless of
+    // how square-on the light hits it.
+    expect(sideEmissive(Z, Z, Z, 8)).toBe(0);
+  });
+
+  it('is zero on a back-facing side (incidence clamped) ', () => {
+    expect(sideEmissive(NEG_X, X, Z, 8)).toBe(0);
+  });
+
+  it('scales with edgeGain (0 gain → no glow on any face)', () => {
+    expect(sideEmissive(X, X, Z, 0)).toBe(0);
+  });
+
+  it('renders the per-face asymmetry that reads as light direction', () => {
+    // Oblique key light: +X and +Y sides glow at different strengths (the cue a
+    // human reads as "the glow tracks the light").
+    const L = normalize3([1, 2, 0]);
+    const xFace = sideEmissive(L, X, Z, 6);
+    const yFace = sideEmissive(L, Y, Z, 6);
+    expect(yFace).toBeGreaterThan(xFace);
+    expect(xFace).toBeGreaterThan(0);
   });
 });

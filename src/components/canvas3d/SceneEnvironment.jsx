@@ -2,6 +2,7 @@
 // Imports three/@react-three/* — must NEVER be imported from a 2D render-path module.
 import { forwardRef } from 'react';
 import { Environment } from '@react-three/drei';
+import { KEY_LIGHT_POSITION } from '../../lib/three3d/keyLight.js';
 
 /** Neutral DARK background (spec D12) so emissive glow + acrylic transmission pop. */
 export const DARK_BG = '#0b0b10';
@@ -28,7 +29,7 @@ const SceneEnvironment = forwardRef(function SceneEnvironment(
     <>
       <color attach="background" args={[DARK_BG]} />
       <ambientLight intensity={ambientIntensity} />
-      <directionalLight ref={keyLightRef} position={[4, 6, 5]} intensity={keyIntensity} />
+      <directionalLight ref={keyLightRef} position={KEY_LIGHT_POSITION} intensity={keyIntensity} />
       <Environment preset="studio" />
     </>
   );

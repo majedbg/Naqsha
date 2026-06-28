@@ -4,6 +4,7 @@
 // consumes (lib/three3d/sheetSpecs.js) is three-free and stays on the 2D side.
 import { MeshTransmissionMaterial } from '@react-three/drei';
 import { resolveSheetMaterial } from '../../lib/three3d/sheetMaterial.js';
+import EdgeGlow from './EdgeGlow.jsx';
 
 /**
  * Surface A slabs (S4, PRD D7/D11). Renders one extruded box per sheet spec
@@ -29,8 +30,9 @@ import { resolveSheetMaterial } from '../../lib/three3d/sheetMaterial.js';
  *     renders with a clearcoat sheen);
  *   - when `appearance` is null (Operation lens / no material) the helper returns
  *     the substrate-descriptor result, byte-identical to the pre-S4 fallback.
- * Edge/rim glow (edgeGain/rimGain) and procedural wood grain are NOT here — they
- * land in S5/S6; S4 only sets the base material channels.
+ * Edge/rim glow (edgeGain/rimGain) lands in S5 as separate emissive rim meshes
+ * (EdgeGlow.jsx, rendered per slab beside the base material); procedural wood grain
+ * is S6. S4 only sets the base material channels.
  *
  * @param {{ specs?: import('../../lib/three3d/sheetSpecs.js').SheetSpec[],
  *           appearance?: import('../../lib/three3d/resolveAppearance.js').AppearanceParams|null }} props
@@ -47,7 +49,8 @@ export default function Sheets({ specs = [], appearance = null }) {
         // are MTM RENDER config (not appearance) and stay hard-wired below.
         const mat = resolveSheetMaterial({ appearance, descriptor: m });
         return (
-          <mesh key={spec.panelId} position={[0, 0, spec.zOffset]} castShadow receiveShadow>
+          <group key={spec.panelId}>
+          <mesh position={[0, 0, spec.zOffset]} castShadow receiveShadow>
             {/* boxGeometry args = [x=width, y=height, z=thickness] */}
             <boxGeometry args={[w, h, spec.thickness]} />
             {mat.mode === 'transmission' ? (
@@ -82,6 +85,12 @@ export default function Sheets({ specs = [], appearance = null }) {
               />
             )}
           </mesh>
+          {/* Acrylic cut-edge glow (S5, §3.4/§3.6). Only when a material lens is
+              active; EdgeGlow self-gates to archetypes with edgeGain/rimGain > 0
+              (fluorescent glows hard; opaque/mirror/wood render nothing). Driven by
+              the designated key light + registered for bloom via <Select>. */}
+          {appearance && <EdgeGlow spec={spec} appearance={appearance} />}
+          </group>
         );
       })}
     </group>

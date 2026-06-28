@@ -398,6 +398,35 @@ export default function Studio({ submitOrg = null } = {}) {
     [loadLayerSet]
   );
 
+  // === Tier-2 cloud history persistence (undo-history-plan §7, S9) ===
+  // The undo/redo tail travels embedded in the MANUALLY-saved design config (see
+  // useCloudPersistence). getHistoryTail is read ONLY on a manual save and feeds
+  // history.exportTail() into the saved blob; importHistoryTail installs an
+  // embedded tail AFTER a cloud load (which already cleared history) through the
+  // same rails Tier-1 uses (validateTail → importTail) — a version/checksum
+  // mismatch silently drops history and keeps the document (the safe failure
+  // mode).
+  const getHistoryTail = useCallback(
+    () => historyRef.current?.exportTail() ?? null,
+    []
+  );
+  // LIMITATION (S9): the present-checksum deep-equals the embedded whole-doc
+  // snapshot against the live doc, but the cloud save/load only round-trip
+  // layers + panels + canvas W/H. bgColor, operations, assignments, unit, margin
+  // and outputMode are NOT persisted/restored (presetIndex is saved but not
+  // re-applied), and within this synchronous load handler the slice refs still
+  // lag the just-dispatched setState — so for any non-default doc the checksum
+  // mismatches and the tail is dropped (doc always kept). The embedded WRITE is
+  // the durable deliverable: once cloud load restores every slice, import starts
+  // succeeding with no change here.
+  const importHistoryTail = useCallback((configHistory) => {
+    if (!configHistory) return;
+    const api = historyRef.current;
+    if (!api) return;
+    const stacks = validateTail(configHistory, api.exportTail().present);
+    if (stacks) api.importTail(stacks);
+  }, []);
+
   // === Live selection state (B2 / #5) ===
   // Replaces the old hardcoded `layers[0]` placeholder. Clicking a tree row sets
   // this; the Inspector consumes it. Falls back to the top layer when nothing is
@@ -875,6 +904,9 @@ export default function Studio({ submitOrg = null } = {}) {
     applyCanvasSize,
     markCleanFrom,
     canvasContainerRef,
+    // Tier-2 (S9): tail embedded on MANUAL save only; imported after cloud load.
+    getHistoryTail,
+    importHistoryTail,
   });
 
   // === Guest gating (Rec 3 / A) ===
@@ -882,7 +914,13 @@ export default function Studio({ submitOrg = null } = {}) {
   // bails on `!user`. Route that intent to Google sign-in instead. Guest gating
   // is a UX concern at THIS layer: the hook keeps its `if (!user) return` and its
   // "does nothing without a signed-in user" test stays valid.
-  const onCloudSaveIntent = user ? handleSaveToCloud : signIn;
+  // Manual save intent (⌘S + MenuBar Save). Passes `{ manual: true }` so this —
+  // and ONLY this — embeds the Tier-2 history tail in the saved config; the
+  // autosave caller below invokes `handleSaveToCloud` with no args (manual:false).
+  const onCloudSaveIntent = useCallback(
+    () => (user ? handleSaveToCloud({ manual: true }) : signIn()),
+    [user, handleSaveToCloud, signIn]
+  );
 
   // === Autosave + Cmd/Ctrl+S (Rec 2) ===
   // Both are CALLERS of the single save path (handleSaveToCloud), never a second

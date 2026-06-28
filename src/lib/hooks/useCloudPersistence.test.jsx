@@ -354,6 +354,96 @@ describe("useCloudPersistence", () => {
     expect(result.current.nameDirty).toBe(true);
   });
 
+  // === Tier-2 cloud history persistence (undo-history-plan §7, S9) ===
+  it("history: a MANUAL save embeds config.history (history.exportTail) in the saved config", async () => {
+    saveDesign.mockResolvedValue({ id: "design-9" });
+    const tail = { v: 1, past: [{ a: 1 }], future: [], present: { a: 2 } };
+    const getHistoryTail = vi.fn(() => tail);
+    const props = baseProps({ getHistoryTail });
+    const { result } = renderHook(() => useCloudPersistence(props));
+
+    await act(async () => {
+      await result.current.handleSaveToCloud({ manual: true });
+    });
+
+    expect(getHistoryTail).toHaveBeenCalledTimes(1);
+    const sentConfig = saveDesign.mock.calls[0][2];
+    expect(sentConfig.history).toEqual(tail);
+    // The document slices still ride alongside the tail.
+    expect(sentConfig.layers).toEqual(props.layers);
+  });
+
+  it("history: an AUTOSAVE (no-arg) save does NOT embed config.history", async () => {
+    saveDesign.mockResolvedValue({ id: "design-9" });
+    const getHistoryTail = vi.fn(() => ({ v: 1, past: [], future: [] }));
+    const props = baseProps({ getHistoryTail });
+    const { result } = renderHook(() => useCloudPersistence(props));
+
+    await act(async () => {
+      // The autosave path calls handleSaveToCloud() with no args (manual:false).
+      await result.current.handleSaveToCloud();
+    });
+
+    expect(getHistoryTail).not.toHaveBeenCalled();
+    const sentConfig = saveDesign.mock.calls[0][2];
+    expect(sentConfig.history).toBeUndefined();
+  });
+
+  it("history: a MANUAL save keeps the history-free config for saveHistorySnapshot (no tail bloat)", async () => {
+    saveDesign.mockResolvedValue({ id: "design-9" });
+    const tail = { v: 1, past: [{ a: 1 }], future: [], present: { a: 2 } };
+    // historySnapshots > 0 → the pro snapshot path runs.
+    const props = baseProps({
+      limits: { historySnapshots: 5 },
+      getHistoryTail: () => tail,
+    });
+    const { result } = renderHook(() => useCloudPersistence(props));
+
+    await act(async () => {
+      await result.current.handleSaveToCloud({ manual: true });
+    });
+
+    expect(saveHistorySnapshot).toHaveBeenCalledTimes(1);
+    const snapshotConfig = saveHistorySnapshot.mock.calls[0][2];
+    expect(snapshotConfig.history).toBeUndefined();
+    // But the primary design save DID carry the tail.
+    expect(saveDesign.mock.calls[0][2].history).toEqual(tail);
+  });
+
+  it("history: a cloud LOAD forwards the embedded config.history to importHistoryTail", async () => {
+    const embedded = { v: 1, past: [{ a: 1 }], future: [], present: { a: 2 } };
+    loadDesign.mockResolvedValue({
+      id: "design-7",
+      config: { layers: makeLayers(), canvasW: 640, canvasH: 480, history: embedded },
+    });
+    const importHistoryTail = vi.fn();
+    const props = baseProps({ importHistoryTail });
+    const { result } = renderHook(() => useCloudPersistence(props));
+
+    await act(async () => {
+      await result.current.handleLoadCloudDesign("design-7");
+    });
+
+    expect(importHistoryTail).toHaveBeenCalledTimes(1);
+    expect(importHistoryTail).toHaveBeenCalledWith(embedded);
+  });
+
+  it("history: a cloud LOAD with no embedded history forwards undefined (importer drops)", async () => {
+    loadDesign.mockResolvedValue({
+      id: "design-7",
+      config: { layers: makeLayers(), canvasW: 640, canvasH: 480 },
+    });
+    const importHistoryTail = vi.fn();
+    const props = baseProps({ importHistoryTail });
+    const { result } = renderHook(() => useCloudPersistence(props));
+
+    await act(async () => {
+      await result.current.handleLoadCloudDesign("design-7");
+    });
+
+    expect(importHistoryTail).toHaveBeenCalledWith(undefined);
+  });
+
   it("rename: a successful load clears a pending name-dirty flag", async () => {
     loadDesign.mockResolvedValue({
       id: "design-7",

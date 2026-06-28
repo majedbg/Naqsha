@@ -382,6 +382,21 @@ export default function Studio({ submitOrg = null } = {}) {
     [recordEdit, setBgColor]
   );
 
+  // Document LOAD boundary (lifecycle §6, invariant I5): dropping in a DIFFERENT
+  // document must drop the prior document's history so undo can't cross into it.
+  // This wraps loadLayerSet for the genuine load sites (saved group / example /
+  // cloud / share-link / draft recovery). The panel-delete structural edit and
+  // the restore() replay keep the RAW loadLayerSet — they must NOT clear. Tier-1
+  // / Tier-2 reload-persistence (S8/S9) imports a compatible tail on top of this
+  // always-safe clear floor.
+  const loadDocumentLayers = useCallback(
+    (newLayers) => {
+      historyRef.current?.clear();
+      loadLayerSet(newLayers);
+    },
+    [loadLayerSet]
+  );
+
   // === Live selection state (B2 / #5) ===
   // Replaces the old hardcoded `layers[0]` placeholder. Clicking a tree row sets
   // this; the Inspector consumes it. Falls back to the top layer when nothing is
@@ -817,7 +832,7 @@ export default function Studio({ submitOrg = null } = {}) {
   const { markCleanFrom, isDirty } = useDesignPersistence({
     layers,
     bgColor,
-    loadLayerSet,
+    loadLayerSet: loadDocumentLayers, // share-link hydration is a document load (I5)
     setBgColor,
     setCanvasW,
     setCanvasH,
@@ -855,7 +870,7 @@ export default function Studio({ submitOrg = null } = {}) {
     // round-trip. Always pass the real array + setter.
     panels,
     setPanels,
-    loadLayerSet,
+    loadLayerSet: loadDocumentLayers, // cloud load + draft recovery are document loads (I5)
     applyCanvasSize,
     markCleanFrom,
     canvasContainerRef,
@@ -1070,7 +1085,7 @@ export default function Studio({ submitOrg = null } = {}) {
   };
 
   const handleLoadGroup = (group) => {
-    loadLayerSet(group.layers);
+    loadDocumentLayers(group.layers);
     if (group.canvasW && group.canvasH) {
       applyCanvasSize(group.canvasW, group.canvasH);
     }
@@ -1086,7 +1101,7 @@ export default function Studio({ submitOrg = null } = {}) {
     (example) => {
       const cfg = example?.config;
       if (!cfg?.layers) return;
-      loadLayerSet(cfg.layers);
+      loadDocumentLayers(cfg.layers);
       if (typeof cfg.bgColor === "string") setBgColor(cfg.bgColor);
       if (cfg.canvasW && cfg.canvasH) {
         applyCanvasSize(cfg.canvasW, cfg.canvasH);
@@ -1098,7 +1113,7 @@ export default function Studio({ submitOrg = null } = {}) {
       setUI("pendingExample", null);
     },
     [
-      loadLayerSet,
+      loadDocumentLayers,
       setBgColor,
       applyCanvasSize,
       setCurrentDesignId,
@@ -1343,7 +1358,7 @@ export default function Studio({ submitOrg = null } = {}) {
         <CloudSaveModal
           onLoad={handleLoadCloudDesign}
           onLoadConfig={(config) => {
-            if (config.layers) loadLayerSet(config.layers);
+            if (config.layers) loadDocumentLayers(config.layers);
             if (config.canvasW && config.canvasH) {
               applyCanvasSize(config.canvasW, config.canvasH);
             }

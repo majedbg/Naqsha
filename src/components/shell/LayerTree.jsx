@@ -677,6 +677,11 @@ export default function LayerTree({
                       onToggleEditor={toggleEditor}
                       canDelete={panels.length > 1}
                       canDuplicate={canDuplicatePanel(panels, layers, panel.id, cap)}
+                      duplicateDisabledReason={
+                        canAddPanel(panels)
+                          ? "Not enough layer slots to duplicate" // panel cap OK → layer cap
+                          : "Max 3 panels per document" // panel cap hit
+                      }
                       canClearLayers={canClearPanelLayers(layers, panel.id)}
                       onUpdatePanel={onUpdatePanel}
                       onDeletePanel={onDeletePanel}

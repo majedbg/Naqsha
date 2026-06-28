@@ -388,6 +388,32 @@ describe("LayerTree — grouped panel tier (WI-5, spec §6)", () => {
     ).toHaveAttribute("aria-disabled", "true");
   });
 
+  // P6.6b (plan §8.4) — when Duplicate is disabled, LayerTree threads the PRECISE
+  // reason to PanelHeader's tooltip: panel cap hit → "Max 3 panels per document".
+  it("disables Duplicate with the panel-cap tooltip at the 3-panel cap", () => {
+    renderGrouped({
+      panels: [makePanel("p1", 0), makePanel("p2", 1), makePanel("p3", 2)],
+      onDuplicatePanel: vi.fn(),
+    });
+    const p1 = screen.getByTestId("p1");
+    fireEvent.click(within(p1).getByRole("button", { name: "Panel options" }));
+    const dup = within(p1).getByRole("menuitem", { name: "Duplicate" });
+    expect(dup).toHaveAttribute("aria-disabled", "true");
+    expect(dup).toHaveAttribute("title", "Max 3 panels per document");
+  });
+
+  // Layer-cap scenario: under the panel cap but copying would overflow the layer
+  // cap → reason is "Not enough layer slots to duplicate". (Default harness: 3
+  // layers total, p1 holds 2; cap=3 → 3+2 > 3.)
+  it("disables Duplicate with the layer-cap tooltip when copying would overflow the layer cap", () => {
+    renderGrouped({ cap: 3, onDuplicatePanel: vi.fn() });
+    const p1 = screen.getByTestId("p1");
+    fireEvent.click(within(p1).getByRole("button", { name: "Panel options" }));
+    const dup = within(p1).getByRole("menuitem", { name: "Duplicate" });
+    expect(dup).toHaveAttribute("aria-disabled", "true");
+    expect(dup).toHaveAttribute("title", "Not enough layer slots to duplicate");
+  });
+
   // 7. Back-compat: WITHOUT panels, the flat list renders and NO panel headers.
   it("renders the flat list with NO panel headers when panels is omitted", () => {
     render(

@@ -216,14 +216,19 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
   // selected. Read at call time (a getter, not a value) so the latest default
   // applies without re-creating addLayer. When omitted or unresolved, the new
   // layer keeps createLayer's Cut default — byte-stable with the legacy path.
-  const addLayer = useCallback((patternType) => {
+  const addLayer = useCallback((patternType, opts) => {
     const requested = typeof patternType === 'string' ? patternType : undefined;
+    // Panel assignment (Naqsha Panels). Additive optional 2nd arg: when
+    // `opts.panelId` is provided the new layer is born on that panel; otherwise
+    // panelId stays as createLayer sets it (null) and the normalizer assigns it.
+    const panelId = opts?.panelId;
     const defaultOpId = typeof getDefaultOperationId === 'function' ? getDefaultOperationId() : undefined;
     recordStructuralFn(); // history: discrete structural entry (capture-before)
     setLayers((prev) => {
       if (prev.length >= cap) return prev;
       const layer = createLayer(prev.length, requested);
-      return [...prev, defaultOpId ? { ...layer, operationId: defaultOpId } : layer];
+      const withOp = defaultOpId ? { ...layer, operationId: defaultOpId } : layer;
+      return [...prev, panelId !== undefined ? { ...withOp, panelId } : withOp];
     });
   }, [cap, getDefaultOperationId, recordStructuralFn]);
 
@@ -714,5 +719,6 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
     randomizeLayer, randomizeAll, randomizeLayerParams, randomizeAllParams,
     loadLayerSet, bgColor, setBgColor,
     panels, setPanels,
+    cap, // effective tier layer cap (downstream P6/P7 panel duplicate-cap gating)
   };
 }

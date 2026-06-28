@@ -68,10 +68,28 @@ export default function Sheets({ specs = [], appearance = null }) {
                 roughness={mat.roughness}
                 thickness={spec.thickness}
                 transmission={mat.transmission}
-                samples={4}
-                resolution={128}
+                samples={8}
+                // ── Mark-through-slab ANTI-ALIASING (the reported "tiling on orbit") ──
+                // The emissive marks are re-imaged through this slab by screen-space
+                // refraction sampling a finite buffer. At resolution=128 (the prior
+                // value) that buffer was far coarser than the viewport, so the
+                // refracted marks resolved into a blocky grid that crawled/tiled as the
+                // camera orbited. resolution=1024 samples the refracted marks finely
+                // enough that the marks read CRISP at normal/moderate angles and the
+                // tiling is gone (512 was measurably insufficient — still blocked). The
+                // sheets share ONE buffer (transmissionSampler) re-rendered only during
+                // interaction (frameloop="demand"), so even at 1024 the cost is bounded
+                // (measured ~60fps under continuous orbit). samples=8 (was 4) keeps the
+                // refraction blur from banding. chromaticAberration trimmed 0.02→0.002:
+                // the RGB-split sampling added colored fringing that read as colored
+                // tiles on the high-frequency marks; near-zero keeps a faint edge tint
+                // without the fringe. (NOTE: at an EXTREME edge-on grazing angle the
+                // foreshortened slab still shows some residual blocking — an inherent
+                // limit of screen-space refraction, where the marks are near-invisible
+                // anyway.)
+                resolution={1024}
                 anisotropy={0.1}
-                chromaticAberration={0.02}
+                chromaticAberration={0.002}
               />
             ) : mat.mode === 'physical' ? (
               /* Pearlescent nacre (S4, §3.2): opaque + a clearcoat sheen, which

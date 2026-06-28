@@ -7,7 +7,7 @@
  *
  * Three pure responsibilities (all unit-tested):
  *
- *  1. shouldUseTextureMode — the D6 routing CONTRACT (ribbon path-count cap 1500;
+ *  1. shouldUseTextureMode — the D6 routing CONTRACT (ribbon path-count cap PATH_CAP;
  *     mobile / DPR<1.5 force texture). S5 ALWAYS textures regardless; this exists
  *     so S10 can opt SMALL desktop panels into true ribbon geometry instead. The
  *     scene must NOT gate marks on it now (a `false` here means "ribbon", which
@@ -112,7 +112,7 @@ export function countSvgPaths(svg) {
  *
  * Path count reuses countSvgPaths (the S5 routing contract): a coarse `<path>`-open
  * count. Marks emitted only as `<line>`/`<polyline>` (e.g. Grid) count as 0 and so
- * stay ribbon-eligible — intended: the 1500 cap is an UPPER perf guard, not a floor,
+ * stay ribbon-eligible — intended: the PATH_CAP is an UPPER perf guard, not a floor,
  * and SVGLoader strokes those element types into ribbons regardless.
  *
  * Pure + three-free: stays on the 2D side of the import boundary (the ribbon

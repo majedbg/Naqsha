@@ -4,8 +4,10 @@
 // consumes (lib/three3d/markTexture.buildPanelMarkSVGs) is three-free and stays
 // on the 2D side.
 import { useEffect, useMemo, useState } from 'react';
+import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { routePanelRenderModes } from '../../lib/three3d/markTexture.js';
+import { clampAnisotropy, chooseRasterScale } from '../../lib/three3d/textureFiltering.js';
 import { buildRibbonGeometry } from './ribbonGeometry.js';
 import { useBloomRef } from './bloomSelection.js';
 
@@ -14,7 +16,7 @@ import { useBloomRef } from './bloomSelection.js';
  *
  * Per panel, markTexture.routePanelRenderModes (pure, 2D-side) picks the render mode
  * from the panel's stroke-path count + device profile (D6): sparse desktop panels
- * (≤1500 paths, DPR≥1.5, non-mobile) → RIBBON geometry; everything else → TEXTURE.
+ * (≤PATH_CAP paths, DPR≥1.5, non-mobile) → RIBBON geometry; else → TEXTURE.
  *
  * TEXTURE mode (S5, always-works): each per-process emissive SVG (built 2D-side by
  * markTexture.buildPanelMarkSVGs) is rasterized to an offscreen canvas →
@@ -91,6 +93,11 @@ function useSheetClipPlanes(w, h) {
  */
 function useSvgTexture(svg) {
   const [texture, setTexture] = useState(null);
+  // The renderer's hardware anisotropy ceiling (typically 16). The mark plane is
+  // heavily MINIFIED and tilted at the 3/4 viewing angle — the textbook case where
+  // a low anisotropic-sample count stair-steps/shimmers — so sample at the GPU max
+  // (was hardcoded 4). Stable across renders, so it never re-runs the effect.
+  const maxAnisotropy = useThree((s) => s.gl.capabilities.getMaxAnisotropy());
 
   useEffect(() => {
     // Parent (<Marks>) only mounts a plane for a truthy svg, so no clear-to-null
@@ -104,10 +111,9 @@ function useSvgTexture(svg) {
       const w = img.naturalWidth || img.width || 1;
       const h = img.naturalHeight || img.height || 1;
       // Fold DPR in BEFORE clamping so MAX_TEXTURE_EDGE caps the FINAL pixels
-      // (longest raster edge ≤ cap on any display, not cap×DPR).
+      // (longest raster edge ≤ cap on any display, not cap×DPR) — chooseRasterScale.
       const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
-      const longest = Math.max(w, h) * dpr;
-      const scale = (longest > MAX_TEXTURE_EDGE ? MAX_TEXTURE_EDGE / longest : 1) * dpr;
+      const scale = chooseRasterScale({ width: w, height: h, dpr, maxEdge: MAX_TEXTURE_EDGE });
       const canvas = document.createElement('canvas');
       canvas.width = Math.max(1, Math.round(w * scale));
       canvas.height = Math.max(1, Math.round(h * scale));
@@ -116,7 +122,14 @@ function useSvgTexture(svg) {
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
       const tex = new THREE.CanvasTexture(canvas);
       tex.colorSpace = THREE.SRGBColorSpace;
-      tex.anisotropy = 4;
+      // Trilinear mipmaps + max anisotropy: kills the minification stair-step on the
+      // tilted mark plane. (CanvasTexture already defaults generateMipmaps=true /
+      // minFilter=LinearMipmapLinear, but pin them so the intent is explicit and a
+      // future default change can't silently regress the AA.)
+      tex.generateMipmaps = true;
+      tex.minFilter = THREE.LinearMipmapLinearFilter;
+      tex.magFilter = THREE.LinearFilter;
+      tex.anisotropy = clampAnisotropy(maxAnisotropy);
       tex.needsUpdate = true;
       created = tex;
       setTexture(tex);
@@ -128,7 +141,7 @@ function useSvgTexture(svg) {
       img.onload = null;
       if (created) created.dispose();
     };
-  }, [svg]);
+  }, [svg, maxAnisotropy]);
 
   return texture;
 }

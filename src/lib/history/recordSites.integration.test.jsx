@@ -3,6 +3,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import useLayers from "../useLayers";
+import useCanvasSize from "../hooks/useCanvasSize";
+import { addPanel, deletePanel } from "../panels";
 import useHistory from "./useHistory";
 
 // S4 — the record sites against the REAL async path. This wires useLayers +
@@ -41,12 +43,65 @@ function useWired() {
     flushEdit();
     historyRef.current?.record();
   }, [flushEdit]);
+  // recordBatch (mirrors Studio): fold a multi-slice user action into ONE entry.
+  // Studio's handleDocumentSetupApply uses this around applyCanvasSize so a
+  // Document Setup apply is a single undo entry.
+  const recordBatch = useCallback((fn) => {
+    const api = historyRef.current;
+    if (!api || restoringRef.current) {
+      fn();
+      return;
+    }
+    api.beginCoalesce();
+    try {
+      fn();
+    } finally {
+      api.endCoalesce();
+    }
+  }, []);
 
   const layersApi = useLayers({
     persistToLocal: false,
     recordEdit,
     recordStructural,
   });
+
+  // Canvas slice (mirrors useCanvasSize wiring + Studio's resize record site).
+  const { captureCanvas, restoreCanvas, applyCanvasSize } = useCanvasSize({});
+  const canvasRef = useRef(null);
+  useEffect(() => {
+    canvasRef.current = captureCanvas();
+  }, [captureCanvas]);
+  // Panel slice: useLayers owns panels/setPanels; these mirror Studio's
+  // onAddPanel / onDeletePanel record sites (recordStructural BEFORE mutation).
+  const panelsRef = useRef(layersApi.panels);
+  useEffect(() => {
+    panelsRef.current = layersApi.panels;
+  }, [layersApi.panels]);
+  const addPanelEntry = useCallback(() => {
+    recordStructural();
+    layersApi.setPanels((p) => addPanel(p));
+  }, [layersApi, recordStructural]);
+  const deletePanelEntry = useCallback(
+    (id, opts) => {
+      recordStructural();
+      const { panels: np, layers: nl } = deletePanel(
+        panelsRef.current,
+        layersApi.layers,
+        id,
+        opts
+      );
+      layersApi.setPanels(np);
+      layersApi.loadLayerSet(nl); // RAW loadLayerSet (structural edit, no clear)
+    },
+    [layersApi, recordStructural]
+  );
+  const resizeCanvas = useCallback(
+    (w, h) => {
+      recordBatch(() => applyCanvasSize(w, h));
+    },
+    [recordBatch, applyCanvasSize]
+  );
 
   // Operations slice (mirrors S5: plain Studio state, commitOperations records a
   // discrete entry then applies the mapper; restoreOperations is setOperations).
@@ -72,6 +127,8 @@ function useWired() {
     () => ({
       layers: structuredClone(layersRef.current),
       operations: structuredClone(operationsRef.current),
+      panels: structuredClone(panelsRef.current),
+      canvas: canvasRef.current,
     }),
     []
   );
@@ -87,11 +144,13 @@ function useWired() {
           layersApi.updateLayer(l.id, { operationId: l.operationId });
         }
         setOperations(s.operations);
+        layersApi.setPanels(s.panels);
+        restoreCanvas(s.canvas);
       } finally {
         restoringRef.current = false;
       }
     },
-    [layersApi]
+    [layersApi, restoreCanvas]
   );
 
   const history = useHistory({ capture, restore });
@@ -99,7 +158,16 @@ function useWired() {
     historyRef.current = history;
   });
 
-  return { layersApi, history, operations, commitOperations };
+  return {
+    layersApi,
+    history,
+    operations,
+    commitOperations,
+    addPanelEntry,
+    deletePanelEntry,
+    resizeCanvas,
+    canvasW: captureCanvas().w,
+  };
 }
 
 function firstLayer(result) {
@@ -204,6 +272,65 @@ describe("S4 record sites — real async path", () => {
     expect(result.current.operations[0].color).toBe("#FF0000");
     act(() => result.current.history.redo());
     expect(result.current.operations[0].color).toBe("#123456");
+  });
+
+  it("panel add is a discrete entry; undo restores the prior panel set", () => {
+    const { result } = renderHook(() => useWired());
+    const before = result.current.layersApi.panels.length;
+    act(() => result.current.addPanelEntry());
+    expect(result.current.layersApi.panels.length).toBe(before + 1);
+    act(() => result.current.history.undo());
+    expect(result.current.layersApi.panels.length).toBe(before);
+    act(() => result.current.history.redo());
+    expect(result.current.layersApi.panels.length).toBe(before + 1);
+  });
+
+  it("panel delete (panels + layer reassignment) is ONE undo entry", () => {
+    const { result } = renderHook(() => useWired());
+    // deletePanel is a no-op at 1 panel — add one so the delete actually mutates.
+    act(() => result.current.addPanelEntry());
+    const after = result.current.layersApi.panels.length;
+    const victim = result.current.layersApi.panels[after - 1].id;
+    // Assign a layer to the victim panel so the delete genuinely touches BOTH
+    // slices (deleteLayers:false reassigns the layer to a surviving panel). This
+    // proves the layer change rides the SAME entry as the panel removal.
+    const layerId = result.current.layersApi.layers[0].id;
+    act(() => result.current.layersApi.updateLayer(layerId, { panelId: victim }));
+    expect(result.current.layersApi.layers[0].panelId).toBe(victim);
+
+    act(() =>
+      result.current.deletePanelEntry(victim, { deleteLayers: false })
+    );
+    expect(result.current.layersApi.panels.length).toBe(after - 1);
+    expect(
+      result.current.layersApi.panels.some((p) => p.id === victim)
+    ).toBe(false);
+    // The layer was reassigned off the deleted panel.
+    expect(result.current.layersApi.layers[0].panelId).not.toBe(victim);
+    // One undo brings BOTH the deleted panel AND the layer's panelId back.
+    act(() => result.current.history.undo());
+    expect(result.current.layersApi.panels.length).toBe(after);
+    expect(
+      result.current.layersApi.panels.some((p) => p.id === victim)
+    ).toBe(true);
+    expect(result.current.layersApi.layers[0].panelId).toBe(victim);
+  });
+
+  it("canvas resize via recordBatch is ONE undoable entry; undo restores the width", () => {
+    const { result } = renderHook(() => useWired());
+    const w0 = result.current.canvasW;
+    const newW = w0 + 321;
+    act(() => result.current.resizeCanvas(newW, newW));
+    expect(result.current.canvasW).toBe(newW);
+    expect(result.current.history.canUndo).toBe(true);
+    // undo restores the pre-resize canvas slice (recordBatch captured before
+    // applyCanvasSize ran).
+    act(() => result.current.history.undo());
+    expect(result.current.canvasW).toBe(w0);
+    expect(result.current.history.canUndo).toBe(false);
+    act(() => result.current.history.redo());
+    expect(result.current.canvasW).toBe(newW);
+    expect(result.current.history.canRedo).toBe(false);
   });
 
   it("I9 — clear() (profile-switch semantics) drops all history", () => {

@@ -212,6 +212,43 @@ describe("StudioRoute — Naqsha Panels handler round-trips (WI-6 / spec §5)", 
   });
 });
 
+describe("StudioRoute — panel edits are undoable (unified history S4)", () => {
+  beforeEach(() => localStorage.clear());
+
+  // Drive the global ⌘Z handler (Studio binds keydown on window; events bubble
+  // document.body → window). This exercises the REAL onAddPanel handler wired in
+  // Studio.jsx, not a parallel harness copy.
+  const undo = () =>
+    fireEvent.keyDown(document.body, { key: "z", metaKey: true });
+
+  it("adding a panel through the UI then ⌘Z removes the added panel", async () => {
+    renderPro();
+    setProfile("laser");
+
+    const headersBefore = within(objectTree()).getAllByTestId(
+      "panel-header"
+    ).length;
+
+    fireEvent.click(
+      within(objectTree()).getByRole("button", { name: "Add panel" })
+    );
+    await waitFor(() => {
+      expect(within(objectTree()).getAllByTestId("panel-header").length).toBe(
+        headersBefore + 1
+      );
+    });
+
+    // Undo restores the pre-add panel set (recordStructural captured it before
+    // the mutation; the snapshot carries the panels slice).
+    undo();
+    await waitFor(() => {
+      expect(within(objectTree()).getAllByTestId("panel-header").length).toBe(
+        headersBefore
+      );
+    });
+  });
+});
+
 describe("StudioRoute — flat export path unchanged in plotter (WI-6 / spec §5)", () => {
   beforeEach(() => localStorage.clear());
 

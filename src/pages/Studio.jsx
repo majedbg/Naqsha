@@ -965,20 +965,36 @@ export default function Studio({ submitOrg = null } = {}) {
   // to a known preset or Custom, exactly as the cloud/example loaders do).
   const handleDocumentSetupApply = useCallback(
     ({ profileId, bedSize: nextBed, unit: nextUnit, canvasW: nextW, canvasH: nextH }) => {
-      if (profileId && profileId !== activeProfileId) {
-        handleProfileChange(profileId);
-      }
-      if (nextBed) setBedSize(nextBed);
-      // The dialog's mm/in toggle drives the document's global unit (rulers,
-      // status bar, length-tagged params all follow). bedSize stays canonical mm.
-      if ((nextUnit === "mm" || nextUnit === "in") && nextUnit !== unit) {
-        setUnit(nextUnit);
-      }
-      if (typeof nextW === "number" && typeof nextH === "number") {
-        applyCanvasSize(nextW, nextH);
+      const isProfileChange = profileId && profileId !== activeProfileId;
+      // The document-mutating body. Wrapped in ONE recordBatch for the pure
+      // size/unit/margin path so a Document Setup apply is a single undo entry
+      // (S4 gap). NOT recorded inside applyCanvasSize itself — loaders call that
+      // directly and must stay unrecorded.
+      const applyBody = () => {
+        if (isProfileChange) {
+          handleProfileChange(profileId);
+        }
+        if (nextBed) setBedSize(nextBed);
+        // The dialog's mm/in toggle drives the document's global unit (rulers,
+        // status bar, length-tagged params all follow). bedSize stays canonical mm.
+        if ((nextUnit === "mm" || nextUnit === "in") && nextUnit !== unit) {
+          setUnit(nextUnit);
+        }
+        if (typeof nextW === "number" && typeof nextH === "number") {
+          applyCanvasSize(nextW, nextH);
+        }
+      };
+      // A profile switch is non-undoable (I9): handleProfileChange calls
+      // history.clear(), so wrapping it in recordBatch would push a doomed entry
+      // against a doc that's about to be cleared. Run that path raw; only the
+      // pure size/unit/margin path records one entry.
+      if (isProfileChange) {
+        applyBody();
+      } else {
+        recordBatch(applyBody);
       }
     },
-    [activeProfileId, handleProfileChange, applyCanvasSize, unit, setUnit]
+    [activeProfileId, handleProfileChange, applyCanvasSize, unit, setUnit, recordBatch]
   );
 
   // AI-pattern chat (create / revise) — re-homed for #16 AC2. The legacy
@@ -1587,16 +1603,26 @@ export default function Studio({ submitOrg = null } = {}) {
             // unconditionally; they are inert in flat mode (the grouped tier that
             // calls them isn't rendered).
             panels={activeProfileId === "laser" ? panels : []}
-            onAddPanel={() => setPanels((p) => addPanel(p))}
+            onAddPanel={() => {
+              recordStructural(); // capture-before: one discrete undo entry (S4)
+              setPanels((p) => addPanel(p));
+            }}
             onAssignLayerToPanel={(layerId, panelId) =>
               updateLayer(layerId, { panelId })
             }
-            onUpdatePanel={(id, patch) =>
+            onUpdatePanel={(id, patch) => {
+              recordStructural();
               setPanels((p) =>
                 p.map((pn) => (pn.id === id ? { ...pn, ...patch } : pn))
-              )
-            }
+              );
+            }}
             onDeletePanel={(id, { deleteLayers }) => {
+              // Delete mutates BOTH slices (panels + layer reassignment). One
+              // recordStructural BEFORE both setters folds them into a single
+              // undo entry (the snapshot captures panels + layers together).
+              // loadLayerSet stays RAW here (a structural edit, NOT a doc load —
+              // do not switch to loadDocumentLayers, which would clear history).
+              recordStructural();
               const { panels: np, layers: nl } = deletePanel(panels, layers, id, {
                 deleteLayers,
               });

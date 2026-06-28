@@ -126,34 +126,64 @@ describe("LayerTree — grouped panel tier (WI-5, spec §6)", () => {
     expect(screen.getByText("Beta")).toBeInTheDocument();
   });
 
-  // 3. "+ Add panel" calls onAddPanel; disabled at 3 with the cap tooltip.
-  it("calls onAddPanel from the add button; disables it at 3 panels with the cap title", () => {
+  // 3. The old dashed "+ Add panel" is replaced by <NewPanelRow> at the foot
+  //    (P6.4). Its neutral "Create panel" button fires onAddPanel() (no preset);
+  //    disabled at the 3-panel cap with the cap title.
+  it("creates a panel via NewPanelRow's 'Create panel' (neutral → onAddPanel(), no preset)", () => {
     const onAddPanel = vi.fn();
     renderGrouped({ onAddPanel });
-    const add = screen.getByRole("button", { name: "Add panel" });
-    expect(add).not.toBeDisabled();
-    fireEvent.click(add);
+    // The old dashed button is gone.
+    expect(screen.queryByRole("button", { name: "Add panel" })).not.toBeInTheDocument();
+
+    const create = screen.getByRole("button", { name: "Create panel" });
+    expect(create).not.toBeDisabled();
+    fireEvent.click(create);
     expect(onAddPanel).toHaveBeenCalledTimes(1);
+    expect(onAddPanel).toHaveBeenCalledWith();
   });
 
-  it("disables Add panel at the 3-panel cap with title 'Max 3 panels per document'", () => {
+  it("disables NewPanelRow's create at the 3-panel cap with title 'Max 3 panels per document'", () => {
     renderGrouped({
       panels: [makePanel("p1", 0), makePanel("p2", 1), makePanel("p3", 2)],
     });
-    const add = screen.getByRole("button", { name: "Add panel" });
-    expect(add).toBeDisabled();
-    expect(add).toHaveAttribute("title", "Max 3 panels per document");
+    const create = screen.getByRole("button", { name: "Create panel" });
+    expect(create).toBeDisabled();
+    expect(create).toHaveAttribute("title", "Max 3 panels per document");
   });
 
-  // 4. Delete opens the danger ConfirmDialog; checkbox unchecked → deleteLayers
-  //    false; checked → true. Delete disabled when only one panel.
-  it("deletes a panel through a danger confirm dialog, threading the 'delete layers too' checkbox", () => {
+  // P6.4 — NewPanelRow is ALWAYS mounted at the foot (grouped AND flat) so flat
+  // mode can create the first panel. Only when onAddPanel is supplied.
+  it("mounts NewPanelRow at the foot in flat mode (no panels) when onAddPanel is given", () => {
+    const onAddPanel = vi.fn();
+    render(
+      <LayerTree
+        layers={[makeLayer("l1", { name: "Solo" })]}
+        operations={seedOperations()}
+        profileId="laser"
+        selectedLayerId={null}
+        onSelectLayer={() => {}}
+        onUpdateLayer={() => {}}
+        onReorderLayers={() => {}}
+        onProfileChange={() => {}}
+        onAddPanel={onAddPanel}
+      />
+    );
+    expect(screen.getByLabelText("New panel")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Create panel" }));
+    expect(onAddPanel).toHaveBeenCalledWith();
+  });
+
+  // 4. Delete (via the ⋯ "Panel options" menu — the standalone trash icon was
+  //    removed in P5) opens the danger ConfirmDialog; checkbox unchecked →
+  //    deleteLayers false; checked → true. With one panel Delete is a no-op.
+  it("deletes a panel through the ⋯ menu + danger confirm dialog, threading the 'delete layers too' checkbox", () => {
     const onDeletePanel = vi.fn();
     renderGrouped({ onDeletePanel });
     const h1 = screen.getAllByTestId("panel-header")[0];
 
-    // Open the delete confirm.
-    fireEvent.click(within(h1).getByRole("button", { name: /delete panel/i }));
+    // Open the ⋯ options menu, then choose Delete → opens the confirm dialog.
+    fireEvent.click(within(h1).getByRole("button", { name: "Panel options" }));
+    fireEvent.click(within(h1).getByRole("menuitem", { name: "Delete" }));
     const dialog = screen.getByRole("alertdialog");
     expect(dialog).toBeInTheDocument();
 
@@ -166,7 +196,8 @@ describe("LayerTree — grouped panel tier (WI-5, spec §6)", () => {
     const onDeletePanel = vi.fn();
     renderGrouped({ onDeletePanel });
     const h1 = screen.getAllByTestId("panel-header")[0];
-    fireEvent.click(within(h1).getByRole("button", { name: /delete panel/i }));
+    fireEvent.click(within(h1).getByRole("button", { name: "Panel options" }));
+    fireEvent.click(within(h1).getByRole("menuitem", { name: "Delete" }));
     const dialog = screen.getByRole("alertdialog");
     fireEvent.click(
       within(dialog).getByRole("checkbox", { name: /delete the layers on this panel too/i })
@@ -175,13 +206,19 @@ describe("LayerTree — grouped panel tier (WI-5, spec §6)", () => {
     expect(onDeletePanel).toHaveBeenCalledWith("p1", { deleteLayers: true });
   });
 
-  it("disables panel delete when only one panel exists (always >= 1)", () => {
+  it("does not delete when only one panel exists (Delete via ⋯ is a guarded no-op)", () => {
+    const onDeletePanel = vi.fn();
     renderGrouped({
       panels: [makePanel("p1", 0)],
       layers: [makeLayer("l1", { panelId: "p1" })],
+      onDeletePanel,
     });
     const h1 = screen.getByTestId("panel-header");
-    expect(within(h1).getByRole("button", { name: /delete panel/i })).toBeDisabled();
+    fireEvent.click(within(h1).getByRole("button", { name: "Panel options" }));
+    fireEvent.click(within(h1).getByRole("menuitem", { name: "Delete" }));
+    // canDelete=false → handleDelete is a no-op: no confirm dialog, no callback.
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(onDeletePanel).not.toHaveBeenCalled();
   });
 
   // 5. Dragging a layer row and dropping on another panel's header reassigns it.
@@ -252,6 +289,103 @@ describe("LayerTree — grouped panel tier (WI-5, spec §6)", () => {
     fireEvent.click(within(h2).getByRole("button", { name: /acrylic/i }));
     expect(within(h2).getByRole("combobox", { name: "Substrate kind" })).toBeInTheDocument();
     expect(within(h1).queryByRole("combobox", { name: "Substrate kind" })).not.toBeInTheDocument();
+  });
+
+  // P6.1 — grouped per-panel "+ Add layer": each panel row wrapper carries
+  // data-testid={panel.id}; under each panel's layers a static-aria "+ Add layer"
+  // button calls onAddLayer(panel.id). Names aren't unique → scope by id.
+  it("renders a per-panel '+ Add layer' that calls onAddLayer(panel.id)", () => {
+    const onAddLayer = vi.fn();
+    renderGrouped({ onAddLayer });
+
+    const p1 = screen.getByTestId("p1");
+    const p2 = screen.getByTestId("p2");
+    fireEvent.click(within(p1).getByRole("button", { name: "Add layer" }));
+    expect(onAddLayer).toHaveBeenCalledWith("p1");
+
+    fireEvent.click(within(p2).getByRole("button", { name: "Add layer" }));
+    expect(onAddLayer).toHaveBeenCalledWith("p2");
+  });
+
+  // P6.2 — in grouped mode the bottom global "+ New Layer" button is gone; the
+  // only add-layer affordances are the per-panel ones (one per panel).
+  it("does not render the global '+ New Layer' button in grouped mode", () => {
+    const onAddLayer = vi.fn();
+    renderGrouped({ onAddLayer });
+    expect(screen.queryByText("New Layer")).not.toBeInTheDocument();
+    // Exactly one "Add layer" per panel — no extra global one.
+    expect(screen.getAllByRole("button", { name: "Add layer" })).toHaveLength(2);
+  });
+
+  // P6.3 — flat mode (no panels) keeps ONE global add-layer; clicking it calls
+  // onAddLayer() with NO panel id (zero args — guards the P7 panelId contract
+  // against the click-event leak).
+  it("keeps the global add-layer in flat mode and calls onAddLayer() with no panel id", () => {
+    const onAddLayer = vi.fn();
+    render(
+      <LayerTree
+        layers={[makeLayer("l1", { name: "Solo" })]}
+        operations={seedOperations()}
+        profileId="laser"
+        selectedLayerId={null}
+        onSelectLayer={() => {}}
+        onUpdateLayer={() => {}}
+        onReorderLayers={() => {}}
+        onProfileChange={() => {}}
+        onAddLayer={onAddLayer}
+      />
+    );
+    const add = screen.getByRole("button", { name: "Add layer" });
+    fireEvent.click(add);
+    expect(onAddLayer).toHaveBeenCalledWith();
+  });
+
+  // P6.5 — the per-panel "+ Add layer" honors the tier layer cap via addDisabled.
+  it("disables every per-panel '+ Add layer' when addDisabled (layer cap reached)", () => {
+    renderGrouped({ onAddLayer: vi.fn(), addDisabled: true });
+    const adds = screen.getAllByRole("button", { name: "Add layer" });
+    expect(adds).toHaveLength(2);
+    adds.forEach((b) => expect(b).toBeDisabled());
+  });
+
+  // P6.6 — LayerTree threads the panel-action props through to PanelHeader:
+  // onDuplicatePanel / onClearPanelLayers, plus the per-panel canDuplicate /
+  // canClearLayers gates (cap defaults to Infinity → canDuplicate reduces to the
+  // panel cap).
+  it("threads Duplicate through the ⋯ menu → onDuplicatePanel(panel.id)", () => {
+    const onDuplicatePanel = vi.fn();
+    renderGrouped({ onDuplicatePanel });
+    const h1 = screen.getAllByTestId("panel-header")[0];
+    fireEvent.click(within(h1).getByRole("button", { name: "Panel options" }));
+    fireEvent.click(within(h1).getByRole("menuitem", { name: "Duplicate" }));
+    expect(onDuplicatePanel).toHaveBeenCalledWith("p1");
+  });
+
+  it("threads Clear all layers through the ⋯ menu + danger confirm → onClearPanelLayers(panel.id)", () => {
+    const onClearPanelLayers = vi.fn();
+    renderGrouped({ onClearPanelLayers });
+    const h1 = screen.getAllByTestId("panel-header")[0];
+    fireEvent.click(within(h1).getByRole("button", { name: "Panel options" }));
+    const clear = within(h1).getByRole("menuitem", { name: "Clear all layers" });
+    // p1 holds Alpha+Beta and the doc has Gamma left over → clearing is allowed.
+    expect(clear).not.toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(clear);
+    const dialog = screen.getByRole("alertdialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Clear" }));
+    expect(onClearPanelLayers).toHaveBeenCalledWith("p1");
+  });
+
+  it("disables Clear all layers when it would empty the document (single panel, all layers)", () => {
+    renderGrouped({
+      panels: [makePanel("p1", 0)],
+      layers: [makeLayer("l1", { panelId: "p1" })],
+      onClearPanelLayers: vi.fn(),
+    });
+    const h1 = screen.getByTestId("panel-header");
+    fireEvent.click(within(h1).getByRole("button", { name: "Panel options" }));
+    expect(
+      within(h1).getByRole("menuitem", { name: "Clear all layers" })
+    ).toHaveAttribute("aria-disabled", "true");
   });
 
   // 7. Back-compat: WITHOUT panels, the flat list renders and NO panel headers.

@@ -20,7 +20,9 @@ export default function useAutosave({
   isDirty,
   save,
   isSaving = false,
-  debounceMs = 2500,
+  // 3000ms (undo-history-plan §10/§12): a touch longer than the old 2500 so a
+  // rapid undo/redo burst settles before a cloud write fires.
+  debounceMs = 3000,
 }) {
   const saveRef = useRef(save);
   const isDirtyRef = useRef(isDirty);

@@ -190,7 +190,10 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
     return DEFAULT_BG_COLOR;
   });
 
-  // Debounced save to localStorage (500ms — sliders fire at 60Hz)
+  // Debounced save to localStorage. 3000ms (undo-history-plan §10/§12): the
+  // unified-history Tier-1 writer rides this same cadence, and a longer window
+  // coalesces undo/redo bursts. Trade-off: worst-case crash-loss grows from
+  // ~0.5s to ~3s (accepted).
   const saveTimer = useRef(null);
   useEffect(() => {
     if (!persistToLocal) return;
@@ -201,7 +204,7 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
         localStorage.setItem(BG_STORAGE_KEY, bgColor);
         savePanels(panels); // sonoform-panels (WI-1) rides the same debounce
       } catch { /* storage full or unavailable */ }
-    }, 500);
+    }, 3000);
     return () => clearTimeout(saveTimer.current);
   }, [layers, bgColor, panels]);
 

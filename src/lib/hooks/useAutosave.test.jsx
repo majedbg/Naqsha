@@ -47,6 +47,21 @@ describe("useAutosave", () => {
     expect(save).toHaveBeenCalledTimes(1);
   });
 
+  it("defaults the debounce to 3000ms (undo-history-plan §10)", () => {
+    const save = vi.fn(() => Promise.resolve());
+    // No debounceMs override → exercises the default.
+    const { debounceMs: _omit, ...noDebounce } = baseProps({ save });
+    renderHook(() => useAutosave(noDebounce));
+    act(() => {
+      vi.advanceTimersByTime(2999);
+    });
+    expect(save).not.toHaveBeenCalled(); // not yet — default is longer than 2500
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
+    expect(save).toHaveBeenCalledTimes(1); // fires exactly at 3000ms
+  });
+
   it("coalesces rapid changes into exactly one save after the quiet period", () => {
     const save = vi.fn(() => Promise.resolve());
     // Each rerender hands a fresh `isDirty` identity, simulating an edit that

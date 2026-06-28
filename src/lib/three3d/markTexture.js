@@ -14,14 +14,20 @@
  *     does not exist yet — gating would hide marks on common desktop designs).
  *
  *  2. treatmentForProcess — process → emissive {tint,intensity} from the
- *     materialPreview depth scores (score .45 / engrave .72 / cut .92), with the
- *     laser color convention (cut≈red, score≈blue, engrave≈neutral). HUE and
- *     INTENSITY are kept on SEPARATE axes: the tint (hue) goes into the texture
- *     for process identity; the intensity drives the mark plane's emissiveIntensity
- *     so the depth ORDER (cut brightest > engrave > score) holds VISUALLY even
- *     though the hues differ in luminance. (Baking intensity into the color would
- *     break the order: under selection-gated bloom a neutral engrave outshines a
- *     red cut — see EmissiveBloom.jsx, luminanceThreshold 0.)
+ *     materialPreview depth scores (score .45 / engrave .72 / cut .92). With NO
+ *     substrate it uses the laser color convention (cut≈red, score≈blue,
+ *     engrave≈neutral) — back-compat for the 2D/legacy path. With a 3D panel
+ *     substrate it is SUBSTRATE-AWARE: the groove reflects how that stock reacts
+ *     via the shared materialReaction core — acrylic frosts to a brightened hue of
+ *     the sheet (full intensity), wood chars dark and MATTE (intensity damped by
+ *     BURN_GLOW_SCALE, L4), other/unknown stock falls back to the convention.
+ *     HUE and INTENSITY are kept on SEPARATE axes: the tint (hue) goes into the
+ *     texture for process identity; the intensity drives the mark plane's
+ *     emissiveIntensity so the depth ORDER (cut brightest > engrave > score) holds
+ *     VISUALLY even though the hues differ in luminance, and so wood reads matte
+ *     under bloom by LOWER intensity rather than color alone. (Baking intensity
+ *     into the color would break the order: under selection-gated bloom a neutral
+ *     engrave outshines a red cut — see EmissiveBloom.jsx, luminanceThreshold 0.)
  *
  *  3. buildPanelMarkSVGs — per panel, one EMISSIVE SVG PER PROCESS present: the
  *     panel's effectively-visible layers of that process, stroked in the process
@@ -33,6 +39,7 @@
 import { resolveLayerProcess } from '../operations.js';
 import { buildAllLayersSVG } from '../svgExport.js';
 import { effectiveVisibleLayers, layersForPanel } from '../panels.js';
+import { materialCategory, materialSheetHex, reactionEmissive } from '../materialReaction.js';
 
 // D6 ribbon cap: above this many stroke paths in a panel, force texture mode.
 export const PATH_CAP = 1500;
@@ -73,13 +80,34 @@ export function shouldUseTextureMode({ pathCount = 0, isMobile = false, dpr = 2 
 }
 
 /**
- * Map a fabrication process → emissive treatment (D3). Unknown/absent process
- * falls back to cut.
+ * Map a fabrication process → emissive treatment (D3), optionally SUBSTRATE-AWARE.
+ *
+ * Without a substrate the result is the laser color CONVENTION (cut≈red, score≈blue,
+ * engrave≈neutral) at the process depth intensity — back-compat for the 2D/legacy path.
+ *
+ * With a 3D panel substrate ({ kind, color }) the groove reflects how that stock
+ * REACTS (the shared materialReaction core, L3/L4):
+ *   • lighten (acrylic/plastic) → a hue-preserving brightened FROST of the sheet,
+ *     full intensity (intensityScale 1).
+ *   • burn (wood/ply/mdf)       → a dark warm CHAR, matte: intensity × BURN_GLOW_SCALE
+ *     (a real burn line is matte char, not a glowing halo — L4).
+ *   • other / unrecognized / absent substrate → convention tint + full intensity.
+ * `pen` is ink ON the surface, not a groove, so it ALWAYS keeps the convention ink
+ * regardless of substrate (L7). Unknown/absent process still falls back to cut.
+ *
  * @param {string|null|undefined} process
+ * @param {{ kind?:string, color?:string }|null} [substrate]
  * @returns {{ process:string, tint:string, intensity:number }}
  */
-export function treatmentForProcess(process) {
+export function treatmentForProcess(process, substrate) {
   const p = PROCESS_INTENSITY[process] != null ? process : DEFAULT_PROCESS;
+  if (substrate && p !== 'pen') {
+    const category = materialCategory(substrate);
+    if (category === 'lighten' || category === 'burn') {
+      const { tint, intensityScale } = reactionEmissive(materialSheetHex(substrate), category, p);
+      return { process: p, tint, intensity: PROCESS_INTENSITY[p] * intensityScale };
+    }
+  }
   return { process: p, tint: PROCESS_TINT[p], intensity: PROCESS_INTENSITY[p] };
 }
 
@@ -138,11 +166,15 @@ export function routePanelRenderModes(marksByPanel, { isMobile = false, dpr = 2 
  *
  * For every VISIBLE panel (mirrors panelExport.js / sheetSpecs.js visibility), the
  * panel's effectively-visible layers are grouped by process; each group becomes a
- * mark layer: an SVG of just that process's layers, stroked in the process tint
- * (vivid, full strength) on a transparent background, plus the depth-score
- * `intensity` the scene applies as that plane's emissiveIntensity. Groups are
- * ordered cut → engrave → score → pen (PROCESS_ORDER). Keyed by panelId so the
- * scene can pair each sheet spec with its mark planes.
+ * mark layer: an SVG of just that process's layers, stroked in that process's tint
+ * on a transparent background, plus the `intensity` the scene applies as that
+ * plane's emissiveIntensity. The tint+intensity are SUBSTRATE-AWARE (via
+ * treatmentForProcess(process, panel.substrate)): an acrylic panel's grooves frost
+ * to a brightened hue of the sheet at full intensity, a wood panel's char dark and
+ * matte (intensity × BURN_GLOW_SCALE, L4), and an other/absent-substrate panel keeps
+ * the laser convention (vivid, full strength). Groups are ordered cut → engrave →
+ * score → pen (PROCESS_ORDER). Keyed by panelId so the scene can pair each sheet
+ * spec with its mark planes.
  *
  * @typedef {{ process:string, tint:string, intensity:number, svg:string }} MarkLayerSpec
  *
@@ -172,19 +204,24 @@ export function buildPanelMarkSVGs({
     const panelLayers = layersForPanel(visibleLayers, p.id);
 
     // Group this panel's layers by their resolved process (each unknown/absent
-    // process collapses to the cut fallback, matching treatmentForProcess).
+    // process collapses to the cut fallback, matching treatmentForProcess). The
+    // process KEY is substrate-independent, so group with the 1-arg call; the
+    // substrate-aware tint+intensity are computed per group below.
     const byProcess = new Map();
     for (const l of panelLayers) {
-      const { process, tint } = treatmentForProcess(resolveLayerProcess(l, operations));
-      if (!byProcess.has(process)) byProcess.set(process, { tint, layers: [] });
+      const { process } = treatmentForProcess(resolveLayerProcess(l, operations));
+      if (!byProcess.has(process)) byProcess.set(process, { layers: [] });
       byProcess.get(process).layers.push(l);
     }
 
     out[p.id] = PROCESS_ORDER.filter((proc) => byProcess.has(proc)).map((process) => {
-      const { tint, layers: groupLayers } = byProcess.get(process);
-      const { intensity } = treatmentForProcess(process);
-      // Stroke every layer in this group with the vivid process tint; neutralize
-      // any layer background so it can't bake a glowing block (D12).
+      const { layers: groupLayers } = byProcess.get(process);
+      // One substrate-aware call: tint (frost/char/convention) and intensity
+      // (matte-damped for wood) stay consistent for this panel's stock (L3/L4).
+      const { tint, intensity } = treatmentForProcess(process, p.substrate);
+      // Stroke every layer in this group with the substrate-aware process tint
+      // (frost / char / convention); neutralize any layer background so it can't
+      // bake a glowing block (D12).
       const tinted = groupLayers.map((l) => ({ ...l, color: tint, bgOpacity: 0 }));
       const svg = toTransparentBg(
         buildAllLayersSVG(tinted, instances, canvasW, canvasH, false, svgOpts),

@@ -36,14 +36,28 @@ export default function Relief({ field, exaggeration = 0, width = 200, height = 
   useLayoutEffect(() => {
     const g = geomRef.current;
     if (!g || !meshData) return;
-    g.setIndex(new THREE.BufferAttribute(meshData.indices, 1));
-    g.setAttribute('position', new THREE.BufferAttribute(meshData.positions, 3));
-    // itemSize 4 = RGBA: the alpha channel drives per-vertex transparency so the
-    // neutral midrange recedes (~12%) and the saturated lobes stay solid.
-    g.setAttribute('color', new THREE.BufferAttribute(meshData.colors, 4));
-    g.computeVertexNormals();
-    g.attributes.position.needsUpdate = true;
-    g.attributes.color.needsUpdate = true;
+    const pos = g.getAttribute('position');
+    const col = g.getAttribute('color');
+    // Update the existing buffers in place when the grid resolution is unchanged
+    // (the hot path: dragging the Height slider only rescales Y + recolors at a
+    // fixed segment count). Replacing the BufferAttributes every tick would orphan
+    // the old GPU buffers (three only frees the CURRENTLY-attached attribute on
+    // dispose) → a leak that grows on every drag frame until context loss.
+    // computeVertexNormals reuses the existing normal attribute, so no orphan there.
+    if (pos && pos.array.length === meshData.positions.length && col) {
+      pos.array.set(meshData.positions);
+      pos.needsUpdate = true;
+      col.array.set(meshData.colors);
+      col.needsUpdate = true;
+      g.computeVertexNormals();
+    } else {
+      g.setIndex(new THREE.BufferAttribute(meshData.indices, 1));
+      g.setAttribute('position', new THREE.BufferAttribute(meshData.positions, 3));
+      // itemSize 4 = RGBA: the alpha channel drives per-vertex transparency so the
+      // neutral midrange recedes (~12%) and the saturated lobes stay solid.
+      g.setAttribute('color', new THREE.BufferAttribute(meshData.colors, 4));
+      g.computeVertexNormals();
+    }
   }, [meshData]);
 
   if (!meshData) return null;

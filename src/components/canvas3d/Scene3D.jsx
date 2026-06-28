@@ -8,7 +8,7 @@
 // src/lib/three3d and stays on the 2D side of the boundary so it can be unit-tested.
 import { useMemo, useRef, useState, useEffect } from 'react';
 import { Canvas } from '@react-three/fiber';
-import { Selection } from '@react-three/postprocessing';
+import { useBloomSelectionStore, BloomSelectionContext } from './bloomSelection.js';
 import CameraRig from './CameraRig.jsx';
 import SceneEnvironment from './SceneEnvironment.jsx';
 import EmissiveBloom from './EmissiveBloom.jsx';
@@ -118,6 +118,10 @@ export default function Scene3D({
   const glRef = useRef(null);
   // Stable array so the bloom pass doesn't re-register lights every render.
   const bloomLights = useMemo(() => [keyLightRef], []);
+  // Bloom selection store (replaces the looping postprocessing <Selection>/<Select>
+  // — see bloomSelection.jsx). Emissive marks/drape lines register via useBloomRef;
+  // `bloomSelection` (membership-stable) feeds SelectiveBloom's `selection` prop.
+  const { selection: bloomSelection, register: registerBloom } = useBloomSelectionStore();
 
   const isPanelStack = mode === 'panel-stack';
   // Depend on the PRIMITIVE bounds (not the object identity, which the host
@@ -140,11 +144,18 @@ export default function Scene3D({
   // only in height-surface (B). Without the gate, an A session would rewrite the
   // exaggeration default (the slider it can't even see) over a previously-saved B
   // value, and vice versa. Own keys, never the document; camera is excluded.
+  // Debounced (250ms): a slider drag fires this effect per tick, and each
+  // savePreview3DSettings does a synchronous getItem+parse+stringify+setItem. Only
+  // the settled value needs persisting, so coalesce the drag into one write.
   useEffect(() => {
-    if (isPanelStack) savePreview3DSettings({ spacing: spacingMm });
+    if (!isPanelStack) return undefined;
+    const id = setTimeout(() => savePreview3DSettings({ spacing: spacingMm }), 250);
+    return () => clearTimeout(id);
   }, [isPanelStack, spacingMm]);
   useEffect(() => {
-    if (!isPanelStack) savePreview3DSettings({ exaggeration: exaggerationMm });
+    if (isPanelStack) return undefined;
+    const id = setTimeout(() => savePreview3DSettings({ exaggeration: exaggerationMm }), 250);
+    return () => clearTimeout(id);
   }, [isPanelStack, exaggerationMm]);
 
   // Surface-B per-target drape toggles (S9, §3.4). Default ALL-ON: a SET of
@@ -202,17 +213,29 @@ export default function Scene3D({
         data-focus-field={focusFieldLayerId ?? ''}
         dpr={[1, 2]}
         camera={{ position: [3, 3, 4], fov: 50, near: 0.01, far: 1000 }}
+        // Render on demand, not continuously: the scene is static except during
+        // user interaction. OrbitControls (enableDamping) calls invalidate() while
+        // it moves and through the damping tail, and MeshTransmissionMaterial
+        // invalidates while its buffer needs refreshing — so acrylic + damping still
+        // update, but an idle scene stops re-rendering (no constant GPU load/heat).
+        frameloop="demand"
         style={{ width: '100%', height: '100%' }}
         // preserveDrawingBuffer keeps the last COMPOSITED frame (post-bloom /
         // transmission) readable so the "Save image" PNG (D8) isn't black.
         gl={{ preserveDrawingBuffer: true }}
         onCreated={({ gl }) => {
           glRef.current = gl;
+          // Surface-A ribbon marks crop to the sheet rectangle via per-material
+          // clipping planes (Marks.jsx useSheetClipPlanes); local clipping must be
+          // enabled on the renderer for those planes to take effect.
+          gl.localClippingEnabled = true;
         }}
       >
-        {/* Selection must wrap BOTH the EffectComposer and the scene meshes so
-            SelectiveBloom and <Select> share one context. */}
-        <Selection>
+        {/* The bloom provider wraps the scene meshes so emissive marks/drape lines
+            can register into the selection (replaces postprocessing's looping
+            <Selection>/<Select> — see bloomSelection.jsx). The collected
+            `bloomSelection` is handed to EmissiveBloom's `selection` prop below. */}
+        <BloomSelectionContext.Provider value={registerBloom}>
           <CameraRig fitBox={fitBox} resetSignal={resetSignal} />
           <SceneEnvironment ref={keyLightRef} />
 
@@ -254,8 +277,12 @@ export default function Scene3D({
               thin drape lines, and a softer pass avoids any glow leaking onto the
               (now transparent, dimmer) relief. Surface A's marks want the full
               groove glow. */}
-          <EmissiveBloom lights={bloomLights} intensity={isPanelStack ? 1.4 : 0.6} />
-        </Selection>
+          <EmissiveBloom
+            lights={bloomLights}
+            intensity={isPanelStack ? 1.4 : 0.6}
+            selection={bloomSelection}
+          />
+        </BloomSelectionContext.Provider>
       </Canvas>
 
       {/* Top-right controls: Reset view (D4) + Save image PNG snapshot (D8) +

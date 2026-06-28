@@ -5,8 +5,8 @@
 // the 2D side (the unit gate).
 import { useMemo, useRef, useLayoutEffect } from 'react';
 import * as THREE from 'three';
-import { Select } from '@react-three/postprocessing';
 import { buildDrapeForTarget } from '../../lib/three3d/drape.js';
+import { useBloomRef } from './bloomSelection.js';
 
 /**
  * Surface B — per-channel DRAPE of a guide's active modulation targets (S9, PRD
@@ -16,9 +16,9 @@ import { buildDrapeForTarget } from '../../lib/three3d/drape.js';
  * varies with the field. The pure builder emits the segment buffers; this
  * component only marshals them into a BufferGeometry per target.
  *
- * Bloom (D12): wrapped in <Select enabled> like Marks.jsx so the
- * selection-gated SelectiveBloom glows the drape lines (toneMapped off so the
- * line color is its own emissive).
+ * Bloom (D12): each drape line registers into the bloom selection via a stable ref
+ * (useBloomRef, like Marks.jsx) so the selection-gated SelectiveBloom glows the
+ * drape lines (toneMapped off so the line color is its own emissive).
  *
  * @param {{ targets?: Array<{targetId:string, channel:string, amount:number,
  *           color:string}>, enabled?: Record<string, boolean>, field?: object,
@@ -30,23 +30,35 @@ function DrapeLines({ target, field, exaggeration, width, height }) {
     [target, field, exaggeration, width, height],
   );
 
+  // Opt the drape lines into the SelectiveBloom selection (D12) without the looping
+  // <Select> wrapper — see bloomSelection.jsx.
+  const bloomRef = useBloomRef();
+
   const geomRef = useRef(null);
   useLayoutEffect(() => {
     const g = geomRef.current;
     if (!g) return;
-    g.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    g.attributes.position.needsUpdate = true;
+    const attr = g.getAttribute('position');
+    // Update the existing buffer in place when the vertex count is unchanged (the
+    // hot path: dragging exaggeration reseats warp lines at a fixed grid count).
+    // Replacing the BufferAttribute every tick would orphan the old GPU buffer
+    // (three only frees the CURRENTLY-attached attribute on dispose) → a leak that
+    // grows until context loss.
+    if (attr && attr.array.length === positions.length) {
+      attr.array.set(positions);
+      attr.needsUpdate = true;
+    } else {
+      g.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    }
   }, [positions]);
 
   if (!positions || positions.length === 0) return null;
 
   return (
-    <Select enabled>
-      <lineSegments data-testid={`drape-${target.targetId}`}>
-        <bufferGeometry ref={geomRef} />
-        <lineBasicMaterial color={target.color} toneMapped={false} />
-      </lineSegments>
-    </Select>
+    <lineSegments ref={bloomRef} data-testid={`drape-${target.targetId}`}>
+      <bufferGeometry ref={geomRef} />
+      <lineBasicMaterial color={target.color} toneMapped={false} />
+    </lineSegments>
   );
 }
 

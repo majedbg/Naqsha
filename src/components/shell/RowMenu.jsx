@@ -44,7 +44,7 @@ const DISABLED_ITEM_CLASS =
 // double-activate in-app. A div has no native Enter→click, so the explicit
 // handler is the SOLE activation path, identical in jsdom and every browser.
 // `role="menuitem"` + tabIndex keep it focusable and ARIA-conformant.
-function MenuItem({ label, danger, disabled, onActivate }) {
+function MenuItem({ label, danger, disabled, title, onActivate }) {
   const className = disabled
     ? DISABLED_ITEM_CLASS
     : danger
@@ -55,6 +55,7 @@ function MenuItem({ label, danger, disabled, onActivate }) {
       role="menuitem"
       tabIndex={-1}
       aria-disabled={disabled || undefined}
+      title={title || undefined}
       onClick={disabled ? undefined : onActivate}
       className={className}
     >
@@ -69,11 +70,16 @@ export default function RowMenu({
   onClose = () => {},
   onRename = () => {},
   onDuplicate = () => {},
+  duplicateDisabled = false,
+  duplicateTitle,
   onDownload,
   onClearLayers,
   clearLayersDisabled = false,
   clearLayersLabel = "Clear all layers",
+  clearLayersTitle,
   onDelete = () => {},
+  deleteDisabled = false,
+  deleteTitle,
 }) {
   const menuRef = useRef(null);
 
@@ -153,7 +159,12 @@ export default function RowMenu({
       className={`absolute right-0 z-50 ${flipClass} min-w-[140px] rounded-sm border border-hairline bg-paper p-1 shadow-pop`}
     >
       <MenuItem label="Rename" onActivate={select(onRename)} />
-      <MenuItem label="Duplicate" onActivate={select(onDuplicate)} />
+      <MenuItem
+        label="Duplicate"
+        disabled={duplicateDisabled}
+        title={duplicateTitle}
+        onActivate={duplicateDisabled ? undefined : select(onDuplicate)}
+      />
       {onDownload && (
         <MenuItem label="Download" onActivate={select(onDownload)} />
       )}
@@ -161,11 +172,18 @@ export default function RowMenu({
         <MenuItem
           label={clearLayersLabel}
           disabled={clearLayersDisabled}
+          title={clearLayersTitle}
           onActivate={select(onClearLayers)}
         />
       )}
       <div role="separator" className="my-1 border-t border-hairline" />
-      <MenuItem label="Delete" danger onActivate={select(onDelete)} />
+      <MenuItem
+        label="Delete"
+        danger
+        disabled={deleteDisabled}
+        title={deleteTitle}
+        onActivate={deleteDisabled ? undefined : select(onDelete)}
+      />
     </div>
   );
 }

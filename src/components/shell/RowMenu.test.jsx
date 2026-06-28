@@ -266,6 +266,63 @@ describe("RowMenu (WI-4 — per-row overflow popper)", () => {
     ]);
   });
 
+  it("disables Duplicate (aria-disabled + title) and ignores activation when duplicateDisabled is set", () => {
+    const onDuplicate = vi.fn();
+    const onClose = vi.fn();
+    renderMenu({
+      onDuplicate,
+      onClose,
+      duplicateDisabled: true,
+      duplicateTitle: "Duplicate not allowed here",
+    });
+    const item = screen.getByRole("menuitem", { name: /duplicate/i });
+    expect(item).toHaveAttribute("aria-disabled", "true");
+    expect(item).toHaveAttribute("title", "Duplicate not allowed here");
+    fireEvent.click(item);
+    expect(onDuplicate).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("disables Delete (aria-disabled + title, still danger) and ignores activation when deleteDisabled is set", () => {
+    const onDelete = vi.fn();
+    const onClose = vi.fn();
+    renderMenu({
+      onDelete,
+      onClose,
+      deleteDisabled: true,
+      deleteTitle: "Cannot delete the last panel",
+    });
+    const item = screen.getByRole("menuitem", { name: /delete/i });
+    expect(item).toHaveAttribute("aria-disabled", "true");
+    expect(item).toHaveAttribute("title", "Cannot delete the last panel");
+    fireEvent.click(item);
+    expect(onDelete).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("carries clearLayersTitle on the Clear all layers item when provided", () => {
+    renderMenu({
+      onClearLayers: () => {},
+      clearLayersTitle: "No layers to clear",
+    });
+    expect(
+      screen.getByRole("menuitem", { name: /clear all layers/i })
+    ).toHaveAttribute("title", "No layers to clear");
+  });
+
+  it("Duplicate and Delete still fire+close when no disabled flags are set (regression)", () => {
+    const onDuplicate = vi.fn();
+    const onDelete = vi.fn();
+    const onClose = vi.fn();
+    renderMenu({ onDuplicate, onDelete, onClose });
+    fireEvent.click(screen.getByRole("menuitem", { name: /duplicate/i }));
+    expect(onDuplicate).toHaveBeenCalledTimes(1);
+    expect(onClose).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("menuitem", { name: /delete/i }));
+    expect(onDelete).toHaveBeenCalledTimes(1);
+    expect(onClose).toHaveBeenCalledTimes(2);
+  });
+
   it("flips DOWNWARD by default (top-full, opens below the trigger)", () => {
     renderMenu();
     const menu = screen.getByRole("menu");

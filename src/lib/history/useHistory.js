@@ -118,6 +118,12 @@ export default function useHistory({ capture, restore, limit = 50 } = {}) {
   );
 
   const undo = useCallback(() => {
+    // Flush any OPEN coalesce window first. The real ⌘Z case is undo within the
+    // 400ms idle (focus still in the field, no blur): the pre-edit snapshot is
+    // in `pending`, not yet in `past`. Committing it first means undo lands on a
+    // real prior state and the in-flight burst vanishes in one step (the
+    // text-editor model) instead of stranding the pending snapshot.
+    endCoalesce();
     const m = modelRef.current;
     if (m.past.length === 0) return;
     // Reconstruct the present from the live doc (refs have settled by now), park
@@ -130,9 +136,12 @@ export default function useHistory({ capture, restore, limit = 50 } = {}) {
     };
     restoreRef.current(cloneSnapshot(prev));
     publish();
-  }, [publish]);
+  }, [publish, endCoalesce]);
 
   const redo = useCallback(() => {
+    // Symmetric flush (see undo): committing an open burst clears `future`, so a
+    // mid-burst redo simply lands on the just-committed burst — never strands it.
+    endCoalesce();
     const m = modelRef.current;
     if (m.future.length === 0) return;
     const present = captureRef.current();
@@ -143,7 +152,7 @@ export default function useHistory({ capture, restore, limit = 50 } = {}) {
     };
     restoreRef.current(cloneSnapshot(next));
     publish();
-  }, [publish]);
+  }, [publish, endCoalesce]);
 
   // Drop any open coalesce window + pending idle timer. Called from clear/seed
   // so a load/profile-switch mid-gesture can't leave a dangling pre-gesture

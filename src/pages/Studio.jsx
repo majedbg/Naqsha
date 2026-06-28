@@ -54,6 +54,8 @@ import { resolveExportColor } from "../lib/fabrication";
 import { seedOperations, addOperation, resolveOperation } from "../lib/operations";
 import { remapOperationsToProfile, defaultBedSize, profileProcesses, defaultMachineParams } from "../lib/machineProfiles";
 import useOperationsHistory from "../lib/hooks/useOperationsHistory";
+import useHistory from "../lib/history/useHistory";
+import { createDocumentIO } from "../lib/history/documentSnapshot";
 import { syncWeightBand, supportsVariableWeight, isBandOperation } from "../lib/variableWeight";
 import { findMoirePartnerA } from "../lib/moirePair";
 import useCanvasSize, { loadCanvasState } from "../lib/hooks/useCanvasSize";
@@ -107,6 +109,8 @@ export default function Studio({ submitOrg = null } = {}) {
     outputMode,
     setOutputMode,
     applyCanvasSize,
+    captureCanvas,
+    restoreCanvas,
     bedWmm,
     bedHmm,
   } = useCanvasSize({ savedCanvas, activeTab });
@@ -139,6 +143,46 @@ export default function Studio({ submitOrg = null } = {}) {
   }, [defaultOperationId]);
   const getDefaultOperationId = useCallback(() => defaultOperationIdRef.current, []);
 
+  // === Unified app-wide undo/redo: record injection (undo-history-plan §4) ===
+  // The engine is instantiated further down (once every slice exists); these
+  // stable recorders are defined HERE so they can be injected into useLayers'
+  // mutators. They reach the engine through `historyRef` (set in an effect once
+  // useHistory returns) — a safe forward reference because recorders only run in
+  // event handlers, long after mount.
+  //   - recordEdit(signature): coalescing param edit. Same signature within 400ms
+  //     merges into one entry; a different signature flushes the prior burst.
+  //   - recordStructural(): a discrete, immediate entry (closing any open burst).
+  // `restoringRef` suppresses ALL recording while restore() replays a snapshot —
+  // restore calls updateLayer/setBgColor synchronously and recording is
+  // imperative, so this sync flag covers every record site (invariant I6).
+  const historyRef = useRef(null);
+  const restoringRef = useRef(false);
+  const editKeyRef = useRef(null);
+  const flushEdit = useCallback(() => {
+    if (editKeyRef.current !== null) {
+      editKeyRef.current = null;
+      historyRef.current?.endCoalesce();
+    }
+  }, []);
+  const recordEdit = useCallback(
+    (signature) => {
+      if (restoringRef.current) return;
+      const api = historyRef.current;
+      if (!api) return;
+      if (editKeyRef.current !== null && editKeyRef.current !== signature) {
+        api.endCoalesce(); // flush the previous target's burst as its own entry
+      }
+      editKeyRef.current = signature;
+      api.beginCoalesce({ idleMs: 400 });
+    },
+    []
+  );
+  const recordStructural = useCallback(() => {
+    if (restoringRef.current) return;
+    flushEdit(); // close any open param burst as its own entry first
+    historyRef.current?.record();
+  }, [flushEdit]);
+
   // === Layers ===
   // NOTE: useLayers also exposes the per-row randomize-seed handler
   // (randomizeLayer). It is NOT wired here: the Object Tree row's seed control
@@ -169,7 +213,7 @@ export default function Studio({ submitOrg = null } = {}) {
     // tier + per-panel export (laser-gated).
     panels,
     setPanels,
-  } = useLayers({ persistToLocal: limits.localStorage, maxLayers: limits.maxLayers, getDefaultOperationId });
+  } = useLayers({ persistToLocal: limits.localStorage, maxLayers: limits.maxLayers, getDefaultOperationId, recordEdit, recordStructural });
 
   // Pro-shell Inspector + Object-tree slots (B3 / #6, B2 / #5). Null in the
   // legacy layout (no provider), so the portals below are true no-ops when the
@@ -235,6 +279,92 @@ export default function Studio({ submitOrg = null } = {}) {
     captureAssignments,
     restoreAssignments,
   });
+
+  // === Unified app-wide undo/redo: the engine (undo-history-plan §3) ===
+  // A single whole-document snapshot stack over ALL slices. The engine owns no
+  // document state — it is handed one symmetric capture/restore pair built from
+  // each slice's live getters + bulk setters (createDocumentIO).
+  //
+  // Transition note (S4): the legacy useOperationsHistory above is still the
+  // KEYBOUND undo until S5 lands the absorb together with the global keybinding
+  // (S6), so this engine is wired and RECORDING but not yet user-reachable.
+  // `restoreOperations` bridges through the legacy hook's non-recording
+  // `resetHistory` until S5 gives operations a Studio-owned bulk setter.
+  const panelsRef = useRef(panels);
+  const bgColorRef = useRef(bgColor);
+  const operationsRef = useRef(operations);
+  useEffect(() => {
+    panelsRef.current = panels;
+    bgColorRef.current = bgColor;
+    operationsRef.current = operations;
+  }, [panels, bgColor, operations]);
+  // Getters wrapped in useCallback so the ref reads live in a stable handler
+  // (not an inline render-phase arrow), keeping capture reading the latest slice
+  // values without re-creating the engine each render.
+  const getLayers = useCallback(() => layersRef.current, []);
+  const getPanels = useCallback(() => panelsRef.current, []);
+  const getBgColor = useCallback(() => bgColorRef.current, []);
+  const getOperations = useCallback(() => operationsRef.current, []);
+  const { capture: captureDoc, restore: restoreDocBase } = useMemo(
+    () =>
+      createDocumentIO({
+        getLayers,
+        getPanels,
+        getBgColor,
+        getOperations,
+        captureAssignments,
+        captureCanvas,
+        loadLayerSet,
+        setPanels,
+        setBgColor,
+        restoreOperations: resetHistory, // transitional; replaced in S5
+        restoreAssignments,
+        restoreCanvas,
+      }),
+    [
+      getLayers,
+      getPanels,
+      getBgColor,
+      getOperations,
+      captureAssignments,
+      captureCanvas,
+      loadLayerSet,
+      setPanels,
+      setBgColor,
+      resetHistory,
+      restoreAssignments,
+      restoreCanvas,
+    ]
+  );
+  // Wrap restore so self-recording is suppressed for its whole synchronous span
+  // (restore replays via updateLayer/setBgColor, which would otherwise record).
+  const restoreDoc = useCallback(
+    (s) => {
+      restoringRef.current = true;
+      try {
+        restoreDocBase(s);
+      } finally {
+        restoringRef.current = false;
+      }
+    },
+    [restoreDocBase]
+  );
+  const history = useHistory({ capture: captureDoc, restore: restoreDoc });
+  useEffect(() => {
+    historyRef.current = history;
+  });
+
+  // bgColor user edits record a (coalesced) entry — the picker can fire rapidly
+  // during a drag, so it rides the same idle-coalesce path as a slider. Loads
+  // and restore() use the raw setBgColor and must NOT record (they go through
+  // clear() / the restore guard).
+  const handleBgColorChange = useCallback(
+    (next) => {
+      recordEdit("bgColor");
+      setBgColor(next);
+    },
+    [recordEdit, setBgColor]
+  );
 
   // === Live selection state (B2 / #5) ===
   // Replaces the old hardcoded `layers[0]` placeholder. Clicking a tree row sets
@@ -1054,7 +1184,7 @@ export default function Studio({ submitOrg = null } = {}) {
           patternInstancesRef={patternInstancesRef}
           canvasContainerRef={canvasContainerRef}
           bgColor={bgColor}
-          onBgColorChange={setBgColor}
+          onBgColorChange={handleBgColorChange}
           unit={unit}
           externalZoom={canvasView.zoom}
           onZoomChange={canvasView.setZoom}

@@ -214,6 +214,46 @@ describe("history/useHistory — coalescing (S2)", () => {
     expect(hook.result.current.canUndo).toBe(false);
   });
 
+  it("undo mid-burst flushes the open window THEN undoes it (no idle advance)", () => {
+    // The real ⌘Z case: user drags a slider and hits undo within 400ms — focus
+    // still in the field, idle not fired, so the pre-edit snapshot lives only in
+    // the pending window, not yet in `past`. undo() must flush it first or it
+    // strands the snapshot and pops a prior entry onto the live-edited doc.
+    const { hook, box } = setup();
+    act(() => hook.result.current.beginCoalesce({ idleMs: 400 }));
+    for (let f = 1; f <= 5; f++) {
+      act(() => {
+        hook.result.current.record();
+        box.doc = { n: f };
+      });
+    }
+    act(() => hook.result.current.undo()); // NO advanceTimers — burst still open
+    expect(box.doc).toEqual({ n: 0, nested: { tag: "A" } }); // back at pre-burst
+    expect(hook.result.current.canUndo).toBe(false);
+    expect(hook.result.current.canRedo).toBe(true);
+    // The idle timer must be dead — no phantom entry appears later.
+    act(() => vi.advanceTimersByTime(1000));
+    expect(hook.result.current.canUndo).toBe(false);
+    act(() => hook.result.current.redo());
+    expect(box.doc).toEqual({ n: 5 });
+  });
+
+  it("redo mid-burst flushes the open window first", () => {
+    const { hook, box, edit } = setup();
+    edit({ n: 1 }); // discrete entry so future is non-empty after an undo
+    act(() => hook.result.current.undo());
+    expect(hook.result.current.canRedo).toBe(true);
+    act(() => hook.result.current.beginCoalesce({ idleMs: 400 }));
+    act(() => {
+      hook.result.current.record();
+      box.doc = { n: 7 };
+    });
+    // redo with an open burst: flush commits the burst (which clears future),
+    // so there's nothing to redo — the doc stays at the burst value.
+    act(() => hook.result.current.redo());
+    expect(box.doc).toEqual({ n: 7 });
+  });
+
   it("endCoalesce with no open window is a no-op", () => {
     const { hook } = setup();
     act(() => hook.result.current.endCoalesce());

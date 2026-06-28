@@ -46,8 +46,13 @@ function EmissiveBloom({
   mipmapBlur = true,
   selection = [],
 }) {
+  // multisampling drives MSAA for the WHOLE pass: with an EffectComposer active the
+  // canvas-level `antialias` is bypassed, so THIS is what smooths polygon EDGES (the
+  // jagged sheet perimeter + ribbon strokes). 8 samples noticeably de-jaggies those
+  // edges; cost is trivial under frameloop="demand". (Texture-interior mark blockiness
+  // is a separate axis — fixed by mipmaps+anisotropy in Marks.jsx, not here.)
   return (
-    <EffectComposer autoClear={false} multisampling={4}>
+    <EffectComposer autoClear={false} multisampling={8}>
       <SelectiveBloom
         selection={selection}
         lights={lights}

@@ -78,6 +78,13 @@ export default function RightPanel({
   // lazy host so Surface A geometry (later slices) reads from a point-in-time copy
   // rather than the live design. Defaults to null — every non-3D caller unaffected.
   threeDSnapshot = null,
+  // Material→3D appearance (S3, spec §3.5). The LIVE selected material (already
+  // mode-gated by Studio: non-null only in the Material lens), forwarded straight
+  // to the 3D host — a sibling to the live spacing/exaggeration props, NOT folded
+  // into threeDSnapshot, so switching material re-tints the scene without a
+  // Rebuild. null (default) → Operation lens / no material → today's substrate
+  // fallback, so every non-3D caller is unaffected.
+  selectedMaterial = null,
   canvasW,
   canvasH,
   patternInstancesRef,
@@ -748,6 +755,7 @@ export default function RightPanel({
             marksByPanel={threeDMarks}
             reliefField={reliefField}
             drapeTargets={drapeTargets}
+            selectedMaterial={selectedMaterial}
             onClose={onClose3D}
           />
         </div>

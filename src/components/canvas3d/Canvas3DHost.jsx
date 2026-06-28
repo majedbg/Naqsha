@@ -21,9 +21,14 @@ const Scene3D = lazy(() => import('./Scene3D.jsx'));
  * `drapeTargets` are the guide's ACTIVE modulation-target descriptors (S9),
  * resolved 2D-side (three-free) for the per-channel drape + toggle checklist.
  *
+ * `selectedMaterial` (S3, spec §3.5) is the LIVE Material-lens selection, passed
+ * straight through to Scene3D (not snapshot-frozen). null → Operation-lens / no
+ * material fallback.
+ *
  * @param {{ mode?: string, focusFieldLayerId?: string|null, snapshot?: object|null,
  *           boundsMm?: {width:number,height:number}, marksByPanel?: object|null,
- *           reliefField?: object|null, drapeTargets?: object[] }} props
+ *           reliefField?: object|null, drapeTargets?: object[],
+ *           selectedMaterial?: object|null }} props
  */
 export default function Canvas3DHost({
   mode,
@@ -33,6 +38,7 @@ export default function Canvas3DHost({
   marksByPanel = null,
   reliefField = null,
   drapeTargets = [],
+  selectedMaterial = null,
   // Close the overlay (Studio → RightPanel → here → Scene3D's "✕"). Optional.
   onClose = null,
 }) {
@@ -61,6 +67,7 @@ export default function Canvas3DHost({
         marksByPanel={marksByPanel}
         reliefField={reliefField}
         drapeTargets={drapeTargets}
+        selectedMaterial={selectedMaterial}
         onClose={onClose}
       />
     </Suspense>

@@ -9,6 +9,13 @@ import {
 } from './preview3dPersistence.js';
 import { SPACING_DEFAULT, SPACING_MIN, SPACING_MAX } from './sheetSpecs.js';
 import { EXAG_MIN } from './heightSurface.js';
+import {
+  DEFAULT_ENVIRONMENT_ID,
+  DEFAULT_BG_BLURRINESS,
+  DEFAULT_BG_INTENSITY,
+  BG_BLUR_MAX,
+  BG_INTENSITY_MAX,
+} from './hdriEnvironments.js';
 
 describe('preview3dPersistence', () => {
   beforeEach(() => {
@@ -16,11 +23,14 @@ describe('preview3dPersistence', () => {
   });
 
   describe('defaults', () => {
-    it('defaults: no sub-mode, spacing=SPACING_DEFAULT, exaggeration=null', () => {
+    it('defaults: no sub-mode, spacing=SPACING_DEFAULT, exaggeration=null, studio env', () => {
       expect(defaultPreview3DSettings()).toEqual({
         subMode: null,
         spacing: SPACING_DEFAULT,
         exaggeration: null,
+        environmentId: DEFAULT_ENVIRONMENT_ID,
+        bgBlurriness: DEFAULT_BG_BLURRINESS,
+        bgIntensity: DEFAULT_BG_INTENSITY,
       });
     });
 
@@ -70,10 +80,42 @@ describe('preview3dPersistence', () => {
     });
   });
 
+  describe('HDRI environment fields', () => {
+    it('keeps a known environmentId, rejects unknown back to studio default', () => {
+      expect(normalizePreview3DSettings({ environmentId: 'voortrekker-interior' }).environmentId).toBe(
+        'voortrekker-interior',
+      );
+      expect(normalizePreview3DSettings({ environmentId: 'nope' }).environmentId).toBe(
+        DEFAULT_ENVIRONMENT_ID,
+      );
+      expect(normalizePreview3DSettings({ environmentId: 42 }).environmentId).toBe(
+        DEFAULT_ENVIRONMENT_ID,
+      );
+    });
+
+    it('clamps bgBlurriness / bgIntensity into range, defaults on non-finite', () => {
+      expect(normalizePreview3DSettings({ bgBlurriness: -1 }).bgBlurriness).toBe(0);
+      expect(normalizePreview3DSettings({ bgBlurriness: 5 }).bgBlurriness).toBe(BG_BLUR_MAX);
+      expect(normalizePreview3DSettings({ bgBlurriness: 0.4 }).bgBlurriness).toBe(0.4);
+      expect(normalizePreview3DSettings({ bgBlurriness: NaN }).bgBlurriness).toBe(DEFAULT_BG_BLURRINESS);
+      expect(normalizePreview3DSettings({ bgIntensity: 99 }).bgIntensity).toBe(BG_INTENSITY_MAX);
+      expect(normalizePreview3DSettings({ bgIntensity: 'x' }).bgIntensity).toBe(DEFAULT_BG_INTENSITY);
+    });
+
+    it('round-trips a chosen environment + slider values', () => {
+      savePreview3DSettings({ environmentId: 'voortrekker-interior', bgBlurriness: 0.5, bgIntensity: 0.9 });
+      const loaded = loadPreview3DSettings();
+      expect(loaded.environmentId).toBe('voortrekker-interior');
+      expect(loaded.bgBlurriness).toBe(0.5);
+      expect(loaded.bgIntensity).toBe(0.9);
+    });
+  });
+
   describe('round-trip', () => {
     it('save then load returns the written settings', () => {
       savePreview3DSettings({ subMode: 'panel-stack', spacing: 30, exaggeration: 40 });
       expect(loadPreview3DSettings()).toEqual({
+        ...defaultPreview3DSettings(),
         subMode: 'panel-stack',
         spacing: 30,
         exaggeration: 40,
@@ -84,6 +126,7 @@ describe('preview3dPersistence', () => {
       savePreview3DSettings({ subMode: 'height-surface', spacing: 20, exaggeration: 15 });
       savePreview3DSettings({ spacing: 5 });
       expect(loadPreview3DSettings()).toEqual({
+        ...defaultPreview3DSettings(),
         subMode: 'height-surface',
         spacing: 5,
         exaggeration: 15,
@@ -114,7 +157,11 @@ describe('preview3dPersistence', () => {
         JSON.stringify({ subMode: 'panel-stack', spacing: 12, camera: { pos: [1, 2, 3] } }),
       );
       const loaded = loadPreview3DSettings();
-      expect(loaded).toEqual({ subMode: 'panel-stack', spacing: 12, exaggeration: null });
+      expect(loaded).toEqual({
+        ...defaultPreview3DSettings(),
+        subMode: 'panel-stack',
+        spacing: 12,
+      });
       expect('camera' in loaded).toBe(false);
     });
   });

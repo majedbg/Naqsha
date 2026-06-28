@@ -23,6 +23,7 @@ import useCanvasView from "../lib/hooks/useCanvasView";
 import useColorView from "../lib/hooks/useColorView";
 import { use3DPreview } from "../lib/three3d/use3DPreview";
 import { use3DLensEntry } from "../lib/three3d/use3DLensEntry";
+import { selectedMaterialForScene } from "../lib/three3d/selectedMaterial";
 import ColorViewControl from "../components/canvas/ColorViewControl";
 import useSvgImport from "../lib/hooks/useSvgImport";
 import ConfirmDialog from "../components/ui/ConfirmDialog";
@@ -1334,6 +1335,12 @@ export default function Studio({ submitOrg = null } = {}) {
           // Frozen design snapshot the 3D scene reads from (S3, D14). Consumed by
           // Surface A geometry in later slices; null when 3D is closed.
           threeDSnapshot={lensEntry.snapshot}
+          // Selected material for the 3D scene (S3, spec §3.5). LIVE — derived
+          // from the colorView lens, NOT the frozen snapshot — so switching
+          // material re-tints the 3D slabs without a Rebuild. Mode-gated here:
+          // non-null only in the Material lens (Operation / no material → null →
+          // today's substrate fallback).
+          selectedMaterial={selectedMaterialForScene(colorView.colorView)}
           canvasW={canvasW}
           canvasH={canvasH}
           patternInstancesRef={patternInstancesRef}

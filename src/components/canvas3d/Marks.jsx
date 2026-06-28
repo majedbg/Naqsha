@@ -44,6 +44,15 @@ import { useBloomRef } from './bloomSelection.js';
 // High-DPI raster cap (px) on the longest texture edge — keeps marks crisp under
 // zoom without an unbounded offscreen canvas (PRD D9 perf budget).
 const MAX_TEXTURE_EDGE = 2048;
+// Raster FLOOR (px) on the longest texture edge. The mark SVG's intrinsic size is
+// the DESIGN size (a 200mm panel decodes to ~756px), so on a small/dense design DPR
+// alone left the offscreen raster well under the cap — the hatch then under-resolved
+// and merged into blocks (directly AND when re-imaged through the translucent slab,
+// the reported fluorescent aliasing). Pinning the floor to the cap rasterizes every
+// mark texture at one bounded 2048px edge regardless of design/display, so the hatch
+// is resolved before mipmaps + max-anisotropy filter it. Bounded: floor == cap, so a
+// mark texture is never larger than the existing perf budget already allowed.
+const MIN_TEXTURE_EDGE = MAX_TEXTURE_EDGE;
 // Global emissive multiplier; the per-process depth score scales it per plane.
 const BASE_EMISSIVE = 2.4;
 // Tiny z step (mm) so stacked per-process planes layer in a stable order.
@@ -110,10 +119,18 @@ function useSvgTexture(svg) {
       if (disposed) return;
       const w = img.naturalWidth || img.width || 1;
       const h = img.naturalHeight || img.height || 1;
-      // Fold DPR in BEFORE clamping so MAX_TEXTURE_EDGE caps the FINAL pixels
-      // (longest raster edge ≤ cap on any display, not cap×DPR) — chooseRasterScale.
+      // Fold DPR in BEFORE clamping into [MIN_TEXTURE_EDGE, MAX_TEXTURE_EDGE]: the
+      // cap bounds the FINAL pixels (≤ cap on any display, not cap×DPR) and the floor
+      // upscales a small/dense design's intrinsic-sized SVG so the hatch is resolved —
+      // chooseRasterScale.
       const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
-      const scale = chooseRasterScale({ width: w, height: h, dpr, maxEdge: MAX_TEXTURE_EDGE });
+      const scale = chooseRasterScale({
+        width: w,
+        height: h,
+        dpr,
+        minEdge: MIN_TEXTURE_EDGE,
+        maxEdge: MAX_TEXTURE_EDGE,
+      });
       const canvas = document.createElement('canvas');
       canvas.width = Math.max(1, Math.round(w * scale));
       canvas.height = Math.max(1, Math.round(h * scale));

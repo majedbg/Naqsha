@@ -16,6 +16,13 @@
  *     at, folding DPR in BEFORE clamping the longest edge so a fixed cap bounds the
  *     FINAL pixels on any display (not cap×DPR). Too low ⇒ the marks pixelate under
  *     magnification; the cap keeps the offscreen canvas bounded for the perf budget.
+ *     A `minEdge` FLOOR (added for the fluorescent-mark fix) is the other half: the
+ *     mark SVG's intrinsic size is the DESIGN size (e.g. a 200mm panel decodes to
+ *     ~756px), so on a small/dense design DPR alone left the raster well under the
+ *     cap — the hatch then merged into blocks both directly and when re-imaged
+ *     through the translucent slab. The floor guarantees a minimum resolution so the
+ *     hatch is resolved before mipmaps/anisotropy filter it; floor == cap pins every
+ *     mark texture to one bounded size regardless of design or display.
  */
 
 /**
@@ -36,19 +43,28 @@ export function clampAnisotropy(max, cap = 16) {
 
 /**
  * Choose the rasterization scale for the offscreen mark canvas. DPR is folded in
- * first, then the LONGEST resulting edge is clamped to `maxEdge` so the final raster
- * never exceeds the cap on any display. Returns the multiplier to apply to the
- * source width/height when sizing the canvas.
+ * first to get the desired longest edge, which is then clamped into
+ * [`minEdge`, `maxEdge`] so the final raster never exceeds the cap NOR falls below
+ * the floor on any display. Returns the multiplier to apply to the source
+ * width/height when sizing the canvas.
  *
- * @param {{ width:number, height:number, dpr?:number, maxEdge?:number }} input
+ * `minEdge` (the floor) upscales a small/dense design whose intrinsic SVG size ×
+ * DPR would otherwise leave the hatch under-resolved; `maxEdge` (the cap) bounds
+ * the offscreen canvas for the perf budget. With no minEdge the result is exactly
+ * the prior behaviour (DPR, capped) — back-compatible. A degenerate range
+ * (minEdge > maxEdge) lets the cap win so the perf bound is never violated.
+ *
+ * @param {{ width:number, height:number, dpr?:number, maxEdge?:number, minEdge?:number }} input
  * @returns {number} positive scale factor
  */
-export function chooseRasterScale({ width, height, dpr = 1, maxEdge } = {}) {
+export function chooseRasterScale({ width, height, dpr = 1, maxEdge, minEdge } = {}) {
   const w = Number.isFinite(width) && width > 0 ? width : 1;
   const h = Number.isFinite(height) && height > 0 ? height : 1;
   const d = Number.isFinite(dpr) && dpr > 0 ? dpr : 1;
-  const longest = Math.max(w, h) * d;
-  const capScale =
-    Number.isFinite(maxEdge) && maxEdge > 0 && longest > maxEdge ? maxEdge / longest : 1;
-  return capScale * d;
+  const sourceLongest = Math.max(w, h);
+  let targetLongest = sourceLongest * d;
+  if (Number.isFinite(minEdge) && minEdge > 0) targetLongest = Math.max(targetLongest, minEdge);
+  // Cap wins last so a (minEdge > maxEdge) misconfig can never blow the perf bound.
+  if (Number.isFinite(maxEdge) && maxEdge > 0) targetLongest = Math.min(targetLongest, maxEdge);
+  return targetLongest / sourceLongest;
 }

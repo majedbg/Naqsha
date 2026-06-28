@@ -52,4 +52,31 @@ describe('chooseRasterScale', () => {
     expect(chooseRasterScale({ width: 0, height: 0, dpr: 0, maxEdge: 2048 })).toBe(1);
     expect(chooseRasterScale({})).toBe(1);
   });
+
+  it('floors the longest edge up to minEdge for a small/dense design', () => {
+    // A 200mm panel decodes to ~756px; DPR 2 alone would raster only 1512px (under
+    // the cap), so the hatch under-resolves. The floor lifts it to minEdge.
+    const scale = chooseRasterScale({ width: 756, height: 756, dpr: 2, minEdge: 2048, maxEdge: 2048 });
+    expect(756 * scale).toBeCloseTo(2048, 6);
+  });
+
+  it('pins every edge to a single size when floor === cap', () => {
+    // floor == cap means the final longest edge is always exactly that size,
+    // independent of source size and DPR — one bounded raster for every mark.
+    const small = chooseRasterScale({ width: 300, height: 200, dpr: 1, minEdge: 2048, maxEdge: 2048 });
+    expect(300 * small).toBeCloseTo(2048, 6);
+    const large = chooseRasterScale({ width: 4000, height: 1000, dpr: 3, minEdge: 2048, maxEdge: 2048 });
+    expect(4000 * large).toBeCloseTo(2048, 6);
+  });
+
+  it('lets the cap win when minEdge exceeds maxEdge (perf bound is never blown)', () => {
+    const scale = chooseRasterScale({ width: 1000, height: 1000, dpr: 1, minEdge: 4096, maxEdge: 2048 });
+    expect(1000 * scale).toBeCloseTo(2048, 6);
+  });
+
+  it('does not floor when DPR already clears minEdge', () => {
+    // longest = 1500 * 2 = 3000 ≥ floor 2048 ⇒ floor is a no-op, DPR honored, capped.
+    const scale = chooseRasterScale({ width: 1500, height: 1500, dpr: 2, minEdge: 2048, maxEdge: 4096 });
+    expect(scale).toBe(2);
+  });
 });

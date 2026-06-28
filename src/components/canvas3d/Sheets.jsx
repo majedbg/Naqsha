@@ -74,12 +74,20 @@ export default function Sheets({ specs = [], appearance = null }) {
                 // refraction sampling a finite buffer. At resolution=128 (the prior
                 // value) that buffer was far coarser than the viewport, so the
                 // refracted marks resolved into a blocky grid that crawled/tiled as the
-                // camera orbited. resolution=1024 samples the refracted marks finely
-                // enough that the marks read CRISP at normal/moderate angles and the
-                // tiling is gone (512 was measurably insufficient — still blocked). The
-                // sheets share ONE buffer (transmissionSampler) re-rendered only during
-                // interaction (frameloop="demand"), so even at 1024 the cost is bounded
-                // (measured ~60fps under continuous orbit). samples=8 (was 4) keeps the
+                // camera orbited. 1024 fixed normal/moderate angles (512 was measurably
+                // insufficient — still blocked), but a TRANSLUCENT material (fluorescent,
+                // transmission 0.4) seen at the 3/4 orbit angle still showed the dense
+                // hatch merging into hard stair-stepped SOLID blocks (the reported
+                // "fluorescent aliasing"): a 1024 screen-space buffer foreshortened across
+                // the tilted slab falls well under the DPR-2 viewport, so the
+                // high-frequency marks undersample into a texel grid. resolution=2048
+                // roughly halves that block size, resolving the hatch through the slab at
+                // the usable 3/4 angle. The sheets share ONE buffer (transmissionSampler)
+                // re-rendered only during interaction (frameloop="demand"), so the cost
+                // stays bounded — a single 2048² FBO on demand, NOT a per-sheet/per-frame
+                // FBO (the shape that once froze the tab). 2048 is the cap: 4096 quadruples
+                // the buffer for no visible gain at usable angles and reopens perf risk.
+                // samples=8 (was 4) keeps the
                 // refraction blur from banding. chromaticAberration trimmed 0.02→0.002:
                 // the RGB-split sampling added colored fringing that read as colored
                 // tiles on the high-frequency marks; near-zero keeps a faint edge tint
@@ -87,7 +95,7 @@ export default function Sheets({ specs = [], appearance = null }) {
                 // foreshortened slab still shows some residual blocking — an inherent
                 // limit of screen-space refraction, where the marks are near-invisible
                 // anyway.)
-                resolution={1024}
+                resolution={2048}
                 anisotropy={0.1}
                 chromaticAberration={0.002}
               />

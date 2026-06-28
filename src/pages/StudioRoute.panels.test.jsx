@@ -52,6 +52,26 @@ function setProfile(value) {
   });
 }
 
+// The grouped-tier panel container for the Nth panel (0-based, in render order =
+// `order` ascending). LayerTree wraps each PanelHeader in a `<div
+// data-testid={panel.id}>`, so the header's parent IS that container — its
+// data-testid is the panel id. Returns { el, id } so callers can scope queries
+// to one panel AND assert against its id.
+function panelAt(index) {
+  const header = within(objectTree()).getAllByTestId("panel-header")[index];
+  const el = header.parentElement;
+  return { el, id: el.getAttribute("data-testid") };
+}
+
+// Pick a pattern through the REAL PatternPickerModal. Switch to the Map tab
+// first (plain PatternCard, no dnd-kit grid that misbehaves in jsdom), then
+// click the card carrying `symbol` (each pattern's glyph is unique, e.g. spiral
+// = "Sl"). Drives Studio's onPick → addLayer(id, { panelId }).
+function pickPattern(symbol = "Sl") {
+  fireEvent.click(screen.getByRole("tab", { name: "Map" }));
+  fireEvent.click(screen.getByText(symbol).closest("button"));
+}
+
 describe("StudioRoute — Naqsha Panels laser-only gate (WI-6 / spec §5)", () => {
   beforeEach(() => localStorage.clear());
 
@@ -158,7 +178,7 @@ describe("StudioRoute — Naqsha Panels handler round-trips (WI-6 / spec §5)", 
     const tree = objectTree();
     const headersBefore = within(tree).getAllByTestId("panel-header").length;
 
-    fireEvent.click(within(tree).getByRole("button", { name: "Add panel" }));
+    fireEvent.click(within(tree).getByRole("button", { name: "Create panel" }));
 
     // A new PanelHeader appears immediately…
     await waitFor(() => {
@@ -230,7 +250,7 @@ describe("StudioRoute — panel edits are undoable (unified history S4)", () => 
     ).length;
 
     fireEvent.click(
-      within(objectTree()).getByRole("button", { name: "Add panel" })
+      within(objectTree()).getByRole("button", { name: "Create panel" })
     );
     await waitFor(() => {
       expect(within(objectTree()).getAllByTestId("panel-header").length).toBe(
@@ -246,6 +266,193 @@ describe("StudioRoute — panel edits are undoable (unified history S4)", () => 
         headersBefore
       );
     });
+  });
+});
+
+describe("StudioRoute — create panel from a material preset (P7 slice 1)", () => {
+  beforeEach(() => localStorage.clear());
+
+  it("a chosen preset becomes the new panel's substrate", async () => {
+    renderPro();
+    setProfile("laser");
+
+    // Pick the plywood · 4mm preset (SUBSTRATE_PRESETS index 2) on NewPanelRow,
+    // then create → onCreatePanel(preset) → onAddPanel(substrate).
+    fireEvent.change(
+      within(objectTree()).getByRole("combobox", { name: "Material preset" }),
+      { target: { value: "2" } }
+    );
+    fireEvent.click(
+      within(objectTree()).getByRole("button", { name: "Create panel" })
+    );
+
+    await waitFor(() =>
+      expect(within(objectTree()).getAllByTestId("panel-header").length).toBe(2)
+    );
+    // The new panel (order 1) carries the plywood substrate, not the default.
+    expect(panelAt(1).el).toHaveTextContent(/plywood/);
+  });
+});
+
+describe("StudioRoute — add-layer threads the target panel (P7 slice 2)", () => {
+  beforeEach(() => localStorage.clear());
+
+  it("clicking panel 2's '+ Add layer' assigns the new layer to panel 2", async () => {
+    renderPro();
+    setProfile("laser");
+
+    // Create a second panel (NewPanelRow, no preset → default panel).
+    fireEvent.click(
+      within(objectTree()).getByRole("button", { name: "Create panel" })
+    );
+    await waitFor(() =>
+      expect(within(objectTree()).getAllByTestId("panel-header").length).toBe(2)
+    );
+
+    const panel1 = panelAt(0);
+    const panel2 = panelAt(1);
+    // Panel 2 starts empty; capture panel 1's rows to prove they're untouched
+    // (rules out a stale-pendingPanelId leak onto the wrong group).
+    const panel1RowsBefore = within(panel1.el).queryAllByTestId("layer-row").length;
+    expect(within(panel2.el).queryAllByTestId("layer-row").length).toBe(0);
+
+    // Open the picker for PANEL 2 specifically. Both expanded panels render an
+    // "Add layer" button (same static aria-label); render order = order asc, so
+    // index 1 is panel 2's.
+    const addButtons = within(objectTree()).getAllByRole("button", {
+      name: "Add layer",
+    });
+    fireEvent.click(addButtons[1]);
+
+    // Pick a pattern → addLayer(id, { panelId: panel2.id }).
+    pickPattern("Sl");
+
+    // The new layer renders UNDER panel 2 (grouped tier filters by panelId, so a
+    // row appears in this container iff layer.panelId === panel2.id). Panel 1 is
+    // unchanged → no stale id leaked.
+    await waitFor(() =>
+      expect(within(panel2.el).getAllByTestId("layer-row").length).toBe(1)
+    );
+    expect(within(panel1.el).queryAllByTestId("layer-row").length).toBe(
+      panel1RowsBefore
+    );
+  });
+});
+
+describe("StudioRoute — duplicate panel (P7 slice 3)", () => {
+  beforeEach(() => localStorage.clear());
+
+  const undo = () =>
+    fireEvent.keyDown(document.body, { key: "z", metaKey: true });
+
+  // Delete the first flat/grouped layer-row so the document drops to a single
+  // layer — leaving headroom under the guest cap (3) to duplicate a 1-layer
+  // panel (1 + 1 ≤ 3). Mirrors the row's ⋯ → Delete → confirm flow.
+  function deleteFirstLayer() {
+    const row = within(objectTree()).getAllByTestId("layer-row")[0];
+    fireEvent.click(within(row).getByRole("button", { name: "Row actions" }));
+    fireEvent.click(within(row).getByRole("menuitem", { name: "Delete" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+  }
+
+  it("duplicating a panel appends a panel whose layer is a fresh-id copy; ⌘Z restores", async () => {
+    renderPro();
+    setProfile("laser");
+
+    // Seed shrinks to one layer on the lone panel (cap headroom for the copy).
+    deleteFirstLayer();
+    await waitFor(() =>
+      expect(within(objectTree()).getAllByTestId("layer-row").length).toBe(1)
+    );
+
+    // Duplicate panel 1 via its ⋯ Panel options → Duplicate.
+    const panel1 = panelAt(0);
+    fireEvent.click(
+      within(panel1.el).getByRole("button", { name: "Panel options" })
+    );
+    fireEvent.click(
+      within(panel1.el).getByRole("menuitem", { name: "Duplicate" })
+    );
+
+    // A second panel is appended, carrying one copied layer-row.
+    await waitFor(() =>
+      expect(within(objectTree()).getAllByTestId("panel-header").length).toBe(2)
+    );
+    expect(within(objectTree()).getAllByTestId("layer-row").length).toBe(2);
+    expect(within(panelAt(1).el).getAllByTestId("layer-row").length).toBe(1);
+
+    // The copy has a FRESH layer id (unique) and lives on the NEW panel (two
+    // distinct panelIds across the two layers). Asserted off persisted state.
+    await waitFor(
+      () => {
+        const persisted = JSON.parse(localStorage.getItem("sonoform-layers"));
+        expect(persisted.length).toBe(2);
+        expect(new Set(persisted.map((l) => l.id)).size).toBe(2);
+        expect(new Set(persisted.map((l) => l.panelId)).size).toBe(2);
+      },
+      { timeout: 4000 }
+    );
+
+    // ⌘Z restores the pre-duplicate state: one panel, one layer.
+    undo();
+    await waitFor(() =>
+      expect(within(objectTree()).getAllByTestId("panel-header").length).toBe(1)
+    );
+    expect(within(objectTree()).getAllByTestId("layer-row").length).toBe(1);
+  });
+});
+
+describe("StudioRoute — clear all layers on a panel (P7 slice 4)", () => {
+  beforeEach(() => localStorage.clear());
+
+  const undo = () =>
+    fireEvent.keyDown(document.body, { key: "z", metaKey: true });
+
+  it("clearing a panel removes its layers (doc not emptied); ⌘Z restores them", async () => {
+    renderPro();
+    setProfile("laser");
+
+    // Distribute layers across two panels so clearing panel 1 (its 2 seeded
+    // layers) can't empty the document — panel 2 keeps one. Create panel 2,
+    // then add a layer to it.
+    fireEvent.click(
+      within(objectTree()).getByRole("button", { name: "Create panel" })
+    );
+    await waitFor(() =>
+      expect(within(objectTree()).getAllByTestId("panel-header").length).toBe(2)
+    );
+    fireEvent.click(
+      within(objectTree()).getAllByRole("button", { name: "Add layer" })[1]
+    );
+    pickPattern("Sl");
+    await waitFor(() =>
+      expect(within(panelAt(1).el).getAllByTestId("layer-row").length).toBe(1)
+    );
+
+    // Panel 1 holds the 2 seeded layers.
+    expect(within(panelAt(0).el).getAllByTestId("layer-row").length).toBe(2);
+
+    // Clear panel 1 via its ⋯ Panel options → Clear all layers → confirm.
+    fireEvent.click(
+      within(panelAt(0).el).getByRole("button", { name: "Panel options" })
+    );
+    fireEvent.click(
+      within(panelAt(0).el).getByRole("menuitem", { name: "Clear all layers" })
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+
+    // Panel 1 is emptied; panel 2's layer survives (doc not emptied).
+    await waitFor(() =>
+      expect(within(panelAt(0).el).queryAllByTestId("layer-row").length).toBe(0)
+    );
+    expect(within(objectTree()).getAllByTestId("layer-row").length).toBe(1);
+
+    // ⌘Z restores panel 1's layers.
+    undo();
+    await waitFor(() =>
+      expect(within(panelAt(0).el).getAllByTestId("layer-row").length).toBe(2)
+    );
+    expect(within(objectTree()).getAllByTestId("layer-row").length).toBe(3);
   });
 });
 

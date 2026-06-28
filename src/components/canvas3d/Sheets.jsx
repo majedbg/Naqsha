@@ -30,17 +30,23 @@ export default function Sheets({ specs = [] }) {
             {/* boxGeometry args = [x=width, y=height, z=thickness] */}
             <boxGeometry args={[w, h, spec.thickness]} />
             {m.type === 'transmissive' ? (
+              // transmissionSampler: all acrylic sheets sample ONE shared scene
+              // buffer instead of each rendering the whole scene into its own FBO
+              // every frame — an N-sheet stack went from ~N (×2 with backside)
+              // full-scene renders per frame to one. Paired with lower
+              // resolution/samples and dropping backside, this is the biggest
+              // per-frame GPU win for the acrylic stack (zoom/rotate cost).
               <MeshTransmissionMaterial
+                transmissionSampler
                 color={m.color}
                 ior={m.ior ?? 1.49}
                 roughness={m.roughness ?? 0.15}
                 thickness={spec.thickness}
                 transmission={1}
-                samples={6}
-                resolution={256}
+                samples={4}
+                resolution={128}
                 anisotropy={0.1}
                 chromaticAberration={0.02}
-                backside
               />
             ) : (
               <meshStandardMaterial

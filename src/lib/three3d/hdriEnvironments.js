@@ -38,6 +38,48 @@ export const HDRI_ENVIRONMENTS = Object.freeze([
     file: '/hdri/voortrekker_interior_2k.hdr',
     background: true,
   }),
+  Object.freeze({
+    id: 'hospital-room-2',
+    label: 'Hospital Room 2',
+    kind: 'file',
+    file: '/hdri/hospital_room_2_2k.hdr',
+    background: true,
+  }),
+  Object.freeze({
+    id: 'pine-attic',
+    label: 'Pine Attic',
+    kind: 'file',
+    file: '/hdri/pine_attic_2k.hdr',
+    background: true,
+  }),
+  Object.freeze({
+    id: 'wooden-studio-10',
+    label: 'Wooden Studio 10',
+    kind: 'file',
+    file: '/hdri/wooden_studio_10_2k.hdr',
+    background: true,
+  }),
+  Object.freeze({
+    id: 'historic-cloister-passage',
+    label: 'Historic Cloister Passage',
+    kind: 'file',
+    file: '/hdri/historic_cloister_passage_2k.hdr',
+    background: true,
+  }),
+  Object.freeze({
+    id: 'blinds',
+    label: 'Blinds',
+    kind: 'file',
+    file: '/hdri/blinds_2k.hdr',
+    background: true,
+  }),
+  Object.freeze({
+    id: 'billiard-hall',
+    label: 'Billiard Hall',
+    kind: 'file',
+    file: '/hdri/billiard_hall_2k.hdr',
+    background: true,
+  }),
 ]);
 
 /** The default environment id — the dark studio preset (zero download, glow-first). */

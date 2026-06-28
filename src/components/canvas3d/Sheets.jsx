@@ -5,6 +5,7 @@
 import { MeshTransmissionMaterial } from '@react-three/drei';
 import { resolveSheetMaterial } from '../../lib/three3d/sheetMaterial.js';
 import EdgeGlow from './EdgeGlow.jsx';
+import WoodGrain from './WoodGrain.jsx';
 
 /**
  * Surface A slabs (S4, PRD D7/D11). Renders one extruded box per sheet spec
@@ -76,6 +77,20 @@ export default function Sheets({ specs = [], appearance = null }) {
                 metalness={mat.metalness}
                 clearcoat={mat.clearcoat}
                 clearcoatRoughness={0.1}
+              />
+            ) : appearance?.archetype === 'wood' ? (
+              /* Procedural wood grain (S6, §3.2/L6). ONLY on the wood archetype
+                 when a material lens is active — the no-material substrate fallback
+                 (appearance === null) stays a plain standard material, byte-
+                 identical to pre-S4. The grain math is the unit-tested woodGrain.js;
+                 this material mirrors it in GLSL. No texture loaded (texturePath
+                 reserved). */
+              <WoodGrain
+                color={mat.color}
+                roughness={mat.roughness}
+                width={w}
+                height={h}
+                appearance={appearance}
               />
             ) : (
               <meshStandardMaterial

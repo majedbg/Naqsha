@@ -5,7 +5,7 @@
 // on the 2D side; this component only marshals those scalars into emissive meshes.
 import { useMemo } from 'react';
 import * as THREE from 'three';
-import { Select } from '@react-three/postprocessing';
+import { useBloomRef } from './bloomSelection.js';
 import { keyLightDirection, sideEmissive } from '../../lib/three3d/edgeGlow.js';
 import { KEY_LIGHT_POSITION, KEY_LIGHT_TARGET } from '../../lib/three3d/keyLight.js';
 
@@ -28,11 +28,15 @@ import { KEY_LIGHT_POSITION, KEY_LIGHT_TARGET } from '../../lib/three3d/keyLight
  *      as the user orbits.
  *
  *  (2) BLOOM MEMBERSHIP (D12). Emissive that is NOT in the SelectiveBloom
- *      selection does not bloom (EmissiveBloom.jsx glows ONLY `<Select>` members,
- *      exactly like Marks/DrapedMarks). So every rim mesh AND the fresnel shell are
- *      wrapped in `<Select enabled>`. NOTE: this codebase has no `useBloomRef` /
- *      `bloomSelection.js` — `<Select enabled>` from @react-three/postprocessing IS
- *      the registration mechanism (see Marks.jsx).
+ *      selection does not bloom (EmissiveBloom.jsx glows ONLY the registered
+ *      objects, exactly like Marks/DrapedMarks). So every rim mesh AND the fresnel
+ *      shell attach the `useBloomRef()` ref callback (bloomSelection.js) to register
+ *      into the bloom selection store. NOTE: this codebase DELIBERATELY does NOT use
+ *      @react-three/postprocessing's `<Selection>`/`<Select>` — that context's
+ *      self-retriggering effect froze the tab, and with no `<Selection>` provider in
+ *      Scene3D a stray `<Select>` throws "Cannot read properties of null (reading
+ *      'layers')" and loses the WebGL context. `useBloomRef` is the replacement (see
+ *      bloomSelection.js / Marks.jsx).
  *
  * These rim meshes are SEPARATE thin emissive geometry (plain emissive
  * meshStandardMaterial), NOT emissive injected into the slab's drei
@@ -95,6 +99,12 @@ const FRESNEL_FRAG = /* glsl */ `
 `;
 
 export default function EdgeGlow({ spec, appearance }) {
+  // Bloom membership (D12) via the codebase's selection store — a STABLE ref
+  // callback (registers each emissive mesh on mount, unregisters on unmount). The
+  // same stable callback is attached to every rim bar and the fresnel shell; React
+  // invokes it once per mesh, so all of them join the SelectiveBloom selection
+  // without the abandoned, tab-freezing `<Select>` wrapper.
+  const bloomRef = useBloomRef();
   const [w = 0, h = 0] = spec?.size || [];
   const thickness = spec?.thickness ?? 0;
   const edgeGain = appearance?.edgeGain ?? 0;
@@ -122,58 +132,55 @@ export default function EdgeGlow({ spec, appearance }) {
 
   return (
     <group position={[0, 0, spec.zOffset]} data-testid={`edge-glow-${spec.panelId}`}>
-      {showRim && (
-        // Perimeter rim bars. <Select enabled> = bloom membership (D12) — without
-        // it the emissive renders with zero bloom and looks dead.
-        <Select enabled>
-          {SIDE_FACES.map((face) => {
-            // Per-face emissive strength from the key-light incidence (the §3.6
-            // term). 0 on shadowed sides → those bars stay dark, giving the
-            // direction-tracking asymmetry.
-            const intensity = RIM_BASE * sideEmissive(KEY_LIGHT_DIR, face.normal, STACK_AXIS, edgeGain);
-            const pos =
-              face.axis === 'x'
-                ? [face.normal[0] * (w / 2), 0, 0]
-                : [0, face.normal[1] * (h / 2), 0];
-            const size = face.axis === 'x' ? [rimW, h, thickness] : [w, rimW, thickness];
-            return (
-              <mesh key={face.id} position={pos}>
-                <boxGeometry args={size} />
-                {/* Black base so the lit diffuse adds nothing; the glow is pure
-                    emissive in the material tint, scaled per-face. toneMapped off
-                    so the beauty pass doesn't attenuate it (matches Marks.jsx). */}
-                <meshStandardMaterial
-                  color="#000000"
-                  emissive={tint}
-                  emissiveIntensity={intensity}
-                  toneMapped={false}
-                  roughness={1}
-                  metalness={0}
-                />
-              </mesh>
-            );
-          })}
-        </Select>
-      )}
+      {showRim &&
+        // Perimeter rim bars. Each registers into the bloom selection (D12) via
+        // `ref={bloomRef}` — without bloom membership the emissive renders with zero
+        // glow and looks dead.
+        SIDE_FACES.map((face) => {
+          // Per-face emissive strength from the key-light incidence (the §3.6
+          // term). 0 on shadowed sides → those bars stay dark, giving the
+          // direction-tracking asymmetry.
+          const intensity = RIM_BASE * sideEmissive(KEY_LIGHT_DIR, face.normal, STACK_AXIS, edgeGain);
+          const pos =
+            face.axis === 'x'
+              ? [face.normal[0] * (w / 2), 0, 0]
+              : [0, face.normal[1] * (h / 2), 0];
+          const size = face.axis === 'x' ? [rimW, h, thickness] : [w, rimW, thickness];
+          return (
+            <mesh key={face.id} ref={bloomRef} position={pos}>
+              <boxGeometry args={size} />
+              {/* Black base so the lit diffuse adds nothing; the glow is pure
+                  emissive in the material tint, scaled per-face. toneMapped off
+                  so the beauty pass doesn't attenuate it (matches Marks.jsx). */}
+              <meshStandardMaterial
+                color="#000000"
+                emissive={tint}
+                emissiveIntensity={intensity}
+                toneMapped={false}
+                roughness={1}
+                metalness={0}
+              />
+            </mesh>
+          );
+        })}
 
       {showFresnel && (
         // Face fresnel "internally lit" rim — a view-dependent additive shell
-        // hugging the slab. Also a bloom member so the grazing rim glows.
-        <Select enabled>
-          <mesh>
-            <boxGeometry args={[w, h, thickness]} />
-            <shaderMaterial
-              vertexShader={FRESNEL_VERT}
-              fragmentShader={FRESNEL_FRAG}
-              uniforms={fresnelUniforms}
-              transparent
-              depthWrite={false}
-              toneMapped={false}
-              blending={THREE.AdditiveBlending}
-              side={THREE.DoubleSide}
-            />
-          </mesh>
-        </Select>
+        // hugging the slab. Also a bloom member (ref={bloomRef}) so the grazing rim
+        // glows.
+        <mesh ref={bloomRef}>
+          <boxGeometry args={[w, h, thickness]} />
+          <shaderMaterial
+            vertexShader={FRESNEL_VERT}
+            fragmentShader={FRESNEL_FRAG}
+            uniforms={fresnelUniforms}
+            transparent
+            depthWrite={false}
+            toneMapped={false}
+            blending={THREE.AdditiveBlending}
+            side={THREE.DoubleSide}
+          />
+        </mesh>
       )}
     </group>
   );

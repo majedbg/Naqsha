@@ -15,6 +15,7 @@
 import { useState, useEffect, useRef } from "react";
 import { SUBSTRATE_KINDS } from "../../lib/panels";
 import ConfirmDialog from "../ui/ConfirmDialog";
+import RowMenu from "./RowMenu";
 
 function ChevronIcon({ collapsed }) {
   return (
@@ -47,11 +48,14 @@ function EyeIcon({ open }) {
   );
 }
 
-function TrashIcon() {
+// The ⋯ trigger glyph — three horizontal dots, matching the LayerRow overflow
+// affordance. Decorative; the button carries the accessible name.
+function MoreIcon() {
   return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-      <polyline points="3 6 5 6 21 6" />
-      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true">
+      <circle cx="5" cy="12" r="1.6" />
+      <circle cx="12" cy="12" r="1.6" />
+      <circle cx="19" cy="12" r="1.6" />
     </svg>
   );
 }
@@ -73,10 +77,18 @@ export default function PanelHeader({
   editorOpen = false,
   onToggleEditor,
   canDelete = true,
+  canDuplicate = false,
+  canClearLayers = false,
   onUpdatePanel,
   onDeletePanel,
+  onDuplicatePanel,
+  onClearPanelLayers,
   onAssignLayerToPanel,
 }) {
+  // The ⋯ options menu is self-owned (P5 locked decision): PanelHeader holds the
+  // open/close state and renders <RowMenu /> itself, anchored in a relative
+  // wrapper so RowMenu's `absolute right-0` panel lines up under the trigger.
+  const [menuOpen, setMenuOpen] = useState(false);
   // Inline rename — mirrors LayerRow's rename (§7). Commit trims + rejects empty.
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(panel.name);
@@ -114,6 +126,25 @@ export default function PanelHeader({
   const confirmDelete = () => {
     setConfirming(false);
     onDeletePanel?.(panel.id, { deleteLayers });
+  };
+
+  // Clear-all-layers confirm — a separate danger dialog (no "delete layers too?"
+  // checkbox; the action IS the layer removal). Disabled-gating lives on the
+  // menu item via RowMenu's clearLayersDisabled, so this only opens when allowed.
+  const [clearing, setClearing] = useState(false);
+  const confirmClear = () => {
+    setClearing(false);
+    onClearPanelLayers?.(panel.id);
+  };
+
+  // Duplicate/Delete are NOT disable-aware in RowMenu (only Clear is), so their
+  // caps are enforced here: a guarded no-op when the cap gate is false. P6/P7
+  // wire the real `canDuplicate`/`canDelete` booleans.
+  const handleDuplicate = () => {
+    if (canDuplicate) onDuplicatePanel?.(panel.id);
+  };
+  const handleDelete = () => {
+    if (canDelete) openDelete();
   };
 
   const substrate = panel.substrate || {};
@@ -207,17 +238,31 @@ export default function PanelHeader({
           <EyeIcon open={panel.visible} />
         </button>
 
-        {/* Delete control — disabled when this is the only panel (always >= 1). */}
-        <button
-          type="button"
-          aria-label="Delete panel"
-          title={canDelete ? "Delete panel" : "Can't delete the only panel"}
-          disabled={!canDelete}
-          onClick={openDelete}
-          className="shrink-0 text-ink-soft hover:text-tone-strong disabled:opacity-30 disabled:cursor-not-allowed"
-        >
-          <TrashIcon />
-        </button>
+        {/* ⋯ options menu — folds Rename · Duplicate · Clear all layers · Delete.
+            The relative wrapper anchors RowMenu's `absolute right-0` panel. */}
+        <div className="relative shrink-0">
+          <button
+            type="button"
+            aria-label="Panel options"
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            title="Panel options"
+            onClick={() => setMenuOpen((o) => !o)}
+            className="text-ink-soft hover:text-ink"
+          >
+            <MoreIcon />
+          </button>
+          <RowMenu
+            open={menuOpen}
+            onClose={() => setMenuOpen(false)}
+            onRename={beginEdit}
+            onDuplicate={handleDuplicate}
+            onClearLayers={() => setClearing(true)}
+            clearLayersDisabled={!canClearLayers}
+            clearLayersLabel="Clear all layers"
+            onDelete={handleDelete}
+          />
+        </div>
       </div>
 
       {/* Substrate editor (single-open, owned by LayerTree via editorOpen). */}
@@ -299,6 +344,17 @@ export default function PanelHeader({
           Delete the layers on this panel too?
         </label>
       </ConfirmDialog>
+
+      {/* Clear-all-layers confirm — danger, no checkbox (the action is the wipe). */}
+      <ConfirmDialog
+        open={clearing}
+        danger
+        title={`Clear all layers on "${panel.name}"?`}
+        confirmLabel="Clear"
+        cancelLabel="Cancel"
+        onConfirm={confirmClear}
+        onCancel={() => setClearing(false)}
+      />
     </div>
   );
 }

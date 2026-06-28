@@ -69,7 +69,7 @@ export default function RowMenu({
   onClose = () => {},
   onRename = () => {},
   onDuplicate = () => {},
-  onDownload = () => {},
+  onDownload,
   onClearLayers,
   clearLayersDisabled = false,
   clearLayersLabel = "Clear all layers",
@@ -154,7 +154,9 @@ export default function RowMenu({
     >
       <MenuItem label="Rename" onActivate={select(onRename)} />
       <MenuItem label="Duplicate" onActivate={select(onDuplicate)} />
-      <MenuItem label="Download" onActivate={select(onDownload)} />
+      {onDownload && (
+        <MenuItem label="Download" onActivate={select(onDownload)} />
+      )}
       {onClearLayers && (
         <MenuItem
           label={clearLayersLabel}

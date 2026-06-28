@@ -224,6 +224,35 @@ describe("RowMenu (WI-4 — per-row overflow popper)", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  it("omits Download when onDownload is absent (order Rename · Duplicate · — · Delete, and with onClearLayers: Rename · Duplicate · Clear all layers · — · Delete)", () => {
+    const { rerender } = renderMenu({ onDownload: undefined });
+    let menu = screen.getByRole("menu");
+    expect(
+      within(menu).queryByRole("menuitem", { name: /download/i })
+    ).not.toBeInTheDocument();
+    expect(
+      within(menu).getAllByRole("menuitem").map((i) => i.textContent)
+    ).toEqual(["Rename", "Duplicate", "Delete"]);
+
+    rerender(
+      <RowMenu
+        open
+        onClose={() => {}}
+        onRename={() => {}}
+        onDuplicate={() => {}}
+        onDelete={() => {}}
+        onClearLayers={() => {}}
+      />
+    );
+    menu = screen.getByRole("menu");
+    expect(
+      within(menu).queryByRole("menuitem", { name: /download/i })
+    ).not.toBeInTheDocument();
+    expect(
+      within(menu).getAllByRole("menuitem").map((i) => i.textContent)
+    ).toEqual(["Rename", "Duplicate", "Clear all layers", "Delete"]);
+  });
+
   it("keeps the order Rename · Duplicate · Download · — · Delete when onClearLayers is absent (regression)", () => {
     renderMenu();
     const menu = screen.getByRole("menu");

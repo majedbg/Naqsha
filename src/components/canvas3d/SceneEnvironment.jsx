@@ -8,6 +8,18 @@ import { getEnvironmentById, isFileEnvironment } from '../../lib/three3d/hdriEnv
 /** Neutral DARK background (spec D12) so emissive glow + acrylic transmission pop. */
 export const DARK_BG = '#0b0b10';
 
+// IBL intensity for PRESET environments (e.g. 'studio'). drei's studio preset is a
+// BRIGHT studio HDRI, but a preset env keeps the neutral DARK backdrop (the
+// "glow-first" look). At full IBL (1.0) that bright lighting fully lights the flat
+// acrylic slab and CLIPS it to a featureless bright block against the dark backdrop —
+// burying the marks/edge-glow the dark scene is meant to showcase (the slab face has
+// a constant normal, so the diffuse+specular IBL term is uniform across it and
+// saturates all at once). Dimming the IBL to a fraction keeps the slab reading as a
+// dark, transmissive sheet so the emissive glow + marks pop — matching the preset's
+// stated intent. FILE HDRIs (cloister/pine-attic) are untouched: their backdrop and
+// lighting match, so they tone-map naturally and need no dimming.
+const PRESET_ENV_INTENSITY = 0.3;
+
 /**
  * Shared lighting + image-based environment (spec D12, + the HDRI picker).
  *
@@ -54,9 +66,12 @@ const SceneEnvironment = forwardRef(function SceneEnvironment(
         </Suspense>
       ) : (
         <>
-          {/* preset env: IBL only (no `background`), so the dark backdrop shows */}
+          {/* preset env: IBL only (no `background`), so the dark backdrop shows.
+              Dimmed IBL (PRESET_ENV_INTENSITY) so the bright preset HDRI doesn't
+              clip the flat acrylic slab into a featureless block — keeps the
+              glow-first dark look readable. */}
           <color attach="background" args={[DARK_BG]} />
-          <Environment preset={env.preset} />
+          <Environment preset={env.preset} environmentIntensity={PRESET_ENV_INTENSITY} />
         </>
       )}
     </>

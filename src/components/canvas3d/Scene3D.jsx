@@ -37,6 +37,15 @@ import {
   loadPreview3DSettings,
   savePreview3DSettings,
 } from '../../lib/three3d/preview3dPersistence.js';
+import {
+  HDRI_ENVIRONMENTS,
+  getEnvironmentById,
+  isFileEnvironment,
+  BG_BLUR_MIN,
+  BG_BLUR_MAX,
+  BG_INTENSITY_MIN,
+  BG_INTENSITY_MAX,
+} from '../../lib/three3d/hdriEnvironments.js';
 
 // Placeholder content bounds (S2). Stable identity so CameraRig's zoom-fit effect
 // doesn't re-run every render. Used for height-surface (B, later) + the empty
@@ -165,6 +174,23 @@ export default function Scene3D({
     return () => clearTimeout(id);
   }, [isPanelStack, exaggerationMm]);
 
+  // HDRI environment picker. Seeded from persisted prefs; owned locally so the
+  // dropdown + blur/intensity sliders drive the backdrop live. Unlike spacing/
+  // exaggeration this is NOT sub-mode-gated (the environment applies to both
+  // surfaces). Debounced-persisted like the others.
+  const [environmentId, setEnvironmentId] = useState(() => persisted.environmentId);
+  const [bgBlurriness, setBgBlurriness] = useState(() => persisted.bgBlurriness);
+  const [bgIntensity, setBgIntensity] = useState(() => persisted.bgIntensity);
+  // Blur/intensity sliders are only meaningful for a file HDRI shown as background.
+  const envIsFile = isFileEnvironment(getEnvironmentById(environmentId));
+  useEffect(() => {
+    const id = setTimeout(
+      () => savePreview3DSettings({ environmentId, bgBlurriness, bgIntensity }),
+      250,
+    );
+    return () => clearTimeout(id);
+  }, [environmentId, bgBlurriness, bgIntensity]);
+
   // Surface-B per-target drape toggles (S9, §3.4). Default ALL-ON: a SET of
   // DISABLED targetIds, so newly-added targets light up without re-seeding.
   // NOT persisted — D13/S11 cover sub-mode/spacing/exaggeration only.
@@ -254,7 +280,12 @@ export default function Scene3D({
             `bloomSelection` is handed to EmissiveBloom's `selection` prop below. */}
         <BloomSelectionContext.Provider value={registerBloom}>
           <CameraRig fitBox={fitBox} resetSignal={resetSignal} />
-          <SceneEnvironment ref={keyLightRef} />
+          <SceneEnvironment
+            ref={keyLightRef}
+            environmentId={environmentId}
+            backgroundBlurriness={bgBlurriness}
+            backgroundIntensity={bgIntensity}
+          />
 
           {isPanelStack ? (
             /* Surface A — stacked substrate slabs (S4) + texture-mode emissive
@@ -334,6 +365,63 @@ export default function Scene3D({
         >
           ✕
         </button>
+      </div>
+
+      {/* Environment (HDRI) picker — applies to BOTH surfaces, so pinned bottom-
+          RIGHT (the spacing/amplitude sliders own bottom-left). A dropdown swaps the
+          backdrop; for a file HDRI shown as background, two sliders soften it
+          (blurriness + intensity) so the room reads as ambiance without washing out
+          the emissive glow. The dark 'Studio' preset keeps the glow-first look. */}
+      <div
+        data-testid="canvas3d-environment"
+        className="absolute bottom-3 right-3 flex flex-col items-end gap-2 rounded-md border border-white/10 bg-black/40 px-3 py-2 text-xs font-medium text-white/80 backdrop-blur"
+      >
+        <label className="flex items-center gap-2">
+          <span className="whitespace-nowrap">Scene</span>
+          <select
+            data-testid="canvas3d-environment-select"
+            value={environmentId}
+            onChange={(e) => setEnvironmentId(e.target.value)}
+            className="cursor-pointer rounded border border-white/10 bg-black/40 px-1.5 py-1 text-white/90 outline-none focus:border-violet"
+            aria-label="3D scene environment"
+          >
+            {HDRI_ENVIRONMENTS.map((env) => (
+              <option key={env.id} value={env.id} className="bg-neutral-900 text-white">
+                {env.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        {envIsFile && (
+          <>
+            <label className="flex w-full items-center gap-2">
+              <span className="w-14 whitespace-nowrap text-white/60">Blur</span>
+              <input
+                type="range"
+                min={BG_BLUR_MIN}
+                max={BG_BLUR_MAX}
+                step={0.01}
+                value={bgBlurriness}
+                onChange={(e) => setBgBlurriness(Number(e.target.value))}
+                className="h-1 w-28 cursor-pointer accent-violet"
+                aria-label="Background blurriness"
+              />
+            </label>
+            <label className="flex w-full items-center gap-2">
+              <span className="w-14 whitespace-nowrap text-white/60">Bright</span>
+              <input
+                type="range"
+                min={BG_INTENSITY_MIN}
+                max={BG_INTENSITY_MAX}
+                step={0.05}
+                value={bgIntensity}
+                onChange={(e) => setBgIntensity(Number(e.target.value))}
+                className="h-1 w-28 cursor-pointer accent-violet"
+                aria-label="Background intensity"
+              />
+            </label>
+          </>
+        )}
       </div>
 
       {/* Surface-A stack-spacing slider (D11): 0–60mm, default 12mm. Panel-stack

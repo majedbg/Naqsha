@@ -15,6 +15,16 @@
 
 import { SPACING_DEFAULT, SPACING_MIN, SPACING_MAX } from './sheetSpecs.js';
 import { EXAG_MIN } from './heightSurface.js';
+import {
+  DEFAULT_ENVIRONMENT_ID,
+  isEnvironmentId,
+  DEFAULT_BG_BLURRINESS,
+  DEFAULT_BG_INTENSITY,
+  BG_BLUR_MIN,
+  BG_BLUR_MAX,
+  BG_INTENSITY_MIN,
+  BG_INTENSITY_MAX,
+} from './hdriEnvironments.js';
 
 export const PREVIEW3D_STORAGE_KEY = 'sonoform-3d-preview';
 
@@ -30,7 +40,14 @@ const VALID_SUBMODES = new Set(['panel-stack', 'height-surface']);
  * @returns {{ subMode: null, spacing: number, exaggeration: null }}
  */
 export function defaultPreview3DSettings() {
-  return { subMode: null, spacing: SPACING_DEFAULT, exaggeration: null };
+  return {
+    subMode: null,
+    spacing: SPACING_DEFAULT,
+    exaggeration: null,
+    environmentId: DEFAULT_ENVIRONMENT_ID,
+    bgBlurriness: DEFAULT_BG_BLURRINESS,
+    bgIntensity: DEFAULT_BG_INTENSITY,
+  };
 }
 
 /**
@@ -52,6 +69,16 @@ export function normalizePreview3DSettings(raw) {
     // only reject non-finite / sub-floor values; the scene clamps to its live max.
     if (Number.isFinite(raw.exaggeration) && raw.exaggeration >= EXAG_MIN) {
       out.exaggeration = raw.exaggeration;
+    }
+    // HDRI environment picker (visible-background option). Unknown ids fall back
+    // to the studio default; blur/intensity are clamped to their slider ranges so
+    // a corrupted store can never feed an out-of-range value into drei Environment.
+    if (isEnvironmentId(raw.environmentId)) out.environmentId = raw.environmentId;
+    if (Number.isFinite(raw.bgBlurriness)) {
+      out.bgBlurriness = Math.min(BG_BLUR_MAX, Math.max(BG_BLUR_MIN, raw.bgBlurriness));
+    }
+    if (Number.isFinite(raw.bgIntensity)) {
+      out.bgIntensity = Math.min(BG_INTENSITY_MAX, Math.max(BG_INTENSITY_MIN, raw.bgIntensity));
     }
   }
   return out;

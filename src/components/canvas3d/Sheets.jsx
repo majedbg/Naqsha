@@ -17,21 +17,33 @@ import { MeshTransmissionMaterial } from '@react-three/drei';
  * No marks yet — S5 (texture) / S10 (ribbon) drape the engraved/cut grooves onto
  * these sheets using each spec's `layerIds`.
  *
- * @param {{ specs?: import('../../lib/three3d/sheetSpecs.js').SheetSpec[] }} props
+ * `appearance` (S3, spec §3.5) is the selected material's resolved AppearanceParams
+ * (from resolveAppearance), threaded live from Studio's Material lens. When it's
+ * present its `tintHex` overrides the substrate's intrinsic color on every slab;
+ * when null (Operation lens / no material) each slab keeps today's substrate
+ * descriptor color — byte-identical fallback. The remaining channels
+ * (transmission/roughness/metalness, mirror + pearlescent archetypes) are applied
+ * by S4; S3 only proves the live tint thread end-to-end.
+ *
+ * @param {{ specs?: import('../../lib/three3d/sheetSpecs.js').SheetSpec[],
+ *           appearance?: import('../../lib/three3d/resolveAppearance.js').AppearanceParams|null }} props
  */
-export default function Sheets({ specs = [] }) {
+export default function Sheets({ specs = [], appearance = null }) {
   return (
     <group data-testid="sheet-stack">
       {specs.map((spec) => {
         const [w = 0, h = 0] = spec.size || [];
         const m = spec.materialDescriptor || {};
+        // Material lens active → tint every slab to the selected material's sheet
+        // hex; else fall back to the substrate descriptor's own color (today).
+        const color = appearance?.tintHex ?? m.color;
         return (
           <mesh key={spec.panelId} position={[0, 0, spec.zOffset]} castShadow receiveShadow>
             {/* boxGeometry args = [x=width, y=height, z=thickness] */}
             <boxGeometry args={[w, h, spec.thickness]} />
             {m.type === 'transmissive' ? (
               <MeshTransmissionMaterial
-                color={m.color}
+                color={color}
                 ior={m.ior ?? 1.49}
                 roughness={m.roughness ?? 0.15}
                 thickness={spec.thickness}
@@ -44,7 +56,7 @@ export default function Sheets({ specs = [] }) {
               />
             ) : (
               <meshStandardMaterial
-                color={m.color}
+                color={color}
                 roughness={m.roughness ?? 0.8}
                 metalness={0}
               />

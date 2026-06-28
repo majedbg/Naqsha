@@ -31,6 +31,7 @@ import {
   clampExaggeration,
   EXAG_MIN,
 } from '../../lib/three3d/heightSurface.js';
+import { resolveAppearance } from '../../lib/three3d/resolveAppearance.js';
 import { saveCanvasPng } from '../../lib/three3d/snapshotExport.js';
 import {
   loadPreview3DSettings,
@@ -94,6 +95,12 @@ export default function Scene3D({
   // ({targetId, channel, amount, color, name}), resolved 2D-side by
   // drape.resolveActiveTargets (three-free) and passed across the boundary.
   drapeTargets = [],
+  // Material→Appearance (S3, spec §3.5). The user's selected material, threaded
+  // LIVE from Studio's Material lens (a sibling to spacing/exaggeration — NOT in
+  // designSnapshot, so changing material updates the scene without a Rebuild).
+  // null in the Operation lens / when no material is resolved → Sheets falls back
+  // to the substrate's intrinsic descriptor (today's behavior).
+  selectedMaterial = null,
   designName = 'untitled',
 }) {
   const [resetSignal, setResetSignal] = useState(0);
@@ -160,6 +167,16 @@ export default function Scene3D({
   const hasTargets = !isPanelStack && reliefField && drapeTargets.length > 0;
   const emptyDrape = !isPanelStack && reliefField && drapeTargets.length === 0;
 
+  // Selected-material appearance (S3, spec §3.5). resolveAppearance is pure +
+  // three-free; null-in → null-out so the Operation-lens / no-material fallback
+  // (Sheets keeps each slab's intrinsic substrate color) is preserved exactly.
+  // Memoized on the live material identity so material switches re-tint without a
+  // Rebuild, but unrelated renders don't re-resolve.
+  const appearance = useMemo(
+    () => (selectedMaterial ? resolveAppearance(selectedMaterial) : null),
+    [selectedMaterial],
+  );
+
   // Surface A sheet specs (S4). Memoized on the snapshot + spacing + bounds so the
   // geometry — and the derived fitBox handed to CameraRig — keep stable identity
   // across renders (a fresh box each render would re-run zoom-fit every frame).
@@ -214,7 +231,7 @@ export default function Scene3D({
             /* Surface A — stacked substrate slabs (S4) + texture-mode emissive
                marks floated in front of each sheet (S5). Ribbon marks land in S10. */
             <>
-              <Sheets specs={sheetSpecs} />
+              <Sheets specs={sheetSpecs} appearance={appearance} />
               <Marks specs={sheetSpecs} marksByPanel={marksByPanel ?? {}} />
             </>
           ) : (

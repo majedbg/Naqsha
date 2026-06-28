@@ -29,9 +29,40 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
  * is the documented deviation permitted by PRD §3.2.
  */
 
-// pointsToStroke needs ≥2 points. A floor (SVG user units = mm) so a hairline groove
-// still strokes into a visible ribbon rather than a zero-area sliver.
+// pointsToStroke needs ≥2 points. A floor (in SVG user/viewBox units — see
+// svgUserUnitSize: the mark SVGs are px-space, 96-PPI) so a hairline groove still
+// strokes into a visible ribbon rather than a zero-area sliver. It is scaled to mm
+// along with the rest of the geometry in buildRibbonGeometry, so a too-faint ribbon
+// under bloom is tuned HERE (this is the knob), not by the world-space transform.
 const MIN_STROKE_WIDTH = 0.4;
+
+/**
+ * The SVG's intrinsic user-unit extent — the coordinate space the path data (and
+ * thus SVGLoader's points) live in. That is the viewBox size, NOT the width/height
+ * presentation attributes: the mark SVGs (svgExport.svgOpen) declare
+ * `width/height` in mm but a `viewBox="0 0 canvasW canvasH"` in 96-PPI px, and the
+ * path coordinates are px. We must map THAT px space onto the mm plane frame.
+ * Falls back to numeric width/height attrs, then null (caller then skips scaling).
+ * @param {string} svg
+ * @returns {[number, number] | null}
+ */
+function svgUserUnitSize(svg) {
+  if (typeof svg !== 'string') return null;
+  const vb = /viewBox\s*=\s*["']\s*[\d.eE+-]+\s+[\d.eE+-]+\s+([\d.eE+-]+)\s+([\d.eE+-]+)/.exec(svg);
+  if (vb) {
+    const w = parseFloat(vb[1]);
+    const h = parseFloat(vb[2]);
+    if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0) return [w, h];
+  }
+  const wm = /\bwidth\s*=\s*["']\s*([\d.eE+-]+)/.exec(svg);
+  const hm = /\bheight\s*=\s*["']\s*([\d.eE+-]+)/.exec(svg);
+  if (wm && hm) {
+    const w = parseFloat(wm[1]);
+    const h = parseFloat(hm[1]);
+    if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0) return [w, h];
+  }
+  return null;
+}
 
 /**
  * Parse one emissive mark SVG and stroke every subpath into a flat ribbon
@@ -67,14 +98,18 @@ export function strokeGeometriesForSvg(svg) {
  * Build ONE merged emissive ribbon geometry for a per-process mark SVG.
  *
  * COORDINATE TRANSFORM (the make-or-break correctness step, advisor A item 1): SVG
- * is y-DOWN with a top-left origin spanning [0..width]×[0..height]; the scene's mark
- * plane is a centered, y-UP `planeGeometry(width,height)`. So the merged ribbon is
- * baked from SVG space into that exact frame — `scale(1,-1,1)` flips Y, then
- * `translate(-width/2, height/2, 0)` recenters — making a ribbon panel overlay the
- * texture-mode marks (and its sheet) precisely, same center and handedness. SVG user
- * units already equal mm == world units (buildAllLayersSVG is sized to the bounds),
- * so no scale is applied. When width/height are omitted the geometry stays in raw SVG
- * space (used by unit tests asserting vertex/group counts).
+ * is y-DOWN with a top-left origin spanning the viewBox [0..vbW]×[0..vbH]; the
+ * scene's mark plane is a centered, y-UP `planeGeometry(width,height)` in mm (world
+ * units). The mark SVGs are NOT mm-sized: svgExport.svgOpen declares mm width/height
+ * but a px (96-PPI) viewBox, and the path coordinates are px — so the ribbon must be
+ * SCALED from that px viewBox onto the mm frame (`width/vbW`, `height/vbH` — uniform
+ * `1/PX_PER_MM`, so non-square canvases are fine), then `scale(…,-…,1)` flips Y and
+ * `translate(-width/2, height/2, 0)` recenters. Without this scale the ribbon renders
+ * at px magnitude (~3.8× too big) and off-center — the bug this fixes; the texture
+ * path is immune because it maps a UV-[0,1] plane. The result overlays the
+ * texture-mode marks (and its sheet) precisely, same center and handedness. When
+ * width/height are omitted the geometry stays in raw SVG space (used by unit tests
+ * asserting vertex/group counts).
  *
  * @param {string} svg
  * @param {{ width?:number, height?:number, useGroups?:boolean }} [opts]
@@ -90,7 +125,14 @@ export function buildRibbonGeometry(svg, { width, height, useGroups = false } = 
   for (const g of geoms) g.dispose();
   if (!merged) return null;
   if (Number.isFinite(width) && Number.isFinite(height)) {
-    merged.scale(1, -1, 1);
+    // Map the SVG's px viewBox space onto the mm plane frame. When the viewBox
+    // already equals the target (or is absent), src is [width,height]/null →
+    // sx=sy=1, i.e. the prior flip+recenter behavior, so raw-space callers and
+    // viewBox==target tests are unaffected.
+    const src = svgUserUnitSize(svg);
+    const sx = src ? width / src[0] : 1;
+    const sy = src ? height / src[1] : 1;
+    merged.scale(sx, -sy, 1);
     merged.translate(-width / 2, height / 2, 0);
   }
   merged.computeBoundingBox();

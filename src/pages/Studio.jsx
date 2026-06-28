@@ -53,7 +53,10 @@ import ShareLinkButton from "../components/ShareLinkButton";
 import { resolveExportColor } from "../lib/fabrication";
 import { seedOperations, addOperation, resolveOperation } from "../lib/operations";
 import { remapOperationsToProfile, defaultBedSize, profileProcesses, defaultMachineParams } from "../lib/machineProfiles";
-import useOperationsHistory from "../lib/hooks/useOperationsHistory";
+import useHistory from "../lib/history/useHistory";
+import { createDocumentIO } from "../lib/history/documentSnapshot";
+import { readTail, writeTail, validateTail } from "../lib/history/persist";
+import { isTextEntryTarget } from "../lib/history/typingGuard";
 import { syncWeightBand, supportsVariableWeight, isBandOperation } from "../lib/variableWeight";
 import { findMoirePartnerA } from "../lib/moirePair";
 import useCanvasSize, { loadCanvasState } from "../lib/hooks/useCanvasSize";
@@ -107,6 +110,8 @@ export default function Studio({ submitOrg = null } = {}) {
     outputMode,
     setOutputMode,
     applyCanvasSize,
+    captureCanvas,
+    restoreCanvas,
     bedWmm,
     bedHmm,
   } = useCanvasSize({ savedCanvas, activeTab });
@@ -139,6 +144,64 @@ export default function Studio({ submitOrg = null } = {}) {
   }, [defaultOperationId]);
   const getDefaultOperationId = useCallback(() => defaultOperationIdRef.current, []);
 
+  // === Unified app-wide undo/redo: record injection (undo-history-plan §4) ===
+  // The engine is instantiated further down (once every slice exists); these
+  // stable recorders are defined HERE so they can be injected into useLayers'
+  // mutators. They reach the engine through `historyRef` (set in an effect once
+  // useHistory returns) — a safe forward reference because recorders only run in
+  // event handlers, long after mount.
+  //   - recordEdit(signature): coalescing param edit. Same signature within 400ms
+  //     merges into one entry; a different signature flushes the prior burst.
+  //   - recordStructural(): a discrete, immediate entry (closing any open burst).
+  // `restoringRef` suppresses ALL recording while restore() replays a snapshot —
+  // restore calls updateLayer/setBgColor synchronously and recording is
+  // imperative, so this sync flag covers every record site (invariant I6).
+  const historyRef = useRef(null);
+  const restoringRef = useRef(false);
+  const editKeyRef = useRef(null);
+  const flushEdit = useCallback(() => {
+    if (editKeyRef.current !== null) {
+      editKeyRef.current = null;
+      historyRef.current?.endCoalesce();
+    }
+  }, []);
+  const recordEdit = useCallback(
+    (signature) => {
+      if (restoringRef.current) return;
+      const api = historyRef.current;
+      if (!api) return;
+      if (editKeyRef.current !== null && editKeyRef.current !== signature) {
+        api.endCoalesce(); // flush the previous target's burst as its own entry
+      }
+      editKeyRef.current = signature;
+      api.beginCoalesce({ idleMs: 400 });
+    },
+    []
+  );
+  const recordStructural = useCallback(() => {
+    if (restoringRef.current) return;
+    flushEdit(); // close any open param burst as its own entry first
+    historyRef.current?.record();
+  }, [flushEdit]);
+  // recordBatch(fn) folds MULTIPLE slice mutations into ONE undo entry by wrapping
+  // fn in a coalesce window — used where a single user action touches two slices
+  // (e.g. variable-weight: a layer patch AND the operation band). Any record()
+  // the inner mutators fire is absorbed into the open window, so undo reverts the
+  // whole action atomically.
+  const recordBatch = useCallback((fn) => {
+    const api = historyRef.current;
+    if (!api || restoringRef.current) {
+      fn();
+      return;
+    }
+    api.beginCoalesce();
+    try {
+      fn();
+    } finally {
+      api.endCoalesce();
+    }
+  }, []);
+
   // === Layers ===
   // NOTE: useLayers also exposes the per-row randomize-seed handler
   // (randomizeLayer). It is NOT wired here: the Object Tree row's seed control
@@ -169,7 +232,7 @@ export default function Studio({ submitOrg = null } = {}) {
     // tier + per-panel export (laser-gated).
     panels,
     setPanels,
-  } = useLayers({ persistToLocal: limits.localStorage, maxLayers: limits.maxLayers, getDefaultOperationId });
+  } = useLayers({ persistToLocal: limits.localStorage, maxLayers: limits.maxLayers, getDefaultOperationId, recordEdit, recordStructural });
 
   // Pro-shell Inspector + Object-tree slots (B3 / #6, B2 / #5). Null in the
   // legacy layout (no provider), so the portals below are true no-ops when the
@@ -221,20 +284,149 @@ export default function Studio({ submitOrg = null } = {}) {
     },
     [updateLayer]
   );
-  const {
-    operations,
-    commitOperations,
-    commitAssignment,
-    undo,
-    redo,
-    resetHistory,
-    canUndo,
-    canRedo,
-  } = useOperationsHistory({
-    initialOperations: seedOperations(),
-    captureAssignments,
-    restoreAssignments,
+  // The operation library is now PLAIN Studio state — its undo/redo (and
+  // assignment's) is absorbed into the unified history engine below (S5). Seeded
+  // byte-identically (seedOperations(), same ids/colors) so export stays stable.
+  // commitOperations records one discrete entry then applies the library mapper
+  // (recolor / reorder / add / remove / param-edit); the pre-edit snapshot
+  // includes operations via getOperations, so undo restores the prior library.
+  // captureAssignments/restoreAssignments (above) now feed createDocumentIO.
+  const [operations, setOperations] = useState(() => seedOperations());
+  const commitOperations = useCallback(
+    (mapper) => {
+      recordStructural();
+      setOperations((ops) => mapper(ops));
+    },
+    [recordStructural]
+  );
+
+  // === Unified app-wide undo/redo: the engine (undo-history-plan §3) ===
+  // A single whole-document snapshot stack over ALL slices — the ONLY undo/redo
+  // in the app (the old per-slice useOperationsHistory was absorbed in S5). The
+  // engine owns no document state; it is handed one symmetric capture/restore
+  // pair built from each slice's live getters + bulk setters (createDocumentIO),
+  // with `restoreOperations` writing the plain `operations` state above.
+  const panelsRef = useRef(panels);
+  const bgColorRef = useRef(bgColor);
+  const operationsRef = useRef(operations);
+  useEffect(() => {
+    panelsRef.current = panels;
+    bgColorRef.current = bgColor;
+    operationsRef.current = operations;
+  }, [panels, bgColor, operations]);
+  // Getters wrapped in useCallback so the ref reads live in a stable handler
+  // (not an inline render-phase arrow), keeping capture reading the latest slice
+  // values without re-creating the engine each render.
+  const getLayers = useCallback(() => layersRef.current, []);
+  const getPanels = useCallback(() => panelsRef.current, []);
+  const getBgColor = useCallback(() => bgColorRef.current, []);
+  const getOperations = useCallback(() => operationsRef.current, []);
+  const { capture: captureDoc, restore: restoreDocBase } = useMemo(
+    () =>
+      createDocumentIO({
+        getLayers,
+        getPanels,
+        getBgColor,
+        getOperations,
+        captureAssignments,
+        captureCanvas,
+        loadLayerSet,
+        setPanels,
+        setBgColor,
+        restoreOperations: setOperations, // plain non-recording setter (S5)
+        restoreAssignments,
+        restoreCanvas,
+      }),
+    [
+      getLayers,
+      getPanels,
+      getBgColor,
+      getOperations,
+      captureAssignments,
+      captureCanvas,
+      loadLayerSet,
+      setPanels,
+      setBgColor,
+      restoreAssignments,
+      restoreCanvas,
+    ]
+  );
+  // Wrap restore so self-recording is suppressed for its whole synchronous span
+  // (restore replays via updateLayer/setBgColor, which would otherwise record).
+  const restoreDoc = useCallback(
+    (s) => {
+      restoringRef.current = true;
+      try {
+        restoreDocBase(s);
+      } finally {
+        restoringRef.current = false;
+      }
+    },
+    [restoreDocBase]
+  );
+  const history = useHistory({ capture: captureDoc, restore: restoreDoc });
+  useEffect(() => {
+    historyRef.current = history;
   });
+  // The unified engine now drives ALL undo/redo (menu, toolbar, ⌘Z). undo/redo
+  // are stable; canUndo/canRedo re-render the enablement state.
+  const { undo, redo, canUndo, canRedo } = history;
+
+  // bgColor user edits record a (coalesced) entry — the picker can fire rapidly
+  // during a drag, so it rides the same idle-coalesce path as a slider. Loads
+  // and restore() use the raw setBgColor and must NOT record (they go through
+  // clear() / the restore guard).
+  const handleBgColorChange = useCallback(
+    (next) => {
+      recordEdit("bgColor");
+      setBgColor(next);
+    },
+    [recordEdit, setBgColor]
+  );
+
+  // Document LOAD boundary (lifecycle §6, invariant I5): dropping in a DIFFERENT
+  // document must drop the prior document's history so undo can't cross into it.
+  // This wraps loadLayerSet for the genuine load sites (saved group / example /
+  // cloud / share-link / draft recovery). The panel-delete structural edit and
+  // the restore() replay keep the RAW loadLayerSet — they must NOT clear. Tier-1
+  // / Tier-2 reload-persistence (S8/S9) imports a compatible tail on top of this
+  // always-safe clear floor.
+  const loadDocumentLayers = useCallback(
+    (newLayers) => {
+      historyRef.current?.clear();
+      loadLayerSet(newLayers);
+    },
+    [loadLayerSet]
+  );
+
+  // === Tier-2 cloud history persistence (undo-history-plan §7, S9) ===
+  // The undo/redo tail travels embedded in the MANUALLY-saved design config (see
+  // useCloudPersistence). getHistoryTail is read ONLY on a manual save and feeds
+  // history.exportTail() into the saved blob; importHistoryTail installs an
+  // embedded tail AFTER a cloud load (which already cleared history) through the
+  // same rails Tier-1 uses (validateTail → importTail) — a version/checksum
+  // mismatch silently drops history and keeps the document (the safe failure
+  // mode).
+  const getHistoryTail = useCallback(
+    () => historyRef.current?.exportTail() ?? null,
+    []
+  );
+  // LIMITATION (S9): the present-checksum deep-equals the embedded whole-doc
+  // snapshot against the live doc, but the cloud save/load only round-trip
+  // layers + panels + canvas W/H. bgColor, operations, assignments, unit, margin
+  // and outputMode are NOT persisted/restored (presetIndex is saved but not
+  // re-applied), and within this synchronous load handler the slice refs still
+  // lag the just-dispatched setState — so for any non-default doc the checksum
+  // mismatches and the tail is dropped (doc always kept). The embedded WRITE is
+  // the durable deliverable: once cloud load restores every slice, import starts
+  // succeeding with no change here.
+  const importHistoryTail = useCallback((configHistory) => {
+    if (!configHistory) return;
+    const api = historyRef.current;
+    if (!api) return;
+    const stacks = validateTail(configHistory, api.exportTail().present);
+    if (stacks) api.importTail(stacks);
+  }, []);
 
   // === Live selection state (B2 / #5) ===
   // Replaces the old hardcoded `layers[0]` placeholder. Clicking a tree row sets
@@ -259,11 +451,11 @@ export default function Studio({ submitOrg = null } = {}) {
   // (laser locks cut/score/engrave colors; plotter/drag leave them editable).
   // Keep the legacy `outputMode` in sync for the laser/plotter pair so the
   // export path (which still reads it) follows the selector.
-  // Switching the machine profile is NOT undoable (out of #10's scope, and a
-  // pre-remap snapshot's colors/params no longer fit the new profile — so
-  // cross-profile undo is semantically broken). Route the remap through the
-  // history hook's non-recording `resetHistory`, which replaces the library and
-  // CLEARS the undo/redo stacks.
+  // Switching the machine profile is NOT undoable (a pre-remap snapshot's
+  // colors/params no longer fit the new profile — cross-profile undo is
+  // semantically broken). The remap replaces the library via setOperations and
+  // then clears the whole history (history.clear()), preserving the old
+  // resetHistory-on-profile-switch semantics (I9).
   // Bed-as-artboard is OVERRIDABLE document state (C6 / #14): seeded from the
   // active profile's defaultBed, switched back to that default whenever the
   // machine profile changes (inside handleProfileChange — the single profile
@@ -298,11 +490,15 @@ export default function Studio({ submitOrg = null } = {}) {
       // line weight) must DROP any band rows entirely, so switching to it hides
       // the feature instead of leaking orphan band rows into the panel (#17).
       const remapped = remapOperationsToProfile(operations, nextProfileId);
-      resetHistory(
+      setOperations(
         supportsVariableWeight(nextProfileId)
           ? remapped
           : remapped.filter((o) => !isBandOperation(o))
       );
+      // Profile switch is NOT undoable (I9): a pre-remap snapshot's colors/params
+      // no longer fit the new profile, so clear the whole history (preserves the
+      // old resetHistory-on-profile-switch semantics).
+      historyRef.current?.clear();
       // Mirror the laser/plotter profile into the persisted `outputMode` so the
       // chosen profile round-trips through the `sonoform-canvas` localStorage
       // blob and `activeProfileId` re-seeds from it on next load. This is now a
@@ -313,7 +509,7 @@ export default function Studio({ submitOrg = null } = {}) {
         setOutputMode(nextProfileId);
       }
     },
-    [setOutputMode, resetHistory, operations]
+    [setOutputMode, operations]
   );
 
   // === Operations-panel edit handlers (C1 / #10) — all routed through history.
@@ -333,24 +529,22 @@ export default function Studio({ submitOrg = null } = {}) {
 
   // Variable line-weight toggle / N control (C8 / #17). Stores the per-layer
   // `variableWeight = { enabled, n }` AND syncs the operation library's band rows
-  // in ONE handler (the only place that owns both updateLayer and
-  // commitOperations) — never in an effect, matching useOperationsHistory's
-  // "recording is imperative" contract. Enable/disable/N-change all route here:
-  // syncWeightBand strips this layer's old band and (when enabled on a supported
-  // profile) appends a fresh N-row band, so changing N re-buckets live.
+  // in ONE handler — never in an effect (recording is imperative). The two slice
+  // mutations are wrapped in recordBatch so they form a SINGLE undo entry: the
+  // layer patch and the band sync revert together. syncWeightBand strips this
+  // layer's old band and (when enabled on a supported profile) appends a fresh
+  // N-row band, so changing N re-buckets live. setOperations is used directly
+  // here (not commitOperations) so it doesn't open a second history entry.
   const handleVariableWeightChange = useCallback(
     (layerId, { enabled, n }) => {
-      updateLayer(layerId, { variableWeight: { enabled, n } });
-      commitOperations((ops) =>
-        syncWeightBand(ops, {
-          layerId,
-          profileId: activeProfileId,
-          enabled,
-          n,
-        })
-      );
+      recordBatch(() => {
+        updateLayer(layerId, { variableWeight: { enabled, n } });
+        setOperations((ops) =>
+          syncWeightBand(ops, { layerId, profileId: activeProfileId, enabled, n })
+        );
+      });
     },
-    [updateLayer, commitOperations, activeProfileId]
+    [recordBatch, updateLayer, activeProfileId]
   );
 
   // The inspector edits the selected layer — EXCEPT for a Moiré role-B layer,
@@ -365,16 +559,16 @@ export default function Studio({ submitOrg = null } = {}) {
     )?.id ?? selectedLayerId;
 
   // === Operation assignment (C2 / #11) — the stroke/operation picker ===
-  // Assigning a layer's operationId is routed through #10's `commitAssignment`
-  // so it is genuinely undoable/redoable (the snapshot captures the prior
-  // {layerId: operationId} map; undo restores it via updateLayer). The LayerTree
-  // row chip assigns its OWN row's layer.
+  // Assigning a layer's operationId is a normal layer edit, so it records through
+  // updateLayer's own history hook (a coalesced entry keyed by layer+operationId;
+  // the pre-edit snapshot's assignments restore on undo). The LayerTree row chip
+  // assigns its OWN row's layer.
   const assignOperationToLayer = useCallback(
     (layerId, operationId) => {
       if (!layerId) return;
-      commitAssignment(() => updateLayer(layerId, { operationId }));
+      updateLayer(layerId, { operationId });
     },
-    [commitAssignment, updateLayer]
+    [updateLayer]
   );
 
   // The control-bar swatch + tool-strip base chip share one handler. With a layer
@@ -490,33 +684,25 @@ export default function Studio({ submitOrg = null } = {}) {
   // the undo/redo keyboard shortcut so ⌘Z never hijacks the legacy layout.
   const operationsPanelSlot = useOperationsPanelSlot();
 
-  // ⌘Z / ⇧⌘Z (Ctrl on non-mac) drive the operation-library + assignment history,
-  // bound only on the pro-shell path and ignored while typing into a text field
-  // (the operations panel's number inputs) so editing a param never triggers an
-  // undo. Mirrors the useActiveTool({enabled}) gate.
+  // ⌘Z / ⇧⌘Z (Ctrl on non-mac) drive the unified app-wide undo/redo (D4): bound
+  // GLOBALLY in every shell now that history covers the whole document, not just
+  // the operation library. Guarded only while focus is in a genuine TEXT-ENTRY
+  // surface (isTextEntryTarget) so native text-cursor undo survives — a focused
+  // range slider / checkbox / select has no native undo and must let ⌘Z reach
+  // the document history. `undo`/`redo` are stable engine callbacks, so this
+  // binds once.
   useEffect(() => {
-    if (!operationsPanelSlot) return undefined;
-    const isTextEntry = (t) => {
-      if (!t) return false;
-      const tag = t.tagName;
-      return (
-        tag === "INPUT" ||
-        tag === "TEXTAREA" ||
-        tag === "SELECT" ||
-        t.isContentEditable
-      );
-    };
     const onKeyDown = (e) => {
       if (e.key !== "z" && e.key !== "Z") return;
       if (!(e.metaKey || e.ctrlKey)) return;
-      if (isTextEntry(e.target)) return;
+      if (isTextEntryTarget(e.target)) return;
       e.preventDefault();
       if (e.shiftKey) redo();
       else undo();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [operationsPanelSlot, undo, redo]);
+  }, [undo, redo]);
 
   const { groups, saveGroup, deleteGroup, renameGroup } = useLayerGroups();
   const patternInstancesRef = useRef({});
@@ -669,7 +855,7 @@ export default function Studio({ submitOrg = null } = {}) {
   const { markCleanFrom, isDirty } = useDesignPersistence({
     layers,
     bgColor,
-    loadLayerSet,
+    loadLayerSet: loadDocumentLayers, // share-link hydration is a document load (I5)
     setBgColor,
     setCanvasW,
     setCanvasH,
@@ -707,10 +893,13 @@ export default function Studio({ submitOrg = null } = {}) {
     // round-trip. Always pass the real array + setter.
     panels,
     setPanels,
-    loadLayerSet,
+    loadLayerSet: loadDocumentLayers, // cloud load + draft recovery are document loads (I5)
     applyCanvasSize,
     markCleanFrom,
     canvasContainerRef,
+    // Tier-2 (S9): tail embedded on MANUAL save only; imported after cloud load.
+    getHistoryTail,
+    importHistoryTail,
   });
 
   // === Guest gating (Rec 3 / A) ===
@@ -718,7 +907,13 @@ export default function Studio({ submitOrg = null } = {}) {
   // bails on `!user`. Route that intent to Google sign-in instead. Guest gating
   // is a UX concern at THIS layer: the hook keeps its `if (!user) return` and its
   // "does nothing without a signed-in user" test stays valid.
-  const onCloudSaveIntent = user ? handleSaveToCloud : signIn;
+  // Manual save intent (⌘S + MenuBar Save). Passes `{ manual: true }` so this —
+  // and ONLY this — embeds the Tier-2 history tail in the saved config; the
+  // autosave caller below invokes `handleSaveToCloud` with no args (manual:false).
+  const onCloudSaveIntent = useCallback(
+    () => (user ? handleSaveToCloud({ manual: true }) : signIn()),
+    [user, handleSaveToCloud, signIn]
+  );
 
   // === Autosave + Cmd/Ctrl+S (Rec 2) ===
   // Both are CALLERS of the single save path (handleSaveToCloud), never a second
@@ -740,6 +935,55 @@ export default function Studio({ submitOrg = null } = {}) {
   // it routes to sign-in via the same intent the MenuBar uses (Rec 3 / A).
   useSaveHotkey(onCloudSaveIntent);
 
+  // === Tier-1 history persistence (undo-history-plan §7, D7) ===
+  // History survives reload via localStorage, keyed by document identity
+  // (design:<id> or draft) and gated by the same localStorage tier as layers.
+  const historyIdentity = currentDesignId ? `design:${currentDesignId}` : "draft";
+  // Import ONCE on mount: read the keyed tail, run the version + present-checksum
+  // rails (validateTail), and install it only if it matches the freshly-loaded
+  // doc. A mismatch (breaking-version / stale tail) silently drops history and
+  // keeps the document (I7). Runs for the INITIAL identity (the local draft, or a
+  // design opened directly); a later in-session document load clears instead.
+  const didImportHistoryRef = useRef(false);
+  useEffect(() => {
+    if (didImportHistoryRef.current) return;
+    didImportHistoryRef.current = true;
+    if (!limits.localStorage) return;
+    const api = historyRef.current;
+    if (!api) return;
+    const tail = readTail(historyIdentity);
+    if (!tail) return;
+    const stacks = validateTail(tail, api.exportTail().present);
+    if (stacks) api.importTail(stacks);
+    // Mount-only: capture the initial identity; later loads clear (loadDocumentLayers).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // Debounced write (3s, riding the same cadence as the local layers writer):
+  // re-persist the tail after any document change OR undo/redo (which mutate the
+  // slices in the deps). exportTail re-reads `present` fresh, so the persisted
+  // checksum tracks the live doc and the reload import stays consistent.
+  useEffect(() => {
+    if (!limits.localStorage) return undefined;
+    const t = setTimeout(() => {
+      const tail = historyRef.current?.exportTail();
+      if (tail) writeTail(historyIdentity, tail);
+    }, 3000);
+    return () => clearTimeout(t);
+  }, [
+    limits.localStorage,
+    historyIdentity,
+    layers,
+    bgColor,
+    panels,
+    operations,
+    canvasW,
+    canvasH,
+    unit,
+    margin,
+    presetIndex,
+    outputMode,
+  ]);
+
   // Document Setup apply (C6 / #14). Routes the profile half through the SAME
   // handleProfileChange the LayerTree selector uses (so the remap + default-bed
   // reset stay single-sourced), THEN overrides the bed with the dialog's chosen
@@ -752,20 +996,36 @@ export default function Studio({ submitOrg = null } = {}) {
   // to a known preset or Custom, exactly as the cloud/example loaders do).
   const handleDocumentSetupApply = useCallback(
     ({ profileId, bedSize: nextBed, unit: nextUnit, canvasW: nextW, canvasH: nextH }) => {
-      if (profileId && profileId !== activeProfileId) {
-        handleProfileChange(profileId);
-      }
-      if (nextBed) setBedSize(nextBed);
-      // The dialog's mm/in toggle drives the document's global unit (rulers,
-      // status bar, length-tagged params all follow). bedSize stays canonical mm.
-      if ((nextUnit === "mm" || nextUnit === "in") && nextUnit !== unit) {
-        setUnit(nextUnit);
-      }
-      if (typeof nextW === "number" && typeof nextH === "number") {
-        applyCanvasSize(nextW, nextH);
+      const isProfileChange = profileId && profileId !== activeProfileId;
+      // The document-mutating body. Wrapped in ONE recordBatch for the pure
+      // size/unit/margin path so a Document Setup apply is a single undo entry
+      // (S4 gap). NOT recorded inside applyCanvasSize itself — loaders call that
+      // directly and must stay unrecorded.
+      const applyBody = () => {
+        if (isProfileChange) {
+          handleProfileChange(profileId);
+        }
+        if (nextBed) setBedSize(nextBed);
+        // The dialog's mm/in toggle drives the document's global unit (rulers,
+        // status bar, length-tagged params all follow). bedSize stays canonical mm.
+        if ((nextUnit === "mm" || nextUnit === "in") && nextUnit !== unit) {
+          setUnit(nextUnit);
+        }
+        if (typeof nextW === "number" && typeof nextH === "number") {
+          applyCanvasSize(nextW, nextH);
+        }
+      };
+      // A profile switch is non-undoable (I9): handleProfileChange calls
+      // history.clear(), so wrapping it in recordBatch would push a doomed entry
+      // against a doc that's about to be cleared. Run that path raw; only the
+      // pure size/unit/margin path records one entry.
+      if (isProfileChange) {
+        applyBody();
+      } else {
+        recordBatch(applyBody);
       }
     },
-    [activeProfileId, handleProfileChange, applyCanvasSize, unit, setUnit]
+    [activeProfileId, handleProfileChange, applyCanvasSize, unit, setUnit, recordBatch]
   );
 
   // AI-pattern chat (create / revise) — re-homed for #16 AC2. The legacy
@@ -922,7 +1182,7 @@ export default function Studio({ submitOrg = null } = {}) {
   };
 
   const handleLoadGroup = (group) => {
-    loadLayerSet(group.layers);
+    loadDocumentLayers(group.layers);
     if (group.canvasW && group.canvasH) {
       applyCanvasSize(group.canvasW, group.canvasH);
     }
@@ -938,7 +1198,7 @@ export default function Studio({ submitOrg = null } = {}) {
     (example) => {
       const cfg = example?.config;
       if (!cfg?.layers) return;
-      loadLayerSet(cfg.layers);
+      loadDocumentLayers(cfg.layers);
       if (typeof cfg.bgColor === "string") setBgColor(cfg.bgColor);
       if (cfg.canvasW && cfg.canvasH) {
         applyCanvasSize(cfg.canvasW, cfg.canvasH);
@@ -950,7 +1210,7 @@ export default function Studio({ submitOrg = null } = {}) {
       setUI("pendingExample", null);
     },
     [
-      loadLayerSet,
+      loadDocumentLayers,
       setBgColor,
       applyCanvasSize,
       setCurrentDesignId,
@@ -1064,7 +1324,7 @@ export default function Studio({ submitOrg = null } = {}) {
           patternInstancesRef={patternInstancesRef}
           canvasContainerRef={canvasContainerRef}
           bgColor={bgColor}
-          onBgColorChange={setBgColor}
+          onBgColorChange={handleBgColorChange}
           unit={unit}
           externalZoom={canvasView.zoom}
           onZoomChange={canvasView.setZoom}
@@ -1205,7 +1465,7 @@ export default function Studio({ submitOrg = null } = {}) {
         <CloudSaveModal
           onLoad={handleLoadCloudDesign}
           onLoadConfig={(config) => {
-            if (config.layers) loadLayerSet(config.layers);
+            if (config.layers) loadDocumentLayers(config.layers);
             if (config.canvasW && config.canvasH) {
               applyCanvasSize(config.canvasW, config.canvasH);
             }
@@ -1310,6 +1570,10 @@ export default function Studio({ submitOrg = null } = {}) {
             operation={swatchOperation}
             operations={operations}
             onAssignOperation={handleSwatchAssign}
+            onUndo={undo}
+            onRedo={redo}
+            canUndo={canUndo}
+            canRedo={canRedo}
             view={canvasView}
           />,
           controlBarSlot
@@ -1384,16 +1648,26 @@ export default function Studio({ submitOrg = null } = {}) {
             // unconditionally; they are inert in flat mode (the grouped tier that
             // calls them isn't rendered).
             panels={activeProfileId === "laser" ? panels : []}
-            onAddPanel={() => setPanels((p) => addPanel(p))}
+            onAddPanel={() => {
+              recordStructural(); // capture-before: one discrete undo entry (S4)
+              setPanels((p) => addPanel(p));
+            }}
             onAssignLayerToPanel={(layerId, panelId) =>
               updateLayer(layerId, { panelId })
             }
-            onUpdatePanel={(id, patch) =>
+            onUpdatePanel={(id, patch) => {
+              recordStructural();
               setPanels((p) =>
                 p.map((pn) => (pn.id === id ? { ...pn, ...patch } : pn))
-              )
-            }
+              );
+            }}
             onDeletePanel={(id, { deleteLayers }) => {
+              // Delete mutates BOTH slices (panels + layer reassignment). One
+              // recordStructural BEFORE both setters folds them into a single
+              // undo entry (the snapshot captures panels + layers together).
+              // loadLayerSet stays RAW here (a structural edit, NOT a doc load —
+              // do not switch to loadDocumentLayers, which would clear history).
+              recordStructural();
               const { panels: np, layers: nl } = deletePanel(panels, layers, id, {
                 deleteLayers,
               });

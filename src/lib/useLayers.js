@@ -131,7 +131,35 @@ function loadLayers() {
 // `def.type === 'select'` which missed `iconselect` defs (e.g. shape, fillMode)
 // and produced NaN. paramOps branches on `def.options` presence instead.
 
-export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYERS, getDefaultOperationId } = {}) {
+// `recordEdit`/`recordStructural` are the unified-history injection seam
+// (undo-history-plan §4). Each mutator calls the relevant one IMMEDIATELY BEFORE
+// its setLayers (capture-before-change, §3.1) so the engine snapshots the
+// pre-edit document. They default to no-ops, so call sites that don't wire
+// history (tests, legacy harnesses) behave exactly as before.
+//   - recordEdit(signature): coalescing param edit (slider/number burst → one
+//     entry; the caller keys by `signature` to flush when the target changes).
+//   - recordStructural(): a discrete, immediate entry (add/remove/reorder/etc).
+// NOTE (accepted, §4 advisor note #3): record fires before the mutator runs, so
+// a no-op mutation (e.g. add/remove blocked at the tier cap, randomize of a
+// locked layer) still leaves a dead undo step that restores an identical doc —
+// harmless (no corruption), refined later if it proves annoying.
+export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYERS, getDefaultOperationId, recordEdit, recordStructural } = {}) {
+  // Hold the injected recorders in refs (synced in an effect, not during render)
+  // so the mutators below stay referentially stable — their existing deps are
+  // unchanged and memoized consumers don't churn. The injected fns are already
+  // stable in Studio; the refs just decouple them from the mutators' closures.
+  const recordEditRef = useRef(recordEdit);
+  const recordStructuralRef = useRef(recordStructural);
+  useEffect(() => {
+    recordEditRef.current = recordEdit;
+    recordStructuralRef.current = recordStructural;
+  });
+  const recordEditFn = useCallback((signature) => {
+    recordEditRef.current?.(signature);
+  }, []);
+  const recordStructuralFn = useCallback(() => {
+    recordStructuralRef.current?.();
+  }, []);
   // Effective capacity = the tier cap (Guest 3, Free/Pro/Studio 6), never above
   // the hard MAX_LAYERS. Existing call sites that don't pass maxLayers keep the
   // old MAX_LAYERS behavior.
@@ -162,7 +190,10 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
     return DEFAULT_BG_COLOR;
   });
 
-  // Debounced save to localStorage (500ms — sliders fire at 60Hz)
+  // Debounced save to localStorage. 3000ms (undo-history-plan §10/§12): the
+  // unified-history Tier-1 writer rides this same cadence, and a longer window
+  // coalesces undo/redo bursts. Trade-off: worst-case crash-loss grows from
+  // ~0.5s to ~3s (accepted).
   const saveTimer = useRef(null);
   useEffect(() => {
     if (!persistToLocal) return;
@@ -173,7 +204,7 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
         localStorage.setItem(BG_STORAGE_KEY, bgColor);
         savePanels(panels); // sonoform-panels (WI-1) rides the same debounce
       } catch { /* storage full or unavailable */ }
-    }, 500);
+    }, 3000);
     return () => clearTimeout(saveTimer.current);
   }, [layers, bgColor, panels]);
 
@@ -188,12 +219,13 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
   const addLayer = useCallback((patternType) => {
     const requested = typeof patternType === 'string' ? patternType : undefined;
     const defaultOpId = typeof getDefaultOperationId === 'function' ? getDefaultOperationId() : undefined;
+    recordStructuralFn(); // history: discrete structural entry (capture-before)
     setLayers((prev) => {
       if (prev.length >= cap) return prev;
       const layer = createLayer(prev.length, requested);
       return [...prev, defaultOpId ? { ...layer, operationId: defaultOpId } : layer];
     });
-  }, [cap, getDefaultOperationId]);
+  }, [cap, getDefaultOperationId, recordStructuralFn]);
 
   // Import an SVG file's outline as ONE place-as-artwork layer (issue #12, C4).
   // Parses the SVG → imported-path layer carrying the verbatim `d` data in
@@ -213,6 +245,7 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
     // mirroring changeLayerPattern's pattern, so the returned outcome is exact.
     if (layers.length >= cap) return { ok: false, error: 'Layer limit reached.' };
 
+    recordStructuralFn(); // history: past the cap guard, this will mutate
     // Generate the id once, outside the updater, so it survives StrictMode's
     // double-invoke and can be returned to the caller for selection.
     const id = genId();
@@ -246,7 +279,7 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
       return [...prev, layer];
     });
     return { ok: true, id };
-  }, [cap, layers]);
+  }, [cap, layers, recordStructuralFn]);
 
   // Create a TEXT layer (Option B: text objects are layers, like `import`).
   // Mirrors addImportedLayer's structure exactly: id generated outside the
@@ -259,6 +292,7 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
   const addTextLayer = useCallback((opts = {}) => {
     if (layers.length >= cap) return { ok: false, error: 'Layer limit reached.' };
 
+    recordStructuralFn(); // history: past the cap guard, this will mutate
     const id = genId();
     setLayers((prev) => {
       if (prev.length >= cap) return prev; // re-check against live state
@@ -288,9 +322,10 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
       return [...prev, layer];
     });
     return { ok: true, id };
-  }, [cap, layers]);
+  }, [cap, layers, recordStructuralFn]);
 
   const duplicateLayer = useCallback((id) => {
+    recordStructuralFn(); // history: discrete structural entry
     setLayers((prev) => {
       const idx = prev.findIndex((l) => l.id === id);
       if (idx === -1) return prev;
@@ -351,9 +386,10 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
       next.splice(idx + 1, 0, copy);
       return next;
     });
-  }, [cap]);
+  }, [cap, recordStructuralFn]);
 
   const removeLayer = useCallback((id) => {
+    recordStructuralFn(); // history: discrete structural entry
     setLayers((prev) => {
       const target = prev.find((l) => l.id === id);
       if (!target) return prev;
@@ -373,7 +409,7 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
       if (prev.length <= 1) return prev;
       return prev.filter((l) => l.id !== id);
     });
-  }, []);
+  }, [recordStructuralFn]);
 
   const updateLayer = useCallback((id, patch) => {
     // The role toggle (OutputModeSection) is the temporary assignment surface
@@ -384,10 +420,14 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
       patch && Object.prototype.hasOwnProperty.call(patch, 'role')
         ? { ...patch, operationId: operationIdForRole(patch.role) }
         : patch;
+    // History: coalescing param edit. Keyed by layer + edited fields so a slider
+    // burst on one field merges into one entry, while switching layer/field
+    // flushes the prior burst (capture-before-change, §3.1/§4).
+    recordEditFn(`${id}:${synced ? Object.keys(synced).sort().join(',') : ''}`);
     setLayers((prev) =>
       prev.map((l) => (l.id === id ? { ...l, ...synced } : l))
     );
-  }, []);
+  }, [recordEditFn]);
 
   // Pair-aware pattern-switch ROUTER. Consumes the patch already computed by
   // usePatternCache (`{patternType, params, randomizeKeys, paramsCache}`) and
@@ -420,6 +460,7 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
       if (layers.length + 1 > cap) {
         return { ok: false, blocked: true };
       }
+      recordStructuralFn(); // history: pair-spawn pattern switch
       const groupId = genMoireGroupId();
       setLayers((prev) => {
         const idx = prev.findIndex((l) => l.id === id);
@@ -476,6 +517,7 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
     // Dissolve: remove the partner, switched layer becomes a normal layer with
     // role fields cleared. Works whether active is role A or role B.
     if (!toMoire && activeIsMember) {
+      recordStructuralFn(); // history: pair-dissolve pattern switch
       setLayers((prev) => {
         const partnerIds = new Set(
           prev
@@ -497,13 +539,15 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
 
     // Default: ordinary pattern switch (non-moiré → non-moiré). When the layer's
     // name is auto (nameIsCustom === false), recompute it for the new type.
+    recordStructuralFn(); // history: ordinary pattern switch
     setLayers((prev) =>
       prev.map((l) => (l.id === id ? { ...l, ...patch, ...nameRecompute(l, patch) } : l))
     );
     return { ok: true, blocked: false };
-  }, [layers, cap]);
+  }, [layers, cap, recordStructuralFn]);
 
   const reorderLayers = useCallback((fromIndex, toIndex) => {
+    recordStructuralFn(); // history: discrete structural entry
     setLayers((prev) => {
       const moved = prev[fromIndex];
       if (!moved) return prev;
@@ -582,9 +626,10 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
       next.splice(dest, 0, m);
       return next;
     });
-  }, []);
+  }, [recordStructuralFn]);
 
   const randomizeLayer = useCallback((id) => {
+    recordStructuralFn(); // history: re-seed is a discrete entry
     setLayers((prev) =>
       prev.map((l) =>
         // Locked layers never re-seed (spec §9 — defense in depth; the per-row
@@ -592,17 +637,19 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
         l.id === id && !l.locked ? { ...l, seed: randomSeed() } : l
       )
     );
-  }, []);
+  }, [recordStructuralFn]);
 
   const randomizeAll = useCallback(() => {
+    recordStructuralFn(); // history: re-seed all is a discrete entry
     setLayers((prev) =>
       // Skip locked layers — their seed is preserved (spec §9).
       prev.map((l) => (l.locked ? l : { ...l, seed: randomSeed() }))
     );
-  }, []);
+  }, [recordStructuralFn]);
 
   // Randomize checked params for a single layer
   const randomizeLayerParams = useCallback((id) => {
+    recordStructuralFn(); // history: randomize params is a discrete entry
     setLayers((prev) =>
       prev.map((l) => {
         if (l.id !== id) return l;
@@ -622,10 +669,11 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
         return { ...l, params: newParams };
       })
     );
-  }, []);
+  }, [recordStructuralFn]);
 
   // Randomize checked params for ALL layers
   const randomizeAllParams = useCallback(() => {
+    recordStructuralFn(); // history: randomize all params is a discrete entry
     setLayers((prev) =>
       prev.map((l) => {
         // Skip locked layers — their params are preserved (spec §9).
@@ -644,7 +692,7 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
         return { ...l, params: newParams };
       })
     );
-  }, []);
+  }, [recordStructuralFn]);
 
   const loadLayerSet = useCallback((newLayers) => {
     // Sync nextId to avoid collisions

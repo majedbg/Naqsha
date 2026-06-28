@@ -79,6 +79,10 @@ export default function PanelHeader({
   canDelete = true,
   canDuplicate = false,
   canClearLayers = false,
+  // Tooltip shown on a disabled Duplicate item. LayerTree (P6) threads the
+  // precise reason ("Max 3 panels per document" vs "Not enough layer slots to
+  // duplicate"); this generic default covers isolated/test use.
+  duplicateDisabledReason = "Can't duplicate — panel or layer cap reached",
   onUpdatePanel,
   onDeletePanel,
   onDuplicatePanel,
@@ -137,15 +141,6 @@ export default function PanelHeader({
     onClearPanelLayers?.(panel.id);
   };
 
-  // Duplicate/Delete are NOT disable-aware in RowMenu (only Clear is), so their
-  // caps are enforced here: a guarded no-op when the cap gate is false. P6/P7
-  // wire the real `canDuplicate`/`canDelete` booleans.
-  const handleDuplicate = () => {
-    if (canDuplicate) onDuplicatePanel?.(panel.id);
-  };
-  const handleDelete = () => {
-    if (canDelete) openDelete();
-  };
 
   const substrate = panel.substrate || {};
 
@@ -256,11 +251,18 @@ export default function PanelHeader({
             open={menuOpen}
             onClose={() => setMenuOpen(false)}
             onRename={beginEdit}
-            onDuplicate={handleDuplicate}
+            onDuplicate={() => onDuplicatePanel?.(panel.id)}
+            duplicateDisabled={!canDuplicate}
+            duplicateTitle={!canDuplicate ? duplicateDisabledReason : undefined}
             onClearLayers={() => setClearing(true)}
             clearLayersDisabled={!canClearLayers}
             clearLayersLabel="Clear all layers"
-            onDelete={handleDelete}
+            clearLayersTitle={
+              !canClearLayers ? "Document needs at least one layer" : undefined
+            }
+            onDelete={openDelete}
+            deleteDisabled={!canDelete}
+            deleteTitle={!canDelete ? "Can't delete the only panel" : undefined}
           />
         </div>
       </div>

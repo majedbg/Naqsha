@@ -88,7 +88,7 @@ describe("PanelHeader (P5 — ⋯ options menu, trash removed)", () => {
     expect(onDuplicatePanel).toHaveBeenCalledWith(panel.id);
   });
 
-  it("Duplicate is a no-op when canDuplicate is false (onDuplicatePanel NOT called)", () => {
+  it("Duplicate is disabled (aria-disabled + tooltip) and does not fire when canDuplicate is false", () => {
     const onDuplicatePanel = vi.fn();
     render(
       <PanelHeader
@@ -98,8 +98,30 @@ describe("PanelHeader (P5 — ⋯ options menu, trash removed)", () => {
       />
     );
     const menu = openMenu();
-    fireEvent.click(within(menu).getByRole("menuitem", { name: /duplicate/i }));
+    const item = within(menu).getByRole("menuitem", { name: /duplicate/i });
+    expect(item).toHaveAttribute("aria-disabled", "true");
+    // Default generic reason (P6 threads the precise one via duplicateDisabledReason).
+    expect(item).toHaveAttribute(
+      "title",
+      "Can't duplicate — panel or layer cap reached"
+    );
+    fireEvent.click(item);
     expect(onDuplicatePanel).not.toHaveBeenCalled();
+  });
+
+  it("Duplicate disabled tooltip uses a custom duplicateDisabledReason when provided", () => {
+    render(
+      <PanelHeader
+        panel={makePanel()}
+        canDuplicate={false}
+        duplicateDisabledReason="Max 3 panels per document"
+        onDuplicatePanel={() => {}}
+      />
+    );
+    const menu = openMenu();
+    expect(
+      within(menu).getByRole("menuitem", { name: /duplicate/i })
+    ).toHaveAttribute("title", "Max 3 panels per document");
   });
 
   // Slice 5
@@ -167,6 +189,7 @@ describe("PanelHeader (P5 — ⋯ options menu, trash removed)", () => {
       name: /clear all layers/i,
     });
     expect(item).toHaveAttribute("aria-disabled", "true");
+    expect(item).toHaveAttribute("title", "Document needs at least one layer");
     fireEvent.click(item);
     expect(screen.queryByRole("alertdialog")).toBeNull();
     expect(onClearPanelLayers).not.toHaveBeenCalled();
@@ -193,7 +216,7 @@ describe("PanelHeader (P5 — ⋯ options menu, trash removed)", () => {
     expect(onDeletePanel).toHaveBeenCalledWith(panel.id, { deleteLayers: true });
   });
 
-  it("Delete is a no-op when canDelete is false (no dialog, onDeletePanel NOT called)", () => {
+  it("Delete is disabled (aria-disabled + tooltip), opens no dialog and does not fire when canDelete is false", () => {
     const onDeletePanel = vi.fn();
     render(
       <PanelHeader
@@ -203,7 +226,10 @@ describe("PanelHeader (P5 — ⋯ options menu, trash removed)", () => {
       />
     );
     const menu = openMenu();
-    fireEvent.click(within(menu).getByRole("menuitem", { name: /delete/i }));
+    const item = within(menu).getByRole("menuitem", { name: /delete/i });
+    expect(item).toHaveAttribute("aria-disabled", "true");
+    expect(item).toHaveAttribute("title", "Can't delete the only panel");
+    fireEvent.click(item);
     expect(screen.queryByRole("alertdialog")).toBeNull();
     expect(onDeletePanel).not.toHaveBeenCalled();
   });

@@ -1448,6 +1448,10 @@ export default function Studio({ submitOrg = null } = {}) {
             operation={swatchOperation}
             operations={operations}
             onAssignOperation={handleSwatchAssign}
+            onUndo={undo}
+            onRedo={redo}
+            canUndo={canUndo}
+            canRedo={canRedo}
             view={canvasView}
           />,
           controlBarSlot

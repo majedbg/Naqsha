@@ -55,6 +55,7 @@ import { seedOperations, addOperation, resolveOperation } from "../lib/operation
 import { remapOperationsToProfile, defaultBedSize, profileProcesses, defaultMachineParams } from "../lib/machineProfiles";
 import useHistory from "../lib/history/useHistory";
 import { createDocumentIO } from "../lib/history/documentSnapshot";
+import { readTail, writeTail, validateTail } from "../lib/history/persist";
 import { syncWeightBand, supportsVariableWeight, isBandOperation } from "../lib/variableWeight";
 import { findMoirePartnerA } from "../lib/moirePair";
 import useCanvasSize, { loadCanvasState } from "../lib/hooks/useCanvasSize";
@@ -902,6 +903,55 @@ export default function Studio({ submitOrg = null } = {}) {
   // Cmd/Ctrl+S works even before the first save (manual checkpoint). For a guest
   // it routes to sign-in via the same intent the MenuBar uses (Rec 3 / A).
   useSaveHotkey(onCloudSaveIntent);
+
+  // === Tier-1 history persistence (undo-history-plan §7, D7) ===
+  // History survives reload via localStorage, keyed by document identity
+  // (design:<id> or draft) and gated by the same localStorage tier as layers.
+  const historyIdentity = currentDesignId ? `design:${currentDesignId}` : "draft";
+  // Import ONCE on mount: read the keyed tail, run the version + present-checksum
+  // rails (validateTail), and install it only if it matches the freshly-loaded
+  // doc. A mismatch (breaking-version / stale tail) silently drops history and
+  // keeps the document (I7). Runs for the INITIAL identity (the local draft, or a
+  // design opened directly); a later in-session document load clears instead.
+  const didImportHistoryRef = useRef(false);
+  useEffect(() => {
+    if (didImportHistoryRef.current) return;
+    didImportHistoryRef.current = true;
+    if (!limits.localStorage) return;
+    const api = historyRef.current;
+    if (!api) return;
+    const tail = readTail(historyIdentity);
+    if (!tail) return;
+    const stacks = validateTail(tail, api.exportTail().present);
+    if (stacks) api.importTail(stacks);
+    // Mount-only: capture the initial identity; later loads clear (loadDocumentLayers).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // Debounced write (3s, riding the same cadence as the local layers writer):
+  // re-persist the tail after any document change OR undo/redo (which mutate the
+  // slices in the deps). exportTail re-reads `present` fresh, so the persisted
+  // checksum tracks the live doc and the reload import stays consistent.
+  useEffect(() => {
+    if (!limits.localStorage) return undefined;
+    const t = setTimeout(() => {
+      const tail = historyRef.current?.exportTail();
+      if (tail) writeTail(historyIdentity, tail);
+    }, 3000);
+    return () => clearTimeout(t);
+  }, [
+    limits.localStorage,
+    historyIdentity,
+    layers,
+    bgColor,
+    panels,
+    operations,
+    canvasW,
+    canvasH,
+    unit,
+    margin,
+    presetIndex,
+    outputMode,
+  ]);
 
   // Document Setup apply (C6 / #14). Routes the profile half through the SAME
   // handleProfileChange the LayerTree selector uses (so the remap + default-bed

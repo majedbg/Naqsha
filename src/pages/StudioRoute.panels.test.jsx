@@ -123,7 +123,7 @@ describe("StudioRoute — Naqsha Panels laser-only gate (WI-6 / spec §5)", () =
     renderPro();
 
     setProfile("laser");
-    // Let the seeded layers + panelId assignment persist (debounced ~500ms).
+    // Let the seeded layers + panelId assignment persist (debounced 3000ms, §10).
     await waitFor(
       () => {
         const raw = localStorage.getItem("sonoform-layers");
@@ -133,7 +133,7 @@ describe("StudioRoute — Naqsha Panels laser-only gate (WI-6 / spec §5)", () =
         // Every layer carries a non-null panelId after normalization.
         expect(parsed.every((l) => l.panelId != null)).toBe(true);
       },
-      { timeout: 2000 }
+      { timeout: 4000 }
     );
 
     // Switch out of laser; panelId values must remain untouched.
@@ -143,7 +143,7 @@ describe("StudioRoute — Naqsha Panels laser-only gate (WI-6 / spec §5)", () =
         const parsed = JSON.parse(localStorage.getItem("sonoform-layers"));
         expect(parsed.every((l) => l.panelId != null)).toBe(true);
       },
-      { timeout: 2000 }
+      { timeout: 4000 }
     );
   });
 });
@@ -172,7 +172,7 @@ describe("StudioRoute — Naqsha Panels handler round-trips (WI-6 / spec §5)", 
         const parsed = JSON.parse(localStorage.getItem("sonoform-panels"));
         expect(parsed.length).toBe(headersBefore + 1);
       },
-      { timeout: 2000 }
+      { timeout: 4000 }
     );
   });
 
@@ -207,7 +207,7 @@ describe("StudioRoute — Naqsha Panels handler round-trips (WI-6 / spec §5)", 
         const parsed = JSON.parse(localStorage.getItem("sonoform-panels"));
         expect(parsed.some((p) => p.substrate?.kind === "plywood")).toBe(true);
       },
-      { timeout: 2000 }
+      { timeout: 4000 }
     );
   });
 });

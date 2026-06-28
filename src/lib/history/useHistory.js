@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { cloneSnapshot } from "./snapshot";
+import { cloneSnapshot, HISTORY_SCHEMA_VERSION } from "./snapshot";
+
+// Persisted tail cap (§7 rail #3): smaller than the in-memory limit so a reload
+// restores a shorter history than a live session keeps. `future` persists whole.
+const PERSIST_PAST_LIMIT = 25;
 
 // useHistory — the unified, app-wide undo/redo engine (decision D2/D3). A
 // generalized port of the proven useOperationsHistory engine: same
@@ -185,6 +189,37 @@ export default function useHistory({ capture, restore, limit = 50 } = {}) {
     publish();
   }, [publish, resetCoalesce]);
 
+  // === Persistence seam (Tier-1/Tier-2, §7) ===
+  // exportTail() snapshots the stacks for storage: the last PERSIST_PAST_LIMIT of
+  // `past`, all of `future`, and `present` (capture()) — the latter is the
+  // consistency-checksum the import gate (persist.validateTail) uses, NOT a value
+  // we re-apply on import. Version-stamped for the drop-on-mismatch rail.
+  const exportTail = useCallback(() => {
+    const m = modelRef.current;
+    return {
+      v: HISTORY_SCHEMA_VERSION,
+      past: m.past.slice(-PERSIST_PAST_LIMIT),
+      future: m.future,
+      present: captureRef.current(),
+    };
+  }, []);
+
+  // importTail() installs a PRE-VALIDATED tail (caller ran persist.validateTail,
+  // which enforced version + checksum). It repopulates past/future ONLY — the
+  // freshly-loaded doc IS the present, reconstructed via capture() at the next
+  // undo, so restoring present here would double-apply it.
+  const importTail = useCallback(
+    (stacks) => {
+      resetCoalesce();
+      modelRef.current = {
+        past: Array.isArray(stacks?.past) ? stacks.past : [],
+        future: Array.isArray(stacks?.future) ? stacks.future : [],
+      };
+      publish();
+    },
+    [publish, resetCoalesce]
+  );
+
   // Cancel a pending idle timer on unmount so it can't fire into a torn-down
   // tree (a setState-after-unmount warning / stray commit).
   useEffect(
@@ -202,6 +237,8 @@ export default function useHistory({ capture, restore, limit = 50 } = {}) {
     redo,
     clear,
     seed,
+    exportTail,
+    importTail,
     canUndo: view.canUndo,
     canRedo: view.canRedo,
   };

@@ -138,6 +138,39 @@ describe("history/useHistory — pure engine (record/undo/redo/clear/seed)", () 
     act(() => hook.result.current.redo());
     expect(box.doc).toEqual({ n: 0, nested: { tag: "A" } });
   });
+
+  it("exportTail caps `past` at 25, keeps all `future`, and stamps present+version", () => {
+    const { hook, box, edit } = setup();
+    for (let i = 1; i <= 30; i++) edit({ n: i }); // 30 entries
+    act(() => hook.result.current.undo()); // future gets one
+    const tail = hook.result.current.exportTail();
+    expect(tail.v).toBe(1);
+    expect(tail.past.length).toBe(25); // persisted cap < in-memory 50
+    expect(tail.future.length).toBe(1);
+    expect(tail.present).toEqual(box.doc); // present = live doc (the checksum)
+  });
+
+  it("importTail repopulates the stacks; the loaded doc stays present", () => {
+    const { hook, box } = setup();
+    // A hand-built tail (as persist.validateTail would return): one undoable entry.
+    act(() =>
+      hook.result.current.importTail({
+        past: [{ n: 0, nested: { tag: "A" } }],
+        future: [],
+      })
+    );
+    expect(hook.result.current.canUndo).toBe(true);
+    box.doc = { n: 5 }; // pretend the loaded doc is {n:5}
+    act(() => hook.result.current.undo());
+    expect(box.doc).toEqual({ n: 0, nested: { tag: "A" } }); // restores the imported entry
+  });
+
+  it("importTail tolerates a malformed payload (empty stacks)", () => {
+    const { hook } = setup();
+    act(() => hook.result.current.importTail(null));
+    expect(hook.result.current.canUndo).toBe(false);
+    expect(hook.result.current.canRedo).toBe(false);
+  });
 });
 
 describe("history/useHistory — coalescing (S2)", () => {

@@ -25,8 +25,14 @@ import OperationPicker from "./OperationPicker";
 import RowMenu from "./RowMenu";
 import ConfirmDialog from "../ui/ConfirmDialog";
 import PanelHeader from "./PanelHeader";
+import NewPanelRow from "./NewPanelRow";
 import ModulationRail from "./ModulationRail";
-import { canAddPanel, layersForPanel } from "../../lib/panels";
+import {
+  canAddPanel,
+  layersForPanel,
+  canDuplicatePanel,
+  canClearPanelLayers,
+} from "../../lib/panels";
 import { buildModulationGraph } from "../../lib/fields/modulationGraph";
 
 // Human label for a pattern type (falls back to the raw id for AI / extras /
@@ -471,7 +477,13 @@ export default function LayerTree({
   onAddPanel,
   onDeletePanel,
   onUpdatePanel,
+  onDuplicatePanel,
+  onClearPanelLayers,
   onAssignLayerToPanel,
+  // The tier's layer cap, threaded so canDuplicatePanel can refuse a copy that
+  // would overflow the layer cap. Defaults to Infinity so callers/tests that omit
+  // it get the panel-cap-only behavior (P7 passes the real cap).
+  cap = Infinity,
   // Responsive (spec §3.2): below a ~240px panel width the host passes
   // `compact` to hide the 🎲 dice. No container-query plugin is installed on this
   // Tailwind v3 build, so the panel width is threaded via this boolean (kept
@@ -655,7 +667,7 @@ export default function LayerTree({
                 const panelLayers = layersForPanel(layers, panel.id);
                 const isCollapsed = collapsedPanels.has(panel.id);
                 return (
-                  <div key={panel.id} className="space-y-0.5">
+                  <div key={panel.id} data-testid={panel.id} className="space-y-0.5">
                     <PanelHeader
                       panel={panel}
                       layerCount={panelLayers.length}
@@ -664,36 +676,55 @@ export default function LayerTree({
                       editorOpen={openPanelEditorId === panel.id}
                       onToggleEditor={toggleEditor}
                       canDelete={panels.length > 1}
+                      canDuplicate={canDuplicatePanel(panels, layers, panel.id, cap)}
+                      duplicateDisabledReason={
+                        canAddPanel(panels)
+                          ? "Not enough layer slots to duplicate" // panel cap OK → layer cap
+                          : "Max 3 panels per document" // panel cap hit
+                      }
+                      canClearLayers={canClearPanelLayers(layers, panel.id)}
                       onUpdatePanel={onUpdatePanel}
                       onDeletePanel={onDeletePanel}
+                      onDuplicatePanel={onDuplicatePanel}
+                      onClearPanelLayers={onClearPanelLayers}
                       onAssignLayerToPanel={onAssignLayerToPanel}
                     />
-                    {!isCollapsed &&
-                      panelLayers.map((layer) => (
-                        <LayerRow
-                          {...rowProps(layer, layers.indexOf(layer))}
-                          draggable
-                          onDragStartRow={onDragStartRow}
-                        />
-                      ))}
+                    {!isCollapsed && (
+                      <>
+                        {panelLayers.map((layer) => (
+                          <LayerRow
+                            {...rowProps(layer, layers.indexOf(layer))}
+                            draggable
+                            onDragStartRow={onDragStartRow}
+                          />
+                        ))}
+
+                        {/* Per-panel "+ Add layer" — adds a layer assigned to THIS
+                            panel. Static aria-label (names aren't unique); the host
+                            threads onAddLayer(panel.id) into the pattern picker.
+                            Disabled at the tier's layer cap. */}
+                        {onAddLayer && (
+                          <button
+                            type="button"
+                            aria-label="Add layer"
+                            onClick={() => onAddLayer(panel.id)}
+                            disabled={addDisabled}
+                            className="flex w-full items-center gap-1.5 rounded-xs border border-hairline bg-paper-warm px-1.5 py-1 text-left opacity-60 hover:opacity-100 disabled:opacity-30 disabled:cursor-not-allowed transition-opacity duration-fast"
+                          >
+                            <span className="shrink-0 text-ink-soft">
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" aria-hidden="true">
+                                <line x1="12" y1="5" x2="12" y2="19" />
+                                <line x1="5" y1="12" x2="19" y2="12" />
+                              </svg>
+                            </span>
+                            <span className="flex-1 min-w-0 truncate text-xs font-semibold text-ink">Add layer</span>
+                          </button>
+                        )}
+                      </>
+                    )}
                   </div>
                 );
               })}
-
-            {/* "+ Add panel" — at the foot of the grouped tier. Disabled at the
-                cap with the documented tooltip. */}
-            {onAddPanel && (
-              <button
-                type="button"
-                aria-label="Add panel"
-                onClick={onAddPanel}
-                disabled={!canAddPanel(panels)}
-                title={!canAddPanel(panels) ? "Max 3 panels per document" : undefined}
-                className="w-full py-2 text-sm rounded border border-dashed border-hairline text-ink-soft hover:text-saffron hover:border-violet disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-              >
-                + Add panel
-              </button>
-            )}
           </>
         ) : (
           layers.map((layer, i) => <LayerRow {...rowProps(layer, i)} />)
@@ -707,12 +738,14 @@ export default function LayerTree({
             visual hierarchy — NOT the dashed CTA the "+ Add panel" button uses.
             Held at reduced opacity to read as a placeholder; full opacity on
             hover. Opens the pattern picker (host wires onAddLayer); disabled at
-            the tier's layer cap. Only rendered when a handler is given. */}
-        {onAddLayer && (
+            the tier's layer cap. FLAT-ONLY: in grouped mode the per-panel
+            "+ Add layer" buttons replace it. Only rendered when a handler is
+            given. */}
+        {!grouped && onAddLayer && (
           <button
             type="button"
             aria-label="Add layer"
-            onClick={onAddLayer}
+            onClick={() => onAddLayer()}
             disabled={addDisabled}
             className="flex w-full items-center gap-1.5 rounded-xs border border-hairline bg-paper-warm px-1.5 py-1 text-left opacity-60 hover:opacity-100 disabled:opacity-30 disabled:cursor-not-allowed transition-opacity duration-fast"
           >
@@ -725,6 +758,14 @@ export default function LayerTree({
             </span>
             <span className="flex-1 min-w-0 truncate text-xs font-semibold text-ink">New Layer</span>
           </button>
+        )}
+
+        {/* "New panel" creation row — at the column FOOT, ALWAYS rendered (both
+            grouped and flat, so flat mode can create the first panel). Replaces
+            the old dashed "+ Add panel" button. Wired to onAddPanel + the cap
+            gate; only rendered when the host supplies onAddPanel. */}
+        {onAddPanel && (
+          <NewPanelRow onCreatePanel={onAddPanel} canAdd={canAddPanel(panels)} />
         )}
       </div>
     </div>

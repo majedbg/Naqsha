@@ -37,7 +37,12 @@ import { parseForPlacement, centerTransform } from "../lib/scene/placement";
 import StudioSubmitModal from "../components/org/StudioSubmitModal";
 import useLayers from "../lib/useLayers";
 import useLayerGroups from "../lib/useLayerGroups";
-import { addPanel, deletePanel } from "../lib/panels";
+import {
+  addPanel,
+  deletePanel,
+  duplicatePanel,
+  clearPanelLayers,
+} from "../lib/panels";
 import { exportPanelsZip } from "../lib/panelExport";
 import { isTextLayer } from "../lib/text/textLayer";
 import { useFont } from "../lib/text/fontRegistry";
@@ -84,6 +89,13 @@ export default function Studio({ submitOrg = null } = {}) {
   // Prepare/Export tabs); it is still read once here only to round-trip the
   // legacy `sonoform-canvas` localStorage blob shape for existing users.
   const { ui, set: setUI } = useUIState({ savedTab: savedCanvas?.activeTab });
+
+  // Add-layer target panel (panel-row redesign P7 §10 slice 2). When a per-panel
+  // "+ Add layer" opens the pattern picker it stashes that panel.id here; the
+  // picker's onPick threads it into addLayer so the new layer is born on that
+  // panel. Every OTHER picker-open path (File→New, flat add-layer) resets it to
+  // undefined first, so a stale id never leaks onto a globally-added layer.
+  const [pendingPanelId, setPendingPanelId] = useState(undefined);
   const {
     activeTab,
     showLoadModal,
@@ -232,6 +244,9 @@ export default function Studio({ submitOrg = null } = {}) {
     // tier + per-panel export (laser-gated).
     panels,
     setPanels,
+    // Effective tier layer cap — threaded into LayerTree so its per-panel
+    // canDuplicatePanel gate refuses a copy that would overflow the cap (P7).
+    cap,
   } = useLayers({ persistToLocal: limits.localStorage, maxLayers: limits.maxLayers, getDefaultOperationId, recordEdit, recordStructural });
 
   // Pro-shell Inspector + Object-tree slots (B3 / #6, B2 / #5). Null in the
@@ -1445,7 +1460,11 @@ export default function Studio({ submitOrg = null } = {}) {
         open={ui.showPatternPicker}
         onClose={() => setUI("showPatternPicker", false)}
         onPick={(id) => {
-          addLayer(id);
+          // Thread the pending panel (per-panel add) into the new layer; a
+          // global/flat add leaves it undefined → addLayer ignores it and the
+          // normalizer assigns the layer. Reset after so it never leaks again.
+          addLayer(id, { panelId: pendingPanelId });
+          setPendingPanelId(undefined);
           setUI("showPatternPicker", false);
         }}
       />
@@ -1498,7 +1517,13 @@ export default function Studio({ submitOrg = null } = {}) {
       {menuSlot &&
         createPortal(
           <MenuBar
-            onNew={() => setUI("showPatternPicker", true)}
+            onNew={() => {
+              // Global "New layer" — clear any pending per-panel target so the
+              // layer is added unassigned (normalizer homes it), never leaking a
+              // stale panel id from a prior per-panel add.
+              setPendingPanelId(undefined);
+              setUI("showPatternPicker", true);
+            }}
             onOpen={() => setUI("showLoadModal", true)}
             onExamples={() => setUI("showExamples", !showExamples)}
             onImport={handleImportClick}
@@ -1639,7 +1664,12 @@ export default function Studio({ submitOrg = null } = {}) {
             onRandomizeAllParams={randomizeAllParams}
             // "+ New" add-layer row → opens the pattern picker, same path as the
             // menu's New. Disabled at the tier's layer cap (addLayer no-ops there).
-            onAddLayer={() => setUI("showPatternPicker", true)}
+            onAddLayer={(panelId) => {
+              // Per-panel add passes panel.id; flat/global add passes undefined.
+              // Stash it so onPick can thread it into the new layer.
+              setPendingPanelId(panelId);
+              setUI("showPatternPicker", true);
+            }}
             addDisabled={layers.length >= (limits.maxLayers ?? Infinity)}
             // Naqsha Panels grouped tier (WI-6, spec §5) — LASER-ONLY. Passing []
             // in plotter/dragCutter makes LayerTree render the flat list (its
@@ -1648,9 +1678,12 @@ export default function Studio({ submitOrg = null } = {}) {
             // unconditionally; they are inert in flat mode (the grouped tier that
             // calls them isn't rendered).
             panels={activeProfileId === "laser" ? panels : []}
-            onAddPanel={() => {
+            onAddPanel={(substrate) => {
               recordStructural(); // capture-before: one discrete undo entry (S4)
-              setPanels((p) => addPanel(p));
+              // NewPanelRow → onCreatePanel → onAddPanel(preset|undefined): a
+              // chosen material preset is passed through as the new panel's
+              // substrate; no preset → addPanel's plain default panel.
+              setPanels((p) => addPanel(p, substrate));
             }}
             onAssignLayerToPanel={(layerId, panelId) =>
               updateLayer(layerId, { panelId })
@@ -1674,6 +1707,23 @@ export default function Studio({ submitOrg = null } = {}) {
               setPanels(np);
               loadLayerSet(nl);
             }}
+            onDuplicatePanel={(id) => {
+              // Duplicate appends a panel + deep-copies its layers (fresh ids,
+              // new panelId). Like delete, it mutates BOTH slices — one
+              // recordStructural BEFORE both setters folds it into a single undo
+              // entry. loadLayerSet stays RAW (a structural edit, NOT a doc load).
+              recordStructural();
+              const { panels: np, layers: nl } = duplicatePanel(panels, layers, id);
+              setPanels(np);
+              loadLayerSet(nl);
+            }}
+            onClearPanelLayers={(id) => {
+              // Drop every layer on this panel. One slice mutated (layers) →
+              // recordStructural before the RAW loadLayerSet makes it undoable.
+              recordStructural();
+              loadLayerSet(clearPanelLayers(layers, id));
+            }}
+            cap={cap}
           />,
           objectTreeSlot
         )}

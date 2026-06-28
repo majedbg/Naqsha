@@ -32,19 +32,32 @@ const DANGER_ITEM_CLASS =
   "flex w-full items-center rounded-xs px-1.5 py-1 text-left text-[11px] " +
   "transition-colors duration-fast ease-out-quart text-tone-strong hover:bg-tone-strong/10 hover:text-tone-strong";
 
+// Disabled: no `hover:` variants (so it never lights up under the pointer) and a
+// reduced opacity to read as inert. Activation is also guarded in the handler.
+const DISABLED_ITEM_CLASS =
+  "flex w-full items-center rounded-xs px-1.5 py-1 text-left text-[11px] " +
+  "text-ink-soft opacity-40 cursor-default";
+
 // Rendered as a div (not a <button>) on purpose: native buttons synthesize a
 // click from Enter in real browsers, which — combined with the explicit Enter
 // handler below (needed because jsdom does NOT synthesize that click) — would
 // double-activate in-app. A div has no native Enter→click, so the explicit
 // handler is the SOLE activation path, identical in jsdom and every browser.
 // `role="menuitem"` + tabIndex keep it focusable and ARIA-conformant.
-function MenuItem({ label, danger, onActivate }) {
+function MenuItem({ label, danger, disabled, title, onActivate }) {
+  const className = disabled
+    ? DISABLED_ITEM_CLASS
+    : danger
+      ? DANGER_ITEM_CLASS
+      : ITEM_CLASS;
   return (
     <div
       role="menuitem"
       tabIndex={-1}
-      onClick={onActivate}
-      className={danger ? DANGER_ITEM_CLASS : ITEM_CLASS}
+      aria-disabled={disabled || undefined}
+      title={title || undefined}
+      onClick={disabled ? undefined : onActivate}
+      className={className}
     >
       {label}
     </div>
@@ -57,8 +70,16 @@ export default function RowMenu({
   onClose = () => {},
   onRename = () => {},
   onDuplicate = () => {},
-  onDownload = () => {},
+  duplicateDisabled = false,
+  duplicateTitle,
+  onDownload,
+  onClearLayers,
+  clearLayersDisabled = false,
+  clearLayersLabel = "Clear all layers",
+  clearLayersTitle,
   onDelete = () => {},
+  deleteDisabled = false,
+  deleteTitle,
 }) {
   const menuRef = useRef(null);
 
@@ -138,10 +159,31 @@ export default function RowMenu({
       className={`absolute right-0 z-50 ${flipClass} min-w-[140px] rounded-sm border border-hairline bg-paper p-1 shadow-pop`}
     >
       <MenuItem label="Rename" onActivate={select(onRename)} />
-      <MenuItem label="Duplicate" onActivate={select(onDuplicate)} />
-      <MenuItem label="Download" onActivate={select(onDownload)} />
+      <MenuItem
+        label="Duplicate"
+        disabled={duplicateDisabled}
+        title={duplicateTitle}
+        onActivate={duplicateDisabled ? undefined : select(onDuplicate)}
+      />
+      {onDownload && (
+        <MenuItem label="Download" onActivate={select(onDownload)} />
+      )}
+      {onClearLayers && (
+        <MenuItem
+          label={clearLayersLabel}
+          disabled={clearLayersDisabled}
+          title={clearLayersTitle}
+          onActivate={select(onClearLayers)}
+        />
+      )}
       <div role="separator" className="my-1 border-t border-hairline" />
-      <MenuItem label="Delete" danger onActivate={select(onDelete)} />
+      <MenuItem
+        label="Delete"
+        danger
+        disabled={deleteDisabled}
+        title={deleteTitle}
+        onActivate={deleteDisabled ? undefined : select(onDelete)}
+      />
     </div>
   );
 }

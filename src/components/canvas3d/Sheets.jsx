@@ -35,10 +35,21 @@ import WoodGrain from './WoodGrain.jsx';
  * (EdgeGlow.jsx, rendered per slab beside the base material); procedural wood grain
  * is S6. S4 only sets the base material channels.
  *
+ * `isMoving` (from Scene3D ← CameraRig) drops the acrylic's screen-space refraction
+ * while the camera is in motion: transmitted marks re-imaged through the slab alias
+ * into a tiling grid at grazing orbit angles (an inherent screen-space-refraction
+ * limit, not a buffer-resolution bug — drei's `resolution` is bypassed under
+ * `transmissionSampler`). Rendering the slab opaque DURING motion and restoring the
+ * glass on settle sidesteps the artifact entirely, at the moment the user is
+ * actually inspecting the piece. The MTM stays mounted (no FBO churn); only its
+ * `transmission` toggles, so the cost is a one-time shader-variant compile, cached
+ * thereafter.
+ *
  * @param {{ specs?: import('../../lib/three3d/sheetSpecs.js').SheetSpec[],
- *           appearance?: import('../../lib/three3d/resolveAppearance.js').AppearanceParams|null }} props
+ *           appearance?: import('../../lib/three3d/resolveAppearance.js').AppearanceParams|null,
+ *           isMoving?: boolean }} props
  */
-export default function Sheets({ specs = [], appearance = null }) {
+export default function Sheets({ specs = [], appearance = null, isMoving = false }) {
   return (
     <group data-testid="sheet-stack">
       {specs.map((spec) => {
@@ -67,35 +78,28 @@ export default function Sheets({ specs = [], appearance = null }) {
                 ior={mat.ior}
                 roughness={mat.roughness}
                 thickness={spec.thickness}
-                transmission={mat.transmission}
+                // Gate refraction OFF during camera motion (transmission→0 renders
+                // the slab opaque, killing the grazing-angle mark tiling); the
+                // archetype's real transmission returns the instant the camera
+                // settles. See the `isMoving` note in this component's JSDoc.
+                transmission={isMoving ? 0 : mat.transmission}
                 samples={8}
-                // ── Mark-through-slab ANTI-ALIASING (the reported "tiling on orbit") ──
-                // The emissive marks are re-imaged through this slab by screen-space
-                // refraction sampling a finite buffer. At resolution=128 (the prior
-                // value) that buffer was far coarser than the viewport, so the
-                // refracted marks resolved into a blocky grid that crawled/tiled as the
-                // camera orbited. 1024 fixed normal/moderate angles (512 was measurably
-                // insufficient — still blocked), but a TRANSLUCENT material (fluorescent,
-                // transmission 0.4) seen at the 3/4 orbit angle still showed the dense
-                // hatch merging into hard stair-stepped SOLID blocks (the reported
-                // "fluorescent aliasing"): a 1024 screen-space buffer foreshortened across
-                // the tilted slab falls well under the DPR-2 viewport, so the
-                // high-frequency marks undersample into a texel grid. resolution=2048
-                // roughly halves that block size, resolving the hatch through the slab at
-                // the usable 3/4 angle. The sheets share ONE buffer (transmissionSampler)
-                // re-rendered only during interaction (frameloop="demand"), so the cost
-                // stays bounded — a single 2048² FBO on demand, NOT a per-sheet/per-frame
-                // FBO (the shape that once froze the tab). 2048 is the cap: 4096 quadruples
-                // the buffer for no visible gain at usable angles and reopens perf risk.
-                // samples=8 (was 4) keeps the
-                // refraction blur from banding. chromaticAberration trimmed 0.02→0.002:
-                // the RGB-split sampling added colored fringing that read as colored
-                // tiles on the high-frequency marks; near-zero keeps a faint edge tint
-                // without the fringe. (NOTE: at an EXTREME edge-on grazing angle the
-                // foreshortened slab still shows some residual blocking — an inherent
-                // limit of screen-space refraction, where the marks are near-invisible
-                // anyway.)
-                resolution={2048}
+                // ── Mark-through-slab tuning ──
+                // The emissive marks are re-imaged through this slab by SCREEN-SPACE
+                // refraction, which undersamples the high-frequency hatch into a tiling
+                // grid at grazing orbit angles ("tiling on orbit" / "fluorescent
+                // aliasing"). That is an inherent limit of screen-space refraction, not a
+                // buffer-resolution bug: under `transmissionSampler` drei routes sampling
+                // to three's SHARED `_transmissionRenderTarget` (sized to the full
+                // viewport by renderer.transmissionResolutionScale=1.0), and drei's own
+                // per-material `resolution` FBO is never rendered in that path — so a
+                // `resolution` prop here would be inert (verified in drei source). The
+                // tiling is instead sidestepped at its only visible moment by the
+                // `isMoving` refraction gate above (slab goes opaque during motion).
+                // What DOES help the settled glass: samples=8 (was 4) keeps the refraction
+                // blur from banding; chromaticAberration 0.002 (was 0.02) drops the
+                // RGB-split fringing that read as colored tiles on the marks while keeping
+                // a faint edge tint.
                 anisotropy={0.1}
                 chromaticAberration={0.002}
               />

@@ -119,6 +119,14 @@ export default function Scene3D({
   onClose = null,
 }) {
   const [resetSignal, setResetSignal] = useState(0);
+  // Camera-in-motion flag (S?, refraction-tiling bypass). True while the user is
+  // orbiting/panning/zooming (through the damping tail); CameraRig owns the
+  // debounced detection. Surface A's acrylic drops its screen-space refraction
+  // while this is true — the marks re-imaged through the slab alias into a tiling
+  // grid at grazing angles (a screen-space-refraction limit, empirically confirmed),
+  // so we render the slab opaque during motion and restore the glass on settle, when
+  // the user is actually studying it. See Sheets.jsx `isMoving`.
+  const [isInteracting, setIsInteracting] = useState(false);
   // Persisted view-prefs (D13/S11), read ONCE on mount. Spacing + exaggeration
   // seed their sliders below; camera is never persisted (always zoom-fits).
   const persisted = useMemo(() => loadPreview3DSettings(), []);
@@ -279,7 +287,11 @@ export default function Scene3D({
             <Selection>/<Select> — see bloomSelection.jsx). The collected
             `bloomSelection` is handed to EmissiveBloom's `selection` prop below. */}
         <BloomSelectionContext.Provider value={registerBloom}>
-          <CameraRig fitBox={fitBox} resetSignal={resetSignal} />
+          <CameraRig
+            fitBox={fitBox}
+            resetSignal={resetSignal}
+            onInteractingChange={setIsInteracting}
+          />
           <SceneEnvironment
             ref={keyLightRef}
             environmentId={environmentId}
@@ -291,7 +303,7 @@ export default function Scene3D({
             /* Surface A — stacked substrate slabs (S4) + texture-mode emissive
                marks floated in front of each sheet (S5). Ribbon marks land in S10. */
             <>
-              <Sheets specs={sheetSpecs} appearance={appearance} />
+              <Sheets specs={sheetSpecs} appearance={appearance} isMoving={isInteracting} />
               <Marks specs={sheetSpecs} marksByPanel={marksByPanel ?? {}} />
             </>
           ) : (

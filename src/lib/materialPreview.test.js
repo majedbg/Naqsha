@@ -45,9 +45,9 @@ describe('materialCategory', () => {
     expect(materialCategory({ type: '3mm MDF' })).toBe('burn');
     expect(materialCategory({ type: 'walnut veneer' })).toBe('burn');
   });
-  it('falls back to darken for unknown types', () => {
-    expect(materialCategory({ type: 'mystery' })).toBe('darken');
-    expect(materialCategory({})).toBe('darken');
+  it('falls back to other for unknown types', () => {
+    expect(materialCategory({ type: 'mystery' })).toBe('other');
+    expect(materialCategory({})).toBe('other');
   });
 });
 
@@ -100,6 +100,24 @@ describe('materialStrokeColor — every mark tints in the material reaction dire
     const cut = luminance(materialStrokeColor(sheet, 'burn', 'cut'));
     expect(engrave).toBeLessThan(score);
     expect(cut).toBeLessThan(engrave);
+  });
+});
+
+describe('materialStrokeColor — hue-preserving frost (L3)', () => {
+  // A fluorescent yellow acrylic must frost toward a SATURATED yellowish-white,
+  // never plain/near white: the blue channel stays clearly the smallest so the
+  // yellow hue survives. (Old lens mixed toward #ffffff, washing the hue out.)
+  const channels = (hex) => {
+    const h = hex.replace('#', '');
+    return { r: parseInt(h.slice(0, 2), 16), g: parseInt(h.slice(2, 4), 16), b: parseInt(h.slice(4, 6), 16) };
+  };
+  it('keeps a yellow hue across score/engrave/cut (B clearly the smallest)', () => {
+    const sheet = '#E6E954';
+    for (const p of ['score', 'engrave', 'cut']) {
+      const { r, g, b } = channels(materialStrokeColor(sheet, 'lighten', p));
+      expect(b).toBeLessThan(g);
+      expect(b).toBeLessThan(r - 20); // not pure/near white
+    }
   });
 });
 

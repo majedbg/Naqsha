@@ -23,6 +23,7 @@
     "@react-three/postprocessing": "^3.0.4",
     "@supabase/supabase-js": "^2.100.0",
     "dompurify": "^3.4.11",
+    "esm-potrace-wasm": "^0.4.4",
     "jszip": "^3.10.1",
     "opentype.js": "^2.0.0",
     "p5": "^2.2.3",

@@ -22,18 +22,46 @@
 // live structurally in jsonb, not only as data-role attributes, so fabrication
 // mapping never depends on markup parsing (locked decision 9).
 
+import { FABRICATION_ROLES } from './vectorizer';
+
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
 function newPatternId() {
   return `extracted-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function escapeAttr(s) {
+/** XML attribute escaping — shared with ExtractedPatternGenerator.toSVGGroup. */
+export function escapeAttr(s) {
   return String(s)
     .replace(/&/g, '&amp;')
     .replace(/"/g, '&quot;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
+}
+
+// ── Stored-row validation (adversarial-review finding 1) ────────────────────
+// user_patterns rows are attacker-writable in principle (any tool holding the
+// user's JWT can insert arbitrary strings), so everything deserialized from a
+// row is validated against a strict shape BEFORE it can reach markup surfaces
+// (thumbnail dangerouslySetInnerHTML, exported SVG). Violations throw; the
+// loader treats that as a corrupt row and skips it.
+
+const PATTERN_ID_RE = /^[A-Za-z0-9_-]+$/;
+
+// SVG path data only: command letters, numbers (incl. exponents), separators.
+// Notably excludes `<`, `>`, `"`, `&` — nothing markup-active can pass.
+const SAFE_PATH_D_RE = /^[MmLlHhVvCcSsQqTtAaZz0-9\s.,+eE-]*$/;
+
+function assertSafePathD(d) {
+  if (!SAFE_PATH_D_RE.test(d)) {
+    throw new Error('ExtractedPattern: rejected unsafe path data in stored row');
+  }
+}
+
+function assertKnownRole(role) {
+  if (!FABRICATION_ROLES.includes(role)) {
+    throw new Error(`ExtractedPattern: rejected unknown fabrication role "${role}"`);
+  }
 }
 
 /**
@@ -124,6 +152,10 @@ function unescapeAttr(s) {
  * authoritative role source; data-role attributes are a fallback.
  */
 export function deserializeExtractedPattern(record) {
+  if (!PATTERN_ID_RE.test(String(record.pattern_id ?? ''))) {
+    throw new Error('ExtractedPattern: rejected malformed pattern_id in stored row');
+  }
+
   const svg = record.tile_svg || '';
   const vb = svg.match(VIEWBOX_RE);
   const width = vb ? parseFloat(vb[1]) : 0;
@@ -135,8 +167,10 @@ export function deserializeExtractedPattern(record) {
   PATH_RE.lastIndex = 0;
   while ((m = PATH_RE.exec(svg)) !== null) {
     const [, dRaw, kind, roleAttr] = m;
+    const d = unescapeAttr(dRaw);
+    assertSafePathD(d);
     const list = kind === 'stroke' ? strokes : fills;
-    list.push({ d: unescapeAttr(dRaw), role: roleAttr });
+    list.push({ d, role: unescapeAttr(roleAttr) });
   }
   const tags = record.fabrication_tags;
   if (tags?.fills?.length === fills.length) {
@@ -145,6 +179,10 @@ export function deserializeExtractedPattern(record) {
   if (tags?.strokes?.length === strokes.length) {
     strokes.forEach((s, i) => { s.role = tags.strokes[i]; });
   }
+  // Validate the FINAL role (fabrication_tags is the authoritative source and
+  // is just as attacker-writable as the markup attributes).
+  fills.forEach((f) => assertKnownRole(f.role));
+  strokes.forEach((s) => assertKnownRole(s.role));
 
   return makeExtractedPattern({
     patternId: record.pattern_id,

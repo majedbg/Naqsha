@@ -19,6 +19,7 @@
 
 import { Pattern } from './drawingContext';
 import { registerPattern } from '../patternRegistry';
+import { escapeAttr } from '../extraction/extractedPattern';
 
 const CURVE_SEGMENTS = 12;
 
@@ -136,17 +137,23 @@ export function makeExtractedPatternClass(entity) {
       const ox = (this._lastCx ?? tile.width / 2) - tile.width / 2;
       const oy = (this._lastCy ?? tile.height / 2) - tile.height / 2;
       const opacityFrac = Math.max(0, Math.min(100, opacity ?? 100)) / 100;
+      // Every interpolation is attribute-escaped (adversarial-review finding 1):
+      // this markup reaches dangerouslySetInnerHTML (picker thumbnails) and the
+      // exported SVG file, and the tile ultimately came from a stored row.
+      // Escaping is a no-op for well-formed path data / roles, so faithful
+      // digitization (locked decision 1) is unaffected.
+      const fill = escapeAttr(color);
       const inner = [
         ...tile.fills.map(
           ({ d, role }) =>
-            `    <path d="${d}" fill="${color}" fill-rule="evenodd" stroke="none" data-role="${role}"/>`
+            `    <path d="${escapeAttr(d)}" fill="${fill}" fill-rule="evenodd" stroke="none" data-role="${escapeAttr(role)}"/>`
         ),
         ...tile.strokes.map(
           ({ d, role }) =>
-            `    <path d="${d}" fill="none" stroke="${color}" stroke-width="1" data-role="${role}"/>`
+            `    <path d="${escapeAttr(d)}" fill="none" stroke="${fill}" stroke-width="1" data-role="${escapeAttr(role)}"/>`
         ),
       ].join('\n');
-      return `<g id="${layerId}" opacity="${opacityFrac}" transform="translate(${ox} ${oy})">\n${inner}\n  </g>`;
+      return `<g id="${escapeAttr(layerId)}" opacity="${opacityFrac}" transform="translate(${ox} ${oy})">\n${inner}\n  </g>`;
     }
   };
 }

@@ -101,3 +101,78 @@ describe('round-trip', () => {
     expect(back.tile.fills).toHaveLength(2);
   });
 });
+
+// Adversarial-review finding 1 (stored-markup injection): a crafted
+// user_patterns row must never round-trip active markup back into the app.
+// Deserialization REJECTS rows whose pattern_id / path data / roles fall
+// outside their strict shapes — loadAndRegisterExtractedPatterns treats the
+// throw as a corrupt row and skips it.
+describe('deserializeExtractedPattern — crafted-row hardening', () => {
+  const baseRow = () =>
+    serializeExtractedPattern(
+      makeExtractedPattern({ patternId: 'extracted-safe', title: 'ok', tile: TILE })
+    );
+
+  it('rejects a row whose path data smuggles markup through entity unescaping', () => {
+    // Stored (escaped) payload that unescapeAttr would turn back into raw
+    // `"><script>` inside the d string.
+    const row = {
+      ...baseRow(),
+      tile_svg:
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10" width="10" height="10">\n' +
+        '  <path d="M0 0Z&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;" data-kind="fill" data-role="engrave" fill="#000"/>\n' +
+        '</svg>',
+    };
+    expect(() => deserializeExtractedPattern(row)).toThrow(/path data/i);
+  });
+
+  it('rejects a row whose d contains raw event-handler characters', () => {
+    const row = {
+      ...baseRow(),
+      tile_svg:
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10" width="10" height="10">\n' +
+        '  <path d="M0 0Z onload=alert(1)" data-kind="fill" data-role="engrave" fill="#000"/>\n' +
+        '</svg>',
+    };
+    expect(() => deserializeExtractedPattern(row)).toThrow(/path data/i);
+  });
+
+  it('rejects an unknown data-role (attribute injection vector)', () => {
+    const row = {
+      ...baseRow(),
+      tile_svg:
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10" width="10" height="10">\n' +
+        '  <path d="M0 0Z" data-kind="fill" data-role="engrave&quot; onload=&quot;alert(1)" fill="#000"/>\n' +
+        '</svg>',
+      fabrication_tags: null,
+    };
+    expect(() => deserializeExtractedPattern(row)).toThrow(/role/i);
+  });
+
+  it('rejects a malicious role smuggled through fabrication_tags (authoritative source)', () => {
+    const row = {
+      ...baseRow(),
+      fabrication_tags: { fills: ['engrave" onload="alert(1)', 'cut'], strokes: [] },
+    };
+    expect(() => deserializeExtractedPattern(row)).toThrow(/role/i);
+  });
+
+  it('rejects a pattern_id outside the strict id shape', () => {
+    const row = { ...baseRow(), pattern_id: 'x"><img src=x onerror=alert(1)>' };
+    expect(() => deserializeExtractedPattern(row)).toThrow(/pattern_id/i);
+  });
+
+  it('ignores non-path markup (e.g. <script>) embedded in tile_svg', () => {
+    const row = {
+      ...baseRow(),
+      tile_svg:
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10" width="10" height="10">\n' +
+        '  <script>alert(1)</script>\n' +
+        '  <path d="M0 0 L5 5Z" data-kind="fill" data-role="engrave" fill="#000"/>\n' +
+        '</svg>',
+    };
+    const back = deserializeExtractedPattern(row);
+    expect(back.tile.fills).toEqual([{ d: 'M0 0 L5 5Z', role: 'engrave' }]);
+    expect(JSON.stringify(back.tile)).not.toContain('<');
+  });
+});

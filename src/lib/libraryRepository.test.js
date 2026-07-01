@@ -176,4 +176,27 @@ describe('loadAndRegisterExtractedPatterns', () => {
     _ref.client = null;
     expect(await loadAndRegisterExtractedPatterns('user-1')).toEqual([]);
   });
+
+  // Adversarial-review finding 1: a crafted row (script payloads in d / role /
+  // pattern_id) must be rejected at deserialize and skipped — never registered.
+  it('skips crafted rows with markup payloads instead of registering them', async () => {
+    seed.user_patterns.push(
+      {
+        pattern_id: 'extracted-evil',
+        name: 'evil',
+        source: 'extracted',
+        user_id: 'user-1',
+        tile_svg:
+          '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10" width="10" height="10">\n' +
+          '  <path d="M0 0Z&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;" data-kind="fill" data-role="engrave" fill="#000"/>\n' +
+          '</svg>',
+        fabrication_tags: { fills: ['engrave'], strokes: [] },
+      },
+      { ...serializeExtractedPattern(entity('extracted-lr-1')), user_id: 'user-1' },
+    );
+    const entities = await loadAndRegisterExtractedPatterns('user-1');
+    expect(entities).toHaveLength(1);
+    expect(getDynamicPatternClass('extracted-evil')).toBeNull();
+    expect(getDynamicPatternClass('extracted-lr-1')).toBeTruthy();
+  });
 });

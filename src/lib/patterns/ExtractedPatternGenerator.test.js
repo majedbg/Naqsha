@@ -123,6 +123,52 @@ describe('makeExtractedPatternClass — toSVGGroup()', () => {
   });
 });
 
+// Adversarial-review finding 1: toSVGGroup output is injected raw into the
+// document (pattern-picker thumbnails via dangerouslySetInnerHTML) and into
+// exported SVG files, so EVERY attribute interpolation must be escaped. The
+// entity here is built directly (bypassing deserialize validation) to prove
+// the generator is safe on its own layer too — defense in depth.
+describe('makeExtractedPatternClass — toSVGGroup() escaping', () => {
+  const craftedEntity = () => ({
+    patternId: 'extracted-test-1',
+    title: 'crafted',
+    source: 'extracted',
+    visibility: 'private',
+    tile: {
+      width: 10,
+      height: 10,
+      fills: [{ d: 'M0 0Z"><script>alert(1)</script>', role: 'engrave" onload="alert(1)' }],
+      strokes: [{ d: 'M1 1 L2 2"><img src=x onerror=alert(2)>', role: 'score' }],
+    },
+    lattice: null,
+    photoPath: null,
+  });
+
+  it('emits no executable content from crafted d / role values', () => {
+    const Cls = makeExtractedPatternClass(craftedEntity());
+    const inst = new Cls();
+    const svg = inst.toSVGGroup('layer-1', '#000000', 100);
+    // No raw markup can appear — every `<`, `>`, `"` is escaped, so the
+    // payload can neither open a tag nor break out of its attribute.
+    expect(svg).not.toContain('<script');
+    expect(svg).not.toContain('<img');
+    expect(svg).not.toContain('onload="alert'); // a raw quote would be attribute breakout
+    // The payloads survive only as inert escaped text inside quoted attributes.
+    expect(svg).toContain('&lt;script&gt;');
+    expect(svg).toContain('2&quot;&gt;&lt;img'); // breakout quote neutralized
+    // Only the four legitimate <path> / <g> tags exist in the markup.
+    expect(svg.match(/<[a-zA-Z/]/g).sort()).toEqual(['</', '<g', '<p', '<p']);
+  });
+
+  it('escapes the layer id interpolation', () => {
+    const Cls = makeExtractedPatternClass(craftedEntity());
+    const inst = new Cls();
+    const svg = inst.toSVGGroup('l"><script>alert(3)</script>', '#000000', 100);
+    expect(svg).not.toContain('<script');
+    expect(svg).toContain('id="l&quot;&gt;&lt;script&gt;');
+  });
+});
+
 describe('registerExtractedPattern', () => {
   it('registers into the dynamic registry as a non-AI extracted type', () => {
     registerExtractedPattern(entity());

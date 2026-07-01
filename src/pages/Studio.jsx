@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect, useMemo } from "react";
+import { useState, useRef, useCallback, useEffect, useMemo, lazy, Suspense } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import Inspector from "../components/shell/Inspector";
@@ -73,10 +73,16 @@ import useCloudPersistence from "../lib/hooks/useCloudPersistence";
 import useAutosave from "../lib/hooks/useAutosave";
 import useSaveHotkey from "../lib/hooks/useSaveHotkey";
 import { resolveSaveStatus } from "../lib/saveStatus";
+import { isFeatureEnabled } from "../lib/featureFlags";
+import { loadAndRegisterExtractedPatterns } from "../lib/libraryRepository";
+
+// Photo → Pattern stepper (issue #49) is lazy so potrace-wasm + the extraction
+// stack stay out of the studio bundle until the tool is actually opened.
+const ExtractStepper = lazy(() => import("../components/extract/ExtractStepper"));
 
 export default function Studio({ submitOrg = null } = {}) {
   const { loading, user, signIn } = useAuth();
-  const { limits } = useGate();
+  const { limits, check } = useGate();
   // Admin entry point, relocated into the MenuBar now that TopNav no longer
   // renders over the studio route (the standalone Naqsha bar was dropped).
   const navigate = useNavigate();
@@ -97,6 +103,20 @@ export default function Studio({ submitOrg = null } = {}) {
   // panel. Every OTHER picker-open path (File→New, flat add-layer) resets it to
   // undefined first, so a stale id never leaks onto a globally-added layer.
   const [pendingPanelId, setPendingPanelId] = useState(undefined);
+
+  // Photo → Pattern stepper (issue #49). Locked decision 5: feature flag
+  // (flippable per-deploy/per-browser) AND tier gate (flippable to premium in
+  // tierLimits) resolve whether the menu item is live; without both, MenuBar
+  // renders it present-but-disabled.
+  const [extractOpen, setExtractOpen] = useState(false);
+  const extractionEnabled = isFeatureEnabled("extraction") && check("extraction").allowed;
+
+  // Rehydrate this user's extracted library patterns into the dynamic registry
+  // (→ picker custom family) on sign-in. Best-effort: failures only warn.
+  useEffect(() => {
+    if (user?.id) loadAndRegisterExtractedPatterns(user.id);
+  }, [user?.id]);
+
   const {
     activeTab,
     showLoadModal,
@@ -1550,6 +1570,11 @@ export default function Studio({ submitOrg = null } = {}) {
                 layers.find((l) => l.id === selectedLayerId) || null
               )
             }
+            // Photo → Pattern (issue #49): handler only when flag + tier gate
+            // allow; otherwise the item renders present-but-disabled.
+            onExtractPattern={
+              extractionEnabled ? () => setExtractOpen(true) : undefined
+            }
             buildShareState={buildShareState}
             showAdmin={showAdmin}
             onOpenAdmin={() => navigate("/admin")}
@@ -1821,6 +1846,23 @@ export default function Studio({ submitOrg = null } = {}) {
           onPatternGenerated={handleAIPatternGenerated}
           onClose={() => setUI("aiChatOpen", false)}
         />
+      )}
+
+      {/* Photo → Pattern extraction stepper (issue #49). Same pro-shell gating
+          as the AI chat (its entry point is the Object-menu item). Lazy-mounted
+          so the extraction stack (potrace-wasm, worker) loads only when opened.
+          On save the pattern picker opens: the fresh pattern is immediately
+          visible in its custom family, ready to place. */}
+      {menuSlot && extractOpen && (
+        <Suspense fallback={null}>
+          <ExtractStepper
+            onClose={() => setExtractOpen(false)}
+            onSaved={() => {
+              setPendingPanelId(undefined);
+              setUI("showPatternPicker", true);
+            }}
+          />
+        </Suspense>
       )}
 
       <ConfirmDialog

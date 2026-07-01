@@ -125,6 +125,8 @@ export default function MenuBar({
   onToggleOverlays,
   overlaysOn = false,
   onGenerateAI,
+  // Photo → Pattern stepper opener (issue #49) — OPTIONAL; gated upstream.
+  onExtractPattern,
   buildShareState,
   // Admin entry point (relocated from the now-removed studio TopNav). `showAdmin`
   // is gated upstream (useShowAdmin); `onOpenAdmin` navigates to /admin. Both come
@@ -240,6 +242,14 @@ export default function MenuBar({
           label: "Generate with AI…",
           onSelect: onGenerateAI,
           disabled: !onGenerateAI,
+        },
+        // Photo → Pattern extraction (issue #49). Studio supplies the handler
+        // only when the feature flag + tier gate allow it; without a handler
+        // the item renders present-but-disabled like other pending features.
+        {
+          label: "Extract from Photo…",
+          onSelect: onExtractPattern,
+          disabled: !onExtractPattern,
         },
       ],
     },

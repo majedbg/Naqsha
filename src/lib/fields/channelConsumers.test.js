@@ -12,6 +12,14 @@ describe("channelForTarget", () => {
     expect(channelForTarget("flowfield")).toBe("warp");
   });
 
+  it("maps spiral to the distort channel", () => {
+    expect(channelForTarget("spiral")).toBe("distort");
+  });
+
+  it("maps grid to the warp channel", () => {
+    expect(channelForTarget("grid")).toBe("warp");
+  });
+
   it("returns null for non-consumer patterns", () => {
     expect(channelForTarget("ellipse")).toBe(null);
     expect(channelForTarget("unknown")).toBe(null);

@@ -19,10 +19,37 @@ export const PX_PER_MM = _PX_PER_MM;
 export function mmToPx(mm) { return mm * PX_PER_MM; }
 export function pxToMm(px) { return px / PX_PER_MM; }
 
+// Number of straight sub-segments used to flatten a single cubic Bézier.
+// This is the plotter "slicer" segmentation — higher = smoother curve but more
+// points to plot / travel between. 16 is plenty for typical print-scale curves.
+const FLATTEN_STEPS = 16;
+
+// Sample a cubic Bézier B(t) (Bernstein basis, plain JS — no DOM APIs, which
+// jsdom does not implement) for t in (0, 1] at FLATTEN_STEPS equal sub-steps,
+// pushing each sampled point into `out`. t=0 is EXCLUDED (P0 is already the
+// last emitted point); t=1 is INCLUDED and evaluates EXACTLY to p3. The two
+// control points c1/c2 are never emitted as vertices.
+function sampleCubic(p0, c1, c2, p3, out) {
+  for (let s = 1; s <= FLATTEN_STEPS; s++) {
+    const t = s / FLATTEN_STEPS;
+    const mt = 1 - t;
+    const a = mt * mt * mt;
+    const b = 3 * mt * mt * t;
+    const c = 3 * mt * t * t;
+    const d = t * t * t;
+    out.push([
+      a * p0[0] + b * c1[0] + c * c2[0] + d * p3[0],
+      a * p0[1] + b * c1[1] + c * c2[1] + d * p3[1],
+    ]);
+  }
+}
+
 // Tokenize a path-d string. Returns array of tokens: either a command letter
-// (M/L/Z) or a numeric string.
+// (M/L/Z/C/S) or a numeric string. Curve commands (C cubic, S smooth-cubic)
+// are flattened to polylines by parsePathD; lowercase variants are accepted
+// but — matching the historical M/L/Z handling — treated as absolute.
 function tokenize(d) {
-  return d.match(/[MLZmlz]|-?\d+(?:\.\d+)?(?:e[-+]?\d+)?/gi) || [];
+  return d.match(/[MLZCSmlzcs]|-?\d+(?:\.\d+)?(?:e[-+]?\d+)?/gi) || [];
 }
 
 export function parsePathD(d) {
@@ -30,15 +57,57 @@ export function parsePathD(d) {
   const tokens = tokenize(d);
   const points = [];
   let closed = false;
+  let cmd = null;        // current command letter (uppercased)
+  let cur = [0, 0];      // current on-curve point (start anchor for next cmd)
+  let prevC2 = null;     // previous C/S second control point (for S reflection)
   let i = 0;
   while (i < tokens.length) {
     const t = tokens[i];
-    if (/^[MLml]$/.test(t)) { i++; continue; }
-    if (/^[Zz]$/.test(t))   { closed = true; i++; continue; }
-    const x = parseFloat(t);
-    const y = parseFloat(tokens[i + 1]);
-    if (Number.isFinite(x) && Number.isFinite(y)) points.push([x, y]);
-    i += 2;
+    if (/^[Zz]$/.test(t)) { closed = true; cmd = null; prevC2 = null; i++; continue; }
+    if (/^[MLCSmlcs]$/.test(t)) { cmd = t.toUpperCase(); i++; continue; }
+    // Numeric token: dispatch on the current command. Implicit repeats reuse
+    // the same command (SVG polyline / polybezier semantics).
+    const c = cmd || 'L';
+    if (c === 'M' || c === 'L') {
+      const x = parseFloat(tokens[i]);
+      const y = parseFloat(tokens[i + 1]);
+      if (Number.isFinite(x) && Number.isFinite(y)) { points.push([x, y]); cur = [x, y]; }
+      prevC2 = null;
+      if (c === 'M') cmd = 'L'; // extra coordinate sets after M are implicit L
+      i += 2;
+    } else if (c === 'C') {
+      const c1x = parseFloat(tokens[i]);
+      const c1y = parseFloat(tokens[i + 1]);
+      const c2x = parseFloat(tokens[i + 2]);
+      const c2y = parseFloat(tokens[i + 3]);
+      const ex = parseFloat(tokens[i + 4]);
+      const ey = parseFloat(tokens[i + 5]);
+      if ([c1x, c1y, c2x, c2y, ex, ey].every(Number.isFinite)) {
+        sampleCubic(cur, [c1x, c1y], [c2x, c2y], [ex, ey], points);
+        cur = [ex, ey];
+        prevC2 = [c2x, c2y];
+      }
+      i += 6;
+    } else if (c === 'S') {
+      const c2x = parseFloat(tokens[i]);
+      const c2y = parseFloat(tokens[i + 1]);
+      const ex = parseFloat(tokens[i + 2]);
+      const ey = parseFloat(tokens[i + 3]);
+      if ([c2x, c2y, ex, ey].every(Number.isFinite)) {
+        // First control point is the reflection of the previous C/S second
+        // control point about the current point; if the previous command was
+        // not C/S (prevC2 === null) it coincides with the current point.
+        const c1 = prevC2
+          ? [2 * cur[0] - prevC2[0], 2 * cur[1] - prevC2[1]]
+          : [cur[0], cur[1]];
+        sampleCubic(cur, c1, [c2x, c2y], [ex, ey], points);
+        cur = [ex, ey];
+        prevC2 = [c2x, c2y];
+      }
+      i += 4;
+    } else {
+      i++;
+    }
   }
   return { points, closed };
 }

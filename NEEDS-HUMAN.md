@@ -45,3 +45,20 @@ captured and must be confirmed live.
 3. Cycle green-fluorescent / clear / an opaque / walnut; **orbit** the camera for each and watch the bright edge rotate
    relative to the camera (incidence is view-independent by design).
 4. Watch the dev console for any **new** shader-compile error or warning beyond the known "Layer out of range" item.
+
+## Pre-existing plotter-extractor gap (surfaced during Spiral/Grid modulation work, 2026-07-01)
+
+- [ ] **`<line>` and `<polyline>` patterns never reach the plotter.**
+      `extractRenderedPaths` (`src/lib/plotter/pipeline.js:179`) only recurses/extracts
+      elements whose `tagName` is `path`; every other tag (`<line>`, `<polyline>`,
+      `<rect>`, `<ellipse>`) falls through the `else` branch and is walked-but-not-emitted.
+      **Consequence:** current **Grid** (`<line>`) and **TopographicContours**
+      (`<polyline>`) produce NO plotter geometry at all — the plot preview / export
+      silently omits them. This is a **long-standing pre-existing bug**, independent of
+      the modulation feature; it was merely re-confirmed while wiring Grid's warp.
+      **Scoped out of the Spiral/Grid-modulation change on purpose** (per
+      `docs/spiral-grid-modulation-targets.md §8.6`): fixing the extractor to flatten
+      `<line>`/`<polyline>` is its own change with its own snapshot blast-radius.
+      Note the one interaction: once Grid is warp-modulated it emits a `<path>`, so a
+      **warped** grid becomes plotter-visible for the first time while an unwarped grid
+      still does not — expected, not a regression.

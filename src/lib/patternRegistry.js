@@ -12,10 +12,12 @@ export function registerPattern(id, PatternClass, label, defaults, paramDefs, op
   // isAI defaults to true so existing AI-generation callers (5-arg form) keep
   // the violet dot + guest-bypass behaviour. Self-registering BUILT-IN extras
   // pass { isAI: false } so they read as first-class patterns, not AI ones.
-  const { isAI = true } = opts;
+  // `origin` is an optional provenance tag ('extracted' for photo-extracted
+  // library patterns, issue #49) so surfaces can badge them without guessing.
+  const { isAI = true, origin } = opts;
   dynamicPatterns[id] = PatternClass;
   if (!dynamicTypes.find((t) => t.id === id)) {
-    dynamicTypes.push({ id, label, isAI });
+    dynamicTypes.push({ id, label, isAI, ...(origin ? { origin } : {}) });
   }
   dynamicDefaults[id] = defaults;
   dynamicParamDefs[id] = paramDefs;

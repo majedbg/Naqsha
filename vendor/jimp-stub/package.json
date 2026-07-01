@@ -1,0 +1,7 @@
+{
+  "name": "jimp",
+  "version": "0.0.1-naqsha-stub",
+  "description": "Local stub satisfying @realness.online/potrace's require('jimp') — the extraction Vectorizer (issue #49) never exercises any Jimp code path (instanceof checks only), and real jimp is a heavy node-only image library we don't want in the bundle.",
+  "main": "index.cjs",
+  "license": "MIT"
+}

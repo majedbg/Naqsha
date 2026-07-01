@@ -150,6 +150,19 @@ export function checkGate(tier, feature, value) {
         upgradeTarget: 'free',
       };
 
+    // Photo → Pattern extraction (PRD #48, locked decision 5): ships FREE for
+    // every tier (undefined ⇒ allowed). Flipping to premium later = set
+    // `extraction: false` on the free tiers here — no caller rebuild. The
+    // on/off half of the gate lives in featureFlags.isFeatureEnabled.
+    case 'extraction': {
+      const allowed = limits.extraction !== false;
+      return {
+        allowed,
+        reason: allowed ? null : 'Upgrade to Pro to extract patterns from photos',
+        upgradeTarget: 'pro',
+      };
+    }
+
     case 'param': {
       // value = { paramKey, paramIndex, isUniversal }
       if (!value) return { allowed: true };

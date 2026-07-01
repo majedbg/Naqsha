@@ -1,10 +1,10 @@
 // Vectorizer — raster → vector geometry for the extraction pipeline (S0 spine,
 // issue #49; module map in PRD #48).
 //
-// S0 ships the CONTOUR path only (closed fills via potrace-wasm). The returned
-// shape already carries the full data model later slices deepen:
+// S0 ships the CONTOUR path only (closed fills). The returned shape already
+// carries the full data model later slices deepen:
 //
-//   vectorize/traceContours(image, opts) → {
+//   traceContours(image, opts) → {
 //     fills:   [{ d, role }],   // closed contours; role ∈ 'engrave'|'cut'|'score'
 //     strokes: [{ d, role }],   // centerline strokes — EMPTY until the
 //                               // skeleton/centerline slice lands (locked
@@ -13,9 +13,20 @@
 //
 // `image` is ImageData-shaped ({ data: Uint8ClampedArray RGBA, width, height })
 // so the module runs identically in the browser, in a Web Worker, and headless
-// under vitest (no canvas dependency). potrace-wasm is imported lazily so the
-// studio bundle only pays for it when an extraction actually runs
-// (bundle-conditional).
+// under vitest (no canvas dependency).
+//
+// TRACER CHOICE (S0 deviation, documented): issue #49 named potrace-wasm, but
+// both wasm ports are unusable in practice — esm-potrace-wasm marshals the
+// image through emscripten's ~64KB stack (hard-fails above ~127×127 px, found
+// during browser verification), and potrace-wasm@1.0.4 doesn't ship its .wasm.
+// We use @realness.online/potrace (pinned EXACT 2.1.25) instead: the kilobtye
+// potrace JS port — same potrace algorithm, same GPL-2 license posture as the
+// wasm build, no input-size ceiling, and it runs in workers + node unchanged.
+// Only lib/Potrace + lib/utils are deep-imported (the package main requires
+// jimp, which isn't needed or installed). Both are lazy imports so the studio
+// bundle only pays for the tracer when an extraction runs (bundle-conditional).
+// The dependency's internals we touch (`_pathlist`, `path.sign`,
+// `utils.renderCurve`) are stable in the pinned version; revisit on upgrade.
 
 export const FABRICATION_ROLES = ['engrave', 'cut', 'score'];
 
@@ -49,91 +60,43 @@ export function thresholdImage(image, threshold = 128) {
   return { data: out, width, height };
 }
 
-// --- potrace-space → image-space normalization ------------------------------
-//
-// potrace emits path data at 10× scale with a flipped y axis, normally undone
-// by a wrapper `<g transform="translate(0,H) scale(0.1,-0.1)">`. We bake that
-// transform into the coordinates instead, so the stored `d` strings live in
-// image pixel space and can be exported verbatim (the ImportedPath convention).
-// potrace's SVG backend only emits M + relative l/c + z, but absolute L/C and
-// h/v variants are handled too for safety.
-
-const round2 = (n) => Math.round(n * 100) / 100;
-
-/**
- * Bake `translate(0, height) scale(0.1, -0.1)` into a potrace `d` string.
- * Exported for tests.
- */
-export function bakePotraceTransform(d, height, scale = 0.1) {
-  const tokens = d.match(/[a-zA-Z]|-?\d*\.?\d+(?:e[-+]?\d+)?/g) || [];
-  const abs = ([x, y]) => [round2(x * scale), round2(height - y * scale)];
-  const rel = ([dx, dy]) => [round2(dx * scale), round2(-dy * scale)];
-
-  let out = '';
-  let cmd = null;
-  let i = 0;
-  const read = (n) => {
-    const nums = tokens.slice(i, i + n).map(Number);
-    i += n;
-    return nums;
-  };
-  const emit = (letter, nums) => {
-    out += (out ? ' ' : '') + letter + nums.join(' ');
-  };
-
-  while (i < tokens.length) {
-    if (/[a-zA-Z]/.test(tokens[i])) {
-      cmd = tokens[i];
-      i += 1;
-      if (cmd === 'z' || cmd === 'Z') {
-        emit('Z', []);
-        cmd = null;
-        continue;
-      }
-    }
-    if (cmd == null) break; // malformed tail — stop rather than guess
-    switch (cmd) {
-      case 'M': emit('M', abs(read(2))); cmd = 'L'; break;
-      case 'm': emit('m', rel(read(2))); cmd = 'l'; break;
-      case 'L': emit('L', abs(read(2))); break;
-      case 'l': emit('l', rel(read(2))); break;
-      case 'H': emit('H', [round2(read(1)[0] * scale)]); break;
-      case 'h': emit('h', [round2(read(1)[0] * scale)]); break;
-      case 'V': emit('V', [round2(height - read(1)[0] * scale)]); break;
-      case 'v': emit('v', [round2(-read(1)[0] * scale)]); break;
-      case 'C': {
-        const [x1, y1, x2, y2, x, y] = read(6);
-        emit('C', [...abs([x1, y1]), ...abs([x2, y2]), ...abs([x, y])]);
-        break;
-      }
-      case 'c': {
-        const [x1, y1, x2, y2, x, y] = read(6);
-        emit('c', [...rel([x1, y1]), ...rel([x2, y2]), ...rel([x, y])]);
-        break;
-      }
-      default:
-        // Unknown command from a future potrace build — bail out verbatim so
-        // nothing silently corrupts; callers still get a drawable path.
-        return d;
-    }
-  }
-  return out;
-}
-
-let potraceReady = null;
+let potraceModules = null;
 
 async function loadPotrace() {
-  if (!potraceReady) {
-    potraceReady = import('esm-potrace-wasm').then(async (mod) => {
-      await mod.init();
-      return mod;
-    });
+  if (!potraceModules) {
+    potraceModules = Promise.all([
+      import('@realness.online/potrace/lib/Potrace'),
+      import('@realness.online/potrace/lib/utils'),
+    ]).then(([p, u]) => ({
+      Potrace: p.default || p,
+      utils: u.default || u,
+    }));
   }
-  return potraceReady;
+  return potraceModules;
+}
+
+// Minimal Jimp-shaped duck over an ImageData-like buffer — exactly the surface
+// Potrace._processLoadedImage touches (bitmap {data,width,height} + scan).
+function jimpLike({ data, width, height }) {
+  return {
+    bitmap: { data, width, height },
+    scan(x0, y0, w, h, cb) {
+      for (let y = y0; y < y0 + h; y++) {
+        for (let x = x0; x < x0 + w; x++) {
+          cb.call(this, x, y, (y * width + x) * 4);
+        }
+      }
+    },
+  };
 }
 
 /**
- * Trace the dark regions of an image into closed contour paths.
+ * Trace the dark regions of an image into closed contour paths. Contours are
+ * grouped per top-level component by bbox containment: a contour whose bounds
+ * lie inside an existing component joins it as a subpath, so a single evenodd
+ * fill renders holes (and alternating nesting) faithfully — evenodd is
+ * winding-independent, which matters because this potrace port's xor-based
+ * tracing gives every contour the same orientation and sign.
  *
  * @param {{data: Uint8ClampedArray, width: number, height: number}} image
  * @param {object} [opts]
@@ -150,20 +113,44 @@ export async function traceContours(image, opts = {}) {
   } = opts;
 
   const bw = thresholdImage(image, threshold);
-  const { potrace } = await loadPotrace();
-  // `pathonly` returns an array of absolute `d` strings, one per traced path.
-  // Passing the plain {data,width,height} object skips every canvas/DOM branch
-  // inside esm-potrace-wasm, keeping this callable headless and in workers.
-  const ds = await potrace(bw, {
-    pathonly: true,
-    extractcolors: false,
-    turdsize,
+  const { Potrace, utils } = await loadPotrace();
+
+  const tracer = new Potrace({
+    turdSize: turdsize,
+    threshold: 128, // input is already pure black/white
+    blackOnWhite: true,
   });
+  await new Promise((resolve, reject) => {
+    try {
+      tracer.loadImage(jimpLike(bw), (err) => (err ? reject(err) : resolve()));
+    } catch (err) {
+      reject(err);
+    }
+  });
+  // Triggers _bmToPathlist + _processPath; the rendered tag itself is unused.
+  tracer.getPathTag('black');
 
-  const fills = (Array.isArray(ds) ? ds : [])
-    .map((d) => (typeof d === 'string' ? d.trim() : ''))
-    .filter(Boolean)
-    .map((d) => ({ d: bakePotraceTransform(d, image.height), role }));
+  // Group contours into top-level components. Potrace emits contours in scan
+  // order (outers before the contours nested inside them), and every Path
+  // carries its integer pixel bounds.
+  const components = [];
+  const containedIn = (c, p) =>
+    p.minX >= c.minX && p.maxX <= c.maxX && p.minY >= c.minY && p.maxY <= c.maxY;
+  for (const path of tracer._pathlist || []) {
+    const sub = `${utils.renderCurve(path.curve, 1).trim()} Z`;
+    const owner = components.find((c) => containedIn(c, path));
+    if (owner) {
+      owner.d += ` ${sub}`; // nested contour → evenodd subpath
+    } else {
+      components.push({
+        d: sub,
+        minX: path.minX,
+        maxX: path.maxX,
+        minY: path.minY,
+        maxY: path.maxY,
+      });
+    }
+  }
 
-  return { fills, strokes: [] };
+  return { fills: components.map(({ d }) => ({ d, role })), strokes: [] };
 }

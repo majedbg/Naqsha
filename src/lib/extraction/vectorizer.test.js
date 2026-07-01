@@ -107,6 +107,31 @@ describe('traceContours (contour trace on synthetic fixtures)', () => {
     const { fills } = await traceContours(blank());
     expect(fills).toEqual([]);
   });
+
+  // Regression (browser-verify find): the potrace-wasm builds hard-failed on
+  // anything larger than ~127×127 (emscripten stack marshaling). Real photo
+  // crops are far bigger — the tracer must handle them.
+  it('traces a real-photo-sized image (600×600)', async () => {
+    const big = makeImage(
+      600,
+      600,
+      (x, y) => (x - 300) ** 2 + (y - 300) ** 2 <= 150 ** 2
+    );
+    const { fills } = await traceContours(big);
+    expect(fills.length).toBeGreaterThanOrEqual(1);
+    expect(fills[0].d).toMatch(/^M/);
+  });
+
+  it('keeps holes attached to their component (donut → one evenodd fill)', async () => {
+    const donut = makeImage(100, 100, (x, y) => {
+      const r2 = (x - 50) ** 2 + (y - 50) ** 2;
+      return r2 <= 35 ** 2 && r2 >= 15 ** 2;
+    });
+    const { fills } = await traceContours(donut);
+    expect(fills).toHaveLength(1);
+    // Two subpaths (outer + hole) in one d.
+    expect(fills[0].d.match(/M/g).length).toBe(2);
+  });
 });
 
 describe('thresholdImage', () => {

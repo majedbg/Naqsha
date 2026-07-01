@@ -257,6 +257,12 @@ export const DEFAULT_PARAMS = {
     drawVertical: 1,
     margin: 20,
     strokeWeight: 1,
+    // Modulation-scoped: only consumed when the grid is an active 'warp' target
+    // (see docs/spiral-grid-modulation-targets.md §3/§5). Node count for the
+    // bézier-subdivision warp; the underfit↔overfit knob. Ignored when unwarped
+    // (grid stays a straight <line>), so this default never moves rendered
+    // output on its own.
+    warpNodes: 6,
     symmetry: 1,
     startAngle: 0,
     offsetX: 0,
@@ -270,6 +276,15 @@ export const DEFAULT_PARAMS = {
     growth: 1.0,
     distortAmount: 0,
     distortScale: 0.01,
+    // Coordinate frame the 'distort' guide field is sampled in (§2). 'cartesian'
+    // = screen-space (continuous); 'polar' = "which spoke, how far out". Default
+    // is 'cartesian' per the §8.1 seam eyeball: polar sawtooths u at the atan2
+    // wrap, so a non-periodic field (fbm, gradients — the typical case) shows a
+    // hard radial seam along the wrap ray every turn. Cartesian has no such
+    // discontinuity. Polar stays selectable for periodic fields / the spoke look.
+    // Only consulted when a matching 'distort' modulation is present, so it never
+    // moves unmodulated output.
+    distortFrame: 'cartesian',
     wobbleAmp: 0,
     wobbleFreq: 8,
     stepsPerTurn: 120,
@@ -729,6 +744,10 @@ export const PATTERN_PARAM_DEFS = {
     { key: 'growth', label: 'Growth', min: 0.3, max: 3, step: 0.05, tooltip: '1 = linear (Archimedean), >1 = tighter center, <1 = tighter edge' },
     { key: 'distortAmount', label: 'Distortion', min: 0, max: 80, step: 1, tooltip: 'Perlin noise displacement amount' },
     { key: 'distortScale', label: 'Distort Scale', min: 0.002, max: 0.05, step: 0.001, tooltip: 'Noise frequency — smaller = smoother warps' },
+    { key: 'distortFrame', label: 'Distort Frame', type: 'select', options: [
+      { value: 'cartesian', label: 'Cartesian (screen)' },
+      { value: 'polar', label: 'Polar (spoke / radius)' },
+    ], tooltip: 'Coordinate frame a modulation guide samples the spiral in — cartesian is screen-space (default, seamless); polar follows the arms but can show a radial seam with non-periodic fields. Only active when a Distort modulation targets this spiral.' },
     { key: 'wobbleAmp', label: 'Wobble Amp', min: 0, max: 30, step: 0.5, tooltip: 'Sinusoidal angle wobble in degrees' },
     { key: 'wobbleFreq', label: 'Wobble Freq', min: 1, max: 40, step: 1, tooltip: 'Number of wobble oscillations per arm' },
     { key: 'stepsPerTurn', label: 'Resolution', min: 30, max: 300, step: 10, tooltip: 'Points per full rotation — higher = smoother' },

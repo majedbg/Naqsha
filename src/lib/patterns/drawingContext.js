@@ -123,6 +123,7 @@ export class P5Adapter {
   triangle(...a) { if (this._draw) this._p.triangle(...a); }
   beginShape(...a) { if (this._draw) this._p.beginShape(...a); }
   vertex(...a) { if (this._draw) this._p.vertex(...a); }
+  bezierVertex(...a) { if (this._draw) this._p.bezierVertex(...a); }
   endShape(...a) { if (this._draw) this._p.endShape(...a); }
 }
 
@@ -208,6 +209,7 @@ export class RecordingContext {
   triangle(...a) { this._record('triangle', a); }
   beginShape(...a) { this._record('beginShape', a); }
   vertex(...a) { this._record('vertex', a); }
+  bezierVertex(...a) { this._record('bezierVertex', a); }
   endShape(...a) { this._record('endShape', a); }
 }
 

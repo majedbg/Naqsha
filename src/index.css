@@ -233,9 +233,27 @@ input[type="range"].mod-range-min::-moz-range-thumb     { background: rgb(17, 10
   animation: naqsha-fade var(--motion-fast) var(--ease-out-quart);
 }
 
+/* A modulation-scoped param cell (ModulationParamBox) revealing on mount. Per
+ * the design (spiral-grid-modulation-targets §5.1) it enters by animating the
+ * grid ROW TRACK 0fr → 1fr — never height — so nothing snaps. CSS-only (runs
+ * once on mount, like the gallery cards), so it needs no setState-in-effect and
+ * collapses to instant under prefers-reduced-motion via the motion token. The
+ * steady state is 1fr; the inner child must be min-h-0 + overflow-hidden. */
+@keyframes naqsha-reveal-rows {
+  from { grid-template-rows: 0fr; }
+  to   { grid-template-rows: 1fr; }
+}
+
+.anim-reveal-rows {
+  display: grid;
+  grid-template-rows: 1fr;
+  animation: naqsha-reveal-rows var(--motion-medium) var(--ease-out-quart);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .gallery-card-enter,
-  .picker-panel-enter {
+  .picker-panel-enter,
+  .anim-reveal-rows {
     animation: none;
   }
 }

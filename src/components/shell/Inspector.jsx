@@ -45,8 +45,36 @@ import {
 import { previewButtonState } from "../../lib/three3d/previewButtonState";
 import FieldOverlay from "../FieldOverlay";
 import ShapeCurve from "../ui/ShapeCurve";
+import ModulationParamBox from "../ui/ModulationParamBox";
 import { channelForTarget } from "../../lib/fields/channelConsumers";
+import { resolveModulationForTarget } from "../../lib/fields/resolveModulationForTarget";
 import { ANCHOR_POS, ANCHOR_MID, ANCHOR_NEG } from "../../lib/fields/colormap";
+
+// Modulation-scoped param control: the Grid's `warpNodes` slider (2–24). Reuses
+// the file's `accent-violet` range styling. Rendered INSIDE a <ModulationParamBox>
+// at two sites (Grid panel + modulator map row); both write the SAME canonical
+// grid param through the generic onUpdateLayer, so they never drift. `testidSuffix`
+// keeps the two instances individually queryable.
+function WarpNodesControl({ value, onChange, testidSuffix = "" }) {
+  const v = value ?? 6;
+  return (
+    <label className="flex items-center gap-2 text-[11px] text-ink-soft">
+      <span className="w-12 whitespace-nowrap">Nodes</span>
+      <input
+        type="range"
+        data-testid={`warp-nodes-slider${testidSuffix}`}
+        aria-label="Warp nodes"
+        min={2}
+        max={24}
+        step={1}
+        value={v}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="flex-1 accent-violet"
+      />
+      <span className="w-9 text-right tabular-nums text-ink num">{v}</span>
+    </label>
+  );
+}
 
 // Variable line-weight UI (issue #17, C8). A per-layer "advanced" toggle + bucket
 // count (N) control, shown ONLY for weight-varying patterns on a profile that
@@ -435,6 +463,34 @@ function ModulatorDevice({
                 {(m.amount ?? 1).toFixed(1)}
               </span>
             </label>
+
+            {/* Modulation-scoped param (§5) — the target Grid's `warpNodes`,
+                surfaced here "for convenience" but OWNED by the grid layer (hence
+                the "Grid layer" owner label). Shown only when this map warps a
+                grid. Writes through the generic onUpdateLayer; the spread of
+                `...targetLayer.params` is REQUIRED — onUpdateLayer shallow-merges
+                the top level, so omitting siblings would clobber the grid's other
+                params. */}
+            {(() => {
+              const targetLayer = (layers || []).find(
+                (l) => l.id === m.targetLayerId
+              );
+              if (!(m.channel === "warp" && targetLayer?.patternType === "grid"))
+                return null;
+              return (
+                <ModulationParamBox owner="Grid layer">
+                  <WarpNodesControl
+                    testidSuffix="-modulator"
+                    value={targetLayer.params?.warpNodes ?? 6}
+                    onChange={(v) =>
+                      onUpdateLayer(m.targetLayerId, {
+                        params: { ...targetLayer.params, warpNodes: Number(v) },
+                      })
+                    }
+                  />
+                </ModulationParamBox>
+              );
+            })()}
           </div>
         ))}
 
@@ -502,6 +558,26 @@ function SelectedLayerInspector({ layer, layers, unit, profileId, onUpdateLayer,
           <PatternParams />
         </LayerParamsProvider>
       )}
+
+      {/* Modulation-scoped param (§5) — the Grid's `warpNodes`, shown in the grid
+          panel ONLY while the grid is an active 'warp' target (a modulator maps a
+          warp channel to it and can produce a field). Owner label "Modulation".
+          Same canonical write as the modulator-row site; the `...layer.params`
+          spread is REQUIRED (shallow top-level merge). */}
+      {layer.patternType === "grid" &&
+        resolveModulationForTarget(layer, layers) !== null && (
+          <ModulationParamBox owner="Modulation">
+            <WarpNodesControl
+              testidSuffix="-panel"
+              value={layer.params?.warpNodes ?? 6}
+              onChange={(v) =>
+                onUpdateLayer(layer.id, {
+                  params: { ...layer.params, warpNodes: Number(v) },
+                })
+              }
+            />
+          </ModulationParamBox>
+        )}
 
       {/* Variable line-weight UI (#17, C8) — capability-gated, OFF by default. */}
       <VariableWeightControls

@@ -4,6 +4,12 @@
 -- ⚠️  HUMAN-GATED: this migration renames the live ai_patterns table.
 --     Review + apply manually; nothing in CI/agents may run it.
 --
+-- ⚠️  SINGLE-RUN / TRANSACTIONAL — NOT idempotent. The scattered
+--     IF NOT EXISTS / ON CONFLICT clauses are belt-and-suspenders inside ONE
+--     transactional apply, not re-run support: the RENAME, the payload CHECK,
+--     the ai_patterns view, and the storage policies all fail on a second run.
+--     Apply exactly once; roll back the transaction on any error.
+--
 -- 1. Generalizes ai_patterns into the unified USER-PATTERN table
 --    `user_patterns` with source enum ('ai' | 'extracted'). Existing AI
 --    rows are preserved in place (rename, not copy); a security-invoker
@@ -89,8 +95,16 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON public.ai_patterns TO service_role;
 
 -- ---------- 3. private per-user storage bucket ----------------------
 
-INSERT INTO storage.buckets (id, name, public)
-VALUES ('pattern-photos', 'pattern-photos', false)
+-- Server-side upload constraints (review finding 4): 20 MB cap and image
+-- MIME types only — the client whitelists extensions, the bucket enforces it.
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES (
+  'pattern-photos',
+  'pattern-photos',
+  false,
+  20971520,  -- 20 MB
+  ARRAY['image/jpeg', 'image/png', 'image/webp', 'image/heic']
+)
 ON CONFLICT (id) DO NOTHING;
 
 -- Objects are keyed `<user_id>/<pattern_id>.<ext>`; the first folder

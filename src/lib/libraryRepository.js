@@ -27,11 +27,22 @@ async function authedUser() {
   return data?.user ?? null;
 }
 
+// Photo extensions we accept for the bucket object key. Anything else — user
+// filenames are arbitrary strings — falls back to 'jpg' (review finding 4).
+const PHOTO_EXTS = new Set(['jpg', 'jpeg', 'png', 'webp', 'heic']);
+
+function sanitizePhotoExt(ext) {
+  const e = String(ext || '').toLowerCase();
+  return PHOTO_EXTS.has(e) ? e : 'jpg';
+}
+
 /**
- * Persist an ExtractedPattern: upload the original photo (best-effort) into
- * `<uid>/<patternId>.<ext>` of the private bucket, then insert the serialized
- * row. Returns { entity, persisted, reason?, record? } — `entity` carries the
- * final photoPath.
+ * Persist an ExtractedPattern: insert the serialized row FIRST, then upload
+ * the original photo into `<uid>/<patternId>.<ext>` of the private bucket and
+ * back-fill the row's photo_path (both photo steps best-effort). Insert-first
+ * means a failed insert can never orphan a storage object (review finding 4).
+ * Returns { entity, persisted, reason? } — `entity` carries the final
+ * photoPath actually recorded in the row.
  */
 export async function saveExtractedPattern(entity, { photoBlob, photoExt = 'png' } = {}) {
   if (!supabase) return { entity, persisted: false, reason: 'no-supabase' };
@@ -41,25 +52,36 @@ export async function saveExtractedPattern(entity, { photoBlob, photoExt = 'png'
 
   let saved = { ...entity, photoPath: entity.photoPath ?? null };
 
-  if (photoBlob) {
-    const path = `${user.id}/${entity.patternId}.${photoExt}`;
-    const { error: upErr } = await supabase.storage
-      .from(PHOTO_BUCKET)
-      .upload(path, photoBlob, { contentType: photoBlob.type, upsert: false });
-    if (upErr) {
-      console.warn('Pattern photo upload failed (pattern still saved):', upErr.message);
-      saved = { ...saved, photoPath: null };
-    } else {
-      saved = { ...saved, photoPath: path };
-    }
-  }
-
   const { error } = await supabase
     .from(TABLE)
     .insert({ ...serializeExtractedPattern(saved), user_id: user.id });
   if (error) {
     return { entity: saved, persisted: false, reason: `save failed: ${error.message}` };
   }
+
+  if (photoBlob) {
+    const path = `${user.id}/${entity.patternId}.${sanitizePhotoExt(photoExt)}`;
+    const { error: upErr } = await supabase.storage
+      .from(PHOTO_BUCKET)
+      .upload(path, photoBlob, { contentType: photoBlob.type, upsert: false });
+    if (upErr) {
+      console.warn('Pattern photo upload failed (pattern still saved):', upErr.message);
+    } else {
+      const { error: updErr } = await supabase
+        .from(TABLE)
+        .update({ photo_path: path })
+        .eq('pattern_id', entity.patternId)
+        .eq('user_id', user.id);
+      if (updErr) {
+        // Row says null, so the entity says null — the object is reachable by
+        // its deterministic `<uid>/<patternId>.<ext>` key if ever needed.
+        console.warn('Pattern photo_path back-fill failed (pattern still saved):', updErr.message);
+      } else {
+        saved = { ...saved, photoPath: path };
+      }
+    }
+  }
+
   return { entity: saved, persisted: true };
 }
 

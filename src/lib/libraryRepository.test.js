@@ -61,14 +61,17 @@ describe('saveExtractedPattern', () => {
     expect(row.visibility).toBe('private');
   });
 
-  it('uploads the original photo into the per-user bucket folder first', async () => {
+  // Review finding 4 (storage hygiene): the ROW is inserted first, THEN the
+  // photo uploads and the row's photo_path is updated — a failed insert can
+  // never leave an orphaned storage object behind.
+  it('inserts the row first, then uploads the photo and back-fills photo_path', async () => {
     const uploads = [];
     const mock = createSupabaseMock(seed, { user: USER });
     mock.storage = {
       from(bucket) {
         return {
           async upload(path, blob, opts) {
-            uploads.push({ bucket, path, blob, opts });
+            uploads.push({ bucket, path, blob, opts, rowsAtUpload: seed.user_patterns.length });
             return { data: { path }, error: null };
           },
         };
@@ -81,9 +84,57 @@ describe('saveExtractedPattern', () => {
     expect(uploads).toHaveLength(1);
     expect(uploads[0].bucket).toBe(PHOTO_BUCKET);
     expect(uploads[0].path).toBe('user-1/extracted-lr-1.png');
+    // Insert-before-upload: the row already existed when the upload ran.
+    expect(uploads[0].rowsAtUpload).toBe(1);
     // The stored row references the uploaded photo.
     expect(seed.user_patterns[0].photo_path).toBe('user-1/extracted-lr-1.png');
     expect(res.entity.photoPath).toBe('user-1/extracted-lr-1.png');
+  });
+
+  it('never uploads the photo when the row insert fails (no orphaned objects)', async () => {
+    const uploads = [];
+    const mock = createSupabaseMock(seed, { user: USER })
+      .injectError('user_patterns', 'insert', { message: 'RLS denied' });
+    mock.storage = {
+      from() {
+        return {
+          async upload(path) {
+            uploads.push(path);
+            return { data: { path }, error: null };
+          },
+        };
+      },
+    };
+    _ref.client = mock;
+    const res = await saveExtractedPattern(entity(), { photoBlob: {}, photoExt: 'png' });
+    expect(res.persisted).toBe(false);
+    expect(uploads).toHaveLength(0);
+  });
+
+  it('sanitizes the photo extension against the image whitelist', async () => {
+    const uploads = [];
+    const mock = createSupabaseMock(seed, { user: USER });
+    mock.storage = {
+      from() {
+        return {
+          async upload(path) {
+            uploads.push(path);
+            return { data: { path }, error: null };
+          },
+        };
+      },
+    };
+    _ref.client = mock;
+    // Uppercase allowed ext → lowercased; anything off-whitelist → 'jpg'.
+    await saveExtractedPattern(entity('extracted-lr-1'), { photoBlob: {}, photoExt: 'JPEG' });
+    await saveExtractedPattern(entity('extracted-lr-2'), { photoBlob: {}, photoExt: 'svg' });
+    await saveExtractedPattern(entity('extracted-lr-3'), { photoBlob: {}, photoExt: 'png"; DROP' });
+    expect(uploads).toEqual([
+      'user-1/extracted-lr-1.jpeg',
+      'user-1/extracted-lr-2.jpg',
+      'user-1/extracted-lr-3.jpg',
+    ]);
+    unregisterPattern('extracted-lr-3');
   });
 
   it('still persists the pattern when the photo upload fails (best-effort photo)', async () => {
@@ -100,6 +151,18 @@ describe('saveExtractedPattern', () => {
     _ref.client = mock;
     const res = await saveExtractedPattern(entity(), { photoBlob: {}, photoExt: 'jpg' });
     expect(res.persisted).toBe(true);
+    expect(res.entity.photoPath).toBeNull();
+    expect(seed.user_patterns[0].photo_path).toBeNull();
+  });
+
+  it('stays persisted with a null photoPath when the photo_path back-fill fails', async () => {
+    const mock = createSupabaseMock(seed, { user: USER })
+      .injectError('user_patterns', 'update', { message: 'update denied' });
+    _ref.client = mock;
+    const res = await saveExtractedPattern(entity(), { photoBlob: {}, photoExt: 'png' });
+    expect(res.persisted).toBe(true);
+    // Truthful entity: the DB row still has photo_path null.
+    expect(res.entity.photoPath).toBeNull();
     expect(seed.user_patterns[0].photo_path).toBeNull();
   });
 

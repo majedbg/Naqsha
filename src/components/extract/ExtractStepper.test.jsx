@@ -154,6 +154,44 @@ describe('ExtractStepper — save', () => {
     await waitFor(() => expect(onClose).toHaveBeenCalled());
   });
 
+  // Adversarial-review finding 2: a persisted:false save must not be silently
+  // swallowed — the pattern IS kept for the session (by design), but the user
+  // learns it won't survive a reload before the stepper goes away.
+  it('surfaces a session-only notice on persisted:false and closes on dismiss', async () => {
+    mocks.save.mockImplementation(async (entity) => ({
+      entity,
+      persisted: false,
+      reason: 'save failed: relation "user_patterns" does not exist',
+    }));
+    const onClose = vi.fn();
+    const onSaved = vi.fn();
+    render(<ExtractStepper onClose={onClose} onSaved={onSaved} />);
+    await walkToSave();
+    fireEvent.click(screen.getByRole('button', { name: /save to library/i }));
+
+    const notice = await screen.findByRole('status');
+    expect(notice.textContent).toMatch(/saved for this session/i);
+    expect(notice.textContent).toMatch(/disappear on reload/i);
+    expect(notice.textContent).toMatch(/user_patterns/); // short reason surfaced
+    // Not closed out from under the notice; the result still reached onSaved.
+    expect(onClose).not.toHaveBeenCalled();
+    expect(onSaved).toHaveBeenCalledTimes(1);
+    expect(onSaved.mock.calls[0][0].persisted).toBe(false);
+    registeredIds.push(onSaved.mock.calls[0][0].entity.patternId);
+
+    fireEvent.click(screen.getByRole('button', { name: /continue/i }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows no session-only notice when the save persisted', async () => {
+    const onClose = vi.fn();
+    render(<ExtractStepper onClose={onClose} onSaved={({ entity }) => registeredIds.push(entity.patternId)} />);
+    await walkToSave();
+    fireEvent.click(screen.getByRole('button', { name: /save to library/i }));
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(screen.queryByText(/saved for this session/i)).toBeNull();
+  });
+
   it('still registers in-session when persistence reports guest', async () => {
     mocks.save.mockImplementation(async (entity) => ({ entity, persisted: false, reason: 'guest' }));
     const onSaved = vi.fn();

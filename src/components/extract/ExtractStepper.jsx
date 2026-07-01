@@ -49,6 +49,13 @@ function StepRail({ current }) {
   );
 }
 
+// Human-readable labels for saveExtractedPattern's persisted:false reasons;
+// unknown reasons (e.g. "save failed: <db message>") surface verbatim.
+const REASON_LABELS = {
+  guest: 'sign in to keep patterns in your library',
+  'no-supabase': 'cloud storage is not configured',
+};
+
 const PRIMARY_BTN =
   'px-4 py-1.5 text-sm font-medium rounded-xs bg-saffron text-ink hover:bg-saffron-hover disabled:opacity-40 disabled:cursor-default transition-colors duration-fast ease-out-quart';
 const GHOST_BTN =
@@ -67,6 +74,11 @@ export default function ExtractStepper({ onClose, onSaved }) {
   const [error, setError] = useState('');
   const [title, setTitle] = useState('');
   const [saving, setSaving] = useState(false);
+  // Non-null after a save that could NOT be persisted (guest / no supabase /
+  // migration not applied): the pattern is registered for the session, but the
+  // user must learn it won't survive a reload (review finding 2). Holds the
+  // short human-readable reason.
+  const [sessionOnlyReason, setSessionOnlyReason] = useState(null);
 
   const imgElRef = useRef(null); // decoded HTMLImageElement (natural size)
   const cropBoxRef = useRef(null);
@@ -195,7 +207,13 @@ export default function ExtractStepper({ onClose, onSaved }) {
       const photoExt = (file?.name?.split('.').pop() || 'png').toLowerCase();
       const res = await saveExtractedPattern(entity, { photoBlob: file, photoExt });
       onSaved?.(res);
-      onClose?.();
+      if (res.persisted) {
+        onClose?.();
+      } else {
+        // Success flow continues (the pattern IS usable this session), but the
+        // stepper stays up until the session-only notice is acknowledged.
+        setSessionOnlyReason(REASON_LABELS[res.reason] || res.reason || 'cloud save unavailable');
+      }
     } catch (err) {
       setError(err.message || 'Save failed.');
     } finally {
@@ -352,7 +370,29 @@ export default function ExtractStepper({ onClose, onSaved }) {
             </>
           )}
 
-          {step === 4 && result && (
+          {step === 4 && result && sessionOnlyReason && (
+            <>
+              {preview}
+              {/* Session-only save notice (review finding 2). Same inline
+                  role="status" banner pattern as TextPropertiesPanel — the app
+                  has no toast system. */}
+              <div
+                role="status"
+                className="flex gap-1.5 rounded-md border border-tone-mild/30 bg-tone-mild/5 p-2 text-[11px] leading-snug text-tone-mild max-w-md"
+              >
+                <span aria-hidden className="shrink-0">⚠</span>
+                <span>
+                  Saved for this session — cloud save unavailable ({sessionOnlyReason}). It will
+                  disappear on reload.
+                </span>
+              </div>
+              <button type="button" className={PRIMARY_BTN} onClick={onClose}>
+                Continue
+              </button>
+            </>
+          )}
+
+          {step === 4 && result && !sessionOnlyReason && (
             <>
               {preview}
               <label className="flex flex-col gap-1 w-full max-w-sm">

@@ -24,6 +24,7 @@ import {
   getDynamicTypes,
 } from '../patternRegistry';
 import { escapeAttr } from '../extraction/extractedPattern';
+import { tilePlacements } from '../extraction/tileComposer';
 import { addLibraryEntry, clearLibraryEntries } from '../libraryStore';
 
 const CURVE_SEGMENTS = 12;
@@ -99,21 +100,32 @@ export function flattenPathD(d, curveSegments = CURVE_SEGMENTS) {
   return subpaths.filter((s) => s.points.length > 1 || s.closed);
 }
 
+/** SVG number formatting for transform offsets: finite, ≤3 decimals. */
+function fmtNum(n) {
+  return String(Math.round(n * 1000) / 1000);
+}
+
 /**
  * Build the runtime Pattern class for one ExtractedPattern entity.
+ *
+ * S5 (issue #54): when the entity carries a lattice, BOTH surfaces tile the
+ * motif through the same placement source (tileComposer.tilePlacements) —
+ * generate() stamps the tile at every placement on the p5 canvas, and
+ * toSVGGroup() emits one translate-group per placement (fills AND centerline
+ * strokes, roles preserved per copy). No lattice → the pre-S5 single centered
+ * tile, byte-identical.
  */
 export function makeExtractedPatternClass(entity) {
   const tile = entity.tile;
+  const lattice = entity.lattice ?? null;
 
   return class ExtractedPatternGenerator extends Pattern {
     generate(ctx, seed, params, canvasW, canvasH, color, opacity) {
-      const ox = (canvasW - tile.width) / 2;
-      const oy = (canvasH - tile.height) / 2;
       const alpha = Math.round((Math.max(0, Math.min(100, opacity ?? 100)) / 100) * 255);
       const c = ctx.color(color || '#000000');
       if (c && typeof c.setAlpha === 'function') c.setAlpha(alpha);
 
-      const drawPaths = (paths, filled) => {
+      const drawPaths = (paths, filled, ox, oy) => {
         for (const { d } of paths) {
           for (const sub of flattenPathD(d)) {
             if (filled) {
@@ -129,36 +141,62 @@ export function makeExtractedPatternClass(entity) {
           }
         }
       };
-      drawPaths(tile.fills, true);
-      drawPaths(tile.strokes, false);
+
+      // Lattice → tile the motif across the whole canvas, grid anchored at
+      // (0,0); otherwise the single-motif floor renders centered as before.
+      const placements = lattice
+        ? tilePlacements(lattice, { width: canvasW, height: canvasH })
+        : [{ x: (canvasW - tile.width) / 2, y: (canvasH - tile.height) / 2 }];
+      for (const { x, y } of placements) {
+        drawPaths(tile.fills, true, x, y);
+        drawPaths(tile.strokes, false, x, y);
+      }
     }
 
     /**
-     * Export: verbatim `d` per saved path inside a centering translate.
-     * Bypasses base symmetry wrapping — the tile is placed as-is.
+     * Export: verbatim `d` per saved path. No lattice → a single centering
+     * translate (pre-S5, byte-identical). With a lattice → one inner
+     * translate-group per placement so the exported file tiles exactly like
+     * the canvas (same placement source), every copy carrying its
+     * engrave/cut/score roles.
      */
     toSVGGroup(layerId, color, opacity) {
-      // _lastCx/_lastCy are recorded by Pattern.generateWithContext.
-      const ox = (this._lastCx ?? tile.width / 2) - tile.width / 2;
-      const oy = (this._lastCy ?? tile.height / 2) - tile.height / 2;
       const opacityFrac = Math.max(0, Math.min(100, opacity ?? 100)) / 100;
       // Every interpolation is attribute-escaped (adversarial-review finding 1):
       // this markup reaches dangerouslySetInnerHTML (picker thumbnails) and the
       // exported SVG file, and the tile ultimately came from a stored row.
       // Escaping is a no-op for well-formed path data / roles, so faithful
-      // digitization (locked decision 1) is unaffected.
+      // digitization (locked decision 1) is unaffected. Lattice offsets are
+      // validated finite numbers, formatted through fmtNum — digits only.
       const fill = escapeAttr(color);
-      const inner = [
-        ...tile.fills.map(
-          ({ d, role }) =>
-            `    <path d="${escapeAttr(d)}" fill="${fill}" fill-rule="evenodd" stroke="none" data-role="${escapeAttr(role)}"/>`
-        ),
-        ...tile.strokes.map(
-          ({ d, role }) =>
-            `    <path d="${escapeAttr(d)}" fill="none" stroke="${fill}" stroke-width="1" data-role="${escapeAttr(role)}"/>`
-        ),
-      ].join('\n');
-      return `<g id="${escapeAttr(layerId)}" opacity="${opacityFrac}" transform="translate(${ox} ${oy})">\n${inner}\n  </g>`;
+      const pathsAt = (indent) =>
+        [
+          ...tile.fills.map(
+            ({ d, role }) =>
+              `${indent}<path d="${escapeAttr(d)}" fill="${fill}" fill-rule="evenodd" stroke="none" data-role="${escapeAttr(role)}"/>`
+          ),
+          ...tile.strokes.map(
+            ({ d, role }) =>
+              `${indent}<path d="${escapeAttr(d)}" fill="none" stroke="${fill}" stroke-width="1" data-role="${escapeAttr(role)}"/>`
+          ),
+        ].join('\n');
+
+      if (!lattice) {
+        // _lastCx/_lastCy are recorded by Pattern.generateWithContext.
+        const ox = (this._lastCx ?? tile.width / 2) - tile.width / 2;
+        const oy = (this._lastCy ?? tile.height / 2) - tile.height / 2;
+        return `<g id="${escapeAttr(layerId)}" opacity="${opacityFrac}" transform="translate(${ox} ${oy})">\n${pathsAt('    ')}\n  </g>`;
+      }
+
+      const canvasW = (this._lastCx ?? tile.width / 2) * 2;
+      const canvasH = (this._lastCy ?? tile.height / 2) * 2;
+      const copies = tilePlacements(lattice, { width: canvasW, height: canvasH })
+        .map(
+          ({ x, y }) =>
+            `    <g transform="translate(${fmtNum(x)} ${fmtNum(y)})">\n${pathsAt('      ')}\n    </g>`
+        )
+        .join('\n');
+      return `<g id="${escapeAttr(layerId)}" opacity="${opacityFrac}">\n${copies}\n  </g>`;
     }
   };
 }

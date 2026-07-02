@@ -50,6 +50,46 @@ beforeEach(() => {
 
 afterEach(() => clearLibraryEntries());
 
+// S5 (issue #54): a lattice-bearing entry previews TILED — a 3×3-cell window
+// through the same placement source the generator uses — on both the card and
+// the detail view (one entity, two surfaces).
+describe('LibraryView — tiled preview (S5)', () => {
+  const LATTICE = {
+    t1: [20, 0],
+    t2: [0, 20],
+    cell: { width: 20, height: 20 },
+    type: 'square',
+    confidence: 0.9,
+  };
+
+  it('tiles the card preview 3×3 when the entity carries a lattice', () => {
+    addLibraryEntry(
+      makeExtractedPattern({ patternId: 'extracted-lv-t', title: 'Tiled', tile: TILE, lattice: LATTICE })
+    );
+    renderView();
+    const svg = screen.getByTestId('tiled-preview');
+    expect(svg).toHaveAttribute('viewBox', '0 0 60 60');
+    expect(svg.querySelectorAll('g')).toHaveLength(9);
+    expect(svg.querySelectorAll('path')).toHaveLength(9); // 1 fill × 9 copies
+  });
+
+  it('keeps the single-tile preview for lattice-less entries (floor unchanged)', () => {
+    addLibraryEntry(entity('extracted-lv-s', 'Single'));
+    renderView();
+    expect(screen.queryByTestId('tiled-preview')).toBeNull();
+    expect(screen.getByRole('img', { name: 'Extracted pattern' })).toBeInTheDocument();
+  });
+
+  it('tiles the detail-view preview too', () => {
+    addLibraryEntry(
+      makeExtractedPattern({ patternId: 'extracted-lv-t2', title: 'Tiled detail', tile: TILE, lattice: LATTICE })
+    );
+    renderView();
+    fireEvent.click(screen.getByTestId('library-card'));
+    expect(screen.getAllByTestId('tiled-preview').length).toBeGreaterThanOrEqual(1);
+  });
+});
+
 describe('LibraryView — card grid', () => {
   it('renders saved entries as cards, newest first, each with the 📷 Extracted badge', () => {
     addLibraryEntry(entity('extracted-lv-a', 'Uppsala ceiling'), { createdAt: '2026-06-01T00:00:00Z' });

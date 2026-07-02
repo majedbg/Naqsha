@@ -224,6 +224,142 @@ describe('makeExtractedPatternClass — toSVGGroup() escaping', () => {
   });
 });
 
+// --- S5 (issue #54): lattice tiling on both render surfaces -----------------
+//
+// One entity, one placement source (tileComposer), two surfaces: generate()
+// stamps the tile at every lattice placement on canvas; toSVGGroup() emits a
+// translate-group per placement with roles preserved per copy. No lattice →
+// the pre-S5 centered single-tile output, byte-identical.
+describe('makeExtractedPatternClass — lattice tiling (S5)', () => {
+  const LATTICE = {
+    t1: [20, 0],
+    t2: [0, 20],
+    cell: { width: 20, height: 20 },
+    type: 'square',
+    confidence: 0.9,
+  };
+  const tiledEntity = () =>
+    makeExtractedPattern({
+      patternId: 'extracted-test-1',
+      title: 'tiled',
+      tile: {
+        width: 20,
+        height: 20,
+        fills: [{ d: 'M4 4 L16 4 L16 16 L4 16 Z', role: 'engrave' }],
+        strokes: [{ d: 'M0 10 L20 10', role: 'score' }],
+      },
+      lattice: LATTICE,
+    });
+
+  it('generate() tiles the motif across the canvas (expected copy count + positions)', () => {
+    const Cls = makeExtractedPatternClass(tiledEntity());
+    const inst = new Cls();
+    const ctx = new RecordingContext();
+    inst.generateWithContext(ctx, 1, {}, 60, 40, '#000', 100);
+    // 3 columns × 2 rows = 6 copies × (1 fill subpath + 1 stroke subpath).
+    const begins = ctx.calls.filter((c) => c.op === 'beginShape');
+    expect(begins).toHaveLength(12);
+    // Copies land at lattice offsets, NOT centered: the fill's first vertex
+    // (4,4) appears at x ∈ {4, 24, 44} and y ∈ {4, 24}.
+    const verts = ctx.calls.filter((c) => c.op === 'vertex').map((c) => c.args);
+    const xs = new Set(verts.map(([x]) => x));
+    const ys = new Set(verts.map(([, y]) => y));
+    for (const x of [4, 24, 44]) expect(xs).toContain(x);
+    for (const y of [4, 24]) expect(ys).toContain(y);
+    expect(Math.max(...verts.map(([x]) => x))).toBeLessThanOrEqual(60);
+  });
+
+  it('toSVGGroup() emits one translate-group per placement, roles preserved per copy', () => {
+    const Cls = makeExtractedPatternClass(tiledEntity());
+    const inst = new Cls();
+    inst.generateWithContext(new RecordingContext(), 1, {}, 60, 40, '#000', 100);
+    const svg = inst.toSVGGroup('layer-9', '#112233', 100);
+
+    expect(svg).toContain('id="layer-9"');
+    const copies = svg.match(/<g transform="translate\(/g);
+    expect(copies).toHaveLength(6);
+    expect(svg).toContain('translate(0 0)');
+    expect(svg).toContain('translate(40 20)');
+    // Every copy carries BOTH paths with their roles (fills AND strokes tile).
+    expect(svg.match(/data-role="engrave"/g)).toHaveLength(6);
+    expect(svg.match(/data-role="score"/g)).toHaveLength(6);
+    expect(svg.match(/fill="none"/g)).toHaveLength(6);
+    // Verbatim geometry inside each copy (faithful digitization).
+    expect(svg.match(/d="M4 4 L16 4 L16 16 L4 16 Z"/g)).toHaveLength(6);
+    // No centering translate on the outer group — the grid anchors at 0,0.
+    expect(svg).not.toContain('translate(20 10)');
+  });
+
+  it('toSVGGroup() keeps escape-at-emit for every copy (crafted entity, lattice on)', () => {
+    const Cls = makeExtractedPatternClass({
+      patternId: 'extracted-test-1',
+      title: 'crafted-tiled',
+      source: 'extracted',
+      visibility: 'private',
+      tile: {
+        width: 20,
+        height: 20,
+        fills: [{ d: 'M0 0Z"><script>alert(1)</script>', role: 'engrave' }],
+        strokes: [],
+      },
+      lattice: LATTICE,
+      photoPath: null,
+    });
+    const inst = new Cls();
+    // Crafted d can't flow through canvas flattening (throws on parse — same
+    // as the pre-existing escaping tests); exercise the export layer directly
+    // with recorded canvas dims for a 2×1 tiling.
+    inst._lastCx = 20;
+    inst._lastCy = 10;
+    const svg = inst.toSVGGroup('l', '#000', 100);
+    expect(svg).not.toContain('<script');
+    expect(svg.match(/&lt;script&gt;/g)).toHaveLength(2); // escaped in EVERY copy
+  });
+
+  it('no lattice → byte-identical single centered tile (pre-S5 output)', () => {
+    const plain = entity(); // lattice: null
+    const Cls = makeExtractedPatternClass(plain);
+    const inst = new Cls();
+    inst.generateWithContext(new RecordingContext(), 1, {}, 200, 100, '#112233', 80);
+    const svg = inst.toSVGGroup('layer-7', '#445566', 80);
+    expect(svg).toBe(
+      '<g id="layer-7" opacity="0.8" transform="translate(70 30)">\n' +
+        '    <path d="M20 10 L40 10 L40 30 L20 30 Z" fill="#445566" fill-rule="evenodd" stroke="none" data-role="engrave"/>\n' +
+        '    <path d="M5 5 L9 5 L9 9 L5 9 Z" fill="#445566" fill-rule="evenodd" stroke="none" data-role="cut"/>\n' +
+        '  </g>'
+    );
+  });
+
+  it('tiles an oblique lattice with fractional offsets formatted safely', () => {
+    const e = makeExtractedPattern({
+      patternId: 'extracted-test-1',
+      title: 'oblique',
+      tile: {
+        width: 20,
+        height: 20,
+        fills: [{ d: 'M4 4 L16 4 L16 16 Z', role: 'engrave' }],
+        strokes: [],
+      },
+      lattice: {
+        t1: [20, 0],
+        t2: [10.5, 18.25],
+        cell: { width: 30.5, height: 18.25 },
+        type: 'oblique',
+        confidence: 0.6,
+      },
+    });
+    const Cls = makeExtractedPatternClass(e);
+    const inst = new Cls();
+    inst.generateWithContext(new RecordingContext(), 1, {}, 60, 40, '#000', 100);
+    const svg = inst.toSVGGroup('l', '#000', 100);
+    expect(svg).toContain('translate(10.5 18.25)');
+    // Only digits, dots, minus and spaces inside every transform.
+    for (const m of svg.matchAll(/translate\(([^)]*)\)/g)) {
+      expect(m[1]).toMatch(/^-?[\d.]+ -?[\d.]+$/);
+    }
+  });
+});
+
 describe('registerExtractedPattern', () => {
   it('registers into the dynamic registry as a non-AI extracted type', () => {
     registerExtractedPattern(entity());

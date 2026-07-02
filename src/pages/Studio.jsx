@@ -58,7 +58,7 @@ import { getDynamicDefaults } from "../lib/patternRegistry";
 import ShareLinkButton from "../components/ShareLinkButton";
 import { resolveExportColor } from "../lib/fabrication";
 import { seedOperations, addOperation, resolveOperation } from "../lib/operations";
-import { remapOperationsToProfile, defaultBedSize, profileProcesses, defaultMachineParams } from "../lib/machineProfiles";
+import { remapOperationsToProfile, defaultBedSize, bedPresetsFor, profileProcesses, defaultMachineParams } from "../lib/machineProfiles";
 import useHistory from "../lib/history/useHistory";
 import { createDocumentIO } from "../lib/history/documentSnapshot";
 import { readTail, writeTail, validateTail } from "../lib/history/persist";
@@ -155,8 +155,8 @@ export default function Studio({ submitOrg = null } = {}) {
     applyCanvasSize,
     captureCanvas,
     restoreCanvas,
-    bedWmm,
-    bedHmm,
+    workPieceWmm,
+    workPieceHmm,
   } = useCanvasSize({ savedCanvas, activeTab });
 
   // === Optimization applied state (export + plot overlay basis) ===
@@ -502,15 +502,22 @@ export default function Studio({ submitOrg = null } = {}) {
   // semantically broken). The remap replaces the library via setOperations and
   // then clears the whole history (history.clear()), preserving the old
   // resetHistory-on-profile-switch semantics (I9).
-  // Bed-as-artboard is OVERRIDABLE document state (C6 / #14): seeded from the
-  // active profile's defaultBed, switched back to that default whenever the
-  // machine profile changes (inside handleProfileChange — the single profile
-  // path), and overridable to a preset or custom dims by the Document Setup
-  // dialog. CanvasChrome (rulers + bed rect) and StatusBar read THIS state, so
-  // applying updates them immediately. It is intentionally NOT threaded into the
-  // export manifest (export keeps reading the separate canvasW/H-derived
-  // bedWmm/bedHmm), so changing the artboard never alters export output.
+  // Bed is now a MACHINE REFERENCE OVERLAY (UX reframe), not the artboard: it
+  // is seeded from the active profile's defaultBed, switched back to that
+  // default whenever the machine profile changes (inside handleProfileChange —
+  // the single profile path), and selectable to a named preset or hidden via
+  // the View menu's "Bed size" submenu (see showBed below). CanvasChrome
+  // (bed-fill + bed-guide) and StatusBar read THIS state, so applying updates
+  // them immediately. It is intentionally NOT threaded into the export
+  // manifest (export reads the separate canvasW/H-derived workPieceWmm/
+  // workPieceHmm — the work piece the user is designing on), so changing the
+  // bed overlay never alters export output.
   const [bedSize, setBedSize] = useState(() => defaultBedSize(activeProfileId));
+
+  // Bed overlay visibility (UX reframe): toggled from View > Bed size — picking
+  // a named preset shows it, "None" hides it. Transient view state only (not
+  // persisted); defaults to visible.
+  const [showBed, setShowBed] = useState(true);
 
   // Document Setup dialog open state (C6 / #14). Opened from the File menu.
   const [documentSetupOpen, setDocumentSetupOpen] = useState(false);
@@ -557,6 +564,37 @@ export default function Studio({ submitOrg = null } = {}) {
     },
     [setOutputMode, operations]
   );
+
+  // View > Bed size (UX reframe): picking a named preset shows the bed overlay
+  // at that preset's dims; unknown/missing id is a no-op (defensive — the menu
+  // only ever offers ids from bedPresetsFor(activeProfileId)).
+  const handleSelectBedPreset = useCallback(
+    (id) => {
+      const preset = bedPresetsFor(activeProfileId).find((p) => p.id === id);
+      if (!preset) return;
+      setBedSize({ width: preset.width, height: preset.height, unit: "mm" });
+      setShowBed(true);
+    },
+    [activeProfileId]
+  );
+
+  // View > Bed size > None: hides the bed overlay without changing bedSize, so
+  // re-showing a preset (or reopening) still reflects the last chosen dims.
+  const handleHideBed = useCallback(() => {
+    setShowBed(false);
+  }, []);
+
+  // Which named bed preset (if any) matches the CURRENT bedSize, so the View
+  // menu can check the active one. Rounded comparison guards against float
+  // drift (mm math elsewhere in the app rounds too — see useCanvasSize).
+  const activeBedPresetId = useMemo(() => {
+    const preset = bedPresetsFor(activeProfileId).find(
+      (p) =>
+        Math.round(p.width) === Math.round(bedSize.width) &&
+        Math.round(p.height) === Math.round(bedSize.height)
+    );
+    return preset ? preset.id : null;
+  }, [activeProfileId, bedSize]);
 
   // === Operations-panel edit handlers (C1 / #10) — all routed through history.
   // Library edits (reorder / recolor / param-edit / remove) flow through
@@ -1030,18 +1068,18 @@ export default function Studio({ submitOrg = null } = {}) {
     outputMode,
   ]);
 
-  // Document Setup apply (C6 / #14). Routes the profile half through the SAME
-  // handleProfileChange the LayerTree selector uses (so the remap + default-bed
-  // reset stay single-sourced), THEN overrides the bed with the dialog's chosen
-  // preset/custom dims. Order matters: handleProfileChange resets the bed to the
-  // new profile's default first, so the setBedSize below must come AFTER it or
-  // the reset would clobber the custom bed.
-  // Also re-homes the EXPORT document size (#16 AC2): canvasW/canvasH come back
+  // Document Setup apply (UX reframe): the dialog no longer sets the bed (it's
+  // a View-menu-only reference overlay now — see handleSelectBedPreset/
+  // handleHideBed). Routes the profile half through the SAME handleProfileChange
+  // the LayerTree selector uses (so the remap + default-bed reset stay
+  // single-sourced; handleProfileChange still resets bedSize to the new
+  // profile's default), then applies the work-piece size/unit.
+  // Re-homes the EXPORT document size (#16 AC2): canvasW/canvasH come back
   // from the dialog (px) and route through applyCanvasSize so the export
   // dimensions become user-settable again AND presetIndex stays coherent (snaps
   // to a known preset or Custom, exactly as the cloud/example loaders do).
   const handleDocumentSetupApply = useCallback(
-    ({ profileId, bedSize: nextBed, unit: nextUnit, canvasW: nextW, canvasH: nextH }) => {
+    ({ profileId, unit: nextUnit, canvasW: nextW, canvasH: nextH }) => {
       const isProfileChange = profileId && profileId !== activeProfileId;
       // The document-mutating body. Wrapped in ONE recordBatch for the pure
       // size/unit/margin path so a Document Setup apply is a single undo entry
@@ -1051,7 +1089,6 @@ export default function Studio({ submitOrg = null } = {}) {
         if (isProfileChange) {
           handleProfileChange(profileId);
         }
-        if (nextBed) setBedSize(nextBed);
         // The dialog's mm/in toggle drives the document's global unit (rulers,
         // status bar, length-tagged params all follow). bedSize stays canonical mm.
         if ((nextUnit === "mm" || nextUnit === "in") && nextUnit !== unit) {
@@ -1129,8 +1166,12 @@ export default function Studio({ submitOrg = null } = {}) {
       version: "1",
       machineProfile,
       operations,
-      bedW: bedWmm,
-      bedH: bedHmm,
+      // Manifest keys stay bedW/bedH/bedUnit (export format unchanged); the
+      // VALUES now come from the work piece (workPieceWmm/workPieceHmm), not
+      // the machine-bed reference overlay — export tracks what the user is
+      // designing on, not the bed selection.
+      bedW: workPieceWmm,
+      bedH: workPieceHmm,
       bedUnit: "mm",
       layers,
       optimizations: appliedOpsList,
@@ -1382,6 +1423,7 @@ export default function Studio({ submitOrg = null } = {}) {
           onZoomChange={canvasView.setZoom}
           externalPan={canvasView.pan}
           bedSize={bedSize}
+          showBed={showBed}
           onCursorMove={setCursorPos}
           showPlotOverlay={showOverlays}
           appliedOptimizations={appliedOptimizations}
@@ -1571,6 +1613,16 @@ export default function Studio({ submitOrg = null } = {}) {
             isGuest={!user}
             onOpenCloudDesigns={() => setUI("showCloudModal", true)}
             onDocumentSetup={() => setDocumentSetupOpen(true)}
+            // View > Bed size (UX reframe): named presets for the active
+            // machine profile, live checked state, select/hide handlers.
+            bedPresets={bedPresetsFor(activeProfileId).map((p) => ({
+              id: p.id,
+              label: p.label,
+            }))}
+            activeBedPresetId={activeBedPresetId}
+            bedVisible={showBed}
+            onSelectBedPreset={handleSelectBedPreset}
+            onHideBed={handleHideBed}
             onUndo={canUndo ? undo : undefined}
             onRedo={canRedo ? redo : undefined}
             onToggleOverlays={() => setShowOverlays((v) => !v)}
@@ -1827,19 +1879,21 @@ export default function Studio({ submitOrg = null } = {}) {
           operationsPanelSlot
         )}
 
-      {/* Document Setup dialog (C6 / #14). Gated on the pro-shell slots so it is
-          live ONLY in the pro shell and a true no-op in the legacy layout. It has
-          TWO entry points, both pro-shell-only: the File-menu item (menuSlot) and
-          the gear beside the LayerTree machine selector (objectTreeSlot) — gate on
-          either so neither opener can set documentSetupOpen with nothing mounted.
-          Reads the LIVE active profile + bed so reopening shows current settings;
-          Apply routes the profile half through the shared handleProfileChange,
-          overrides the artboard bed, and syncs the document unit. */}
+      {/* Document Setup dialog (C6 / #14; UX reframe). Gated on the pro-shell
+          slots so it is live ONLY in the pro shell and a true no-op in the
+          legacy layout. It has TWO entry points, both pro-shell-only: the
+          File-menu item (menuSlot) and the gear beside the LayerTree machine
+          selector (objectTreeSlot) — gate on either so neither opener can set
+          documentSetupOpen with nothing mounted. Reads the LIVE active profile
+          + work-piece size so reopening shows current settings; Apply routes
+          the profile half through the shared handleProfileChange and syncs the
+          document unit + canvasW/canvasH (the work piece). The machine bed is
+          no longer configured here — it's a View-menu-only reference overlay
+          (see handleSelectBedPreset/handleHideBed above). */}
       {(menuSlot || objectTreeSlot) && (
         <DocumentSetupDialog
           open={documentSetupOpen}
           profileId={activeProfileId}
-          bedSize={bedSize}
           unit={unit}
           // Export document size (#16 AC2) — makes canvasW/canvasH user-settable
           // again in the shell so export dimensions are controllable.

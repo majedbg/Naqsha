@@ -3,7 +3,8 @@
 // A document targets exactly ONE machine. The active profile drives:
 //   (a) which `process` values operations may use,
 //   (b) the `machineParams` field schema each process exposes,
-//   (c) a default bed size (bed = artboard),
+//   (c) a default bed size (a machine reference overlay, distinct from the
+//       work-piece/artboard the user is designing on),
 //   (d) whether operation colors are locked to convention or editable.
 //
 // Profile IDS are LOWERCASE and intentionally match the strings
@@ -153,8 +154,9 @@ export function defaultMachineParams(id, process) {
   return out;
 }
 
-// The profile's default bed size (bed = artboard). Exposed for Document Setup /
-// status bar to read (A2-AC3).
+// The profile's default bed size — a machine reference overlay only, distinct
+// from the work-piece/artboard the user is designing on. Exposed for Document
+// Setup / status bar to read (A2-AC3).
 export function defaultBedSize(id) {
   return { ...getProfile(id).defaultBed };
 }

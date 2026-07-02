@@ -1,25 +1,23 @@
 // @vitest-environment jsdom
 //
-// AC2 re-home (#16): the Document Setup dialog (#14) sets the MACHINE BED
-// (display/artboard) but NOT the EXPORT document size (canvasW/canvasH) that the
-// export manifest + SVG dimensions use. The legacy two-pane layout had a
-// canvas-size control; this re-homes a document-size control (px) into the dialog,
-// reported OUT via onApply alongside the bed. It must NOT collide with the bed
-// Width/Height inputs (those tests query by /width/i and /height/i), so the
-// document-size inputs use the disjoint labels "Document W" / "Document H".
+// UX reframe (#16 follow-up): the Document Setup dialog is now CONTROLLED on
+// the WORK PIECE (design canvas) size — canvasW/canvasH in px @96 PPI — as
+// its PRIMARY editable control. The machine BED no longer lives in this
+// dialog (moved to the View menu). This file exercises the px seeding/round-
+// tripping + preset-matching behavior specifically; DocumentSetupDialog.test
+// covers the general render/interaction surface.
 //
 // NEW test file — does not touch the existing DocumentSetupDialog.test.jsx.
 
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent, within } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import DocumentSetupDialog from "./DocumentSetupDialog";
-import { defaultBedSize } from "../../lib/machineProfiles";
+import { PRESET_SIZES, PPI } from "../../constants";
 
 function makeProps(overrides = {}) {
   return {
     open: true,
     profileId: "laser",
-    bedSize: defaultBedSize("laser"),
     unit: "mm",
     canvasW: 768,
     canvasH: 1024,
@@ -29,31 +27,67 @@ function makeProps(overrides = {}) {
   };
 }
 
-describe("DocumentSetupDialog — export document size (#16 AC2)", () => {
-  it("seeds the document-size inputs from canvasW/canvasH (px)", () => {
-    render(<DocumentSetupDialog {...makeProps({ canvasW: 768, canvasH: 1024 })} />);
-    expect(screen.getByLabelText("Document W")).toHaveValue(768);
-    expect(screen.getByLabelText("Document H")).toHaveValue(1024);
+describe("DocumentSetupDialog — work piece size is px-canonical (#16 follow-up)", () => {
+  it("seeds the Width/Height inputs from canvasW/canvasH (px), converted to the active unit", () => {
+    // 768px / 1024px @96 PPI = 8in / 10.667in = 203mm / 271mm (rounded).
+    render(<DocumentSetupDialog {...makeProps({ canvasW: 768, canvasH: 1024, unit: "mm" })} />);
+    expect(screen.getByLabelText(/width/i)).toHaveValue(Math.round((768 / PPI) * 25.4));
+    expect(screen.getByLabelText(/height/i)).toHaveValue(Math.round((1024 / PPI) * 25.4));
   });
 
-  it("Apply reports the chosen document size out through onApply (canvasW/canvasH px)", () => {
+  it("Apply reports the edited size out through onApply as rounded canvasW/canvasH px", () => {
     const onApply = vi.fn();
-    render(<DocumentSetupDialog {...makeProps({ onApply })} />);
-    fireEvent.change(screen.getByLabelText("Document W"), { target: { value: "900" } });
-    fireEvent.change(screen.getByLabelText("Document H"), { target: { value: "600" } });
+    render(<DocumentSetupDialog {...makeProps({ onApply, unit: "in" })} />);
+    fireEvent.change(screen.getByLabelText(/width/i), { target: { value: "9" } });
+    fireEvent.change(screen.getByLabelText(/height/i), { target: { value: "6" } });
     fireEvent.click(screen.getByRole("button", { name: /apply/i }));
     expect(onApply).toHaveBeenCalledTimes(1);
     const arg = onApply.mock.calls[0][0];
-    expect(arg.canvasW).toBe(900);
-    expect(arg.canvasH).toBe(600);
+    expect(arg.canvasW).toBe(Math.round(9 * PPI));
+    expect(arg.canvasH).toBe(Math.round(6 * PPI));
+    expect(Number.isInteger(arg.canvasW)).toBe(true);
+    expect(Number.isInteger(arg.canvasH)).toBe(true);
   });
 
-  it("the document-size inputs are disjoint from the bed Width/Height inputs", () => {
-    render(<DocumentSetupDialog {...makeProps()} />);
-    const dialog = screen.getByRole("dialog");
-    // The bed inputs still resolve uniquely under /width/i and /height/i — proof
-    // the new inputs did not collide with the untouched bed-input queries.
-    expect(within(dialog).getByLabelText(/width/i)).toBeInTheDocument();
-    expect(within(dialog).getByLabelText(/height/i)).toBeInTheDocument();
+  it("preselects the matching named preset when canvasW/canvasH exactly match one", () => {
+    const idx = 2; // PRESET_SIZES[2] = 12x18in artwork preset
+    const preset = PRESET_SIZES[idx];
+    render(
+      <DocumentSetupDialog
+        {...makeProps({ canvasW: preset.width * PPI, canvasH: preset.height * PPI })}
+      />
+    );
+    expect(screen.getByLabelText(/work piece preset/i)).toHaveValue(String(idx));
+  });
+
+  it("falls back to Custom when canvasW/canvasH don't match any named preset", () => {
+    const customIndex = PRESET_SIZES.findIndex((p) => p.width === null);
+    render(<DocumentSetupDialog {...makeProps({ canvasW: 501, canvasH: 337 })} />);
+    expect(screen.getByLabelText(/work piece preset/i)).toHaveValue(String(customIndex));
+  });
+
+  it("editing Width/Height after a preset pick switches the preset selector to Custom", () => {
+    const customIndex = PRESET_SIZES.findIndex((p) => p.width === null);
+    const idx = 2;
+    const preset = PRESET_SIZES[idx];
+    render(
+      <DocumentSetupDialog
+        {...makeProps({ canvasW: preset.width * PPI, canvasH: preset.height * PPI })}
+      />
+    );
+    expect(screen.getByLabelText(/work piece preset/i)).toHaveValue(String(idx));
+    fireEvent.change(screen.getByLabelText(/width/i), { target: { value: "5" } });
+    expect(screen.getByLabelText(/work piece preset/i)).toHaveValue(String(customIndex));
+  });
+
+  it("choosing a preset from Custom fills the Width/Height dims in the active unit", () => {
+    render(<DocumentSetupDialog {...makeProps({ canvasW: 501, canvasH: 337, unit: "in" })} />);
+    const idx = 3; // PRESET_SIZES[3] = 12x24in artwork preset
+    const preset = PRESET_SIZES[idx];
+    fireEvent.change(screen.getByLabelText(/work piece preset/i), {
+      target: { value: String(idx) },
+    });
+    expect(screen.getByLabelText(/width/i)).toHaveValue(preset.width);
+    expect(screen.getByLabelText(/height/i)).toHaveValue(preset.height);
   });
 });

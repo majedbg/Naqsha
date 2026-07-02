@@ -26,6 +26,15 @@ function Menu({ label, items, openId, setOpenId }) {
   const ref = useRef(null);
   const isOpen = openId === label;
 
+  // Which nested submenu (by item.label) is expanded, if any. Click-to-expand
+  // (not hover-flyout) so it's jsdom-testable; collapses again once this
+  // top-level menu closes so it doesn't reopen stale on the next click.
+  const [expandedSubmenu, setExpandedSubmenu] = useState(null);
+
+  useEffect(() => {
+    if (!isOpen) setExpandedSubmenu(null);
+  }, [isOpen]);
+
   useEffect(() => {
     if (!isOpen) return;
     const onPointer = (e) => {
@@ -70,6 +79,53 @@ function Menu({ label, items, openId, setOpenId }) {
                 role="separator"
                 className="my-1 border-t border-hairline"
               />
+            ) : item.submenu ? (
+              // Nested submenu (e.g. View > Bed size): click-to-expand inline,
+              // NOT a hover flyout, so children render right in this same
+              // dropdown and stay reachable/testable without pointer hover.
+              <div key={item.label}>
+                <button
+                  type="button"
+                  aria-haspopup="menu"
+                  aria-expanded={expandedSubmenu === item.label}
+                  disabled={item.disabled}
+                  onClick={() =>
+                    setExpandedSubmenu(
+                      expandedSubmenu === item.label ? null : item.label
+                    )
+                  }
+                  className="w-full text-left px-3 py-1.5 text-xs text-ink-soft hover:text-ink hover:bg-paper-warm disabled:opacity-40 disabled:cursor-default disabled:hover:bg-transparent disabled:hover:text-ink-soft transition-colors duration-fast ease-out-quart flex items-center justify-between gap-4"
+                >
+                  <span>{item.label}</span>
+                  <span className="text-[10px] text-ink-soft/50" aria-hidden="true">
+                    {expandedSubmenu === item.label ? "▾" : "▸"}
+                  </span>
+                </button>
+                {expandedSubmenu === item.label &&
+                  item.submenu.map((child) => (
+                    <button
+                      key={child.label}
+                      type="button"
+                      role={child.checkable ? "menuitemcheckbox" : "menuitem"}
+                      aria-checked={child.checkable ? !!child.checked : undefined}
+                      disabled={child.disabled || !child.onSelect}
+                      onClick={() => {
+                        setOpenId(null);
+                        child.onSelect?.();
+                      }}
+                      className="w-full text-left pl-7 pr-3 py-1.5 text-xs text-ink-soft hover:text-ink hover:bg-paper-warm disabled:opacity-40 disabled:cursor-default disabled:hover:bg-transparent disabled:hover:text-ink-soft transition-colors duration-fast ease-out-quart flex items-center justify-between gap-4"
+                    >
+                      <span className="flex items-center gap-2">
+                        {child.checkable && (
+                          <span className="w-3 text-accent" aria-hidden="true">
+                            {child.checked ? "✓" : ""}
+                          </span>
+                        )}
+                        <span>{child.label}</span>
+                      </span>
+                    </button>
+                  ))}
+              </div>
             ) : (
               <button
                 key={item.label}
@@ -146,6 +202,16 @@ export default function MenuBar({
   onRetry,
   designName,
   onRenameDesign,
+  // Bed size (moved out of Document Setup into View, per the UX reframe) — all
+  // OPTIONAL. Supplied only on the pro shell path where Studio owns the bed
+  // presets + overlay visibility. The legacy/standalone MenuBar (no bed props)
+  // renders the "Bed size" item disabled with no submenu, so that path stays
+  // non-crashing and effectively unchanged.
+  bedPresets,
+  activeBedPresetId,
+  bedVisible = false,
+  onSelectBedPreset,
+  onHideBed,
 }) {
   // A single "which menu is open" id keeps only one dropdown open at a time and
   // lets clicking another top-level menu switch directly.
@@ -156,6 +222,31 @@ export default function MenuBar({
   // in the legacy/standalone MenuBar (no provider) — the View menu then renders
   // byte-unchanged.
   const dock = useInspectorDockContext();
+
+  // Bed size submenu (View menu) — live only when Studio supplies presets AND
+  // a select handler; otherwise a disabled placeholder with no submenu at all,
+  // matching the Undo/Redo/Overlays conditional-enable pattern.
+  const bedSizeItem =
+    bedPresets && bedPresets.length > 0 && onSelectBedPreset
+      ? {
+          label: "Bed size",
+          submenu: [
+            ...bedPresets.map((preset) => ({
+              label: preset.label,
+              checkable: true,
+              checked: bedVisible && preset.id === activeBedPresetId,
+              onSelect: () => onSelectBedPreset(preset.id),
+            })),
+            {
+              label: "None",
+              checkable: true,
+              checked: !bedVisible,
+              onSelect: () => onHideBed?.(),
+              disabled: !onHideBed,
+            },
+          ],
+        }
+      : { label: "Bed size", disabled: true };
 
   const menus = [
     {
@@ -219,6 +310,9 @@ export default function MenuBar({
           onSelect: onToggleOverlays,
           disabled: !onToggleOverlays,
         },
+        // Bed size (moved out of Document Setup, per the UX reframe) — checkable
+        // preset submenu + a "None" entry that hides the bed overlay entirely.
+        bedSizeItem,
         // Dock Properties to Bottom (WI-6) — checkable, in sync with the live
         // dockPosition. Only present when a dock provider is mounted (pro shell);
         // omitted entirely in the legacy MenuBar so that path is unchanged.

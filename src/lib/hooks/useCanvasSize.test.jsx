@@ -15,17 +15,23 @@ describe("useCanvasSize", () => {
     localStorage.clear();
   });
 
-  it("converts px → mm for the export bed via PX_PER_MM, matching the old inline math", () => {
+  it("converts px → mm for the work-piece (export) dims via PX_PER_MM, matching the old inline math", () => {
     const { result } = renderHook(() =>
       useCanvasSize({ savedCanvas: null, activeTab: "design" })
     );
-    const { canvasW, canvasH, bedWmm, bedHmm } = result.current;
+    const { canvasW, canvasH, workPieceWmm, workPieceHmm } = result.current;
     // Old inline formula: (canvasW / 96 * 25.4).toFixed(1).
-    expect(bedWmm).toBe((canvasW / 96 * 25.4).toFixed(1));
-    expect(bedHmm).toBe((canvasH / 96 * 25.4).toFixed(1));
+    expect(workPieceWmm).toBe((canvasW / 96 * 25.4).toFixed(1));
+    expect(workPieceHmm).toBe((canvasH / 96 * 25.4).toFixed(1));
     // And it is the single-sourced units helper.
-    expect(bedWmm).toBe(pxToUnit(canvasW, "mm").toFixed(1));
-    expect(bedHmm).toBe(pxToUnit(canvasH, "mm").toFixed(1));
+    expect(workPieceWmm).toBe(pxToUnit(canvasW, "mm").toFixed(1));
+    expect(workPieceHmm).toBe(pxToUnit(canvasH, "mm").toFixed(1));
+    // Confirms the renamed keys exist on the returned object (terminology
+    // honesty: these are work-piece/export dims, not the machine bed).
+    expect(result.current).toHaveProperty("workPieceWmm");
+    expect(result.current).toHaveProperty("workPieceHmm");
+    expect(result.current).not.toHaveProperty("bedWmm");
+    expect(result.current).not.toHaveProperty("bedHmm");
   });
 
   it("defaults to preset index 1 dimensions when no saved canvas exists", () => {

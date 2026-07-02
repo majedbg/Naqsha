@@ -5,16 +5,25 @@ import { MemoryRouter } from "react-router-dom";
 import StudioRoute from "./StudioRoute";
 import { getProfile, defaultBedSize } from "../lib/machineProfiles";
 
-// Issue #14 (Lane C / C6): the Document Setup dialog (machine + bed). Opened from
-// the File menu in the pro shell; applying updates the artboard (bed state the
-// chrome/status bar read), and switching profile in the dialog updates the
-// default bed AND the operation library (same remap path as the LayerTree
-// selector). Flag-OFF is a true no-op.
+// Issue #14 (Lane C / C6; UX reframe). The Document Setup dialog now edits the
+// WORK PIECE (design canvas, canvasW/canvasH @96 PPI) as its primary control —
+// the machine BED is no longer configured here (it moved to the View menu's
+// "Bed size" submenu, tested in StudioRoute.statusbar.test.jsx). Opened from
+// the File menu in the pro shell; applying updates the document's canvas size,
+// and switching profile in the dialog still updates the default bed AND the
+// operation library (same remap path as the LayerTree selector) — that half of
+// Document Setup is unchanged.
 //
 // As in the other StudioRoute integration tests, stub the p5 canvas surface +
 // auth so the real Studio + shell render under jsdom. RightPanel (and so
-// CanvasChrome) is mocked, so the artboard's observable here is the StatusBar bed
-// readout — which DOES render in the shell.
+// CanvasChrome) is mocked, so the WORK PIECE observable here is reopening the
+// dialog itself (it is CONTROLLED off Studio's live canvasW/canvasH, so a
+// stale value would mean the apply never reached Studio state) — while the
+// StatusBar bed readout is used to prove the bed is UNTOUCHED by a work-piece-
+// only apply. (Studio always falls back to selecting the first layer when
+// nothing is explicitly clicked, so the ControlBar's "nothing selected"
+// document quick-info is not reachable here — ControlBar.test.jsx already
+// covers that surface directly.)
 vi.mock("../components/RightPanel", () => ({
   default: () => <div data-testid="canvas-surface">canvas</div>,
 }));
@@ -43,19 +52,24 @@ describe("StudioRoute — Document Setup dialog (C6 / #14)", () => {
     expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 
-  it("flag ON: applying a custom bed updates the artboard dimensions (status-bar bed readout)", () => {
+  it("flag ON: applying a custom size updates the WORK PIECE (persists across reopen), leaving the bed untouched", () => {
     render(
       <MemoryRouter>
         <StudioRoute proShell={true} />
       </MemoryRouter>
     );
-    // The document's active unit isn't necessarily mm (the default preset hints
-    // inches), but the status bar always reads the bed in mm. Use a custom width
-    // in INCHES that maps to a clean, unmistakable mm value: 20 in → 508 mm.
-    // (Keep the default profile so this isolates the bed override path.)
+    // Snapshot the status-bar bed reading BEFORE applying, so we can prove the
+    // bed is NOT driven by Document Setup anymore (UX reframe — the bed is a
+    // View-menu-only reference overlay).
+    const statusRegion = screen.getByRole("region", { name: "Status bar" });
+    const bedBefore = within(statusRegion).getByLabelText(
+      /bed|material|machine/i
+    ).textContent;
+
     openDocumentSetup();
-    const dialog = screen.getByRole("dialog");
-    // Confirm the dialog shows dimensions in the active unit (inches here).
+    let dialog = screen.getByRole("dialog");
+    // Confirm the dialog shows dimensions in the active unit (inches here) —
+    // these are the WORK PIECE (canvasW/canvasH) controls, not the bed.
     expect(within(dialog).getByText(/width \(in\)/i)).toBeInTheDocument();
     fireEvent.change(within(dialog).getByLabelText(/width/i), {
       target: { value: "20" },
@@ -64,14 +78,23 @@ describe("StudioRoute — Document Setup dialog (C6 / #14)", () => {
       target: { value: "12" },
     });
     fireEvent.click(within(dialog).getByRole("button", { name: /apply/i }));
-
-    // Dialog closes; the status bar bed readout reflects the custom bed in mm
-    // (20 in = 508 mm, 12 in = 305 mm) — proving the artboard bed updated.
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    const region = screen.getByRole("region", { name: "Status bar" });
-    const bed = within(region).getByLabelText(/bed|material|machine/i);
-    expect(bed).toHaveTextContent(/508/);
-    expect(bed).toHaveTextContent(/305/);
+
+    // Reopen: the dialog is CONTROLLED off Studio's live canvasW/canvasH, so
+    // seeing 20/12 again proves the apply actually reached Studio state (a
+    // stale value would mean it never left the dialog's local draft).
+    openDocumentSetup();
+    dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByLabelText(/width/i)).toHaveValue(20);
+    expect(within(dialog).getByLabelText(/height/i)).toHaveValue(12);
+    fireEvent.click(within(dialog).getByRole("button", { name: /cancel/i }));
+
+    // The bed reading is UNCHANGED by the work-piece-only apply (same profile,
+    // no bed preset selected) — proving the two are decoupled.
+    const bedAfter = within(statusRegion).getByLabelText(
+      /bed|material|machine/i
+    ).textContent;
+    expect(bedAfter).toBe(bedBefore);
   });
 
   it("flag ON: switching profile in the dialog updates the default bed AND operation params", () => {
@@ -125,16 +148,17 @@ describe("StudioRoute — Document Setup dialog (C6 / #14)", () => {
     expect(within(opsPanel).queryAllByLabelText(/power/i).length).toBe(0);
   });
 
-  it("flag ON: reopening shows current settings; a custom bed survives a same-Apply profile switch", () => {
+  it("flag ON: reopening shows current settings; a custom work-piece size survives a same-Apply profile switch", () => {
     render(
       <MemoryRouter>
         <StudioRoute proShell={true} />
       </MemoryRouter>
     );
     // Default profile is the pen plotter. In ONE Apply, switch to a DIFFERENT
-    // profile (laser) AND set custom dims. This exercises the clobber-ordering
-    // guard: the shared profile-change path resets the bed to laser's default
-    // FIRST, then the dialog's custom bed must override it (custom wins).
+    // profile (laser) AND set custom work-piece dims. Unlike the bed (which
+    // handleProfileChange resets to the new profile's default), canvasW/canvasH
+    // is untouched by a profile switch — so the custom size must simply persist
+    // through the combined apply and be reflected on reopen.
     openDocumentSetup();
     let dialog = screen.getByRole("dialog");
     expect(within(dialog).getByLabelText(/machine profile/i)).toHaveValue("plotter");
@@ -149,8 +173,8 @@ describe("StudioRoute — Document Setup dialog (C6 / #14)", () => {
     });
     fireEvent.click(within(dialog).getByRole("button", { name: /apply/i }));
 
-    // Reopen — controls reflect the live document state (laser + the custom bed),
-    // NOT stale defaults and NOT laser's default bed (the custom value survived).
+    // Reopen — controls reflect the live document state (laser + the custom
+    // work-piece size), NOT stale defaults.
     openDocumentSetup();
     dialog = screen.getByRole("dialog");
     expect(within(dialog).getByLabelText(/machine profile/i)).toHaveValue("laser");

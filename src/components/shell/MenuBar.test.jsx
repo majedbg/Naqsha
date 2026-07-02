@@ -178,3 +178,132 @@ describe("MenuBar (B5 — top menu bar structure)", () => {
     ).toBeDisabled();
   });
 });
+
+// UX reframe: bed-size selection moves OUT of Document Setup and INTO the
+// View menu as a checkable "Bed size" nested submenu (presets + a "None"
+// entry that hides the bed overlay). Mirrors the Overlays conditional-enable
+// pattern (#15): disabled placeholder until Studio supplies presets + a
+// select handler.
+describe("MenuBar — View > Bed size submenu (UX reframe)", () => {
+  const presets = [
+    { id: "a4", label: "A4 (210 × 297 mm)" },
+    { id: "letter", label: "Letter (8.5 × 11 in)" },
+  ];
+
+  const openBedSizeSubmenu = () => {
+    openMenu("View");
+    fireEvent.click(screen.getByRole("button", { name: /bed size/i }));
+  };
+
+  it("renders Bed size disabled with no submenu when no presets/handler are provided (placeholder)", () => {
+    render(<MenuBar {...makeHandlers()} />);
+    openMenu("View");
+    const menu = screen.getByRole("menu", { name: "View" });
+    const bedSize = within(menu).getByRole("menuitem", { name: /bed size/i });
+    expect(bedSize).toBeDisabled();
+    expect(bedSize).not.toHaveAttribute("aria-haspopup");
+  });
+
+  it("expands to show preset labels + None when clicked", () => {
+    render(
+      <MenuBar
+        {...makeHandlers({
+          bedPresets: presets,
+          activeBedPresetId: "a4",
+          bedVisible: true,
+          onSelectBedPreset: vi.fn(),
+          onHideBed: vi.fn(),
+        })}
+      />
+    );
+    openBedSizeSubmenu();
+    expect(
+      screen.getByRole("menuitemcheckbox", { name: /a4/i })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("menuitemcheckbox", { name: /letter/i })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("menuitemcheckbox", { name: /^none$/i })
+    ).toBeInTheDocument();
+  });
+
+  it("checks the active preset when bedVisible, and None when it isn't", () => {
+    const { rerender } = render(
+      <MenuBar
+        {...makeHandlers({
+          bedPresets: presets,
+          activeBedPresetId: "a4",
+          bedVisible: true,
+          onSelectBedPreset: vi.fn(),
+          onHideBed: vi.fn(),
+        })}
+      />
+    );
+    openBedSizeSubmenu();
+    expect(
+      screen.getByRole("menuitemcheckbox", { name: /a4/i })
+    ).toHaveAttribute("aria-checked", "true");
+    expect(
+      screen.getByRole("menuitemcheckbox", { name: /letter/i })
+    ).toHaveAttribute("aria-checked", "false");
+    expect(
+      screen.getByRole("menuitemcheckbox", { name: /^none$/i })
+    ).toHaveAttribute("aria-checked", "false");
+
+    rerender(
+      <MenuBar
+        {...makeHandlers({
+          bedPresets: presets,
+          activeBedPresetId: "a4",
+          bedVisible: false,
+          onSelectBedPreset: vi.fn(),
+          onHideBed: vi.fn(),
+        })}
+      />
+    );
+    expect(
+      screen.getByRole("menuitemcheckbox", { name: /a4/i })
+    ).toHaveAttribute("aria-checked", "false");
+    expect(
+      screen.getByRole("menuitemcheckbox", { name: /^none$/i })
+    ).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("clicking a preset invokes onSelectBedPreset with its id", () => {
+    const onSelectBedPreset = vi.fn();
+    render(
+      <MenuBar
+        {...makeHandlers({
+          bedPresets: presets,
+          activeBedPresetId: "a4",
+          bedVisible: true,
+          onSelectBedPreset,
+          onHideBed: vi.fn(),
+        })}
+      />
+    );
+    openBedSizeSubmenu();
+    fireEvent.click(screen.getByRole("menuitemcheckbox", { name: /letter/i }));
+    expect(onSelectBedPreset).toHaveBeenCalledTimes(1);
+    expect(onSelectBedPreset).toHaveBeenCalledWith("letter");
+  });
+
+  it("clicking None invokes onHideBed", () => {
+    const onHideBed = vi.fn();
+    render(
+      <MenuBar
+        {...makeHandlers({
+          bedPresets: presets,
+          activeBedPresetId: "a4",
+          bedVisible: true,
+          onSelectBedPreset: vi.fn(),
+          onHideBed,
+        })}
+      />
+    );
+    openBedSizeSubmenu();
+    fireEvent.click(screen.getByRole("menuitemcheckbox", { name: /^none$/i }));
+    expect(onHideBed).toHaveBeenCalledTimes(1);
+  });
+});

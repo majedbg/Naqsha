@@ -7,6 +7,9 @@
 // contract either way:
 //
 //   bridge.extract(image, options, onProgress, { signal }) → Promise<result>
+//   bridge.rectify(image, quad, onProgress, { signal })    → Promise<{rectified, homography}>
+//     (S3, issue #52 — the Flatten step's warp; same duality, cancellation,
+//      failover, and one-in-flight guard as extract())
 //   bridge.dispose()
 //
 // The image buffer is transferred (zero-copy) on the worker path, so callers
@@ -132,7 +135,16 @@ export function createExtractionBridge(opts = {}) {
     return runExtraction({ image, options }, onProgress, { signal });
   }
 
-  function extractInWorker(w, image, options, onProgress, signal) {
+  async function rectifyInline(image, quad, onProgress, signal) {
+    const { runRectify } = await import('./stages');
+    return runRectify({ image, quad }, onProgress, { signal });
+  }
+
+  // `type`/`extra` (S3, issue #52) let bridge.rectify() reuse the same
+  // per-id routing, watchdog, cancel/drain, and failover machinery with a
+  // 'start-rectify' message; extract() call sites are untouched by the added
+  // optional parameters.
+  function extractInWorker(w, image, options, onProgress, signal, type = 'start', extra = null) {
     const id = nextId++;
     return new Promise((resolve, reject) => {
       let settled = false;
@@ -177,7 +189,7 @@ export function createExtractionBridge(opts = {}) {
 
       const transfer =
         image?.data?.buffer instanceof ArrayBuffer ? [image.data.buffer] : [];
-      w.postMessage({ type: 'start', id, image, options }, transfer);
+      w.postMessage({ type, id, image, options, ...(extra || {}) }, transfer);
     });
   }
 
@@ -211,6 +223,43 @@ export function createExtractionBridge(opts = {}) {
         retireWorker();
         workerBroken = true;
         return extractInline(retained, options, onProgress, signal);
+      }
+    },
+    /**
+     * Flatten-step warp (S3, issue #52): identical worker/inline duality,
+     * cancellation, and failure containment as extract(); shares the
+     * one-in-flight guard (job/drain) so a rectify can never clobber a
+     * running extraction — or vice versa.
+     *
+     * @param {{data: Uint8ClampedArray, width: number, height: number}} image
+     * @param {{x:number,y:number}[]} quad [TL,TR,BR,BL] in image pixels
+     * @param {(p: {stage, status, progress?, error?}) => void} [onProgress]
+     * @param {{ signal?: AbortSignal }} [extra] abort → rejects with AbortError
+     * @returns {Promise<{rectified: {data,width,height}, homography: number[]}>}
+     */
+    async rectify(image, quad, onProgress, { signal } = {}) {
+      if (signal?.aborted) throw makeAbortError();
+      if (!workerBroken && !worker && typeof factory === 'function') {
+        worker = factory();
+        if (worker) attach(worker);
+      }
+      if (!worker) return rectifyInline(image, quad, onProgress, signal);
+      if (job || drain) {
+        throw new Error('extraction already in progress — one operation at a time');
+      }
+      const retained = image?.data
+        ? { ...image, data: new Uint8ClampedArray(image.data) }
+        : image;
+      try {
+        return await extractInWorker(worker, image, {}, onProgress, signal, 'start-rectify', {
+          quad,
+        });
+      } catch (err) {
+        if (!err?.[WORKER_FAILURE]) throw err;
+        console.warn(`Extraction worker failed, falling back inline: ${err.message}`);
+        retireWorker();
+        workerBroken = true;
+        return rectifyInline(retained, quad, onProgress, signal);
       }
     },
     dispose() {

@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 //
-// ExtractStepper (S0, issue #49) — full-screen guided flow Upload → Flatten →
-// Select → Review → Save (locked decision 7; Flatten is skip-only in S0 but
-// the stage EXISTS — locked decision 2). Tests walk the external flow with the
-// DOM/canvas seam (imageIO) and the worker seam (workerBridge) mocked; the
-// registry + entity layers are real, so a completed walk genuinely registers
-// a pattern into the picker's custom family.
+// ExtractStepper (S0, issue #49; Flatten deepened in S3, issue #52) —
+// full-screen guided flow Upload → Flatten → Select → Review → Save (locked
+// decision 7; Flatten = manual 4-corner rectify + skip, locked decision 2).
+// Tests walk the external flow with the DOM/canvas seam (imageIO) and the
+// worker seam (workerBridge) mocked; the registry + entity layers are real,
+// so a completed walk genuinely registers a pattern into the picker's custom
+// family.
 
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
@@ -21,20 +22,35 @@ const TRACE_RESULT = {
   confidence: { trace: 1 },
 };
 
+const RECTIFY_RESULT = {
+  rectified: { data: new Uint8ClampedArray(16), width: 2, height: 2 },
+  homography: [1, 0, 0, 0, 1, 0, 0, 0, 1],
+};
+
 const mocks = vi.hoisted(() => ({
   extract: vi.fn(),
+  rectify: vi.fn(),
   dispose: vi.fn(),
   save: vi.fn(),
+  cropToImageData: vi.fn(),
 }));
 
 vi.mock('../../lib/extraction/imageIO', () => ({
   fileToDataURL: vi.fn(async () => 'data:image/png;base64,x'),
-  loadImage: vi.fn(async () => ({ naturalWidth: 400, naturalHeight: 300 })),
-  cropToImageData: vi.fn(() => ({ data: new Uint8ClampedArray(4), width: 1, height: 1 })),
+  // Tag decoded images with their source URL so tests can tell whether the
+  // ORIGINAL or the RECTIFIED image reached the Select/trace path.
+  loadImage: vi.fn(async (url) => ({ naturalWidth: 400, naturalHeight: 300, src: url })),
+  cropToImageData: mocks.cropToImageData,
+  imageToImageData: vi.fn(() => ({ data: new Uint8ClampedArray(16), width: 200, height: 150 })),
+  imageDataToDataURL: vi.fn(() => 'data:image/png;base64,rectified'),
 }));
 
 vi.mock('../../lib/extraction/workerBridge', () => ({
-  createExtractionBridge: () => ({ extract: mocks.extract, dispose: mocks.dispose }),
+  createExtractionBridge: () => ({
+    extract: mocks.extract,
+    rectify: mocks.rectify,
+    dispose: mocks.dispose,
+  }),
 }));
 
 vi.mock('../../lib/libraryRepository', () => ({
@@ -48,7 +64,11 @@ let registeredIds = [];
 
 beforeEach(() => {
   mocks.extract.mockReset().mockResolvedValue(TRACE_RESULT);
+  mocks.rectify.mockReset().mockResolvedValue(RECTIFY_RESULT);
   mocks.save.mockReset().mockImplementation(async (entity) => ({ entity, persisted: true }));
+  mocks.cropToImageData
+    .mockReset()
+    .mockReturnValue({ data: new Uint8ClampedArray(4), width: 1, height: 1 });
   registeredIds = [];
 });
 
@@ -80,12 +100,13 @@ describe('ExtractStepper — step flow', () => {
     }
   });
 
-  it('advances Upload → Flatten (skip-only) → Select', async () => {
+  it('advances Upload → Flatten (skippable) → Select', async () => {
     render(<ExtractStepper onClose={() => {}} />);
     uploadFixtureFile();
     expect(await screen.findByRole('button', { name: /skip flatten/i })).toBeTruthy();
-    // The stub is honest about what it is.
-    expect(screen.getByText(/auto-flatten/i)).toBeTruthy();
+    // Manual rectify is offered (S3) …
+    expect(screen.getByRole('button', { name: /apply flatten/i })).toBeTruthy();
+    // … but "already flat" skips straight through.
     fireEvent.click(screen.getByRole('button', { name: /skip flatten/i }));
     expect(await screen.findByRole('button', { name: /trace region/i })).toBeTruthy();
   });
@@ -146,6 +167,114 @@ describe('ExtractStepper — step flow', () => {
     expect(await screen.findByText(/no shapes/i)).toBeTruthy();
     // Still on Select — the user can adjust and retry.
     expect(screen.getByRole('button', { name: /trace region/i })).toBeTruthy();
+  });
+});
+
+// S3 (issue #52): manual 4-corner rectify + skip in the Flatten step.
+describe('ExtractStepper — flatten (S3)', () => {
+  it('shows four draggable corner handles over the photo', async () => {
+    render(<ExtractStepper onClose={() => {}} />);
+    uploadFixtureFile();
+    await screen.findByRole('button', { name: /apply flatten/i });
+    for (const corner of ['top-left', 'top-right', 'bottom-right', 'bottom-left']) {
+      expect(screen.getByRole('button', { name: new RegExp(`${corner} corner`, 'i') })).toBeTruthy();
+    }
+  });
+
+  it('skip bypasses rectification entirely', async () => {
+    render(<ExtractStepper onClose={() => {}} />);
+    await walkToSelect();
+    fireEvent.click(screen.getByRole('button', { name: /trace region/i }));
+    await screen.findByText(/1 shape/i);
+    expect(mocks.rectify).not.toHaveBeenCalled();
+    // The trace cropped the ORIGINAL upload.
+    expect(mocks.cropToImageData.mock.calls[0][0].src).toBe('data:image/png;base64,x');
+  });
+
+  it('apply warps through the bridge (pixel quad) and shows before/after', async () => {
+    render(<ExtractStepper onClose={() => {}} />);
+    uploadFixtureFile();
+    fireEvent.click(await screen.findByRole('button', { name: /apply flatten/i }));
+
+    // Before/after preview appears once the warp resolves.
+    expect(await screen.findByText(/^before$/i)).toBeTruthy();
+    expect(screen.getByText(/after — flattened/i)).toBeTruthy();
+    expect(screen.getByAltText(/flattened photo/i).src).toContain('base64,rectified');
+
+    // The quad reached the worker in PIXELS of the passed ImageData (200×150),
+    // default corners at 12% inset.
+    expect(mocks.rectify).toHaveBeenCalledTimes(1);
+    const [imageArg, quadArg] = mocks.rectify.mock.calls[0];
+    expect(imageArg.width).toBe(200);
+    expect(quadArg[0].x).toBeCloseTo(0.12 * 200, 6);
+    expect(quadArg[2].y).toBeCloseTo(0.88 * 150, 6);
+  });
+
+  it('the rectified raster flows into Select/trace after Continue', async () => {
+    render(<ExtractStepper onClose={() => {}} />);
+    uploadFixtureFile();
+    fireEvent.click(await screen.findByRole('button', { name: /apply flatten/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /continue/i }));
+
+    fireEvent.click(await screen.findByRole('button', { name: /trace region/i }));
+    await screen.findByText(/1 shape/i);
+    // Select cropped the RECTIFIED image at its rectified dimensions (2×2).
+    const [imgArg, rectArg] = mocks.cropToImageData.mock.calls[0];
+    expect(imgArg.src).toContain('base64,rectified');
+    expect(rectArg).toEqual({ x: 0, y: 0, w: 2, h: 2 });
+  });
+
+  it('"Adjust corners" discards the proposal and returns to the handles', async () => {
+    render(<ExtractStepper onClose={() => {}} />);
+    uploadFixtureFile();
+    fireEvent.click(await screen.findByRole('button', { name: /apply flatten/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /adjust corners/i }));
+
+    expect(await screen.findByRole('button', { name: /apply flatten/i })).toBeTruthy();
+    expect(screen.queryByText(/after — flattened/i)).toBeNull();
+  });
+
+  it('"Use original" from the preview proceeds with the unrectified photo', async () => {
+    render(<ExtractStepper onClose={() => {}} />);
+    uploadFixtureFile();
+    fireEvent.click(await screen.findByRole('button', { name: /apply flatten/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /use original/i }));
+
+    fireEvent.click(await screen.findByRole('button', { name: /trace region/i }));
+    await screen.findByText(/1 shape/i);
+    expect(mocks.cropToImageData.mock.calls[0][0].src).toBe('data:image/png;base64,x');
+  });
+
+  it('surfaces a warp failure without leaving the Flatten step', async () => {
+    mocks.rectify.mockRejectedValue(new Error('Cannot flatten: quad is degenerate (corners in a line)'));
+    render(<ExtractStepper onClose={() => {}} />);
+    uploadFixtureFile();
+    fireEvent.click(await screen.findByRole('button', { name: /apply flatten/i }));
+    expect(await screen.findByRole('alert')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /apply flatten/i })).toBeTruthy();
+  });
+
+  // S4 seam: detected corners arrive as a programmatic pre-fill.
+  it('accepts an initialQuad pre-fill (S4 seam) and applies it', async () => {
+    const detected = [
+      { x: 0.2, y: 0.1 },
+      { x: 0.9, y: 0.15 },
+      { x: 0.85, y: 0.9 },
+      { x: 0.15, y: 0.8 },
+    ];
+    render(<ExtractStepper onClose={() => {}} initialQuad={detected} />);
+    uploadFixtureFile();
+    await screen.findByRole('button', { name: /apply flatten/i });
+    // Handles sit at the detected corners …
+    const tl = screen.getByRole('button', { name: /top-left corner/i });
+    expect(tl.style.left).toBe('20%');
+    expect(tl.style.top).toBe('10%');
+    // … and the applied warp uses them.
+    fireEvent.click(screen.getByRole('button', { name: /apply flatten/i }));
+    await screen.findByText(/^before$/i);
+    const [, quadArg] = mocks.rectify.mock.calls[0];
+    expect(quadArg[0].x).toBeCloseTo(0.2 * 200, 6);
+    expect(quadArg[3].y).toBeCloseTo(0.8 * 150, 6);
   });
 });
 

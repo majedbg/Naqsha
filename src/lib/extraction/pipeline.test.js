@@ -3,15 +3,17 @@
 // The pipeline is the staged orchestration HARNESS every CV slice plugs into:
 // stage registration (createPipeline), staged progress, cancellation
 // (AbortSignal), per-stage confidence, lazy heavy deps, and fail-soft
-// optional stages. The default stages preserve S0 behavior: flatten reports
-// 'skipped' (stub — the stepper stage exists, locked decision 2) and trace
-// runs the contour Vectorizer. The bridge is the worker seam (locked decision
-// 11): tests cover the inline fallback (jsdom/node have no module Workers),
-// the message protocol, failure containment, and the cancel/drain protocol
-// against stub workers.
+// optional stages. The default stages preserve S0 behavior when no flatten
+// quad is supplied: flatten reports 'skipped' (the "already flat" escape
+// hatch, locked decision 2) and trace runs the contour Vectorizer; with
+// options.flatten.quad the flatten stage rectifies first (S3, issue #52).
+// The bridge is the worker seam (locked decision 11): tests cover the inline
+// fallback (jsdom/node have no module Workers), the message protocol, failure
+// containment, and the cancel/drain protocol against stub workers.
 
 import { describe, it, expect, vi } from 'vitest';
 import { runExtraction, createPipeline, listStages } from './pipeline';
+import { runRectify } from './stages';
 import { createExtractionBridge } from './workerBridge';
 
 function squareImage() {
@@ -593,6 +595,232 @@ describe('createExtractionBridge — cancellation', () => {
     await done;
     controller.abort();
     expect(events).toContainEqual({ stage: 'trace', status: 'running', progress: 0.5 });
+    bridge.dispose();
+  });
+});
+
+// --- S3 (issue #52): the flatten stage + the Flatten step's rectify path ----
+
+describe('runExtraction — flatten stage (S3)', () => {
+  const cropQuad = [
+    { x: 10, y: 10 },
+    { x: 40, y: 10 },
+    { x: 40, y: 40 },
+    { x: 10, y: 40 },
+  ];
+
+  it('rectifies through options.flatten.quad and traces the rectified raster', async () => {
+    const result = await runExtraction({
+      image: squareImage(),
+      options: { flatten: { quad: cropQuad } },
+    });
+    // Axis-aligned quad == crop: the tile is now 30×30 and the black square
+    // (15..35 in source space) still traces inside it.
+    expect(result.tile.width).toBe(30);
+    expect(result.tile.height).toBe(30);
+    expect(result.tile.fills.length).toBeGreaterThanOrEqual(1);
+    expect(result.confidence.flatten).toBe(1);
+  });
+
+  it('emits staged progress: flatten running → done, then trace', async () => {
+    const events = [];
+    await runExtraction(
+      { image: squareImage(), options: { flatten: { quad: cropQuad } } },
+      (p) => events.push(p)
+    );
+    expect(events).toEqual([
+      { stage: 'flatten', status: 'running' },
+      { stage: 'flatten', status: 'done' },
+      { stage: 'trace', status: 'running' },
+      { stage: 'trace', status: 'done' },
+    ]);
+  });
+
+  // Flatten is optional (fail-soft, locked decision 8): a quad that cannot
+  // warp surfaces as {status:'failed'} + confidence 0 and the flow continues
+  // on the UNRECTIFIED image — never a dead end. (The manual Flatten step's
+  // runRectify path rejects loudly instead — covered below.)
+  it('fails soft on a bad quad: failed event, confidence 0, unrectified trace', async () => {
+    const bowtie = [
+      { x: 0, y: 0 },
+      { x: 49, y: 0 },
+      { x: 0, y: 49 },
+      { x: 49, y: 49 },
+    ];
+    const events = [];
+    const result = await runExtraction(
+      { image: squareImage(), options: { flatten: { quad: bowtie } } },
+      (p) => events.push(p)
+    );
+    expect(events).toContainEqual({
+      stage: 'flatten',
+      status: 'failed',
+      error: expect.stringMatching(/cannot flatten/i),
+    });
+    expect(result.confidence.flatten).toBe(0);
+    expect(result.tile.width).toBe(50); // traced the original, unrectified
+    expect(result.tile.fills.length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe('runRectify (S3)', () => {
+  const cropQuad = [
+    { x: 10, y: 10 },
+    { x: 40, y: 10 },
+    { x: 40, y: 40 },
+    { x: 10, y: 40 },
+  ];
+
+  it('returns the rectified raster + homography with flatten progress', async () => {
+    const events = [];
+    const { rectified, homography } = await runRectify(
+      { image: squareImage(), quad: cropQuad },
+      (p) => events.push(p)
+    );
+    expect(rectified.width).toBe(30);
+    expect(rectified.height).toBe(30);
+    expect(homography).toHaveLength(9);
+    expect(events).toEqual([
+      { stage: 'flatten', status: 'running' },
+      { stage: 'flatten', status: 'done' },
+    ]);
+  });
+
+  it('rejects loudly on a quad that cannot warp (apply-time contract)', async () => {
+    const bowtie = [
+      { x: 0, y: 0 },
+      { x: 49, y: 0 },
+      { x: 0, y: 49 },
+      { x: 49, y: 49 },
+    ];
+    await expect(runRectify({ image: squareImage(), quad: bowtie })).rejects.toThrow(
+      /cannot flatten/i
+    );
+  });
+
+  it('rejects with AbortError when the signal is already aborted', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      runRectify({ image: squareImage(), quad: cropQuad }, undefined, {
+        signal: controller.signal,
+      })
+    ).rejects.toMatchObject({ name: 'AbortError' });
+  });
+});
+
+describe('createExtractionBridge — rectify (S3)', () => {
+  const cropQuad = [
+    { x: 10, y: 10 },
+    { x: 40, y: 10 },
+    { x: 40, y: 40 },
+    { x: 10, y: 40 },
+  ];
+
+  it('runs rectify inline when no Worker is available', async () => {
+    const bridge = createExtractionBridge({ workerFactory: null });
+    const progress = vi.fn();
+    const { rectified, homography } = await bridge.rectify(squareImage(), cropQuad, progress);
+    expect(rectified.width).toBe(30);
+    expect(homography).toHaveLength(9);
+    expect(progress).toHaveBeenCalledWith({ stage: 'flatten', status: 'done' });
+    bridge.dispose();
+  });
+
+  it('routes start-rectify → progress → result through the worker, quad included', async () => {
+    const posted = [];
+    const worker = {
+      onmessage: null,
+      onerror: null,
+      onmessageerror: null,
+      postMessage(msg) {
+        posted.push(msg);
+        const { id } = msg;
+        queueMicrotask(() => {
+          worker.onmessage?.({
+            data: { type: 'progress', id, stage: 'flatten', status: 'running' },
+          });
+          worker.onmessage?.({
+            data: {
+              type: 'result',
+              id,
+              result: {
+                rectified: { data: new Uint8ClampedArray(4), width: 1, height: 1 },
+                homography: [1, 0, 0, 0, 1, 0, 0, 0, 1],
+              },
+            },
+          });
+        });
+      },
+      terminate() {},
+    };
+    const bridge = createExtractionBridge({ workerFactory: () => worker });
+    const progress = vi.fn();
+    const result = await bridge.rectify(squareImage(), cropQuad, progress);
+    expect(posted[0].type).toBe('start-rectify');
+    expect(posted[0].quad).toEqual(cropQuad);
+    expect(result.homography).toHaveLength(9);
+    expect(progress).toHaveBeenCalledWith(
+      expect.objectContaining({ stage: 'flatten', status: 'running' })
+    );
+    bridge.dispose();
+  });
+
+  it('falls back inline when the worker never responds (watchdog)', async () => {
+    const dead = {
+      onmessage: null,
+      onerror: null,
+      onmessageerror: null,
+      postMessage() {},
+      terminate() {},
+    };
+    const bridge = createExtractionBridge({ workerFactory: () => dead, watchdogMs: 20 });
+    const { rectified } = await bridge.rectify(squareImage(), cropQuad);
+    expect(rectified.width).toBe(30);
+    bridge.dispose();
+  });
+
+  it('shares the one-in-flight guard with extract()', async () => {
+    const dead = {
+      onmessage: null,
+      onerror: null,
+      onmessageerror: null,
+      postMessage() {},
+      terminate() {},
+    };
+    const bridge = createExtractionBridge({ workerFactory: () => dead, watchdogMs: 50 });
+    const first = bridge.extract(squareImage(), {});
+    await expect(bridge.rectify(squareImage(), cropQuad)).rejects.toThrow(/in progress/i);
+    await first; // settles via watchdog fallback
+    bridge.dispose();
+  });
+
+  it('supports cancellation with the cancel/drain protocol', async () => {
+    // Hangs on start-rectify, acks cancels.
+    const worker = {
+      onmessage: null,
+      onerror: null,
+      onmessageerror: null,
+      cancels: 0,
+      postMessage(msg) {
+        if (msg.type === 'cancel') {
+          worker.cancels++;
+          queueMicrotask(() =>
+            worker.onmessage?.({ data: { type: 'cancelled', id: msg.id } })
+          );
+        }
+        // start-rectify: never answers (until cancelled)
+      },
+      terminate() {},
+    };
+    const bridge = createExtractionBridge({ workerFactory: () => worker });
+    const controller = new AbortController();
+    const p = bridge.rectify(squareImage(), cropQuad, undefined, {
+      signal: controller.signal,
+    });
+    controller.abort();
+    await expect(p).rejects.toMatchObject({ name: 'AbortError' });
+    expect(worker.cancels).toBe(1);
     bridge.dispose();
   });
 });

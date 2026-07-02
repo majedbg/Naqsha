@@ -22,6 +22,34 @@ const TRACE_RESULT = {
   confidence: { trace: 1 },
 };
 
+// S6 (issue #55): pipeline result carrying BOTH representations per motif —
+// one line-work shape (centerline-default, score) + one solid (contour,
+// engrave). The solid's skeleton was degenerate → centerline null.
+const TRACE_RESULT_S6 = {
+  tile: {
+    width: 80,
+    height: 60,
+    fills: [{ d: 'M50 20 L70 20 L70 40 L50 40 Z', role: 'engrave' }],
+    strokes: [{ d: 'M10.5 30.5 L40.5 30.5', role: 'score' }],
+  },
+  components: [
+    {
+      kind: 'stroke',
+      role: 'score',
+      contour: { d: 'M10 29 L41 29 L41 32 L10 32 Z' },
+      centerline: { d: 'M10.5 30.5 L40.5 30.5' },
+    },
+    {
+      kind: 'fill',
+      role: 'engrave',
+      contour: { d: 'M50 20 L70 20 L70 40 L50 40 Z' },
+      centerline: null,
+    },
+  ],
+  lattice: null,
+  confidence: { trace: 1 },
+};
+
 const RECTIFY_RESULT = {
   rectified: { data: new Uint8ClampedArray(16), width: 2, height: 2 },
   homography: [1, 0, 0, 0, 1, 0, 0, 0, 1],
@@ -167,6 +195,118 @@ describe('ExtractStepper — step flow', () => {
     expect(await screen.findByText(/no shapes/i)).toBeTruthy();
     // Still on Select — the user can adjust and retry.
     expect(screen.getByRole('button', { name: /trace region/i })).toBeTruthy();
+  });
+});
+
+// S6 (issue #55): Review is an editable per-shape proposal — flip a shape's
+// engrave/cut/score role, toggle centerline↔contour, and the SAVED entity
+// reflects the edits (locked decision 9).
+describe('ExtractStepper — Review role flip + representation toggle (S6)', () => {
+  async function walkToReview() {
+    await walkToSelectShared();
+    fireEvent.click(screen.getByRole('button', { name: /trace region/i }));
+    await screen.findByText(/2 shapes/i);
+  }
+  const walkToSelectShared = walkToSelect;
+
+  beforeEach(() => {
+    mocks.extract.mockResolvedValue(TRACE_RESULT_S6);
+  });
+
+  it('lists each shape with its default representation and role', async () => {
+    render(<ExtractStepper onClose={() => {}} />);
+    await walkToReview();
+
+    const rep1 = screen.getByRole('button', { name: /representation for shape 1/i });
+    expect(rep1.textContent).toBe('Centerline'); // line-work → centerline-default
+    const rep2 = screen.getByRole('button', { name: /representation for shape 2/i });
+    expect(rep2.textContent).toBe('Contour');
+
+    expect(screen.getByLabelText(/fabrication role for shape 1/i).value).toBe('score');
+    expect(screen.getByLabelText(/fabrication role for shape 2/i).value).toBe('engrave');
+  });
+
+  it('renders centerlines visibly distinct from contours in the preview', async () => {
+    const { container } = render(<ExtractStepper onClose={() => {}} />);
+    await walkToReview();
+    const svg = container.querySelector('svg[aria-label="Traced pattern preview"]');
+    const strokePath = svg.querySelector('path[fill="none"]');
+    expect(strokePath).toBeTruthy();
+    expect(strokePath.getAttribute('stroke')).toBe('#2563eb'); // score color
+    const fillPath = svg.querySelector('path[fill-rule="evenodd"]');
+    expect(fillPath.getAttribute('fill')).toBe('#1a1a1a'); // engrave color
+  });
+
+  it('flipping a role carries into the saved entity', async () => {
+    const onSaved = vi.fn();
+    render(<ExtractStepper onClose={() => {}} onSaved={onSaved} />);
+    await walkToReview();
+
+    fireEvent.change(screen.getByLabelText(/fabrication role for shape 1/i), {
+      target: { value: 'cut' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /continue/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /save to library/i }));
+
+    await waitFor(() => expect(onSaved).toHaveBeenCalled());
+    const { entity } = onSaved.mock.calls[0][0];
+    registeredIds.push(entity.patternId);
+    expect(entity.tile.strokes).toEqual([{ d: 'M10.5 30.5 L40.5 30.5', role: 'cut' }]);
+    expect(entity.tile.fills).toEqual([{ d: 'M50 20 L70 20 L70 40 L50 40 Z', role: 'engrave' }]);
+  });
+
+  it('toggling centerline→contour saves the contour d with the fill default role', async () => {
+    const onSaved = vi.fn();
+    render(<ExtractStepper onClose={() => {}} onSaved={onSaved} />);
+    await walkToReview();
+
+    const rep1 = screen.getByRole('button', { name: /representation for shape 1/i });
+    fireEvent.click(rep1);
+    expect(rep1.textContent).toBe('Contour');
+    expect(screen.getByLabelText(/fabrication role for shape 1/i).value).toBe('engrave');
+
+    fireEvent.click(screen.getByRole('button', { name: /continue/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /save to library/i }));
+
+    await waitFor(() => expect(onSaved).toHaveBeenCalled());
+    const { entity } = onSaved.mock.calls[0][0];
+    registeredIds.push(entity.patternId);
+    expect(entity.tile.strokes).toEqual([]);
+    expect(entity.tile.fills).toEqual([
+      { d: 'M10 29 L41 29 L41 32 L10 32 Z', role: 'engrave' },
+      { d: 'M50 20 L70 20 L70 40 L50 40 Z', role: 'engrave' },
+    ]);
+  });
+
+  it('toggling back restores the centerline with the stroke default role', async () => {
+    render(<ExtractStepper onClose={() => {}} />);
+    await walkToReview();
+    const rep1 = screen.getByRole('button', { name: /representation for shape 1/i });
+    fireEvent.click(rep1);
+    fireEvent.click(rep1);
+    expect(rep1.textContent).toBe('Centerline');
+    expect(screen.getByLabelText(/fabrication role for shape 1/i).value).toBe('score');
+  });
+
+  it('disables the toggle when the shape has only one representation', async () => {
+    render(<ExtractStepper onClose={() => {}} />);
+    await walkToReview();
+    // Shape 2's skeleton was degenerate — contour is the guaranteed floor.
+    const rep2 = screen.getByRole('button', { name: /representation for shape 2/i });
+    expect(rep2.disabled).toBe(true);
+  });
+
+  it('still supports results without components (single-representation rows)', async () => {
+    mocks.extract.mockResolvedValue(TRACE_RESULT);
+    render(<ExtractStepper onClose={() => {}} />);
+    await walkToSelectShared();
+    fireEvent.click(screen.getByRole('button', { name: /trace region/i }));
+    await screen.findByText(/1 shape/i);
+    const rep = screen.getByRole('button', { name: /representation for shape 1/i });
+    expect(rep.textContent).toBe('Contour');
+    expect(rep.disabled).toBe(true); // no centerline available
+    // Role flip still works.
+    expect(screen.getByLabelText(/fabrication role for shape 1/i).value).toBe('engrave');
   });
 });
 

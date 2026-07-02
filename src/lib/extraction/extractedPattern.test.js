@@ -23,6 +23,17 @@ const TILE = {
   strokes: [],
 };
 
+// S6 (issue #55): tile carrying centerline strokes alongside fills.
+const MIXED_TILE = {
+  width: 80,
+  height: 60,
+  fills: [{ d: 'M20 20 l20 0 0 20 -20 0Z', role: 'engrave' }],
+  strokes: [
+    { d: 'M10.5 30.5 L69.5 30.5', role: 'score' },
+    { d: 'M40 10 L40 50 Z', role: 'cut' },
+  ],
+};
+
 describe('makeExtractedPattern', () => {
   it('creates an entity with extracted-source defaults', () => {
     const e = makeExtractedPattern({ title: 'Uppsala vault', tile: TILE });
@@ -90,6 +101,37 @@ describe('round-trip', () => {
     expect(back.lattice).toEqual(lattice);
   });
 
+  // S6 (issue #55): centerline strokes must survive the row round-trip with
+  // their role tags, emitted as stroked (never filled) paths.
+  it('round-trips centerline strokes with role tags (S6)', () => {
+    const e = makeExtractedPattern({ title: 'Tracery', tile: MIXED_TILE });
+    const rec = serializeExtractedPattern(e);
+    expect(rec.fabrication_tags).toEqual({
+      fills: ['engrave'],
+      strokes: ['score', 'cut'],
+    });
+    // Canonical markup: strokes are single stroked paths, not filled outlines.
+    const strokePaths = rec.tile_svg
+      .split('\n')
+      .filter((l) => l.includes('data-kind="stroke"'));
+    expect(strokePaths).toHaveLength(2);
+    for (const p of strokePaths) {
+      expect(p).toContain('fill="none"');
+      expect(p).toContain('stroke="#000"');
+    }
+    expect(rec.tile_svg).toContain('data-role="score"');
+
+    const back = deserializeExtractedPattern(rec);
+    expect(back.tile).toEqual(MIXED_TILE);
+  });
+
+  it('accepts a strokes-only tile (pure line-work motif)', () => {
+    const tile = { width: 10, height: 10, fills: [], strokes: [{ d: 'M1 1 L9 9', role: 'score' }] };
+    const e = makeExtractedPattern({ title: 'line', tile });
+    const back = deserializeExtractedPattern(serializeExtractedPattern(e));
+    expect(back.tile).toEqual(tile);
+  });
+
   it('deserializes a raw DB row (id/name columns, jsonb already parsed)', () => {
     const rec = serializeExtractedPattern(
       makeExtractedPattern({ patternId: 'extracted-db', title: 'DB row', tile: TILE })
@@ -153,6 +195,46 @@ describe('deserializeExtractedPattern — crafted-row hardening', () => {
     const row = {
       ...baseRow(),
       fabrication_tags: { fills: ['engrave" onload="alert(1)', 'cut'], strokes: [] },
+    };
+    expect(() => deserializeExtractedPattern(row)).toThrow(/role/i);
+  });
+
+  // S6: the same path-charset + role-whitelist discipline covers STROKES —
+  // adding centerlines must not open a second injection surface.
+  it('rejects a stroke whose path data smuggles markup', () => {
+    const row = {
+      ...baseRow(),
+      tile_svg:
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10" width="10" height="10">\n' +
+        '  <path d="M0 0 L5 5&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;" data-kind="stroke" data-role="score" fill="none" stroke="#000"/>\n' +
+        '</svg>',
+      fabrication_tags: { fills: [], strokes: ['score'] },
+    };
+    expect(() => deserializeExtractedPattern(row)).toThrow(/path data/i);
+  });
+
+  it('rejects a malicious STROKE role smuggled through fabrication_tags', () => {
+    const rec = serializeExtractedPattern(
+      makeExtractedPattern({ patternId: 'extracted-s6', title: 's', tile: MIXED_TILE })
+    );
+    const row = {
+      ...rec,
+      fabrication_tags: {
+        fills: ['engrave'],
+        strokes: ['score', 'cut" onload="alert(1)'],
+      },
+    };
+    expect(() => deserializeExtractedPattern(row)).toThrow(/role/i);
+  });
+
+  it('rejects an unknown stroke data-role when fabrication_tags is absent', () => {
+    const row = {
+      ...baseRow(),
+      tile_svg:
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10" width="10" height="10">\n' +
+        '  <path d="M0 0 L5 5" data-kind="stroke" data-role="laser-pew" fill="none" stroke="#000"/>\n' +
+        '</svg>',
+      fabrication_tags: null,
     };
     expect(() => deserializeExtractedPattern(row)).toThrow(/role/i);
   });

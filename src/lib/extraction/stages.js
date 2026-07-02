@@ -32,7 +32,7 @@
 // ctx.lattice, …) and patch what they produce. A later stage sees every
 // earlier patch (e.g. rectify patches ctx.image; trace reads it).
 
-import { traceContours } from './vectorizer';
+import { vectorize } from './vectorizer';
 import { rectify } from './rectifier';
 
 // Stage: flatten (S3, issue #52 — manual 4-corner rectify; locked decision 2).
@@ -78,17 +78,23 @@ export async function runRectify({ image, quad, options = {} }, onProgress = () 
   return result;
 }
 
-// Stage: trace — the guaranteed single-motif floor (locked decision 8). Wraps
-// the contour Vectorizer; the centerline slice extends traceContours' output
-// shape ({ fills, strokes }) and this patch carries it through untouched.
+// Stage: trace — the guaranteed single-motif floor (locked decision 8). S6
+// (issue #55): the full Vectorizer pass — closed contours + skeleton
+// centerlines, classified per motif (line-work → centerline-default tagged
+// score; solids → contour tagged engrave; locked decision 9). The patch also
+// carries `components` (both representations per motif) so the Review step
+// can flip a shape's role and toggle centerline↔contour — the harness never
+// inspects the payload. Runs on ctx.image, which flatten may have patched to
+// the rectified raster, so centerlines are traced in flattened space.
 export const traceStage = {
   id: 'trace',
   label: 'Trace',
   async run(ctx) {
-    const { fills, strokes } = await traceContours(ctx.image, ctx.options?.trace);
+    const { fills, strokes, components } = await vectorize(ctx.image, ctx.options?.trace);
     return {
       patch: {
         tile: { width: ctx.image.width, height: ctx.image.height, fills, strokes },
+        components,
       },
       // Crude S0 signal: geometry found = confident enough to proceed. The
       // real per-stage confidence model lands with the detectors.

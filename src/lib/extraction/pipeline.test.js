@@ -54,6 +54,35 @@ describe('runExtraction', () => {
     const result = await runExtraction({ image: squareImage() });
     expect(result.confidence.trace).toBeGreaterThan(0);
   });
+
+  // S6 (issue #55): the vectorize stage payload carries per-motif components
+  // (both representations) so Review can flip role / toggle centerline↔contour.
+  it('carries per-motif components with both representations', async () => {
+    const result = await runExtraction({ image: squareImage() });
+    expect(result.components).toHaveLength(1);
+    expect(result.components[0].kind).toBe('fill');
+    expect(result.components[0].contour.d).toBe(result.tile.fills[0].d);
+  });
+
+  it('extracts line-work into tile.strokes (centerline-default)', async () => {
+    const w = 80;
+    const h = 40;
+    const data = new Uint8ClampedArray(w * h * 4);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const v = x >= 10 && x < 70 && y >= 19 && y <= 21 ? 0 : 255;
+        const i = (y * w + x) * 4;
+        data[i] = v; data[i + 1] = v; data[i + 2] = v; data[i + 3] = 255;
+      }
+    }
+    const result = await runExtraction({ image: { data, width: w, height: h } });
+    expect(result.tile.fills).toEqual([]);
+    expect(result.tile.strokes).toHaveLength(1);
+    expect(result.tile.strokes[0].role).toBe('score');
+    expect(result.components[0].kind).toBe('stroke');
+    expect(result.components[0].contour).toBeTruthy(); // flip target survives
+    expect(result.confidence.trace).toBeGreaterThan(0);
+  });
 });
 
 // --- S2 harness: the stage contract every CV slice implements ---------------

@@ -41,6 +41,15 @@ export function getDynamicTypes() {
   return dynamicTypes;
 }
 
+// Human-readable label for a dynamically registered pattern (or null if the id
+// isn't registered). Extracted-library patterns register their entry title as
+// the label; AI patterns register data.name. Drives auto-layer-naming for
+// symbol-less dynamic types (issue #49 D6).
+export function getDynamicLabel(id) {
+  const entry = dynamicTypes.find((t) => t.id === id);
+  return entry ? entry.label : null;
+}
+
 export function getDynamicDefaults(id) {
   return dynamicDefaults[id] || null;
 }

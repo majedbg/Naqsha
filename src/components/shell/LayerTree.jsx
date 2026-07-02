@@ -303,6 +303,7 @@ function LayerRow({
         />
       ) : (
         <span
+          data-testid="layer-name"
           className="flex-1 min-w-0 truncate text-xs text-ink"
           onDoubleClick={(e) => { e.stopPropagation(); beginEdit(); }}
         >

@@ -4,6 +4,7 @@ import { renderHook, act } from '@testing-library/react';
 import useLayers from './useLayers';
 import { autoLayerName } from './autoLayerName';
 import { migrateLayer } from './migration';
+import { registerPattern, unregisterPattern } from './patternRegistry';
 import { DEFAULT_PARAMS, PATTERN_SYMBOLS } from '../constants';
 
 // WI-1 — Layer model: auto-naming + nameIsCustom + locked + migration + duplicate.
@@ -42,6 +43,29 @@ describe('autoLayerName helper', () => {
     // No symbol, no index → still a stable Layer N (not "Layer undefined").
     expect(autoLayerName('ai-foo')).toBe('Layer 1');
   });
+
+  it('uses the registry label verbatim for a dynamically registered pattern (issue #49 D6)', () => {
+    // Photo-extracted patterns self-register with their entry title as the
+    // label and carry NO PATTERN_SYMBOLS symbol → previously named "Layer N".
+    const id = 'extracted-d6-test';
+    registerPattern(id, class {}, 'Uppsala Rosette', {}, [], {
+      isAI: false,
+      origin: 'extracted',
+    });
+    try {
+      // Label wins over the Layer-N fallback, and is used verbatim (bare title,
+      // NOT wrapped in "Pattern (…)") — matches the object-tree row + browser D6.
+      expect(autoLayerName(id)).toBe('Uppsala Rosette');
+      expect(autoLayerName(id, 7)).toBe('Uppsala Rosette');
+      // Builtins are untouched; unregistered symbol-less types still fall back.
+      expect(autoLayerName('spirograph')).toBe('Pattern (Sg)');
+      expect(autoLayerName('import', 0)).toBe('Layer 1');
+    } finally {
+      unregisterPattern(id);
+    }
+    // Once unregistered, the label is gone → back to the Layer-N fallback.
+    expect(autoLayerName(id, 0)).toBe('Layer 1');
+  });
 });
 
 describe('createLayer auto-naming + new fields', () => {
@@ -63,6 +87,26 @@ describe('createLayer auto-naming + new fields', () => {
     expect(added.name).toBe('Pattern (Ls)');
     expect(added.nameIsCustom).toBe(false);
     expect(added.locked).toBe(false);
+  });
+
+  it('addLayer of a dynamically registered extracted pattern names the layer from its registry title, not Layer N (issue #49 D6)', () => {
+    const id = 'extracted-d6-createlayer';
+    registerPattern(id, class {}, 'Cathedral Tile', {}, [], {
+      isAI: false,
+      origin: 'extracted',
+    });
+    try {
+      const { result } = setup({ maxLayers: 6 });
+      act(() => result.current.addLayer(id));
+      const added = result.current.layers[result.current.layers.length - 1];
+      expect(added.patternType).toBe(id);
+      // The whole point of D6: NOT "Layer N", the entry title verbatim.
+      expect(added.name).toBe('Cathedral Tile');
+      expect(added.name).not.toMatch(/^Layer \d+$/);
+      expect(added.nameIsCustom).toBe(false);
+    } finally {
+      unregisterPattern(id);
+    }
   });
 
   it('allows two Pattern (Sg) layers to coexist (NO auto-indexing)', () => {

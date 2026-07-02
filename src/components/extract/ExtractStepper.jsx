@@ -38,6 +38,8 @@ import { createExtractionBridge } from '../../lib/extraction/workerBridge';
 import { detectQuad } from '../../lib/extraction/detectQuad';
 import { listStages } from '../../lib/extraction/pipeline';
 import { makeExtractedPattern } from '../../lib/extraction/extractedPattern';
+import { readExif } from '../../lib/extraction/exifReader';
+import { reverseGeocode, placeToTitle } from '../../lib/extraction/geocode';
 import { FABRICATION_ROLES } from '../../lib/extraction/vectorizer';
 import { registerExtractedPattern } from '../../lib/patterns/ExtractedPatternGenerator';
 import { saveExtractedPattern } from '../../lib/libraryRepository';
@@ -227,6 +229,17 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad }) {
   const [manualCell, setManualCell] = useState(null);
   const [error, setError] = useState('');
   const [title, setTitle] = useState('');
+  // S8 (issue #57): capture metadata. `exifMeta` = {date,gps,camera}|null read
+  // from the upload (pure, no network). `location` = the EDITABLE location
+  // proposal {lat,lng,placeName,address,source}|null — seeded from EXIF GPS,
+  // fully overridable/clearable. `titleTouched` freezes the auto-suggested
+  // title once the user types their own. Geocoding runs ONLY on the explicit
+  // button (privacy: GPS never leaves the device on mere upload).
+  const [exifMeta, setExifMeta] = useState(null);
+  const [location, setLocation] = useState(null);
+  const [geocoding, setGeocoding] = useState(false);
+  const [geocodeFailed, setGeocodeFailed] = useState(false);
+  const [titleTouched, setTitleTouched] = useState(false);
   const [saving, setSaving] = useState(false);
   // Non-null after a save that could NOT be persisted (guest / no supabase /
   // migration not applied): the pattern is registered for the session, but the
@@ -284,6 +297,28 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad }) {
         setDetectedConfidence(detected ? detected.confidence : null);
       }
       setRectified(null);
+      // S8: read EXIF date/GPS/camera off-critical-path. PURE (no network) and
+      // fail-soft — a photo with no/corrupt EXIF just leaves the fields empty
+      // (zero friction). GPS auto-fills the location as an editable proposal;
+      // reverse geocoding waits for the explicit button (privacy).
+      setExifMeta(null);
+      setLocation(null);
+      setGeocodeFailed(false);
+      setTitleTouched(false);
+      readExif(f)
+        .then((meta) => {
+          setExifMeta(meta);
+          if (meta.gps) {
+            setLocation({
+              lat: meta.gps.lat,
+              lng: meta.gps.lng,
+              placeName: '',
+              address: '',
+              source: 'exif',
+            });
+          }
+        })
+        .catch(() => {}); // readExif already fails soft; belt-and-suspenders
       setStep(1);
     } catch (err) {
       setError(err.message || 'Could not read that image.');
@@ -470,6 +505,52 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad }) {
     });
   }, [sel]);
 
+  // --- Location (S8, issue #57) -----------------------------------------------
+
+  const hasCoords =
+    location && typeof location.lat === 'number' && typeof location.lng === 'number';
+
+  // Patch a location field. Any MANUAL edit stamps source 'manual' (overriding
+  // an earlier 'exif'/'geocoded'); explicit callers (geocode) pass their own.
+  const updateLocation = useCallback((patch, source = 'manual') => {
+    setLocation((l) => ({
+      lat: null,
+      lng: null,
+      placeName: '',
+      address: '',
+      ...(l || {}),
+      ...patch,
+      source,
+    }));
+  }, []);
+
+  // Explicit "look up place name" — the ONLY GPS-carrying network call, gated
+  // behind this user action (locked privacy rule). Failure/offline → a quiet
+  // manual-entry hint, never an error banner.
+  const handleGeocode = useCallback(async () => {
+    if (!hasCoords) return;
+    setGeocoding(true);
+    setGeocodeFailed(false);
+    try {
+      const res = await reverseGeocode({ lat: location.lat, lng: location.lng });
+      if (res) {
+        setLocation((l) => ({ ...l, placeName: res.placeName, address: res.address, source: 'geocoded' }));
+      } else {
+        setGeocodeFailed(true);
+      }
+    } finally {
+      setGeocoding(false);
+    }
+  }, [hasCoords, location]);
+
+  // Auto-suggested title from place + date — an EDITABLE proposal that stops
+  // updating the moment the user types their own (titleTouched).
+  useEffect(() => {
+    if (titleTouched) return;
+    const suggestion = placeToTitle(location?.placeName || null, exifMeta?.date || null);
+    if (suggestion) setTitle(suggestion);
+  }, [location?.placeName, exifMeta?.date, titleTouched]);
+
   // --- Save -------------------------------------------------------------------
 
   const defaultTitle = `Extracted pattern — ${new Date().toLocaleDateString()}`;
@@ -483,6 +564,11 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad }) {
         title: title.trim() || defaultTitle,
         tile: buildTile(result, shapesFromResult(result), shapeEdits),
         lattice: result.lattice,
+        // Metadata is normalized (validate-and-null) inside the entity: an empty
+        // location draft → null (zero friction), out-of-range coords dropped.
+        location,
+        captureDate: exifMeta?.date ?? null,
+        exif: exifMeta?.camera ? { camera: exifMeta.camera } : null,
       });
       // Register FIRST (one entity, two surfaces): the pattern is usable this
       // session even when persistence is unavailable (guest / migration not
@@ -505,7 +591,7 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad }) {
     } finally {
       setSaving(false);
     }
-  }, [result, shapeEdits, title, defaultTitle, file, imageURL, onSaved, onClose]);
+  }, [result, shapeEdits, title, defaultTitle, file, imageURL, location, exifMeta, onSaved, onClose]);
 
   // --- Review edits (S6) --------------------------------------------------------
 
@@ -840,16 +926,126 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad }) {
           {step === 4 && result && !sessionOnlyReason && (
             <>
               {preview}
-              <label className="flex flex-col gap-1 w-full max-w-sm">
-                <span className="text-xs text-ink-soft">Title</span>
-                <input
-                  type="text"
-                  value={title}
-                  placeholder={defaultTitle}
-                  onChange={(e) => setTitle(e.target.value)}
-                  className="bg-paper-warm text-ink text-sm px-2.5 py-1.5 rounded-xs border border-hairline outline-none focus:border-violet transition-colors duration-fast ease-out-quart"
-                />
-              </label>
+              <div className="w-full max-w-sm flex flex-col gap-3">
+                <label className="flex flex-col gap-1">
+                  <span className="text-xs text-ink-soft">Title</span>
+                  <input
+                    type="text"
+                    value={title}
+                    placeholder={defaultTitle}
+                    onChange={(e) => {
+                      setTitleTouched(true);
+                      setTitle(e.target.value);
+                    }}
+                    className="bg-paper-warm text-ink text-sm px-2.5 py-1.5 rounded-xs border border-hairline outline-none focus:border-violet transition-colors duration-fast ease-out-quart"
+                  />
+                </label>
+
+                {/* Location + capture metadata (S8, issue #57): editable
+                    proposals. EXIF pre-fills; nothing here blocks saving. */}
+                <fieldset className="flex flex-col gap-2 border border-hairline rounded-xs p-3">
+                  <legend className="text-[11px] text-ink-soft px-1">Location (optional)</legend>
+
+                  {exifMeta?.date && (
+                    <p className="text-[11px] text-ink-faint" data-testid="capture-date">
+                      Captured{' '}
+                      {new Date(exifMeta.date).toLocaleDateString(undefined, {
+                        year: 'numeric',
+                        month: 'long',
+                        day: 'numeric',
+                      })}
+                      {exifMeta.camera ? ` · ${exifMeta.camera}` : ''}
+                    </p>
+                  )}
+
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[11px] text-ink-soft">Place name</span>
+                    <input
+                      type="text"
+                      aria-label="Place name"
+                      value={location?.placeName ?? ''}
+                      placeholder="e.g. Uppsala, Sweden"
+                      onChange={(e) => updateLocation({ placeName: e.target.value })}
+                      className="bg-paper-warm text-ink text-sm px-2.5 py-1.5 rounded-xs border border-hairline outline-none focus:border-violet"
+                    />
+                  </label>
+
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[11px] text-ink-soft">Address</span>
+                    <input
+                      type="text"
+                      aria-label="Address"
+                      value={location?.address ?? ''}
+                      placeholder="Street / building (optional)"
+                      onChange={(e) => updateLocation({ address: e.target.value })}
+                      className="bg-paper-warm text-ink text-sm px-2.5 py-1.5 rounded-xs border border-hairline outline-none focus:border-violet"
+                    />
+                  </label>
+
+                  <div className="flex gap-2">
+                    <label className="flex flex-col gap-1 flex-1">
+                      <span className="text-[11px] text-ink-soft">Latitude</span>
+                      <input
+                        type="number"
+                        step="any"
+                        aria-label="Latitude"
+                        value={location?.lat ?? ''}
+                        placeholder="—"
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          updateLocation({ lat: v === '' ? null : parseFloat(v) });
+                        }}
+                        className="bg-paper-warm text-ink text-sm px-2.5 py-1.5 rounded-xs border border-hairline outline-none focus:border-violet"
+                      />
+                    </label>
+                    <label className="flex flex-col gap-1 flex-1">
+                      <span className="text-[11px] text-ink-soft">Longitude</span>
+                      <input
+                        type="number"
+                        step="any"
+                        aria-label="Longitude"
+                        value={location?.lng ?? ''}
+                        placeholder="—"
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          updateLocation({ lng: v === '' ? null : parseFloat(v) });
+                        }}
+                        className="bg-paper-warm text-ink text-sm px-2.5 py-1.5 rounded-xs border border-hairline outline-none focus:border-violet"
+                      />
+                    </label>
+                  </div>
+
+                  {hasCoords && (
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={handleGeocode}
+                        disabled={geocoding}
+                        className="px-2.5 py-1 text-[11px] font-medium rounded-xs bg-panel text-ink-soft border border-hairline hover:text-ink disabled:opacity-40 disabled:cursor-default transition-colors duration-fast ease-out-quart"
+                      >
+                        {geocoding ? 'Looking up…' : 'Look up place name'}
+                      </button>
+                      <span className="text-[10px] text-ink-faint">
+                        sends coordinates to OpenStreetMap
+                      </span>
+                    </div>
+                  )}
+                  {geocodeFailed && (
+                    <p className="text-[11px] text-ink-faint" data-testid="geocode-failed">
+                      Couldn’t find a place name — type it in above.
+                    </p>
+                  )}
+
+                  {/* Privacy disclosure: the original photo is stored as-is, so
+                      its embedded EXIF (incl. GPS) travels with it even if these
+                      fields are cleared. */}
+                  <p className="text-[10px] text-ink-faint leading-snug">
+                    Your photo is saved privately with its original EXIF (which may include GPS),
+                    readable only by you.
+                  </p>
+                </fieldset>
+              </div>
+
               <div className="flex gap-2">
                 <button type="button" className={GHOST_BTN} onClick={() => setStep(3)}>
                   Back

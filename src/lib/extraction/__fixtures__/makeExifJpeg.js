@@ -199,6 +199,9 @@ export function makeCorruptExifJpeg() {
 // Minimal base64 → byte array (node & browser both have atob; keep explicit
 // for clarity and to avoid Buffer coupling).
 function atobBytes(b64) {
-  const bin = typeof atob === 'function' ? atob(b64) : Buffer.from(b64, 'base64').toString('binary');
+  const bin =
+    typeof atob === 'function'
+      ? atob(b64)
+      : globalThis.Buffer.from(b64, 'base64').toString('binary');
   return Array.from(bin, (c) => c.charCodeAt(0) & 0xff);
 }

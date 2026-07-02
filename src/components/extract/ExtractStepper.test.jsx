@@ -62,6 +62,8 @@ const mocks = vi.hoisted(() => ({
   save: vi.fn(),
   cropToImageData: vi.fn(),
   detectQuad: vi.fn(),
+  readExif: vi.fn(),
+  reverseGeocode: vi.fn(),
 }));
 
 vi.mock('../../lib/extraction/imageIO', () => ({
@@ -86,6 +88,16 @@ vi.mock('../../lib/libraryRepository', () => ({
   saveExtractedPattern: mocks.save,
 }));
 
+// S8 (issue #57): EXIF read (pure) is mocked so tests drive the auto-fill
+// deterministically; geocode is mocked so NO real request leaves the machine
+// and we can assert it fires only on the explicit button. placeToTitle stays
+// REAL — the stepper's title suggestion is exercised end to end.
+vi.mock('../../lib/extraction/exifReader', () => ({ readExif: mocks.readExif }));
+vi.mock('../../lib/extraction/geocode', async (importOriginal) => ({
+  ...(await importOriginal()),
+  reverseGeocode: mocks.reverseGeocode,
+}));
+
 // S4 (issue #53): the auto-detect seam. Default null → the plain manual default
 // corners, so every pre-S4 test walks the flow unchanged; the S4 describe block
 // below drives the detected-proposal path with mockReturnValueOnce.
@@ -107,6 +119,9 @@ beforeEach(() => {
     .mockReset()
     .mockReturnValue({ data: new Uint8ClampedArray(4), width: 1, height: 1 });
   mocks.detectQuad.mockReset().mockReturnValue(null);
+  // Default: no EXIF (zero-friction path). S8 tests override per-case.
+  mocks.readExif.mockReset().mockResolvedValue({ date: null, gps: null, camera: null });
+  mocks.reverseGeocode.mockReset().mockResolvedValue(null);
   registeredIds = [];
 });
 
@@ -735,6 +750,151 @@ describe('ExtractStepper — save', () => {
     registeredIds.push(entity.patternId);
     expect(persisted).toBe(false);
     expect(getDynamicPatternClass(entity.patternId)).toBeTruthy();
+  });
+});
+
+// --- S8 (issue #57): EXIF auto-fill + reverse-geocode + title suggestion -----
+
+describe('ExtractStepper — EXIF + location (S8)', () => {
+  const EXIF_FULL = {
+    date: '2026-06-28T12:32:10.000Z',
+    gps: { lat: 59.8586, lng: 17.6389 },
+    camera: 'Apple iPhone 15 Pro',
+  };
+
+  async function walkToSave() {
+    await walkToSelect();
+    fireEvent.click(screen.getByRole('button', { name: /trace region/i }));
+    await screen.findByText(/1 shape/i);
+    fireEvent.click(screen.getByRole('button', { name: /continue/i }));
+    await screen.findByRole('button', { name: /save to library/i });
+  }
+
+  it('auto-fills GPS, capture date, and a suggested title from EXIF', async () => {
+    mocks.readExif.mockResolvedValue(EXIF_FULL);
+    render(<ExtractStepper onClose={() => {}} />);
+    await walkToSave();
+
+    expect(mocks.readExif).toHaveBeenCalledTimes(1);
+    expect(Number(screen.getByLabelText(/latitude/i).value)).toBeCloseTo(59.8586, 4);
+    expect(Number(screen.getByLabelText(/longitude/i).value)).toBeCloseTo(17.6389, 4);
+    expect(screen.getByTestId('capture-date').textContent).toMatch(/June 28, 2026/);
+    expect(screen.getByTestId('capture-date').textContent).toMatch(/iPhone 15 Pro/);
+    // Suggested (editable) title — place not yet looked up → date only.
+    expect(screen.getByLabelText(/^title$/i).value).toBe('Ornament — June 2026');
+    // Privacy: NO geocode request fired anywhere in the walk to Save.
+    expect(mocks.reverseGeocode).not.toHaveBeenCalled();
+  });
+
+  it('geocode button fires exactly one request and refines place + title', async () => {
+    mocks.readExif.mockResolvedValue(EXIF_FULL);
+    mocks.reverseGeocode.mockResolvedValue({
+      placeName: 'Uppsala, Sweden',
+      address: 'Uppsala Cathedral, Sweden',
+    });
+    render(<ExtractStepper onClose={() => {}} />);
+    await walkToSave();
+
+    expect(mocks.reverseGeocode).not.toHaveBeenCalled(); // not on upload
+    fireEvent.click(screen.getByRole('button', { name: /look up place name/i }));
+
+    await waitFor(() =>
+      expect(screen.getByLabelText(/place name/i).value).toBe('Uppsala, Sweden')
+    );
+    expect(mocks.reverseGeocode).toHaveBeenCalledTimes(1);
+    expect(mocks.reverseGeocode.mock.calls[0][0]).toEqual({ lat: 59.8586, lng: 17.6389 });
+    expect(screen.getByLabelText(/address/i).value).toBe('Uppsala Cathedral, Sweden');
+    // Title suggestion tightens to include the place.
+    expect(screen.getByLabelText(/^title$/i).value).toBe('Ornament — Uppsala, June 2026');
+  });
+
+  it('a geocode failure shows a quiet hint, no error banner', async () => {
+    mocks.readExif.mockResolvedValue(EXIF_FULL);
+    mocks.reverseGeocode.mockResolvedValue(null); // offline / not found
+    render(<ExtractStepper onClose={() => {}} />);
+    await walkToSave();
+    fireEvent.click(screen.getByRole('button', { name: /look up place name/i }));
+    expect(await screen.findByTestId('geocode-failed')).toBeTruthy();
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('EXIF-less photo → empty location, no capture date, no geocode button', async () => {
+    // default readExif mock returns all-nulls
+    render(<ExtractStepper onClose={() => {}} />);
+    await walkToSave();
+    expect(screen.getByLabelText(/place name/i).value).toBe('');
+    expect(screen.getByLabelText(/latitude/i).value).toBe('');
+    expect(screen.queryByTestId('capture-date')).toBeNull();
+    expect(screen.queryByRole('button', { name: /look up place name/i })).toBeNull();
+    // No fabricated title — the placeholder default carries.
+    expect(screen.getByLabelText(/^title$/i).value).toBe('');
+  });
+
+  it('saves the location, capture date, and camera onto the entity', async () => {
+    mocks.readExif.mockResolvedValue(EXIF_FULL);
+    mocks.reverseGeocode.mockResolvedValue({
+      placeName: 'Uppsala, Sweden',
+      address: 'Uppsala Cathedral, Sweden',
+    });
+    const onSaved = vi.fn();
+    render(<ExtractStepper onClose={() => {}} onSaved={onSaved} />);
+    await walkToSave();
+    fireEvent.click(screen.getByRole('button', { name: /look up place name/i }));
+    await waitFor(() =>
+      expect(screen.getByLabelText(/place name/i).value).toBe('Uppsala, Sweden')
+    );
+    fireEvent.click(screen.getByRole('button', { name: /save to library/i }));
+
+    await waitFor(() => expect(onSaved).toHaveBeenCalled());
+    const { entity } = onSaved.mock.calls[0][0];
+    registeredIds.push(entity.patternId);
+    expect(entity.location).toEqual({
+      lat: 59.8586,
+      lng: 17.6389,
+      placeName: 'Uppsala, Sweden',
+      address: 'Uppsala Cathedral, Sweden',
+      source: 'geocoded',
+    });
+    expect(entity.captureDate).toBe('2026-06-28T12:32:10.000Z');
+    expect(entity.exif).toEqual({ camera: 'Apple iPhone 15 Pro' });
+  });
+
+  it('clearing the auto-filled fields saves no location (fully optional)', async () => {
+    mocks.readExif.mockResolvedValue(EXIF_FULL);
+    const onSaved = vi.fn();
+    render(<ExtractStepper onClose={() => {}} onSaved={onSaved} />);
+    await walkToSave();
+    fireEvent.change(screen.getByLabelText(/latitude/i), { target: { value: '' } });
+    fireEvent.change(screen.getByLabelText(/longitude/i), { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: /save to library/i }));
+
+    await waitFor(() => expect(onSaved).toHaveBeenCalled());
+    const { entity } = onSaved.mock.calls[0][0];
+    registeredIds.push(entity.patternId);
+    expect(entity.location).toBeNull();
+    // Date/camera still ride along even without a location.
+    expect(entity.captureDate).toBe('2026-06-28T12:32:10.000Z');
+  });
+
+  it('a manually typed place (no EXIF) rides the entity as source manual', async () => {
+    const onSaved = vi.fn();
+    render(<ExtractStepper onClose={() => {}} onSaved={onSaved} />);
+    await walkToSave();
+    fireEvent.change(screen.getByLabelText(/place name/i), {
+      target: { value: 'Grandmother’s carved chest' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /save to library/i }));
+
+    await waitFor(() => expect(onSaved).toHaveBeenCalled());
+    const { entity } = onSaved.mock.calls[0][0];
+    registeredIds.push(entity.patternId);
+    expect(entity.location).toEqual({
+      lat: null,
+      lng: null,
+      placeName: 'Grandmother’s carved chest',
+      address: null,
+      source: 'manual',
+    });
   });
 });
 

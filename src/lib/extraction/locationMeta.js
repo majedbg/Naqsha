@@ -28,6 +28,7 @@ const MAX_CAMERA = 200;
 
 // Control characters (C0 + DEL) — stripped so a stored jsonb string can't carry
 // terminal escapes or NULs into the Library UI.
+// eslint-disable-next-line no-control-regex
 const CONTROL_CHARS = /[\x00-\x1F\x7F]/g;
 
 /** Coerce to a trimmed, control-char-stripped, length-capped string or null. */

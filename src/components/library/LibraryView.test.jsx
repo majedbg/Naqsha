@@ -246,3 +246,62 @@ describe('LibraryView — entry detail', () => {
     expect(screen.getByTestId('library-card')).toBeInTheDocument();
   });
 });
+
+// S8 (issue #57): the entry detail surfaces captured provenance — place,
+// address, coordinates (as an external map link), capture date, and camera.
+// Every field optional; the block is omitted entirely when nothing exists.
+describe('LibraryView — provenance / location detail (S8)', () => {
+  const withMeta = (overrides) =>
+    makeExtractedPattern({
+      patternId: 'extracted-lv-loc',
+      title: 'Uppsala vault',
+      tile: TILE,
+      location: {
+        lat: 59.8586,
+        lng: 17.6389,
+        placeName: 'Uppsala, Sweden',
+        address: 'Uppsala Cathedral, Sweden',
+        source: 'geocoded',
+      },
+      captureDate: '2026-06-28T12:32:10.000Z',
+      exif: { camera: 'Apple iPhone 15 Pro' },
+      ...overrides,
+    });
+
+  it('renders place, address, coordinates, date, and camera in the detail', () => {
+    addLibraryEntry(withMeta());
+    renderView();
+    fireEvent.click(screen.getByTestId('library-card'));
+    const meta = screen.getByTestId('provenance-meta');
+    expect(meta.textContent).toMatch(/Uppsala, Sweden/);
+    expect(meta.textContent).toMatch(/Uppsala Cathedral/);
+    expect(meta.textContent).toMatch(/June 28, 2026/);
+    expect(meta.textContent).toMatch(/iPhone 15 Pro/);
+    // Coordinates open OpenStreetMap in a new tab (read-only, click-gated).
+    const link = screen.getByTestId('location-map-link');
+    expect(link.getAttribute('href')).toContain('mlat=59.8586');
+    expect(link.getAttribute('target')).toBe('_blank');
+  });
+
+  it('shows a place-only manual location without coordinates', () => {
+    addLibraryEntry(
+      makeExtractedPattern({
+        patternId: 'extracted-lv-manual',
+        title: 'Carved chest',
+        tile: TILE,
+        location: { placeName: 'A carved chest', source: 'manual' },
+      })
+    );
+    renderView();
+    fireEvent.click(screen.getByTestId('library-card'));
+    expect(screen.getByTestId('provenance-meta').textContent).toMatch(/A carved chest/);
+    expect(screen.queryByTestId('location-map-link')).toBeNull();
+  });
+
+  it('omits the provenance block entirely when no metadata was recorded', () => {
+    addLibraryEntry(entity('extracted-lv-bare', 'No metadata'));
+    renderView();
+    fireEvent.click(screen.getByTestId('library-card'));
+    expect(screen.queryByTestId('provenance-meta')).toBeNull();
+  });
+});

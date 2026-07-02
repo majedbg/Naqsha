@@ -134,6 +134,76 @@ function LibraryCard({ entry, photoURL, onOpen }) {
   );
 }
 
+// Google Maps geo link for a coordinate — read-only, opened only on click
+// (never auto-fetched). Kept keyless + external so the Library view stays pure.
+function mapsHref(lat, lng) {
+  return `https://www.openstreetmap.org/?mlat=${lat}&mlon=${lng}#map=16/${lat}/${lng}`;
+}
+
+// Provenance block (S8, issue #57 / PRD story 39): the entry's captured
+// context — where, when, and with what. Every field optional; the whole block
+// is omitted when nothing was recorded (never an empty-form look).
+function ProvenanceMeta({ entity }) {
+  const { location, captureDate, exif } = entity;
+  const hasCoords =
+    location && typeof location.lat === 'number' && typeof location.lng === 'number';
+  const when = captureDate
+    ? new Date(captureDate).toLocaleDateString(undefined, {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+      })
+    : null;
+  if (!location && !when && !exif?.camera) return null;
+  return (
+    <dl
+      data-testid="provenance-meta"
+      className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs"
+    >
+      {location?.placeName && (
+        <>
+          <dt className="text-ink-soft">Place</dt>
+          <dd className="text-ink">{location.placeName}</dd>
+        </>
+      )}
+      {location?.address && (
+        <>
+          <dt className="text-ink-soft">Address</dt>
+          <dd className="text-ink">{location.address}</dd>
+        </>
+      )}
+      {hasCoords && (
+        <>
+          <dt className="text-ink-soft">Coordinates</dt>
+          <dd className="text-ink">
+            <a
+              href={mapsHref(location.lat, location.lng)}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="text-violet hover:underline"
+              data-testid="location-map-link"
+            >
+              {location.lat.toFixed(5)}, {location.lng.toFixed(5)} ↗
+            </a>
+          </dd>
+        </>
+      )}
+      {when && (
+        <>
+          <dt className="text-ink-soft">Captured</dt>
+          <dd className="text-ink">{when}</dd>
+        </>
+      )}
+      {exif?.camera && (
+        <>
+          <dt className="text-ink-soft">Camera</dt>
+          <dd className="text-ink">{exif.camera}</dd>
+        </>
+      )}
+    </dl>
+  );
+}
+
 function EntryDetail({ entry, photoURL, onBack, onUseInStudio }) {
   const { entity } = entry;
   return (
@@ -148,6 +218,7 @@ function EntryDetail({ entry, photoURL, onBack, onUseInStudio }) {
         <ExtractedBadge />
         <VisibilityChip visibility={entity.visibility} />
       </div>
+      <ProvenanceMeta entity={entity} />
       {/* Documentation and artifact live together (PRD story 39): source photo
           and extracted pattern side by side. */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

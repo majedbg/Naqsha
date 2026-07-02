@@ -108,6 +108,10 @@ export default function RightPanel({
   // byte-identical no-op (no chrome, no cursor tracking).
   bedSize,
   onCursorMove,
+  // Machine-bed overlay toggle (reference-overlay reframe), forwarded straight
+  // to CanvasChrome. Defaults to true so every existing caller renders exactly
+  // as before; the work piece (artboard + rulers) is unaffected either way.
+  showBed = true,
   // Plot preview + overlap overlay (pro shell only — C7 / #15). When
   // `showPlotOverlay` is true the panel renders <PlotOverlay/> as a sibling of
   // the p5 surface INSIDE the scaled wrapper, so it auto-aligns with the live
@@ -633,6 +637,9 @@ export default function RightPanel({
           zoom={finalScale}
           pan={pan}
           origin={chromeOrigin}
+          // Forwarded showBed toggle — bed overlay is reference-only; the
+          // artboard + rulers keep rendering inside CanvasChrome regardless.
+          showBed={showBed}
         />
       )}
       <div

@@ -3,7 +3,12 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen, within, fireEvent } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import StudioRoute from "./StudioRoute";
-import { getProfile, defaultBedSize, PROFILE_IDS } from "../lib/machineProfiles";
+import {
+  getProfile,
+  defaultBedSize,
+  bedPresetsFor,
+  PROFILE_IDS,
+} from "../lib/machineProfiles";
 
 // Issue #7 (Lane B / B4): the canvas chrome's status bar is portaled into the
 // shell's Status bar region on the flag-ON desktop path, and is a true no-op on
@@ -61,6 +66,66 @@ describe("StudioRoute — canvas-chrome status bar (B4)", () => {
     expect(bed).toHaveTextContent(new RegExp(getProfile("plotter").label, "i"));
     const plotter = defaultBedSize("plotter");
     expect(bed).toHaveTextContent(new RegExp(String(plotter.width)));
+  });
+
+  it("flag ON desktop: View > Bed size selects a named preset (bed updates + shows checked), and None un-checks it", () => {
+    // UX reframe: the bed is now a machine reference overlay chosen from the
+    // View menu, decoupled from Document Setup. This exercises the menu wiring
+    // Studio owns (bedPresets/activeBedPresetId/bedVisible/onSelectBedPreset/
+    // onHideBed) end-to-end against the REAL MenuBar + StatusBar (only
+    // RightPanel/CanvasChrome are mocked in this suite, so the actual dashed
+    // bed-overlay hide/show on the canvas itself needs a manual browser check —
+    // see docs note in the run report).
+    render(
+      <MemoryRouter>
+        <StudioRoute proShell={true} />
+      </MemoryRouter>
+    );
+    // Default profile is the pen plotter (outputMode default). Pick a preset
+    // that is NOT the profile's default bed, so selecting it is observable as
+    // a real change in the status-bar readout.
+    const plotterPresets = bedPresetsFor("plotter");
+    const targetPreset = plotterPresets.find(
+      (p) => p.width !== defaultBedSize("plotter").width
+    );
+    expect(targetPreset).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "View" }));
+    fireEvent.click(screen.getByRole("button", { name: "Bed size" }));
+    const presetItem = screen.getByRole("menuitemcheckbox", {
+      name: targetPreset.label,
+    });
+    fireEvent.click(presetItem);
+
+    // Status bar bed reading follows the selected preset.
+    let region = screen.getByRole("region", { name: "Status bar" });
+    let bed = within(region).getByLabelText(/bed|material|machine/i);
+    expect(bed).toHaveTextContent(new RegExp(String(targetPreset.width)));
+
+    // Reopen View > Bed size — the selected preset is checked.
+    fireEvent.click(screen.getByRole("button", { name: "View" }));
+    fireEvent.click(screen.getByRole("button", { name: "Bed size" }));
+    expect(
+      screen.getByRole("menuitemcheckbox", {
+        name: targetPreset.label,
+      })
+    ).toHaveAttribute("aria-checked", "true");
+
+    // Selecting "None" un-checks the preset (bedVisible flips false). The
+    // status-bar dims are unaffected (bedSize itself doesn't change on hide) —
+    // only the overlay's visibility does, which is verified manually in-browser.
+    fireEvent.click(screen.getByRole("menuitemcheckbox", { name: "None" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "View" }));
+    fireEvent.click(screen.getByRole("button", { name: "Bed size" }));
+    expect(
+      screen.getByRole("menuitemcheckbox", { name: "None" })
+    ).toHaveAttribute("aria-checked", "true");
+    expect(
+      screen.getByRole("menuitemcheckbox", {
+        name: targetPreset.label,
+      })
+    ).toHaveAttribute("aria-checked", "false");
   });
 
   it("below the breakpoint (mobile) renders no status bar (desktop-only)", () => {

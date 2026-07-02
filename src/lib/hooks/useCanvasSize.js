@@ -120,10 +120,12 @@ export default function useCanvasSize({ savedCanvas, activeTab } = {}) {
     setOutputMode(c.outputMode);
   }, []);
 
-  // Bed dimensions in mm for the export manifest. Single-sourced via PX_PER_MM
-  // (pxToUnit) instead of the old inline `canvasW / 96 * 25.4` magic numbers.
-  const bedWmm = pxToUnit(canvasW, "mm").toFixed(1);
-  const bedHmm = pxToUnit(canvasH, "mm").toFixed(1);
+  // Work-piece (design canvas) dimensions in mm for the export manifest — the
+  // size the exported SVG/manifest use; NOT the machine bed. Single-sourced via
+  // PX_PER_MM (pxToUnit) instead of the old inline `canvasW / 96 * 25.4` magic
+  // numbers.
+  const workPieceWmm = pxToUnit(canvasW, "mm").toFixed(1);
+  const workPieceHmm = pxToUnit(canvasH, "mm").toFixed(1);
 
   return {
     presetIndex,
@@ -144,7 +146,7 @@ export default function useCanvasSize({ savedCanvas, activeTab } = {}) {
     applyCanvasSize,
     captureCanvas,
     restoreCanvas,
-    bedWmm,
-    bedHmm,
+    workPieceWmm,
+    workPieceHmm,
   };
 }

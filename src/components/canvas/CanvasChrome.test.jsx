@@ -16,6 +16,7 @@ import { defaultBedSize } from '../../lib/machineProfiles';
 
 const canvasArtboard = (c) => c.querySelector('[data-testid="canvas-artboard"]');
 const bedGuide = (c) => c.querySelector('[data-testid="bed-guide"]');
+const bedFill = (c) => c.querySelector('[data-testid="bed-fill"]');
 
 // A 100mm-wide canvas (in px) gives clean mm majors at 0,10,..100.
 const MM100_PX = 100 * PX_PER_MM;
@@ -132,5 +133,22 @@ describe('CanvasChrome — positions ruler 0,0 at the canvas origin', () => {
   it('defaults to translate(0,0) with neither origin nor pan', () => {
     const { container } = render(<CanvasChrome {...base} />);
     expect(svgTransform(container)).toBe('translate(0px, 0px)');
+  });
+});
+
+describe('CanvasChrome — showBed toggles the machine-bed reference overlay', () => {
+  const base = { canvasWidthPx: MM100_PX, canvasHeightPx: 80 * PX_PER_MM, bedWidthMm: 152, bedHeightMm: 203, unit: 'mm', zoom: 1 };
+
+  it('defaults to showing the bed (bed-fill + bed-guide both render)', () => {
+    const { container } = render(<CanvasChrome {...base} />);
+    expect(bedFill(container)).toBeTruthy();
+    expect(bedGuide(container)).toBeTruthy();
+  });
+
+  it('showBed={false} renders neither bed-fill nor bed-guide, but the work piece (artboard) still renders', () => {
+    const { container } = render(<CanvasChrome {...base} showBed={false} />);
+    expect(bedFill(container)).toBeNull();
+    expect(bedGuide(container)).toBeNull();
+    expect(canvasArtboard(container)).toBeTruthy();
   });
 });

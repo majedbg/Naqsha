@@ -1,44 +1,34 @@
 // DocumentSetupDialog — the pro shell's Document Setup dialog (Lane C / C6,
-// GitHub issue #14). The dissolved Prepare tab's home for document/machine
-// config: pick the MACHINE PROFILE and the BED SIZE (bed = artboard).
+// GitHub issue #14). UX reframe: this dialog is now CONTROLLED on the WORK
+// PIECE (design canvas) size — canvasW/canvasH in px @96 PPI — as the PRIMARY
+// editable control. The machine BED is no longer configured here; the bed now
+// lives in the View menu (handled elsewhere). The machine PROFILE selector
+// stays, since Studio still routes profile changes through the same
+// `handleProfileChange` the LayerTree selector uses.
 //
-// Presentational + controlled. The live machine profile + bed size live in
-// Studio; this dialog reads them in (`profileId`, `bedSize`) and reports an
-// Apply OUT through `onApply({ profileId, bedSize })`. Studio routes the profile
-// half through the SAME `handleProfileChange` the LayerTree selector uses (so the
-// remap stays single-sourced) and stores the bed as overridable document state
-// the CanvasChrome + StatusBar read.
+// Presentational + controlled. The live profile + canvas size live in Studio;
+// this dialog reads them in (`profileId`, `canvasW`, `canvasH`, `unit`) and
+// reports an Apply OUT through `onApply({ profileId, canvasW, canvasH, unit })`.
 //
-// Bed math: the document bed is canonical mm everywhere (machineProfiles'
-// defaultBed, CanvasChrome's bedWidthMm, StatusBar's {width,height,unit}). The
-// width/height inputs are shown + entered in the ACTIVE display unit; on Apply we
-// convert back to mm at the boundary via units.js, so what we store is always mm.
+// Work-piece math: canvasW/canvasH are canonical px (96 PPI) everywhere. The
+// Width/Height inputs are shown + entered in the ACTIVE display unit; on Apply
+// we convert back to px at the boundary via units.js, so what we report out is
+// always px (Math.round).
 //
-// Reopening shows current settings: a draft (profile + dims-in-unit) is seeded
-// from the live props each time `open` flips true, so the controls reflect the
-// live document, never stale defaults.
+// Reopening shows current settings: a draft (profile + preset + dims-in-unit)
+// is seeded from the live props each time `open` flips true, so the controls
+// reflect the live document, never stale defaults.
 //
 // Match the in-repo dialog pattern (ui/ConfirmDialog): paper ground, hairline
 // edge, one load-bearing saffron action, Esc cancels. NOT shadcn/native dialogs.
 
 import { useEffect, useRef, useState } from "react";
-import {
-  PROFILE_IDS,
-  getProfile,
-  defaultBedSize,
-  bedPresetsFor,
-} from "../../lib/machineProfiles";
+import { PROFILE_IDS, getProfile } from "../../lib/machineProfiles";
+import { PRESET_SIZES, PPI } from "../../constants";
 import { pxToUnit, unitToPx } from "../../lib/units";
 
-// mm <-> active display unit, routed through the px base (96 PPI) like the rest
-// of the app. A bed dim stored in mm shows in `unit`; an entry in `unit` stores
-// back to mm.
-function mmToUnit(mm, unit) {
-  return pxToUnit(unitToPx(mm, "mm"), unit);
-}
-function unitToMm(value, unit) {
-  return pxToUnit(unitToPx(value, unit), "mm");
-}
+// The sentinel "Custom" entry in PRESET_SIZES (width/height: null).
+const CUSTOM_PRESET_INDEX = PRESET_SIZES.findIndex((p) => p.width === null);
 
 // Round a unit value for display: integers for mm/px, 2dp for inches.
 function roundForUnit(v, unit) {
@@ -46,16 +36,21 @@ function roundForUnit(v, unit) {
   return Math.round(v);
 }
 
+// Given the live canvas px dims, find the matching named preset (if any) —
+// mirrors useCanvasSize's applyCanvasSize matching. Falls back to Custom.
+function presetIndexForSize(w, h) {
+  const idx = PRESET_SIZES.findIndex(
+    (p) => p.width !== null && Math.round(p.width * PPI) === Math.round(w) && Math.round(p.height * PPI) === Math.round(h)
+  );
+  return idx >= 0 ? idx : CUSTOM_PRESET_INDEX;
+}
+
 export default function DocumentSetupDialog({
   open,
   profileId = "laser",
-  bedSize,
   unit = "mm",
-  // Export document size in px (canvasW/canvasH from Studio's useCanvasSize). This
-  // is the size the EXPORT manifest + SVG dimensions use — distinct from the bed
-  // (display/artboard) above. Optional: the document-size control only renders
-  // when both are supplied AND an onApply consumer exists, so existing callers
-  // (and DocumentSetupDialog.test.jsx) that omit them are unaffected.
+  // Work-piece (design canvas) size in px (canvasW/canvasH from Studio's
+  // useCanvasSize) — the PRIMARY control this dialog edits.
   canvasW,
   canvasH,
   onApply,
@@ -66,32 +61,25 @@ export default function DocumentSetupDialog({
   const [draftProfile, setDraftProfile] = useState(profileId);
   const [draftW, setDraftW] = useState("");
   const [draftH, setDraftH] = useState("");
-  const [presetId, setPresetId] = useState("custom");
-  // Display unit for the bed dims — the mm/in toggle. Seeded from the live `unit`
-  // (px falls back to mm, since the toggle only offers mm/in). The W/H inputs
-  // show + accept values in THIS unit; Apply converts back to canonical mm and
-  // also reports the chosen unit OUT so the document's global unit can follow.
+  const [presetIndex, setPresetIndex] = useState(CUSTOM_PRESET_INDEX);
+  // Display unit for the work-piece dims — the mm/in toggle. Seeded from the
+  // live `unit` (px falls back to mm, since the toggle only offers mm/in). The
+  // W/H inputs show + accept values in THIS unit; Apply converts back to
+  // canonical px and also reports the chosen unit OUT so the document's global
+  // unit can follow.
   const [draftUnit, setDraftUnit] = useState(unit === "in" ? "in" : "mm");
-  // Export document size draft (px). Kept separate from the bed dims above.
-  const [draftDocW, setDraftDocW] = useState("");
-  const [draftDocH, setDraftDocH] = useState("");
-  const hasCanvasSize =
-    typeof canvasW === "number" && typeof canvasH === "number";
   const applyRef = useRef(null);
 
   useEffect(() => {
     if (!open) return;
-    const bed = bedSize ?? defaultBedSize(profileId);
     const seedUnit = unit === "in" ? "in" : "mm";
+    const w = typeof canvasW === "number" ? canvasW : 0;
+    const h = typeof canvasH === "number" ? canvasH : 0;
     setDraftProfile(profileId);
     setDraftUnit(seedUnit);
-    setDraftW(String(roundForUnit(mmToUnit(bed.width, seedUnit), seedUnit)));
-    setDraftH(String(roundForUnit(mmToUnit(bed.height, seedUnit), seedUnit)));
-    setPresetId("custom");
-    if (hasCanvasSize) {
-      setDraftDocW(String(Math.round(canvasW)));
-      setDraftDocH(String(Math.round(canvasH)));
-    }
+    setDraftW(String(roundForUnit(pxToUnit(w, seedUnit), seedUnit)));
+    setDraftH(String(roundForUnit(pxToUnit(h, seedUnit), seedUnit)));
+    setPresetIndex(presetIndexForSize(w, h));
     // Focus the primary action, mirroring ConfirmDialog.
     applyRef.current?.focus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -111,62 +99,43 @@ export default function DocumentSetupDialog({
 
   if (!open) return null;
 
-  // The active profile's bed presets.
-  const presets = bedPresetsFor(draftProfile);
-
-  // Switching the machine in the dialog reseeds the bed to that profile's
-  // default (in the active unit) and resets the preset selector — mirrors how
-  // applying a profile change resets the default bed in Studio.
-  const handleMachineChange = (nextProfile) => {
-    setDraftProfile(nextProfile);
-    const def = defaultBedSize(nextProfile);
-    setDraftW(String(roundForUnit(mmToUnit(def.width, draftUnit), draftUnit)));
-    setDraftH(String(roundForUnit(mmToUnit(def.height, draftUnit), draftUnit)));
-    setPresetId("custom");
-  };
-
-  // Choosing a named preset fills the custom dims (preset dims are mm → unit).
-  const handlePresetChange = (id) => {
-    setPresetId(id);
-    if (id === "custom") return;
-    const preset = presets.find((p) => p.id === id);
-    if (!preset) return;
-    setDraftW(String(roundForUnit(mmToUnit(preset.width, draftUnit), draftUnit)));
-    setDraftH(String(roundForUnit(mmToUnit(preset.height, draftUnit), draftUnit)));
+  // Choosing a named preset fills the W/H dims (preset dims are inches → px →
+  // unit). Selecting "Custom" leaves the current dims untouched.
+  const handlePresetChange = (indexStr) => {
+    const idx = Number(indexStr);
+    setPresetIndex(idx);
+    const preset = PRESET_SIZES[idx];
+    if (!preset || preset.width === null) return;
+    const wPx = preset.width * PPI;
+    const hPx = preset.height * PPI;
+    setDraftW(String(roundForUnit(pxToUnit(wPx, draftUnit), draftUnit)));
+    setDraftH(String(roundForUnit(pxToUnit(hPx, draftUnit), draftUnit)));
   };
 
   // mm/in toggle. Switching converts the CURRENT W/H entries in place so the
-  // displayed numbers describe the same physical bed (the dims round-trip through
-  // mm). Selecting a unit never touches the named-preset selection.
+  // displayed numbers describe the same physical size (the dims round-trip
+  // through px). Selecting a unit never touches the named-preset selection.
   const handleUnitToggle = (nextUnit) => {
     if (nextUnit === draftUnit) return;
-    const wMm = unitToMm(Number(draftW) || 0, draftUnit);
-    const hMm = unitToMm(Number(draftH) || 0, draftUnit);
+    const wPx = unitToPx(Number(draftW) || 0, draftUnit);
+    const hPx = unitToPx(Number(draftH) || 0, draftUnit);
     setDraftUnit(nextUnit);
-    setDraftW(String(roundForUnit(mmToUnit(wMm, nextUnit), nextUnit)));
-    setDraftH(String(roundForUnit(mmToUnit(hMm, nextUnit), nextUnit)));
+    setDraftW(String(roundForUnit(pxToUnit(wPx, nextUnit), nextUnit)));
+    setDraftH(String(roundForUnit(pxToUnit(hPx, nextUnit), nextUnit)));
   };
 
   const handleApply = () => {
     const w = Number(draftW);
     const h = Number(draftH);
-    // Convert the active-unit entry back to canonical mm at the boundary.
-    const bed = {
-      width: unitToMm(Number.isFinite(w) ? w : 0, draftUnit),
-      height: unitToMm(Number.isFinite(h) ? h : 0, draftUnit),
-      unit: "mm",
+    // Convert the active-unit entry back to canonical px at the boundary.
+    const wPx = unitToPx(Number.isFinite(w) ? w : 0, draftUnit);
+    const hPx = unitToPx(Number.isFinite(h) ? h : 0, draftUnit);
+    const payload = {
+      profileId: draftProfile,
+      canvasW: Math.round(wPx),
+      canvasH: Math.round(hPx),
+      unit: draftUnit,
     };
-    // bedSize stays canonical mm; `unit` carries the chosen display unit OUT so
-    // the host can sync the document's global unit (rulers/status bar follow).
-    const payload = { profileId: draftProfile, bedSize: bed, unit: draftUnit };
-    // Export document size (px) — only included when the control is present, so
-    // callers that don't pass canvasW/H see an unchanged payload shape.
-    if (hasCanvasSize) {
-      const docW = Math.round(Number(draftDocW));
-      const docH = Math.round(Number(draftDocH));
-      if (Number.isFinite(docW) && docW > 0) payload.canvasW = docW;
-      if (Number.isFinite(docH) && docH > 0) payload.canvasH = docH;
-    }
     onApply?.(payload);
     onClose?.();
   };
@@ -198,7 +167,7 @@ export default function DocumentSetupDialog({
           <select
             aria-label="Machine profile"
             value={draftProfile}
-            onChange={(e) => handleMachineChange(e.target.value)}
+            onChange={(e) => setDraftProfile(e.target.value)}
             className="w-full rounded-xs border border-hairline bg-paper-warm px-1.5 py-1 text-xs text-ink outline-none focus:border-violet"
           >
             {PROFILE_IDS.map((id) => (
@@ -209,133 +178,98 @@ export default function DocumentSetupDialog({
           </select>
         </label>
 
-        {/* Bed presets — filtered to the active machine by construction. */}
-        <label className="block">
+        {/* Work piece size — the PRIMARY control. The design canvas dims used
+            for pattern generation + export (canvasW/canvasH, px @96 PPI). */}
+        <div className="border-t border-hairline pt-3">
           <span className="block text-[10px] font-semibold uppercase tracking-wider text-ink-soft mb-1">
-            Bed preset
+            Work piece size
           </span>
-          <select
-            aria-label="Bed preset"
-            value={presetId}
-            onChange={(e) => handlePresetChange(e.target.value)}
-            className="w-full rounded-xs border border-hairline bg-paper-warm px-1.5 py-1 text-xs text-ink outline-none focus:border-violet"
-          >
-            <option value="custom">Custom…</option>
-            {presets.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.label}
-              </option>
-            ))}
-          </select>
-        </label>
 
-        {/* Unit toggle — mm / in. Drives the W/H display below; Apply converts
-            back to canonical mm and reports the chosen unit out. */}
-        <div className="flex items-center justify-between">
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-ink-soft">
-            Units
-          </span>
-          <div
-            role="group"
-            aria-label="Units"
-            className="inline-flex rounded-xs border border-hairline overflow-hidden"
-          >
-            {["mm", "in"].map((u) => (
-              <button
-                key={u}
-                type="button"
-                aria-pressed={draftUnit === u}
-                onClick={() => handleUnitToggle(u)}
-                className={`px-2.5 py-1 text-xs transition-colors duration-fast ease-out-quart ${
-                  draftUnit === u
-                    ? "bg-saffron text-ink font-medium"
-                    : "bg-paper-warm text-ink-soft hover:text-ink"
-                }`}
-              >
-                {u}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Custom bed dimensions — in the active display unit, converted to mm
-            on Apply. */}
-        <div className="flex items-end gap-3">
-          <label className="flex-1">
-            <span className="block text-[10px] font-semibold uppercase tracking-wider text-ink-soft mb-1">
-              Width ({draftUnit})
+          <label className="block mb-3">
+            <span className="block text-[10px] text-ink-soft/70 mb-1">
+              Preset
             </span>
-            <input
-              type="number"
-              aria-label="Width"
-              value={draftW}
-              min={0}
-              onChange={(e) => {
-                setDraftW(e.target.value);
-                setPresetId("custom");
-              }}
-              className="w-full rounded-xs border border-hairline bg-paper-warm px-1.5 py-1 text-xs text-ink outline-none focus:border-violet num"
-            />
+            <select
+              aria-label="Work piece preset"
+              value={String(presetIndex)}
+              onChange={(e) => handlePresetChange(e.target.value)}
+              className="w-full rounded-xs border border-hairline bg-paper-warm px-1.5 py-1 text-xs text-ink outline-none focus:border-violet"
+            >
+              {PRESET_SIZES.map((p, i) => (
+                <option key={p.label} value={i}>
+                  {p.label}
+                </option>
+              ))}
+            </select>
           </label>
-          <span className="pb-1.5 text-xs text-ink-soft/60">×</span>
-          <label className="flex-1">
-            <span className="block text-[10px] font-semibold uppercase tracking-wider text-ink-soft mb-1">
-              Height ({draftUnit})
-            </span>
-            <input
-              type="number"
-              aria-label="Height"
-              value={draftH}
-              min={0}
-              onChange={(e) => {
-                setDraftH(e.target.value);
-                setPresetId("custom");
-              }}
-              className="w-full rounded-xs border border-hairline bg-paper-warm px-1.5 py-1 text-xs text-ink outline-none focus:border-violet num"
-            />
-          </label>
-        </div>
 
-        {/* Export document size (#16 AC2 re-home). The size the exported SVG +
-            manifest use (canvasW/canvasH, px) — distinct from the bed/artboard
-            above. Labelled "Document W/H" so it never collides with the bed
-            Width/Height inputs. Only shown when Studio supplies canvasW/H. */}
-        {hasCanvasSize && (
-          <div className="border-t border-hairline pt-3">
-            <span className="block text-[10px] font-semibold uppercase tracking-wider text-ink-soft mb-1">
-              Export document size (px)
+          {/* Unit toggle — mm / in. Drives the W/H display below; Apply
+              converts back to canonical px and reports the chosen unit out. */}
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-ink-soft">
+              Units
             </span>
-            <div className="flex items-end gap-3">
-              <label className="flex-1">
-                <span className="block text-[10px] text-ink-soft/70 mb-1">
-                  Document W
-                </span>
-                <input
-                  type="number"
-                  aria-label="Document W"
-                  value={draftDocW}
-                  min={1}
-                  onChange={(e) => setDraftDocW(e.target.value)}
-                  className="w-full rounded-xs border border-hairline bg-paper-warm px-1.5 py-1 text-xs text-ink outline-none focus:border-violet num"
-                />
-              </label>
-              <span className="pb-1.5 text-xs text-ink-soft/60">×</span>
-              <label className="flex-1">
-                <span className="block text-[10px] text-ink-soft/70 mb-1">
-                  Document H
-                </span>
-                <input
-                  type="number"
-                  aria-label="Document H"
-                  value={draftDocH}
-                  min={1}
-                  onChange={(e) => setDraftDocH(e.target.value)}
-                  className="w-full rounded-xs border border-hairline bg-paper-warm px-1.5 py-1 text-xs text-ink outline-none focus:border-violet num"
-                />
-              </label>
+            <div
+              role="group"
+              aria-label="Units"
+              className="inline-flex rounded-xs border border-hairline overflow-hidden"
+            >
+              {["mm", "in"].map((u) => (
+                <button
+                  key={u}
+                  type="button"
+                  aria-pressed={draftUnit === u}
+                  onClick={() => handleUnitToggle(u)}
+                  className={`px-2.5 py-1 text-xs transition-colors duration-fast ease-out-quart ${
+                    draftUnit === u
+                      ? "bg-saffron text-ink font-medium"
+                      : "bg-paper-warm text-ink-soft hover:text-ink"
+                  }`}
+                >
+                  {u}
+                </button>
+              ))}
             </div>
           </div>
-        )}
+
+          {/* Custom work-piece dimensions — in the active display unit,
+              converted to px on Apply. */}
+          <div className="flex items-end gap-3">
+            <label className="flex-1">
+              <span className="block text-[10px] font-semibold uppercase tracking-wider text-ink-soft mb-1">
+                Width ({draftUnit})
+              </span>
+              <input
+                type="number"
+                aria-label="Width"
+                value={draftW}
+                min={0}
+                onChange={(e) => {
+                  setDraftW(e.target.value);
+                  setPresetIndex(CUSTOM_PRESET_INDEX);
+                }}
+                className="w-full rounded-xs border border-hairline bg-paper-warm px-1.5 py-1 text-xs text-ink outline-none focus:border-violet num"
+              />
+            </label>
+            <span className="pb-1.5 text-xs text-ink-soft/60">×</span>
+            <label className="flex-1">
+              <span className="block text-[10px] font-semibold uppercase tracking-wider text-ink-soft mb-1">
+                Height ({draftUnit})
+              </span>
+              <input
+                type="number"
+                aria-label="Height"
+                value={draftH}
+                min={0}
+                onChange={(e) => {
+                  setDraftH(e.target.value);
+                  setPresetIndex(CUSTOM_PRESET_INDEX);
+                }}
+                className="w-full rounded-xs border border-hairline bg-paper-warm px-1.5 py-1 text-xs text-ink outline-none focus:border-violet num"
+              />
+            </label>
+          </div>
+        </div>
 
         <div className="mt-lg flex items-center justify-end gap-xs">
           <button

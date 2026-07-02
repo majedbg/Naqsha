@@ -25,6 +25,12 @@
 //                             centering + pan + scroll (it's the same measured
 //                             rect the cursor readout uses), so pan is NOT
 //                             re-applied on this path. Absent → legacy pan-only.
+//   showBed                   toggles the machine-bed overlay (bed-fill wash +
+//                             bed-guide dashed rect). Defaults to true (today's
+//                             behavior). false → neither bed rect renders and the
+//                             SVG extent shrinks to the canvas alone, so a hidden
+//                             bed reserves no layout space. The canvas-artboard
+//                             rect + rulers/ticks are unaffected either way.
 //
 // Tick screen positions are computed (rulerTicks) rather than left to a CSS
 // transform, so they track zoom explicitly and stay aligned with the cursor
@@ -51,6 +57,9 @@ export default function CanvasChrome({
   zoom = 1,
   pan = { x: 0, y: 0 },
   origin = null,
+  // Machine-bed overlay toggle — see header comment. Default true keeps every
+  // existing caller byte-identical.
+  showBed = true,
 }) {
   const z = Number.isFinite(zoom) && zoom > 0 ? zoom : 1;
 
@@ -73,8 +82,10 @@ export default function CanvasChrome({
   const { major: majorY, minor: minorY } = rulerTicks(canvasHUnit, unit, z);
 
   // The SVG must hold both rects + the ruler bands without clipping either.
-  const extentW = Math.max(canvasScreenW, bedScreenW);
-  const extentH = Math.max(canvasScreenH, bedScreenH);
+  // When the bed overlay is hidden it contributes no extent, so a bed larger
+  // than the canvas doesn't reserve dead space around a hidden guide.
+  const extentW = showBed ? Math.max(canvasScreenW, bedScreenW) : canvasScreenW;
+  const extentH = showBed ? Math.max(canvasScreenH, bedScreenH) : canvasScreenH;
 
   // Place the SVG. When `origin` (the measured canvas top-left) is given, shift
   // the chrome so the artboard/ruler corner (RULER,RULER inside the SVG) lands on
@@ -101,16 +112,19 @@ export default function CanvasChrome({
             canvas top-left origin. Gives the bed (the machine's reachable area) a
             distinct tint so it reads as a zone against the canvas + page bg
             instead of relying on the dashed outline alone. Low opacity keeps it
-            legible over both light and dark backgrounds. */}
-        <rect
-          data-testid="bed-fill"
-          x={RULER + 0.5}
-          y={RULER + 0.5}
-          width={Math.max(0, bedScreenW - 1)}
-          height={Math.max(0, bedScreenH - 1)}
-          fill="#00c9b1"
-          fillOpacity="0.1"
-        />
+            legible over both light and dark backgrounds. Toggleable via showBed;
+            the work piece (artboard + rulers below) always renders. */}
+        {showBed ? (
+          <rect
+            data-testid="bed-fill"
+            x={RULER + 0.5}
+            y={RULER + 0.5}
+            width={Math.max(0, bedScreenW - 1)}
+            height={Math.max(0, bedScreenH - 1)}
+            fill="#00c9b1"
+            fillOpacity="0.1"
+          />
+        ) : null}
 
         {/* Design-canvas artboard — solid; the rulers measure this extent. */}
         <rect
@@ -129,21 +143,24 @@ export default function CanvasChrome({
 
         {/* Machine-bed guide — dashed + muted; shares the canvas top-left origin
             (design 0,0 = machine home) so you can see how much of the design the
-            active machine can reach. May fall inside or beyond the canvas. */}
-        <rect
-          data-testid="bed-guide"
-          data-bed-w-mm={bedWidthMm}
-          data-bed-h-mm={bedHeightMm}
-          x={RULER + 0.5}
-          y={RULER + 0.5}
-          width={Math.max(0, bedScreenW - 1)}
-          height={Math.max(0, bedScreenH - 1)}
-          fill="none"
-          stroke="#00c9b1"
-          strokeOpacity="0.4"
-          strokeWidth="1"
-          strokeDasharray="5 4"
-        />
+            active machine can reach. May fall inside or beyond the canvas.
+            Toggleable via showBed. */}
+        {showBed ? (
+          <rect
+            data-testid="bed-guide"
+            data-bed-w-mm={bedWidthMm}
+            data-bed-h-mm={bedHeightMm}
+            x={RULER + 0.5}
+            y={RULER + 0.5}
+            width={Math.max(0, bedScreenW - 1)}
+            height={Math.max(0, bedScreenH - 1)}
+            fill="none"
+            stroke="#00c9b1"
+            strokeOpacity="0.4"
+            strokeWidth="1"
+            strokeDasharray="5 4"
+          />
+        ) : null}
 
         {/* Ruler bands (sized to the larger extent) */}
         <rect x={0} y={0} width={extentW + RULER} height={RULER} fill="#0a0a0a" fillOpacity="0.35" />

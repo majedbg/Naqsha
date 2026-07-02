@@ -375,6 +375,9 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad }) {
     setStageEvents({});
     try {
       const imageData = cropToImageData(imgElRef.current, rect);
+      // Snapshot the selection raster BEFORE extract(): the worker path
+      // TRANSFERS image.data zero-copy, detaching this buffer.
+      const selURL = imageDataToDataURL(imageData);
       if (!bridgeRef.current) bridgeRef.current = createExtractionBridge();
       const options = latticeOpt === undefined ? {} : { lattice: latticeOpt };
       const res = await bridgeRef.current.extract(imageData, options, (p) =>
@@ -384,7 +387,7 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad }) {
         setError('No shapes found in that region — try a tighter or higher-contrast selection.');
         return false;
       }
-      setSel({ rect, url: imageDataToDataURL(imageData), w: rect.w, h: rect.h });
+      setSel({ rect, url: selURL, w: rect.w, h: rect.h });
       setManualCell(null);
       setResult(res);
       setShapeEdits(shapesFromResult(res).map(({ kind, role }) => ({ kind, role })));

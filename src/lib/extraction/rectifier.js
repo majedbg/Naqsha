@@ -5,12 +5,17 @@
 // Pure JS + typed arrays, no OpenCV.js: the manual warp is an exact 4-point
 // DLT homography (one 8×8 linear solve) plus an inverse per-destination-pixel
 // map with bilinear sampling — small enough to keep the studio bundle lean.
-// The auto-detect slice (S4) may lazy-load heavier machinery for
-// `detectQuad`, but it feeds the SAME quad convention into the same
-// `rectify`, so this module is the shared floor.
+// The auto-detect slice (S4, ./detectQuad.js) proposes a quad, but the human
+// adjusts it and it flows into this same `rectify`, so this module is the
+// shared floor.
 //
-// Quad convention (shared with the Flatten UI and the S4 detectQuad seam):
-// [TL, TR, BR, BL] — four corners in source-image pixel coordinates.
+// Quad convention here: [TL, TR, BR, BL] — four corners in source-image PIXEL
+// coordinates (what `rectify`/`computeHomography` consume). Note the two
+// conventions in the flow: S4's `detectQuad(image)` returns FRACTIONAL 0..1
+// corners (the FlattenStep / ExtractStepper `initialQuad` UI seam, so a
+// proposal is resolution-independent); the stepper converts those to pixels at
+// apply time before calling `rectify`. Classical detector today; the M-LSD
+// vanishing-point path is a documented seam in detectQuad.js.
 //
 // Everything here is pure (ImageData-shaped objects in and out), so it runs
 // identically inline (tests, no-Worker fallback) and inside

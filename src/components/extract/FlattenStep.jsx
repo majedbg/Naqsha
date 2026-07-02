@@ -46,6 +46,10 @@ export default function FlattenStep({
   onQuadChange,
   rectifiedURL, // non-null → preview phase
   flattening,
+  confidence, // S4 (#53): 0..1 when auto-detect PRE-FILLED the quad, else null.
+  // Non-null → the corners were proposed (editable, locked decision 8); the
+  // badge invites correction. Null → the plain manual default (or an external
+  // pre-fill) with no detection claim.
   onApply,
   onSkip, // "already flat" / "use original" escape hatch
   onBack,
@@ -124,10 +128,23 @@ export default function FlattenStep({
 
   return (
     <>
-      <p className="text-xs text-ink-soft max-w-md text-center">
-        Shot at an angle? Drag the four corners onto the pattern&apos;s plane and apply — the
-        photo is flattened to a straight-on view before tracing.
-      </p>
+      {typeof confidence === 'number' ? (
+        <p
+          data-testid="flatten-detection-badge"
+          className="flex items-center gap-1.5 text-xs text-ink-soft"
+        >
+          <span aria-hidden className="inline-block w-2 h-2 rounded-full bg-saffron" />
+          <span>
+            Plane detected — adjust if needed
+            <span className="text-ink-faint"> ({Math.round(confidence * 100)}% confidence)</span>
+          </span>
+        </p>
+      ) : (
+        <p className="text-xs text-ink-soft max-w-md text-center">
+          Shot at an angle? Drag the four corners onto the pattern&apos;s plane and apply — the
+          photo is flattened to a straight-on view before tracing.
+        </p>
+      )}
       <div
         ref={boxRef}
         className="relative inline-block select-none touch-none"

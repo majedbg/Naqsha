@@ -804,8 +804,11 @@ describe('ExtractStepper — EXIF + location (S8)', () => {
     expect(mocks.reverseGeocode).toHaveBeenCalledTimes(1);
     expect(mocks.reverseGeocode.mock.calls[0][0]).toEqual({ lat: 59.8586, lng: 17.6389 });
     expect(screen.getByLabelText(/address/i).value).toBe('Uppsala Cathedral, Sweden');
-    // Title suggestion tightens to include the place.
-    expect(screen.getByLabelText(/^title$/i).value).toBe('Ornament — Uppsala, June 2026');
+    // Title suggestion tightens to include the place (the suggestion effect
+    // lands the render after placeName commits — wait for it).
+    await waitFor(() =>
+      expect(screen.getByLabelText(/^title$/i).value).toBe('Ornament — Uppsala, June 2026')
+    );
   });
 
   it('a geocode failure shows a quiet hint, no error banner', async () => {

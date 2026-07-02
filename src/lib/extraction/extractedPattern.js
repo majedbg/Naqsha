@@ -12,7 +12,12 @@
 //     source:     'extracted'
 //     visibility: 'private'       (sharing scaffold — locked decision, PRD §data safety)
 //     tile:       { width, height, fills:[{d,role}], strokes:[{d,role}] }
-//     lattice:    null | { t1:[x,y], t2:[x,y], type }   (S1 seam; null = single-motif floor)
+//     lattice:    null | { t1:[x,y], t2:[x,y], cell:{width,height}, type,
+//                          confidence }  (S5, issue #54; null = single-motif
+//                          floor. Validated by lattice.validateLattice on
+//                          BOTH construction and deserialize — stored rows
+//                          are attacker-writable, and these numbers drive
+//                          tiling loops and transform attributes.)
 //     photoPath:  null | string   storage path of the original photo
 //   }
 //
@@ -23,6 +28,7 @@
 // mapping never depends on markup parsing (locked decision 9).
 
 import { FABRICATION_ROLES } from './vectorizer';
+import { validateLattice } from './lattice';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -93,7 +99,9 @@ export function makeExtractedPattern({
       fills: fills.map(({ d, role }) => ({ d, role })),
       strokes: strokes.map(({ d, role }) => ({ d, role })),
     },
-    lattice,
+    // Throws on a malformed lattice (same corrupt-row discipline as the path
+    // data below); null stays null — the single-motif floor.
+    lattice: validateLattice(lattice),
     photoPath,
   };
 }

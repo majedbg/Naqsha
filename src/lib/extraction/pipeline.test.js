@@ -30,6 +30,17 @@ function squareImage() {
   return { data, width: w, height: h };
 }
 
+// Collapse progress-only repeats so exact-sequence assertions stay pinned to
+// the status contract without depending on how often a stage calls report().
+function statusSequence(events) {
+  return events
+    .filter((e, i) => {
+      const prev = events[i - 1];
+      return !(prev && prev.stage === e.stage && prev.status === e.status);
+    })
+    .map((e) => `${e.stage}:${e.status}`);
+}
+
 describe('runExtraction', () => {
   it('produces a tile with traced contours and a null lattice (single-motif floor)', async () => {
     const result = await runExtraction({ image: squareImage() });
@@ -40,13 +51,15 @@ describe('runExtraction', () => {
     expect(result.lattice).toBeNull();
   });
 
-  it('emits staged progress: flatten skipped, then trace running → done', async () => {
+  it('emits staged progress: flatten skipped, lattice + trace running → done', async () => {
     const events = [];
     await runExtraction({ image: squareImage() }, (p) => events.push(p));
-    expect(events).toEqual([
-      { stage: 'flatten', status: 'skipped' },
-      { stage: 'trace', status: 'running' },
-      { stage: 'trace', status: 'done' },
+    expect(statusSequence(events)).toEqual([
+      'flatten:skipped',
+      'lattice:running',
+      'lattice:done',
+      'trace:running',
+      'trace:done',
     ]);
   });
 
@@ -82,6 +95,126 @@ describe('runExtraction', () => {
     expect(result.components[0].kind).toBe('stroke');
     expect(result.components[0].contour).toBeTruthy(); // flip target survives
     expect(result.confidence.trace).toBeGreaterThan(0);
+  });
+});
+
+// --- S5 (issue #54): the lattice stage — repeat detection + cell crop -------
+
+// A repeating tiling with a known 16×16 square lattice: an asymmetric motif
+// (two discs) per cell, on an 80×80 field (5×5 repeats).
+function tilingImage(period = 16, size = 80) {
+  const data = new Uint8ClampedArray(size * size * 4).fill(255);
+  for (let i = 3; i < data.length; i += 4) data[i] = 255;
+  const set = (x, y, v) => {
+    if (x < 0 || y < 0 || x >= size || y >= size) return;
+    const i = (y * size + x) * 4;
+    data[i] = v; data[i + 1] = v; data[i + 2] = v;
+  };
+  for (let cy = 0; cy < size + period; cy += period) {
+    for (let cx = 0; cx < size + period; cx += period) {
+      for (let y = -3; y <= 3; y++) {
+        for (let x = -3; x <= 3; x++) {
+          if (x * x + y * y <= 9) set(cx + 5 + x, cy + 5 + y, 0);
+        }
+      }
+      set(cx + 11, cy + 9, 40);
+      set(cx + 12, cy + 9, 40);
+    }
+  }
+  return { data, width: size, height: size };
+}
+
+describe('runExtraction — lattice stage (S5)', () => {
+  it('detects the repeat, crops the tile to ONE cell, and reports the lattice', async () => {
+    const result = await runExtraction({ image: tilingImage() });
+    expect(result.lattice).not.toBeNull();
+    expect(result.lattice.type).toBe('square');
+    // Axis-aligned 16×16 basis within a pixel of truth.
+    expect(Math.abs(result.lattice.t1[0] - 16)).toBeLessThanOrEqual(1);
+    expect(result.lattice.t1[1]).toBe(0);
+    expect(result.lattice.t2[0]).toBe(0);
+    expect(Math.abs(result.lattice.t2[1] - 16)).toBeLessThanOrEqual(1);
+    // The traced tile IS the repeat cell.
+    expect(result.tile.width).toBe(result.lattice.cell.width);
+    expect(result.tile.height).toBe(result.lattice.cell.height);
+    expect(result.tile.fills.length).toBeGreaterThanOrEqual(1);
+    // Review-overlay cell in selection coords, anchored at the origin.
+    expect(result.latticeCell).toEqual({
+      x: 0,
+      y: 0,
+      width: result.lattice.cell.width,
+      height: result.lattice.cell.height,
+    });
+    expect(result.confidence.lattice).toBeGreaterThan(0.4);
+    expect(result.lattice.confidence).toBe(result.confidence.lattice);
+  });
+
+  it('non-repeating input → null lattice, full-selection floor, low confidence recorded', async () => {
+    const result = await runExtraction({ image: squareImage() });
+    expect(result.lattice).toBeNull();
+    expect(result.tile.width).toBe(50); // the untouched single-motif floor
+    expect(result.confidence.lattice).toBeLessThan(0.4);
+  });
+
+  it('options.lattice === false (user opt-out) skips the stage entirely', async () => {
+    const events = [];
+    const result = await runExtraction(
+      { image: tilingImage(), options: { lattice: false } },
+      (p) => events.push(p)
+    );
+    expect(events).toContainEqual({ stage: 'lattice', status: 'skipped' });
+    expect(result.lattice).toBeNull();
+    expect(result.tile.width).toBe(80); // floor: the whole selection
+  });
+
+  it('options.lattice.cell (user-corrected drag) crops that exact cell with confidence 1', async () => {
+    const cell = { x: 8, y: 8, width: 16, height: 16 };
+    const result = await runExtraction({
+      image: tilingImage(),
+      options: { lattice: { cell } },
+    });
+    expect(result.lattice).toEqual({
+      t1: [16, 0],
+      t2: [0, 16],
+      cell: { width: 16, height: 16 },
+      type: 'square',
+      confidence: 1,
+    });
+    expect(result.latticeCell).toEqual(cell);
+    expect(result.tile.width).toBe(16);
+    expect(result.tile.height).toBe(16);
+    expect(result.confidence.lattice).toBe(1);
+  });
+
+  it('clamps a user cell that overflows the image', async () => {
+    const result = await runExtraction({
+      image: tilingImage(),
+      options: { lattice: { cell: { x: 70, y: 70, width: 40, height: 40 } } },
+    });
+    expect(result.latticeCell).toEqual({ x: 70, y: 70, width: 10, height: 10 });
+    expect(result.tile.width).toBe(10);
+  });
+
+  it('fails soft on an unusable user cell: failed event, confidence 0, floor trace', async () => {
+    const events = [];
+    const result = await runExtraction(
+      { image: tilingImage(), options: { lattice: { cell: { x: 0, y: 0, width: NaN, height: 16 } } } },
+      (p) => events.push(p)
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({ stage: 'lattice', status: 'failed' })
+    );
+    expect(result.lattice).toBeNull();
+    expect(result.confidence.lattice).toBe(0);
+    expect(result.tile.width).toBe(80); // floor: the whole selection, flow continued
+    expect(result.tile.fills.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('the pipeline result round-trips into a valid entity with the lattice attached', async () => {
+    const result = await runExtraction({ image: tilingImage() });
+    const { makeExtractedPattern } = await import('./extractedPattern');
+    const entity = makeExtractedPattern({ title: 't', tile: result.tile, lattice: result.lattice });
+    expect(entity.lattice).toEqual(result.lattice);
   });
 });
 
@@ -193,6 +326,7 @@ describe('createPipeline — stage harness', () => {
   it('lists serializable stage descriptors for the UI', () => {
     expect(listStages()).toEqual([
       { id: 'flatten', label: 'Flatten', optional: true },
+      { id: 'lattice', label: 'Detect repeat', optional: true },
       { id: 'trace', label: 'Trace', optional: false },
     ]);
     expect(
@@ -651,17 +785,19 @@ describe('runExtraction — flatten stage (S3)', () => {
     expect(result.confidence.flatten).toBe(1);
   });
 
-  it('emits staged progress: flatten running → done, then trace', async () => {
+  it('emits staged progress: flatten running → done, then lattice, then trace', async () => {
     const events = [];
     await runExtraction(
       { image: squareImage(), options: { flatten: { quad: cropQuad } } },
       (p) => events.push(p)
     );
-    expect(events).toEqual([
-      { stage: 'flatten', status: 'running' },
-      { stage: 'flatten', status: 'done' },
-      { stage: 'trace', status: 'running' },
-      { stage: 'trace', status: 'done' },
+    expect(statusSequence(events)).toEqual([
+      'flatten:running',
+      'flatten:done',
+      'lattice:running',
+      'lattice:done',
+      'trace:running',
+      'trace:done',
     ]);
   });
 

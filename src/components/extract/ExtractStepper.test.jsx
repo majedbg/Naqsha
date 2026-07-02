@@ -418,6 +418,120 @@ describe('ExtractStepper — flatten (S3)', () => {
   });
 });
 
+// --- S5 (issue #54): lattice Review — draggable repeat cell + tiled preview --
+
+const LATTICE_S5 = {
+  t1: [20, 0],
+  t2: [0, 20],
+  cell: { width: 20, height: 20 },
+  type: 'square',
+  confidence: 0.87,
+};
+
+const TRACE_RESULT_LATTICE = {
+  tile: {
+    width: 20,
+    height: 20,
+    fills: [{ d: 'M4 4 L16 4 L16 16 L4 16 Z', role: 'engrave' }],
+    strokes: [],
+  },
+  lattice: LATTICE_S5,
+  latticeCell: { x: 0, y: 0, width: 20, height: 20 },
+  confidence: { lattice: 0.87, trace: 1 },
+};
+
+describe('ExtractStepper — lattice Review (S5)', () => {
+  // Display box for the cell editor's pointer math (selection is the full
+  // 400×300 mock image → 1 display px = 2 image px).
+  const BOX = { left: 0, top: 0, width: 200, height: 150, right: 200, bottom: 150 };
+  let gbcr;
+  beforeEach(() => {
+    gbcr = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(BOX);
+  });
+  afterEach(() => gbcr.mockRestore());
+
+  async function walkToReviewWithLattice() {
+    mocks.extract.mockResolvedValueOnce(TRACE_RESULT_LATTICE);
+    render(<ExtractStepper onClose={() => {}} />);
+    await walkToSelect();
+    fireEvent.click(screen.getByRole('button', { name: /trace region/i }));
+    await screen.findByTestId('lattice-cell-editor');
+  }
+
+  it('shows the tiled preview, confidence badge, and draggable cell when a repeat is detected', async () => {
+    await walkToReviewWithLattice();
+    // Tiled preview: 3×3-cell window, 9 copies of the fill.
+    const tiled = screen.getByTestId('tiled-preview');
+    expect(tiled).toHaveAttribute('viewBox', '0 0 60 60');
+    expect(tiled.querySelectorAll('g')).toHaveLength(9);
+    // Confidence badge as a percentage (editable proposal, locked decision 8).
+    expect(screen.getByTestId('lattice-confidence')).toHaveTextContent('87%');
+    expect(screen.getByTestId('lattice-cell')).toBeTruthy();
+  });
+
+  it('dragging the cell re-extracts the SAME selection with the corrected cell', async () => {
+    await walkToReviewWithLattice();
+    const cell = screen.getByTestId('lattice-cell');
+    const box = screen.getByTestId('lattice-cell-box');
+    fireEvent.pointerDown(cell, { clientX: 10, clientY: 10, pointerId: 1 });
+    fireEvent.pointerMove(box, { clientX: 20, clientY: 15, pointerId: 1 });
+    fireEvent.pointerUp(box, { pointerId: 1 });
+    await waitFor(() => expect(mocks.extract).toHaveBeenCalledTimes(2));
+    // +10 display px → +20 image px on x; +5 → +10 on y, from the (0,0) cell.
+    expect(mocks.extract.mock.calls[1][1]).toEqual({
+      lattice: { cell: { x: 20, y: 10, width: 20, height: 20 } },
+    });
+    // The SAME selection rect was re-cropped for the re-run.
+    expect(mocks.cropToImageData).toHaveBeenCalledTimes(2);
+    expect(mocks.cropToImageData.mock.calls[1][1]).toEqual(
+      mocks.cropToImageData.mock.calls[0][1]
+    );
+  });
+
+  it('"Use single motif" opts out: re-extracts with lattice:false and shows the floor', async () => {
+    await walkToReviewWithLattice();
+    fireEvent.click(screen.getByRole('button', { name: /use single motif/i }));
+    await waitFor(() => expect(mocks.extract).toHaveBeenCalledTimes(2));
+    expect(mocks.extract.mock.calls[1][1]).toEqual({ lattice: false });
+    // Default mock (TRACE_RESULT, lattice null) lands → single-motif floor.
+    expect(await screen.findByTestId('no-lattice-notice')).toHaveTextContent(/single motif/i);
+    expect(screen.queryByTestId('tiled-preview')).toBeNull();
+  });
+
+  it('no repeat detected → floor notice; "Mark repeat cell" seeds a manual editable cell', async () => {
+    render(<ExtractStepper onClose={() => {}} />);
+    await walkToSelect();
+    fireEvent.click(screen.getByRole('button', { name: /trace region/i }));
+    await screen.findByTestId('no-lattice-notice');
+    expect(screen.queryByTestId('lattice-cell-editor')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: /mark repeat cell/i }));
+    expect(screen.getByTestId('lattice-confidence')).toHaveTextContent(/manual/i);
+
+    // Committing the manual cell re-extracts with it (selection 400×300 →
+    // seeded cell (100,75) 200×150; +10 display px → +20 image px on x).
+    const cell = screen.getByTestId('lattice-cell');
+    const box = screen.getByTestId('lattice-cell-box');
+    fireEvent.pointerDown(cell, { clientX: 10, clientY: 10, pointerId: 1 });
+    fireEvent.pointerMove(box, { clientX: 20, clientY: 10, pointerId: 1 });
+    fireEvent.pointerUp(box, { pointerId: 1 });
+    await waitFor(() => expect(mocks.extract).toHaveBeenCalledTimes(2));
+    expect(mocks.extract.mock.calls[1][1]).toEqual({
+      lattice: { cell: { x: 120, y: 75, width: 200, height: 150 } },
+    });
+  });
+
+  it('the saved entity carries the detected lattice (free tier = tile + lattice + export)', async () => {
+    await walkToReviewWithLattice();
+    fireEvent.click(screen.getByRole('button', { name: /continue/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /save to library/i }));
+    await waitFor(() => expect(mocks.save).toHaveBeenCalled());
+    const entity = mocks.save.mock.calls[0][0];
+    registeredIds.push(entity.patternId);
+    expect(entity.lattice).toEqual(LATTICE_S5);
+  });
+});
+
 describe('ExtractStepper — save', () => {
   async function walkToSave() {
     await walkToSelect();

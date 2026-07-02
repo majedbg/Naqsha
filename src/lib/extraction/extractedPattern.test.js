@@ -94,11 +94,45 @@ describe('round-trip', () => {
     expect(back.tile).toEqual(TILE);
   });
 
-  it('round-trips a lattice when present (S1 forward-compat)', () => {
-    const lattice = { t1: [30, 0], t2: [0, 30], type: 'square' };
+  it('round-trips a lattice when present (S5, issue #54)', () => {
+    const lattice = {
+      t1: [30, 0],
+      t2: [0, 30],
+      cell: { width: 30, height: 30 },
+      type: 'square',
+      confidence: 0.82,
+    };
     const e = makeExtractedPattern({ title: 'l', tile: TILE, lattice });
     const back = deserializeExtractedPattern(serializeExtractedPattern(e));
     expect(back.lattice).toEqual(lattice);
+  });
+
+  it('round-trips an oblique lattice with fractional vectors (S5)', () => {
+    const lattice = {
+      t1: [26.5, 2],
+      t2: [9, 24.25],
+      cell: { width: 35.5, height: 26.25 },
+      type: 'oblique',
+      confidence: 0.5,
+    };
+    const e = makeExtractedPattern({ title: 'o', tile: TILE, lattice });
+    const back = deserializeExtractedPattern(serializeExtractedPattern(e));
+    expect(back.lattice).toEqual(lattice);
+  });
+
+  // Stored rows are attacker-writable: a malformed lattice must throw at BOTH
+  // choke points — construction and deserialize — with the same corrupt-row
+  // discipline as path data. These numbers drive tiling loops and transform
+  // attributes, so NaN/injection/collinear shapes are rejected outright.
+  it.each([
+    ['NaN vector', { t1: [NaN, 0], t2: [0, 30], cell: { width: 30, height: 30 }, type: 'square', confidence: 1 }],
+    ['injection string', { t1: ['"/><script>', 0], t2: [0, 30], cell: { width: 30, height: 30 }, type: 'square', confidence: 1 }],
+    ['collinear basis', { t1: [30, 0], t2: [60, 0], cell: { width: 30, height: 30 }, type: 'square', confidence: 1 }],
+    ['legacy partial shape (no cell/confidence)', { t1: [30, 0], t2: [0, 30], type: 'square' }],
+  ])('rejects a malformed lattice (%s) on construction and deserialize', (_label, lattice) => {
+    expect(() => makeExtractedPattern({ title: 'x', tile: TILE, lattice })).toThrow(/lattice/i);
+    const goodRow = serializeExtractedPattern(makeExtractedPattern({ title: 'x', tile: TILE }));
+    expect(() => deserializeExtractedPattern({ ...goodRow, lattice })).toThrow(/lattice/i);
   });
 
   // S6 (issue #55): centerline strokes must survive the row round-trip with

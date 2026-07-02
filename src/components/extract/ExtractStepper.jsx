@@ -15,6 +15,10 @@
 //             (contour + centerline when non-degenerate), so the user can
 //             toggle centerline↔contour and flip the engrave/cut/score role
 //             per shape (locked decision 9). The preview colors by role.
+//             S5 (issue #54): a detected repeat shows a TILED preview + the
+//             draggable repeat-cell proposal with its confidence badge —
+//             dragging/resizing/opting-out re-extracts the same selection in
+//             place; no repeat → single-motif floor + manual cell marking.
 //   Save    : title + save → registers into the picker's custom family AND
 //             persists via LibraryRepository (one entity, two surfaces).
 //
@@ -36,7 +40,9 @@ import { makeExtractedPattern } from '../../lib/extraction/extractedPattern';
 import { FABRICATION_ROLES } from '../../lib/extraction/vectorizer';
 import { registerExtractedPattern } from '../../lib/patterns/ExtractedPatternGenerator';
 import { saveExtractedPattern } from '../../lib/libraryRepository';
+import { tilePlacements } from '../../lib/extraction/tileComposer';
 import FlattenStep, { DEFAULT_QUAD } from './FlattenStep';
+import LatticeCellEditor from './LatticeCellEditor';
 
 const STEPS = ['Upload', 'Flatten', 'Select', 'Review', 'Save'];
 
@@ -202,6 +208,13 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad }) {
   // Per-shape Review edits ({kind, role} parallel to shapesFromResult(result));
   // reset whenever a new trace lands (S6, issue #55).
   const [shapeEdits, setShapeEdits] = useState([]);
+  // Lattice Review (S5, issue #54): the SELECTION snapshot the trace ran on
+  // ({ rect: working-image px, url: dataURL, w, h }) so the repeat-cell
+  // editor can overlay it and re-extractions reuse the exact same region —
+  // and, when no repeat was detected, the manually seeded cell (image px,
+  // selection space) the user is positioning before the first commit.
+  const [sel, setSel] = useState(null);
+  const [manualCell, setManualCell] = useState(null);
   const [error, setError] = useState('');
   const [title, setTitle] = useState('');
   const [saving, setSaving] = useState(false);
@@ -350,38 +363,83 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad }) {
       }
     : crop;
 
-  const handleTrace = useCallback(async () => {
-    if (!imgElRef.current || !natural) return;
+  // Shared extraction runner (S5): the first trace and every lattice
+  // correction (cell drag / opt-out) run the same path — same selection rect,
+  // same staged progress — differing only in options.lattice (undefined =
+  // auto-detect, false = opt-out, {cell} = user-corrected). Returns whether a
+  // usable result landed.
+  const runExtract = useCallback(async (rect, latticeOpt) => {
+    if (!imgElRef.current) return false;
     setError('');
     setTracing(true);
     setStageEvents({});
     try {
-      const f = crop || { x: 0, y: 0, w: 1, h: 1 };
-      const rect = {
-        x: Math.round(f.x * natural.w),
-        y: Math.round(f.y * natural.h),
-        w: Math.max(1, Math.round(f.w * natural.w)),
-        h: Math.max(1, Math.round(f.h * natural.h)),
-      };
       const imageData = cropToImageData(imgElRef.current, rect);
+      // Snapshot the selection raster BEFORE extract(): the worker path
+      // TRANSFERS image.data zero-copy, detaching this buffer.
+      const selURL = imageDataToDataURL(imageData);
       if (!bridgeRef.current) bridgeRef.current = createExtractionBridge();
-      const res = await bridgeRef.current.extract(imageData, {}, (p) =>
+      const options = latticeOpt === undefined ? {} : { lattice: latticeOpt };
+      const res = await bridgeRef.current.extract(imageData, options, (p) =>
         setStageEvents((m) => ({ ...m, [p.stage]: p }))
       );
       if (!res.tile.fills.length && !res.tile.strokes.length) {
         setError('No shapes found in that region — try a tighter or higher-contrast selection.');
-        return;
+        return false;
       }
+      setSel({ rect, url: selURL, w: rect.w, h: rect.h });
+      setManualCell(null);
       setResult(res);
       setShapeEdits(shapesFromResult(res).map(({ kind, role }) => ({ kind, role })));
-      setStep(3);
+      return true;
     } catch (err) {
       setError(err.message || 'Extraction failed.');
+      return false;
     } finally {
       setTracing(false);
       setStageEvents({});
     }
-  }, [crop, natural]);
+  }, []);
+
+  const handleTrace = useCallback(async () => {
+    if (!imgElRef.current || !natural) return;
+    const f = crop || { x: 0, y: 0, w: 1, h: 1 };
+    const rect = {
+      x: Math.round(f.x * natural.w),
+      y: Math.round(f.y * natural.h),
+      w: Math.max(1, Math.round(f.w * natural.w)),
+      h: Math.max(1, Math.round(f.h * natural.h)),
+    };
+    if (await runExtract(rect, undefined)) setStep(3);
+  }, [crop, natural, runExtract]);
+
+  // --- Lattice Review corrections (S5, issue #54) ------------------------------
+
+  // Cell drag committed → re-extract with the corrected cell (the crop +
+  // re-trace happen in the worker; Review updates in place).
+  const handleCellCommit = useCallback(
+    (cell) => sel && runExtract(sel.rect, { cell }),
+    [sel, runExtract]
+  );
+
+  // "Use single motif": explicit opt-out — re-extract with lattice disabled
+  // (the guaranteed floor, locked decision 8).
+  const handleLatticeOptOut = useCallback(
+    () => sel && runExtract(sel.rect, false),
+    [sel, runExtract]
+  );
+
+  // No repeat detected → the user can still mark one by hand: seed a centered
+  // half-size cell and let the editor take over (commit re-extracts).
+  const handleMarkCell = useCallback(() => {
+    if (!sel) return;
+    setManualCell({
+      x: Math.round(sel.w / 4),
+      y: Math.round(sel.h / 4),
+      width: Math.max(8, Math.round(sel.w / 2)),
+      height: Math.max(8, Math.round(sel.h / 2)),
+    });
+  }, [sel]);
 
   // --- Save -------------------------------------------------------------------
 
@@ -445,13 +503,8 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad }) {
   const editedTile = result ? buildTile(result, shapes, shapeEdits) : null;
   const shapeCount = shapes.length;
 
-  const preview = editedTile ? (
-    <svg
-      viewBox={`0 0 ${editedTile.width} ${editedTile.height}`}
-      className="max-h-64 w-auto border border-hairline bg-white"
-      role="img"
-      aria-label="Traced pattern preview"
-    >
+  const tilePathsJSX = editedTile ? (
+    <>
       {editedTile.fills.map((f, i) => (
         <path
           key={`f${i}`}
@@ -471,8 +524,41 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad }) {
           strokeLinecap="round"
         />
       ))}
-    </svg>
+    </>
   ) : null;
+
+  // S5 (issue #54): a lattice-bearing result previews TILED — a 3×3-cell
+  // window through the same placement source the generator uses — so Review
+  // shows the pattern the save will actually produce. Dragging the cell
+  // re-extracts, which re-renders this preview: "dragging updates the tiling".
+  const lattice = result?.lattice ?? null;
+  const preview = !editedTile ? null : lattice ? (
+    <svg
+      viewBox={`0 0 ${lattice.cell.width * 3} ${lattice.cell.height * 3}`}
+      className="max-h-64 w-auto border border-hairline bg-white"
+      role="img"
+      aria-label="Tiled pattern preview"
+      data-testid="tiled-preview"
+    >
+      {tilePlacements(lattice, {
+        width: lattice.cell.width * 3,
+        height: lattice.cell.height * 3,
+      }).map((p, i) => (
+        <g key={i} transform={`translate(${p.x} ${p.y})`}>
+          {tilePathsJSX}
+        </g>
+      ))}
+    </svg>
+  ) : (
+    <svg
+      viewBox={`0 0 ${editedTile.width} ${editedTile.height}`}
+      className="max-h-64 w-auto border border-hairline bg-white"
+      role="img"
+      aria-label="Traced pattern preview"
+    >
+      {tilePathsJSX}
+    </svg>
+  );
 
   return (
     <div className="fixed inset-0 z-50 bg-ink/70 flex items-center justify-center px-4">
@@ -583,6 +669,47 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad }) {
           {step === 3 && result && (
             <>
               {preview}
+              {/* Repeat cell (S5, issue #54): detected → editable proposal +
+                  confidence badge + opt-out; not detected → the single-motif
+                  floor with a manual "mark repeat cell" affordance. Commits
+                  and opt-outs re-extract the SAME selection in place. */}
+              {sel &&
+                (lattice || manualCell ? (
+                  <LatticeCellEditor
+                    imageURL={sel.url}
+                    imageWidth={sel.w}
+                    imageHeight={sel.h}
+                    cell={
+                      lattice
+                        ? result.latticeCell ?? {
+                            x: 0,
+                            y: 0,
+                            width: lattice.cell.width,
+                            height: lattice.cell.height,
+                          }
+                        : manualCell
+                    }
+                    confidence={lattice ? lattice.confidence : null}
+                    busy={tracing}
+                    onCommit={handleCellCommit}
+                    onOptOut={lattice ? handleLatticeOptOut : () => setManualCell(null)}
+                  />
+                ) : (
+                  <div
+                    className="flex items-center gap-2 text-xs text-ink-soft"
+                    data-testid="no-lattice-notice"
+                  >
+                    <span>No repeat detected — this will save as a single motif.</span>
+                    <button
+                      type="button"
+                      className="px-2 py-0.5 text-[11px] font-medium rounded-xs bg-paper-warm text-ink-soft border border-hairline hover:text-ink transition-colors duration-fast ease-out-quart"
+                      onClick={handleMarkCell}
+                    >
+                      Mark repeat cell
+                    </button>
+                  </div>
+                ))}
+              {tracing && <StageProgress events={stageEvents} />}
               <p className="text-xs text-ink-soft">
                 {shapeCount} shape{shapeCount === 1 ? '' : 's'} traced — line-work as single
                 centerline strokes, solid shapes as contours. Flip a shape's role or switch its

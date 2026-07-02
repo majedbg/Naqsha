@@ -18,6 +18,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { subscribeLibrary, getLibraryEntries } from '../../lib/libraryStore';
 import { getPhotoURL } from '../../lib/libraryRepository';
+import { tilePlacements } from '../../lib/extraction/tileComposer';
 
 const PRIMARY_BTN =
   'px-4 py-1.5 text-sm font-medium rounded-xs bg-saffron text-ink hover:bg-saffron-hover disabled:opacity-40 disabled:cursor-default transition-colors duration-fast ease-out-quart';
@@ -25,21 +26,48 @@ const GHOST_BTN =
   'px-4 py-1.5 text-sm font-medium rounded-xs bg-paper-warm text-ink-soft hover:bg-muted hover:text-ink transition-colors duration-fast ease-out-quart';
 
 // The extracted-pattern tile, rendered as a real React <svg> (path data is
-// validated at deserialize; no markup injection surface).
-function TilePreview({ tile, className = '' }) {
-  return (
-    <svg
-      viewBox={`0 0 ${tile.width} ${tile.height}`}
-      className={className}
-      role="img"
-      aria-label="Extracted pattern"
-      preserveAspectRatio="xMidYMid meet"
-    >
+// validated at deserialize; no markup injection surface). S5 (issue #54):
+// when the entity carries a lattice the preview TILES — a 3×3-cell window
+// through the same placement source the generator uses — so the Library shows
+// the pattern, not just its repeat unit (one entity, two surfaces).
+function TilePreview({ tile, lattice = null, className = '' }) {
+  const paths = (
+    <>
       {tile.fills.map((f, i) => (
         <path key={`f${i}`} d={f.d} fill="currentColor" fillRule="evenodd" stroke="none" />
       ))}
       {tile.strokes.map((s, i) => (
         <path key={`s${i}`} d={s.d} fill="none" stroke="currentColor" strokeWidth="1" />
+      ))}
+    </>
+  );
+  if (!lattice) {
+    return (
+      <svg
+        viewBox={`0 0 ${tile.width} ${tile.height}`}
+        className={className}
+        role="img"
+        aria-label="Extracted pattern"
+        preserveAspectRatio="xMidYMid meet"
+      >
+        {paths}
+      </svg>
+    );
+  }
+  const region = { width: lattice.cell.width * 3, height: lattice.cell.height * 3 };
+  return (
+    <svg
+      viewBox={`0 0 ${region.width} ${region.height}`}
+      className={className}
+      role="img"
+      aria-label="Extracted pattern (tiled)"
+      data-testid="tiled-preview"
+      preserveAspectRatio="xMidYMid meet"
+    >
+      {tilePlacements(lattice, region).map((p, i) => (
+        <g key={i} transform={`translate(${p.x} ${p.y})`}>
+          {paths}
+        </g>
       ))}
     </svg>
   );
@@ -93,7 +121,7 @@ function LibraryCard({ entry, photoURL, onOpen }) {
             className="w-full h-full object-cover"
           />
         ) : (
-          <TilePreview tile={entity.tile} className="max-h-full max-w-full p-3 text-ink" />
+          <TilePreview tile={entity.tile} lattice={entity.lattice} className="max-h-full max-w-full p-3 text-ink" />
         )}
         <span className="absolute top-1.5 left-1.5">
           <ExtractedBadge />
@@ -143,7 +171,7 @@ function EntryDetail({ entry, photoURL, onBack, onUseInStudio }) {
         <figure className="flex flex-col gap-1.5">
           <figcaption className="text-[11px] text-ink-soft">Extracted pattern</figcaption>
           <div className="rounded-md border border-hairline bg-white min-h-48 flex items-center justify-center">
-            <TilePreview tile={entity.tile} className="max-h-80 w-auto p-4 text-[#1a1a1a]" />
+            <TilePreview tile={entity.tile} lattice={entity.lattice} className="max-h-80 w-auto p-4 text-[#1a1a1a]" />
           </div>
         </figure>
       </div>

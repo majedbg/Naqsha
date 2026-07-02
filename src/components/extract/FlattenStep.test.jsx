@@ -134,6 +134,25 @@ describe('FlattenStep — validation + actions', () => {
   });
 });
 
+// S4 (issue #53): when auto-detect pre-fills the corners, a confidence badge
+// invites correction (editable proposal, locked decision 8); with no detection
+// the plain manual instruction shows instead.
+describe('FlattenStep — detection badge (S4)', () => {
+  it('shows the plane-detected badge with rounded confidence', () => {
+    renderStep({ confidence: 0.82 });
+    const badge = screen.getByTestId('flatten-detection-badge');
+    expect(badge.textContent).toMatch(/plane detected/i);
+    expect(badge.textContent).toMatch(/adjust if needed/i);
+    expect(badge.textContent).toMatch(/82%/);
+  });
+
+  it('shows the plain manual instruction when confidence is null', () => {
+    renderStep({ confidence: null });
+    expect(screen.queryByTestId('flatten-detection-badge')).toBeNull();
+    expect(screen.getByText(/shot at an angle/i)).toBeTruthy();
+  });
+});
+
 describe('FlattenStep — before/after preview phase', () => {
   it('shows before and after images with the rectified result', () => {
     renderStep({ rectifiedURL: 'data:image/png;base64,rect' });

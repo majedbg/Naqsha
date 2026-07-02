@@ -126,6 +126,9 @@ function quadArea(q) {
  */
 export function detectQuad(image, { maxDim = DEFAULT_MAX_DIM } = {}) {
   if (!image?.data || !(image.width > 2) || !(image.height > 2)) return null;
+  // Malformed/placeholder buffers (fewer bytes than the declared frame) carry
+  // no real pixels — nothing to detect. Fail soft.
+  if (image.data.length < image.width * image.height * 4) return null;
 
   const { gray, w, h } = toGray(image, maxDim);
   if (w < 3 || h < 3) return null;

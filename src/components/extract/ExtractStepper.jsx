@@ -35,6 +35,7 @@ import {
   imageDataToDataURL,
 } from '../../lib/extraction/imageIO';
 import { createExtractionBridge } from '../../lib/extraction/workerBridge';
+import { detectQuad } from '../../lib/extraction/detectQuad';
 import { listStages } from '../../lib/extraction/pipeline';
 import { makeExtractedPattern } from '../../lib/extraction/extractedPattern';
 import { FABRICATION_ROLES } from '../../lib/extraction/vectorizer';
@@ -45,6 +46,11 @@ import FlattenStep, { DEFAULT_QUAD } from './FlattenStep';
 import LatticeCellEditor from './LatticeCellEditor';
 
 const STEPS = ['Upload', 'Flatten', 'Select', 'Review', 'Save'];
+
+// S4 (issue #53): the auto-detect downscale — small enough that the classical
+// detector is a few-ms main-thread pass on the decoded upload (no Worker /
+// OffscreenCanvas needed), large enough to localize the plane's corners.
+const DETECT_MAX_DIM = 240;
 
 // Preview color per fabrication role — a visible distinction between what the
 // laser engraves (dark), cuts (red), and scores (blue). Preview-only; export
@@ -198,6 +204,10 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad }) {
   // rectified working image. `origRef` keeps the untouched upload so
   // "adjust corners" / "use original" can always restore it.
   const [quad, setQuad] = useState(initialQuad || DEFAULT_QUAD);
+  // S4 (issue #53): 0..1 when auto-detect PRE-FILLED the Flatten corners, else
+  // null. Drives the "plane detected" badge (editable proposal, decision 8);
+  // null is indistinguishable from "no detection ran" (fail-soft invariant).
+  const [detectedConfidence, setDetectedConfidence] = useState(null);
   const [rectified, setRectified] = useState(null); // { img, url, w, h }
   const [flattening, setFlattening] = useState(false);
   const origRef = useRef(null); // { img, url, natural }
@@ -253,7 +263,26 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad }) {
       setImageURL(url);
       setCrop(null);
       setResult(null);
-      setQuad(initialQuad || DEFAULT_QUAD);
+      // Flatten corners: an explicit initialQuad prop (external pre-fill) wins;
+      // otherwise S4 auto-detects the ornament plane and PRE-FILLS the quad.
+      // Detection is a pure, fast main-thread pass on a small downscale of the
+      // decoded upload (see DETECT_MAX_DIM). It PROPOSES — the corners stay
+      // fully draggable, and any failure (null / throw) falls silently to the
+      // manual default with no badge (fail-soft invariant, decision 8).
+      if (initialQuad) {
+        setQuad(initialQuad);
+        setDetectedConfidence(null);
+      } else {
+        let detected = null;
+        try {
+          const small = imageToImageData(img, DETECT_MAX_DIM);
+          detected = detectQuad(small);
+        } catch {
+          detected = null; // detection must never block the flow
+        }
+        setQuad(detected ? detected.quad : DEFAULT_QUAD);
+        setDetectedConfidence(detected ? detected.confidence : null);
+      }
       setRectified(null);
       setStep(1);
     } catch (err) {
@@ -613,6 +642,7 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad }) {
               onQuadChange={setQuad}
               rectifiedURL={rectified?.url || null}
               flattening={flattening}
+              confidence={detectedConfidence}
               onApply={handleApplyFlatten}
               onSkip={handleSkipFlatten}
               onBack={() => setStep(0)}

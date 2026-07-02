@@ -61,6 +61,7 @@ const mocks = vi.hoisted(() => ({
   dispose: vi.fn(),
   save: vi.fn(),
   cropToImageData: vi.fn(),
+  detectQuad: vi.fn(),
 }));
 
 vi.mock('../../lib/extraction/imageIO', () => ({
@@ -85,6 +86,14 @@ vi.mock('../../lib/libraryRepository', () => ({
   saveExtractedPattern: mocks.save,
 }));
 
+// S4 (issue #53): the auto-detect seam. Default null → the plain manual default
+// corners, so every pre-S4 test walks the flow unchanged; the S4 describe block
+// below drives the detected-proposal path with mockReturnValueOnce.
+vi.mock('../../lib/extraction/detectQuad', () => ({
+  detectQuad: mocks.detectQuad,
+  MIN_QUAD_CONFIDENCE: 0.4,
+}));
+
 import ExtractStepper from './ExtractStepper';
 import { getDynamicPatternClass, getDynamicTypes, unregisterPattern } from '../../lib/patternRegistry';
 
@@ -97,6 +106,7 @@ beforeEach(() => {
   mocks.cropToImageData
     .mockReset()
     .mockReturnValue({ data: new Uint8ClampedArray(4), width: 1, height: 1 });
+  mocks.detectQuad.mockReset().mockReturnValue(null);
   registeredIds = [];
 });
 
@@ -415,6 +425,110 @@ describe('ExtractStepper — flatten (S3)', () => {
     const [, quadArg] = mocks.rectify.mock.calls[0];
     expect(quadArg[0].x).toBeCloseTo(0.2 * 200, 6);
     expect(quadArg[3].y).toBeCloseTo(0.8 * 150, 6);
+  });
+});
+
+// --- S4 (issue #53): auto-detect pre-fills the Flatten quad -------------------
+
+describe('ExtractStepper — auto-detect flatten (S4)', () => {
+  const DETECTED = [
+    { x: 0.22, y: 0.12 },
+    { x: 0.86, y: 0.2 },
+    { x: 0.78, y: 0.84 },
+    { x: 0.16, y: 0.74 },
+  ];
+
+  it('pre-fills the detected quad and shows the confidence badge', async () => {
+    mocks.detectQuad.mockReturnValueOnce({ quad: DETECTED, confidence: 0.82 });
+    render(<ExtractStepper onClose={() => {}} />);
+    uploadFixtureFile();
+    await screen.findByRole('button', { name: /apply flatten/i });
+
+    // Handles land on the detected corners (not the 12% default).
+    const tl = screen.getByRole('button', { name: /top-left corner/i });
+    expect(tl.style.left).toBe('22%');
+    expect(tl.style.top).toBe('12%');
+    // Confidence badge (editable proposal, locked decision 8).
+    const badge = screen.getByTestId('flatten-detection-badge');
+    expect(badge.textContent).toMatch(/plane detected/i);
+    expect(badge.textContent).toMatch(/82%/);
+
+    // Detection ran on the decoded upload (a real ImageData-shaped input).
+    expect(mocks.detectQuad).toHaveBeenCalledTimes(1);
+    expect(mocks.detectQuad.mock.calls[0][0]).toHaveProperty('width');
+  });
+
+  it('the detected corners are still draggable, then apply uses them', async () => {
+    mocks.detectQuad.mockReturnValueOnce({ quad: DETECTED, confidence: 0.7 });
+    const gbcr = vi
+      .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+      .mockReturnValue({ left: 0, top: 0, width: 400, height: 300, right: 400, bottom: 300 });
+    try {
+      render(<ExtractStepper onClose={() => {}} />);
+      uploadFixtureFile();
+      await screen.findByRole('button', { name: /apply flatten/i });
+
+      // Nudge the top-left corner — proposals are corrections, not commitments.
+      const area = screen.getByTestId('flatten-area');
+      fireEvent.pointerDown(screen.getByTestId('corner-handle-0'), { clientX: 88, clientY: 36 });
+      fireEvent.pointerMove(area, { clientX: 40, clientY: 30 });
+      const tl = screen.getByRole('button', { name: /top-left corner/i });
+      expect(tl.style.left).toBe('10%'); // 40/400
+      expect(tl.style.top).toBe('10%'); // 30/300
+
+      // Apply warps with the CORRECTED quad in pixels of the 200×150 ImageData.
+      fireEvent.click(screen.getByRole('button', { name: /apply flatten/i }));
+      await screen.findByText(/^before$/i);
+      const [, quadArg] = mocks.rectify.mock.calls[0];
+      expect(quadArg[0].x).toBeCloseTo(0.1 * 200, 6);
+      expect(quadArg[0].y).toBeCloseTo(0.1 * 150, 6);
+    } finally {
+      gbcr.mockRestore();
+    }
+  });
+
+  it('falls back to the plain default corners (no badge) when nothing is detected', async () => {
+    mocks.detectQuad.mockReturnValueOnce(null);
+    render(<ExtractStepper onClose={() => {}} />);
+    uploadFixtureFile();
+    await screen.findByRole('button', { name: /apply flatten/i });
+
+    const tl = screen.getByRole('button', { name: /top-left corner/i });
+    expect(tl.style.left).toBe('12%'); // DEFAULT_QUAD inset
+    expect(screen.queryByTestId('flatten-detection-badge')).toBeNull();
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('a detection failure is silent — default corners, no error banner', async () => {
+    mocks.detectQuad.mockImplementationOnce(() => {
+      throw new Error('detector blew up');
+    });
+    render(<ExtractStepper onClose={() => {}} />);
+    uploadFixtureFile();
+    await screen.findByRole('button', { name: /apply flatten/i });
+
+    const tl = screen.getByRole('button', { name: /top-left corner/i });
+    expect(tl.style.left).toBe('12%');
+    expect(screen.queryByTestId('flatten-detection-badge')).toBeNull();
+    // Fail-soft: indistinguishable from "no detection ran".
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('an explicit initialQuad prop overrides auto-detect (no detection, no badge)', async () => {
+    const external = [
+      { x: 0.3, y: 0.3 },
+      { x: 0.7, y: 0.3 },
+      { x: 0.7, y: 0.7 },
+      { x: 0.3, y: 0.7 },
+    ];
+    render(<ExtractStepper onClose={() => {}} initialQuad={external} />);
+    uploadFixtureFile();
+    await screen.findByRole('button', { name: /apply flatten/i });
+
+    const tl = screen.getByRole('button', { name: /top-left corner/i });
+    expect(tl.style.left).toBe('30%');
+    expect(mocks.detectQuad).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('flatten-detection-badge')).toBeNull();
   });
 });
 

@@ -121,6 +121,61 @@ describe('makeExtractedPatternClass — toSVGGroup()', () => {
     expect(svg).toContain('fill="none"');
     expect(svg).toContain('stroke="#000000"');
   });
+
+  // S6 (issue #55): a centerline exports as ONE single-path score — exactly
+  // one <path> per stroke, its verbatim d, no fill and no fill-rule (a filled
+  // outline would double the laser's travel).
+  it('exports each centerline stroke exactly once with no fill attributes', () => {
+    const e = makeExtractedPattern({
+      patternId: 'extracted-test-1',
+      title: 'mixed',
+      tile: {
+        width: 80,
+        height: 60,
+        fills: [{ d: 'M20 20 L40 20 L40 40 L20 40 Z', role: 'engrave' }],
+        strokes: [
+          { d: 'M10.5 30.5 L69.5 30.5', role: 'score' },
+          { d: 'M40 10 L40 50', role: 'cut' },
+        ],
+      },
+    });
+    const Cls = makeExtractedPatternClass(e);
+    const inst = new Cls();
+    inst.generateWithContext(new RecordingContext(), 1, {}, 80, 60, '#000', 100);
+    const svg = inst.toSVGGroup('layer-1', '#112233', 100);
+
+    expect(svg.match(/<path /g)).toHaveLength(3); // 1 fill + 2 strokes, no doubles
+    const strokeLines = svg.split('\n').filter((l) => l.includes('fill="none"'));
+    expect(strokeLines).toHaveLength(2);
+    expect(strokeLines[0]).toContain('d="M10.5 30.5 L69.5 30.5"'); // verbatim single path
+    expect(strokeLines[0]).toContain('data-role="score"');
+    expect(strokeLines[0]).not.toContain('fill-rule');
+    expect(strokeLines[1]).toContain('data-role="cut"');
+    expect(strokeLines[1]).toContain('stroke="#112233"');
+  });
+
+  it('draws strokes on canvas unfilled (stroke only)', () => {
+    const e = makeExtractedPattern({
+      patternId: 'extracted-test-1',
+      title: 'line',
+      tile: {
+        width: 20,
+        height: 20,
+        fills: [],
+        strokes: [{ d: 'M2 10 L18 10', role: 'score' }],
+      },
+    });
+    const Cls = makeExtractedPatternClass(e);
+    const inst = new Cls();
+    const ctx = new RecordingContext();
+    inst.generateWithContext(ctx, 1, {}, 20, 20, '#000', 100);
+    const ops = ctx.calls.map((c) => c.op);
+    expect(ops).toContain('noFill');
+    expect(ops).toContain('stroke');
+    // The open polyline is not closed on canvas either.
+    const end = ctx.calls.find((c) => c.op === 'endShape');
+    expect(end.args[0]).toBeUndefined();
+  });
 });
 
 // Adversarial-review finding 1: toSVGGroup output is injected raw into the

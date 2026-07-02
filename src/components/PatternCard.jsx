@@ -32,7 +32,10 @@ const EASE = 'cubic-bezier(0.165,0.84,0.44,1)';
 // `size` (px) drives the square box via INLINE style (a Tailwind arbitrary
 // `w-[${size}px]` would not compile) — consistent with the card's other inline
 // styles (transform / border). The Map view passes no size, so it stays 92px.
-export default function PatternCard({ id, meta, symbol, label, ready, locked, lockReason, onPick, size = 92, animateIn = false, dimmed = false }) {
+// `origin` (S1, issue #50): provenance tag from the dynamic registry —
+// 'extracted' renders the 📷 badge so library-sourced patterns read distinct
+// from AI-generated ones at a glance.
+export default function PatternCard({ id, meta, symbol, label, ready, locked, lockReason, onPick, size = 92, animateIn = false, dimmed = false, origin = undefined }) {
   // Route the family lookup through familyMetaFor so custom patterns
   // (meta.family === 'custom') resolve to the neutral CUSTOM_FAMILY gray instead
   // of the bare '#888' fallback. Real taxonomy families still map to the same
@@ -94,6 +97,18 @@ export default function PatternCard({ id, meta, symbol, label, ready, locked, lo
           </div>
         )}
       </div>
+
+      {/* extracted-origin badge, top-left (top-right belongs to SOON/lock) */}
+      {origin === 'extracted' && (
+        <span
+          role="img"
+          aria-label="Extracted from a photo"
+          title="Extracted from a photo — a pattern from your Library"
+          className="absolute top-1 left-1 px-1 py-px text-[9px] leading-none rounded-sm bg-paper/85 border border-hairline"
+        >
+          📷
+        </span>
+      )}
 
       {/* coming-soon / lock marker, top-right */}
       {!ready && (

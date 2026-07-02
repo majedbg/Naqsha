@@ -202,8 +202,10 @@ export default function ExtractStepper({ onClose, onSaved }) {
       });
       // Register FIRST (one entity, two surfaces): the pattern is usable this
       // session even when persistence is unavailable (guest / migration not
-      // yet applied) — never a dead end.
-      registerExtractedPattern(entity);
+      // yet applied) — never a dead end. The transient photoURL lets the
+      // Library view show this save's photo even when no storage path exists
+      // (guest / bucket unavailable).
+      registerExtractedPattern(entity, { photoURL: imageURL });
       const photoExt = (file?.name?.split('.').pop() || 'png').toLowerCase();
       const res = await saveExtractedPattern(entity, { photoBlob: file, photoExt });
       onSaved?.(res);
@@ -219,7 +221,7 @@ export default function ExtractStepper({ onClose, onSaved }) {
     } finally {
       setSaving(false);
     }
-  }, [result, title, defaultTitle, file, onSaved, onClose]);
+  }, [result, title, defaultTitle, file, imageURL, onSaved, onClose]);
 
   // --- render -------------------------------------------------------------------
 

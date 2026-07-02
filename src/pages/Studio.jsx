@@ -79,6 +79,9 @@ import { loadAndRegisterExtractedPatterns } from "../lib/libraryRepository";
 // Photo → Pattern stepper (issue #49) is lazy so potrace-wasm + the extraction
 // stack stay out of the studio bundle until the tool is actually opened.
 const ExtractStepper = lazy(() => import("../components/extract/ExtractStepper"));
+// Pattern Library view (S1, issue #50) — lazy for the same reason: browsing
+// chrome stays out of the studio bundle until the Library is opened.
+const LibraryView = lazy(() => import("../components/library/LibraryView"));
 
 export default function Studio({ submitOrg = null } = {}) {
   const { loading, user, signIn } = useAuth();
@@ -110,6 +113,13 @@ export default function Studio({ submitOrg = null } = {}) {
   // renders it present-but-disabled.
   const [extractOpen, setExtractOpen] = useState(false);
   const extractionEnabled = isFeatureEnabled("extraction") && check("extraction").allowed;
+
+  // Pattern Library view (S1, issue #50) — same flag + tier gate as the
+  // stepper (the Library is the extraction feature's second surface).
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  // Whether the open stepper was launched FROM the Library ("+ New from
+  // Photo"), so closing/saving returns the user there instead of the picker.
+  const extractFromLibraryRef = useRef(false);
 
   // Rehydrate this user's extracted library patterns into the dynamic registry
   // (→ picker custom family) on sign-in. Best-effort: failures only warn.
@@ -1573,7 +1583,17 @@ export default function Studio({ submitOrg = null } = {}) {
             // Photo → Pattern (issue #49): handler only when flag + tier gate
             // allow; otherwise the item renders present-but-disabled.
             onExtractPattern={
-              extractionEnabled ? () => setExtractOpen(true) : undefined
+              extractionEnabled
+                ? () => {
+                    extractFromLibraryRef.current = false;
+                    setExtractOpen(true);
+                  }
+                : undefined
+            }
+            // Pattern Library (S1, issue #50): the extraction feature's second
+            // surface, so it shares the exact same flag + tier gating.
+            onOpenLibrary={
+              extractionEnabled ? () => setLibraryOpen(true) : undefined
             }
             buildShareState={buildShareState}
             showAdmin={showAdmin}
@@ -1858,8 +1878,36 @@ export default function Studio({ submitOrg = null } = {}) {
           <ExtractStepper
             onClose={() => setExtractOpen(false)}
             onSaved={() => {
-              setPendingPanelId(undefined);
-              setUI("showPatternPicker", true);
+              // Round-trip UX: a stepper launched from the Library returns to
+              // the Library (the fresh entry is on top); the Object-menu path
+              // keeps opening the picker, where the pattern is ready to place.
+              if (extractFromLibraryRef.current) {
+                setLibraryOpen(true);
+              } else {
+                setPendingPanelId(undefined);
+                setUI("showPatternPicker", true);
+              }
+            }}
+          />
+        </Suspense>
+      )}
+
+      {/* Pattern Library view (S1, issue #50). Same pro-shell gating as the
+          stepper. One entity, two surfaces: this browses the very entities the
+          picker's custom family registered — "Use in Studio" places one as a
+          new layer through the same addLayer path the picker uses. */}
+      {menuSlot && libraryOpen && (
+        <Suspense fallback={null}>
+          <LibraryView
+            onClose={() => setLibraryOpen(false)}
+            onUseInStudio={(patternId) => {
+              setLibraryOpen(false);
+              addLayer(patternId);
+            }}
+            onNewExtraction={() => {
+              extractFromLibraryRef.current = true;
+              setLibraryOpen(false);
+              setExtractOpen(true);
             }}
           />
         </Suspense>

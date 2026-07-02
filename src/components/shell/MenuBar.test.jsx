@@ -156,4 +156,25 @@ describe("MenuBar (B5 — top menu bar structure)", () => {
     expect(onUndo).toHaveBeenCalledTimes(1);
     expect(onRedo).toHaveBeenCalledTimes(1);
   });
+
+  // S1 (issue #50): the Pattern Library opener lives beside the extraction
+  // entry point in the Object menu, gated the same way (handler only when the
+  // feature flag + tier gate allow).
+  it("Object menu exposes Pattern Library…, invoking its handler when supplied", () => {
+    const onOpenLibrary = vi.fn();
+    render(<MenuBar {...makeHandlers({ onOpenLibrary })} />);
+    openMenu("Object");
+    fireEvent.click(
+      screen.getByRole("menuitem", { name: /pattern library/i })
+    );
+    expect(onOpenLibrary).toHaveBeenCalledTimes(1);
+  });
+
+  it("Pattern Library… renders present-but-disabled without a handler (flag/tier off)", () => {
+    render(<MenuBar {...makeHandlers()} />);
+    openMenu("Object");
+    expect(
+      screen.getByRole("menuitem", { name: /pattern library/i })
+    ).toBeDisabled();
+  });
 });

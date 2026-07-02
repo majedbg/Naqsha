@@ -178,6 +178,79 @@ describe('round-trip', () => {
   });
 });
 
+// S8 (issue #57): optional capture metadata rides the entity and round-trips
+// through the row. Unlike tile/lattice (which THROW → row skipped), a bad
+// location/date/camera is validate-and-nulled so a good pattern never dies.
+describe('capture metadata (S8)', () => {
+  const LOCATION = {
+    lat: 59.8586,
+    lng: 17.6389,
+    placeName: 'Uppsala, Sweden',
+    address: 'Uppsala Cathedral, Sweden',
+    source: 'exif',
+  };
+
+  it('defaults metadata to null when absent', () => {
+    const e = makeExtractedPattern({ title: 't', tile: TILE });
+    expect(e.location).toBeNull();
+    expect(e.captureDate).toBeNull();
+    expect(e.exif).toBeNull();
+  });
+
+  it('round-trips location + capture date + camera through the row', () => {
+    const e = makeExtractedPattern({
+      title: 'Uppsala vault',
+      tile: TILE,
+      location: LOCATION,
+      captureDate: '2026-06-28T12:32:10.000Z',
+      exif: { camera: 'Apple iPhone 15 Pro' },
+    });
+    const rec = serializeExtractedPattern(e);
+    expect(rec.location).toEqual(LOCATION);
+    expect(rec.capture_date).toBe('2026-06-28T12:32:10.000Z');
+    expect(rec.exif).toEqual({ camera: 'Apple iPhone 15 Pro' });
+
+    const back = deserializeExtractedPattern(rec);
+    expect(back.location).toEqual(LOCATION);
+    expect(back.captureDate).toBe('2026-06-28T12:32:10.000Z');
+    expect(back.exif).toEqual({ camera: 'Apple iPhone 15 Pro' });
+  });
+
+  it('round-trips a place-only manual location (no coordinates)', () => {
+    const e = makeExtractedPattern({
+      title: 't',
+      tile: TILE,
+      location: { placeName: 'A carved door', source: 'manual' },
+    });
+    const back = deserializeExtractedPattern(serializeExtractedPattern(e));
+    expect(back.location).toEqual({
+      lat: null,
+      lng: null,
+      placeName: 'A carved door',
+      address: null,
+      source: 'manual',
+    });
+  });
+
+  it('validate-and-nulls a corrupt location WITHOUT throwing (keeps the entry)', () => {
+    const goodRow = serializeExtractedPattern(makeExtractedPattern({ title: 't', tile: TILE }));
+    const back = deserializeExtractedPattern({
+      ...goodRow,
+      location: { lat: 999, lng: 999, placeName: '\x00\x1b', source: 'laser' },
+    });
+    // Nothing meaningful survived → location null, but the pattern is intact.
+    expect(back.location).toBeNull();
+    expect(back.tile.fills).toHaveLength(2);
+  });
+
+  it('nulls a bad capture date on a row without discarding the pattern', () => {
+    const goodRow = serializeExtractedPattern(makeExtractedPattern({ title: 't', tile: TILE }));
+    const back = deserializeExtractedPattern({ ...goodRow, capture_date: 'garbage' });
+    expect(back.captureDate).toBeNull();
+    expect(back.tile.fills).toHaveLength(2);
+  });
+});
+
 // Adversarial-review finding 1 (stored-markup injection): a crafted
 // user_patterns row must never round-trip active markup back into the app.
 // Deserialization REJECTS rows whose pattern_id / path data / roles fall

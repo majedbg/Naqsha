@@ -29,6 +29,11 @@
 
 import { FABRICATION_ROLES } from './vectorizer';
 import { validateLattice } from './lattice';
+import {
+  normalizeLocation,
+  normalizeCaptureDate,
+  normalizeExif,
+} from './locationMeta';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -82,6 +87,11 @@ export function makeExtractedPattern({
   lattice = null,
   photoPath = null,
   visibility = 'private',
+  // S8 (issue #57): optional capture metadata. All validate-and-null (never
+  // throw) — location/date/camera are fully optional and must never block.
+  location = null,
+  captureDate = null,
+  exif = null,
 } = {}) {
   const fills = tile?.fills ?? [];
   const strokes = tile?.strokes ?? [];
@@ -103,6 +113,10 @@ export function makeExtractedPattern({
     // data below); null stays null — the single-motif floor.
     lattice: validateLattice(lattice),
     photoPath,
+    // Optional metadata — normalized, never fatal (see locationMeta).
+    location: normalizeLocation(location),
+    captureDate: normalizeCaptureDate(captureDate),
+    exif: normalizeExif(exif),
   };
 }
 
@@ -139,6 +153,15 @@ export function serializeExtractedPattern(entity) {
     },
     lattice: entity.lattice,
     photo_path: entity.photoPath,
+    // S8: capture metadata → columns added by migration 010 (soft jsonb/text).
+    // 010 is human-gated and ships WITH 009 (apply 010 after/with 009). If a
+    // deployment has 009 but not 010, this insert fails on the unknown columns
+    // and saveExtractedPattern's best-effort path degrades to a session-only
+    // save (persisted:false) — never a dead end, exactly like the unapplied-009
+    // path in S0.
+    location: entity.location,
+    capture_date: entity.captureDate,
+    exif: entity.exif,
   };
 }
 
@@ -199,5 +222,11 @@ export function deserializeExtractedPattern(record) {
     lattice: record.lattice ?? null,
     photoPath: record.photo_path ?? null,
     visibility: record.visibility || 'private',
+    // S8: metadata is validate-and-null inside makeExtractedPattern — a corrupt
+    // location/date/camera on an attacker-writable row drops the bad piece, it
+    // never throws, so a good pattern + photo are never lost to bad metadata.
+    location: record.location ?? null,
+    captureDate: record.capture_date ?? null,
+    exif: record.exif ?? null,
   });
 }

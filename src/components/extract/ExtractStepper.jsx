@@ -19,6 +19,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { fileToDataURL, loadImage, cropToImageData } from '../../lib/extraction/imageIO';
 import { createExtractionBridge } from '../../lib/extraction/workerBridge';
+import { listStages } from '../../lib/extraction/pipeline';
 import { makeExtractedPattern } from '../../lib/extraction/extractedPattern';
 import { registerExtractedPattern } from '../../lib/patterns/ExtractedPatternGenerator';
 import { saveExtractedPattern } from '../../lib/libraryRepository';
@@ -56,6 +57,54 @@ const REASON_LABELS = {
   'no-supabase': 'cloud storage is not configured',
 };
 
+// The extraction stages, in order, for the progress rail (serializable
+// descriptors — importing them pulls no heavy stage deps, which stay lazy).
+const EXTRACTION_STAGES = listStages();
+
+// Human-readable status for a stage's latest pipeline progress event.
+const STAGE_STATUS_TEXT = {
+  pending: 'waiting',
+  loading: 'loading…',
+  running: 'running…',
+  done: 'done',
+  skipped: 'skipped',
+  failed: 'failed',
+};
+
+// Per-stage progress rail shown while the pipeline runs (issue #51: staged
+// progress in the stepper). `events` maps stage id → latest progress event.
+function StageProgress({ events }) {
+  return (
+    <ol aria-label="Extraction progress" className="flex items-center gap-3 text-xs">
+      {EXTRACTION_STAGES.map(({ id, label }) => {
+        const ev = events[id];
+        const status = ev?.status ?? 'pending';
+        const pct =
+          typeof ev?.progress === 'number' ? ` ${Math.round(ev.progress * 100)}%` : '';
+        return (
+          <li key={id} className="flex items-center gap-1">
+            <span
+              className={
+                status === 'running' || status === 'loading'
+                  ? 'text-ink font-medium'
+                  : status === 'pending'
+                    ? 'text-ink-faint'
+                    : 'text-ink-soft'
+              }
+            >
+              {label}
+            </span>
+            <span className={status === 'failed' ? 'text-red-500' : 'text-ink-faint'}>
+              {STAGE_STATUS_TEXT[status] ?? status}
+              {pct}
+            </span>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
 const PRIMARY_BTN =
   'px-4 py-1.5 text-sm font-medium rounded-xs bg-saffron text-ink hover:bg-saffron-hover disabled:opacity-40 disabled:cursor-default transition-colors duration-fast ease-out-quart';
 const GHOST_BTN =
@@ -69,7 +118,7 @@ export default function ExtractStepper({ onClose, onSaved }) {
   const [crop, setCrop] = useState(null); // fractional {x,y,w,h}, null = full image
   const [drag, setDrag] = useState(null); // in-flight drag {x0,y0,x1,y1}
   const [tracing, setTracing] = useState(false);
-  const [stageMsg, setStageMsg] = useState('');
+  const [stageEvents, setStageEvents] = useState({}); // stage id → latest progress event
   const [result, setResult] = useState(null);
   const [error, setError] = useState('');
   const [title, setTitle] = useState('');
@@ -159,6 +208,7 @@ export default function ExtractStepper({ onClose, onSaved }) {
     if (!imgElRef.current || !natural) return;
     setError('');
     setTracing(true);
+    setStageEvents({});
     try {
       const f = crop || { x: 0, y: 0, w: 1, h: 1 };
       const rect = {
@@ -170,7 +220,7 @@ export default function ExtractStepper({ onClose, onSaved }) {
       const imageData = cropToImageData(imgElRef.current, rect);
       if (!bridgeRef.current) bridgeRef.current = createExtractionBridge();
       const res = await bridgeRef.current.extract(imageData, {}, (p) =>
-        setStageMsg(`${p.stage}: ${p.status}`)
+        setStageEvents((m) => ({ ...m, [p.stage]: p }))
       );
       if (!res.tile.fills.length && !res.tile.strokes.length) {
         setError('No shapes found in that region — try a tighter or higher-contrast selection.');
@@ -182,7 +232,7 @@ export default function ExtractStepper({ onClose, onSaved }) {
       setError(err.message || 'Extraction failed.');
     } finally {
       setTracing(false);
-      setStageMsg('');
+      setStageEvents({});
     }
   }, [crop, natural]);
 
@@ -335,7 +385,7 @@ export default function ExtractStepper({ onClose, onSaved }) {
                   />
                 )}
               </div>
-              {tracing && <p className="text-xs text-ink-soft">Tracing… {stageMsg}</p>}
+              {tracing && <StageProgress events={stageEvents} />}
               <div className="flex gap-2">
                 <button type="button" className={GHOST_BTN} onClick={() => setStep(1)}>
                   Back

@@ -1,14 +1,17 @@
-// ExtractionPipeline + WorkerBridge (S0, issue #49).
+// ExtractionPipeline + WorkerBridge (S0 spine #49, S2 harness #51).
 //
-// The pipeline is the staged orchestration seam every later slice deepens
-// (flatten → [lattice → symmetry →] trace). S0: flatten reports 'skipped'
-// (stub — the stepper stage exists, locked decision 2) and trace runs the
-// contour Vectorizer. The bridge is the worker seam (locked decision 11):
-// tests cover the inline fallback (jsdom/node have no module Workers) and the
-// message protocol against a stub worker.
+// The pipeline is the staged orchestration HARNESS every CV slice plugs into:
+// stage registration (createPipeline), staged progress, cancellation
+// (AbortSignal), per-stage confidence, lazy heavy deps, and fail-soft
+// optional stages. The default stages preserve S0 behavior: flatten reports
+// 'skipped' (stub — the stepper stage exists, locked decision 2) and trace
+// runs the contour Vectorizer. The bridge is the worker seam (locked decision
+// 11): tests cover the inline fallback (jsdom/node have no module Workers),
+// the message protocol, failure containment, and the cancel/drain protocol
+// against stub workers.
 
 import { describe, it, expect, vi } from 'vitest';
-import { runExtraction } from './pipeline';
+import { runExtraction, createPipeline, listStages } from './pipeline';
 import { createExtractionBridge } from './workerBridge';
 
 function squareImage() {
@@ -48,6 +51,234 @@ describe('runExtraction', () => {
   it('reports a confidence signal for the trace stage', async () => {
     const result = await runExtraction({ image: squareImage() });
     expect(result.confidence.trace).toBeGreaterThan(0);
+  });
+});
+
+// --- S2 harness: the stage contract every CV slice implements ---------------
+
+describe('createPipeline — stage harness', () => {
+  it('runs registered stages in order, merges patches, and collects per-stage confidence', async () => {
+    const calls = [];
+    const run = createPipeline([
+      {
+        id: 'a',
+        label: 'A',
+        run: (ctx) => {
+          calls.push(['a', ctx.image.width]);
+          return { patch: { tile: { width: 9 } }, confidence: 0.7 };
+        },
+      },
+      {
+        id: 'b',
+        label: 'B',
+        run: (ctx) => {
+          calls.push(['b', ctx.tile.width]); // sees a's patch in ctx
+          return { patch: { lattice: { t1: [1, 0], t2: [0, 1] } }, confidence: 0.4 };
+        },
+      },
+    ]);
+    const result = await run({ image: squareImage() });
+    expect(calls).toEqual([
+      ['a', 50],
+      ['b', 9],
+    ]);
+    expect(result.tile).toEqual({ width: 9 });
+    expect(result.lattice).toEqual({ t1: [1, 0], t2: [0, 1] });
+    expect(result.confidence).toEqual({ a: 0.7, b: 0.4 });
+  });
+
+  it('emits skipped for stages whose skip(ctx) is truthy, without running them', async () => {
+    const runFn = vi.fn();
+    const events = [];
+    const run = createPipeline([
+      { id: 'x', label: 'X', skip: (ctx) => ctx.options.skipX, run: runFn },
+    ]);
+    await run({ image: squareImage(), options: { skipX: true } }, (p) => events.push(p));
+    expect(events).toEqual([{ stage: 'x', status: 'skipped' }]);
+    expect(runFn).not.toHaveBeenCalled();
+  });
+
+  it('forwards fractional intra-stage progress via report()', async () => {
+    const events = [];
+    const run = createPipeline([
+      {
+        id: 's',
+        label: 'S',
+        run: (_ctx, { report }) => {
+          report(0.25);
+          report(0.75);
+          return {};
+        },
+      },
+    ]);
+    await run({ image: squareImage() }, (p) => events.push(p));
+    expect(events).toEqual([
+      { stage: 's', status: 'running' },
+      { stage: 's', status: 'running', progress: 0.25 },
+      { stage: 's', status: 'running', progress: 0.75 },
+      { stage: 's', status: 'done' },
+    ]);
+  });
+
+  it('fails soft on an optional stage: failed event, confidence 0, flow continues', async () => {
+    const events = [];
+    const run = createPipeline([
+      {
+        id: 'shaky',
+        label: 'Shaky',
+        optional: true,
+        run: () => {
+          throw new Error('model exploded');
+        },
+      },
+      { id: 'solid', label: 'Solid', run: () => ({ patch: { tile: { ok: true } }, confidence: 1 }) },
+    ]);
+    const result = await run({ image: squareImage() }, (p) => events.push(p));
+    expect(events).toContainEqual({ stage: 'shaky', status: 'failed', error: 'model exploded' });
+    expect(result.tile).toEqual({ ok: true });
+    expect(result.confidence).toEqual({ shaky: 0, solid: 1 });
+  });
+
+  it('rejects on a required stage failure, after emitting the failed event', async () => {
+    const events = [];
+    const after = vi.fn();
+    const run = createPipeline([
+      {
+        id: 'core',
+        label: 'Core',
+        run: () => {
+          throw new Error('no geometry');
+        },
+      },
+      { id: 'later', label: 'Later', run: after },
+    ]);
+    await expect(run({ image: squareImage() }, (p) => events.push(p))).rejects.toThrow(
+      'no geometry'
+    );
+    expect(events).toContainEqual({ stage: 'core', status: 'failed', error: 'no geometry' });
+    expect(after).not.toHaveBeenCalled();
+  });
+
+  it('lists serializable stage descriptors for the UI', () => {
+    expect(listStages()).toEqual([
+      { id: 'flatten', label: 'Flatten', optional: true },
+      { id: 'trace', label: 'Trace', optional: false },
+    ]);
+    expect(
+      listStages([{ id: 'z', label: 'Z', optional: true, run: () => {}, loadDeps: () => {} }])
+    ).toEqual([{ id: 'z', label: 'Z', optional: true }]);
+  });
+});
+
+describe('createPipeline — lazy heavy deps', () => {
+  it('loads deps once per runtime with loading progress, and hands them to run()', async () => {
+    const loadDeps = vi.fn(async (report) => {
+      report(0.5);
+      return { model: 'warm' };
+    });
+    const seen = [];
+    const stage = {
+      id: 'heavy',
+      label: 'Heavy',
+      loadDeps,
+      run: (_ctx, { deps }) => {
+        seen.push(deps);
+        return {};
+      },
+    };
+    const run = createPipeline([stage]);
+    const events = [];
+    await run({ image: squareImage() }, (p) => events.push(p));
+    await run({ image: squareImage() }, (p) => events.push(p)); // second run: cache hit
+    expect(loadDeps).toHaveBeenCalledTimes(1);
+    expect(seen).toEqual([{ model: 'warm' }, { model: 'warm' }]);
+    expect(events.filter((e) => e.status === 'loading')).toEqual([
+      { stage: 'heavy', status: 'loading' },
+      { stage: 'heavy', status: 'loading', progress: 0.5 },
+    ]);
+  });
+
+  it('re-attempts a failed dep load on the next run instead of caching the failure', async () => {
+    let attempts = 0;
+    const stage = {
+      id: 'flaky',
+      label: 'Flaky',
+      loadDeps: async () => {
+        attempts++;
+        if (attempts === 1) throw new Error('CDN down');
+        return { ok: true };
+      },
+      run: (_ctx, { deps }) => ({ confidence: deps.ok ? 1 : 0 }),
+    };
+    const run = createPipeline([stage]);
+    await expect(run({ image: squareImage() })).rejects.toThrow('CDN down');
+    const result = await run({ image: squareImage() });
+    expect(attempts).toBe(2);
+    expect(result.confidence.flaky).toBe(1);
+  });
+});
+
+describe('createPipeline — cancellation', () => {
+  it('rejects with AbortError between stages and never runs later stages', async () => {
+    const controller = new AbortController();
+    const later = vi.fn();
+    const run = createPipeline([
+      {
+        id: 'first',
+        label: 'First',
+        run: () => {
+          controller.abort(); // user cancels while the first stage crunches
+          return {};
+        },
+      },
+      { id: 'second', label: 'Second', run: later },
+    ]);
+    await expect(
+      run({ image: squareImage() }, undefined, { signal: controller.signal })
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    expect(later).not.toHaveBeenCalled();
+  });
+
+  it('passes the signal into stages for cooperative intra-stage aborts', async () => {
+    const controller = new AbortController();
+    const run = createPipeline([
+      {
+        id: 'chunky',
+        label: 'Chunky',
+        run: (_ctx, { signal }) => {
+          controller.abort();
+          if (signal.aborted) {
+            const err = new Error('extraction cancelled');
+            err.name = 'AbortError';
+            throw err;
+          }
+          return {};
+        },
+      },
+    ]);
+    await expect(
+      run({ image: squareImage() }, undefined, { signal: controller.signal })
+    ).rejects.toMatchObject({ name: 'AbortError' });
+  });
+
+  it('treats an in-stage AbortError as cancellation, not a stage failure (even on optional stages)', async () => {
+    const events = [];
+    const run = createPipeline([
+      {
+        id: 'soft',
+        label: 'Soft',
+        optional: true,
+        run: () => {
+          const err = new Error('extraction cancelled');
+          err.name = 'AbortError';
+          throw err;
+        },
+      },
+    ]);
+    await expect(run({ image: squareImage() }, (p) => events.push(p))).rejects.toMatchObject({
+      name: 'AbortError',
+    });
+    expect(events.filter((e) => e.status === 'failed')).toEqual([]);
   });
 });
 
@@ -187,6 +418,181 @@ describe('createExtractionBridge — worker failure fallback', () => {
     const first = bridge.extract(squareImage(), {});
     await expect(bridge.extract(squareImage(), {})).rejects.toThrow(/in progress/i);
     await first; // settles via watchdog fallback
+    bridge.dispose();
+  });
+});
+
+// S2 cancellation: aborting the caller's signal releases the caller
+// immediately (AbortError), sends a cooperative cancel to the worker, and
+// DRAINS the ack — a responsive worker (and its warm lazy-loaded models)
+// survives and is reused; a worker that ignores the cancel is replaced with a
+// fresh one (NOT the broken-worker inline fallback).
+describe('createExtractionBridge — cancellation', () => {
+  const okResult = () => ({
+    tile: { width: 1, height: 1, fills: [{ d: 'M0 0Z', role: 'engrave' }], strokes: [] },
+    lattice: null,
+    confidence: { trace: 1 },
+  });
+
+  // Speaks the full protocol: first start hangs (until cancelled), later
+  // starts complete; cancel is acked with {type:'cancelled'}.
+  function cancelAwareWorker() {
+    const worker = {
+      onmessage: null,
+      onerror: null,
+      onmessageerror: null,
+      terminated: false,
+      starts: 0,
+      cancels: 0,
+      postMessage(msg) {
+        if (msg.type === 'cancel') {
+          worker.cancels++;
+          queueMicrotask(() =>
+            worker.onmessage?.({ data: { type: 'cancelled', id: msg.id } })
+          );
+          return;
+        }
+        if (msg.type !== 'start') return;
+        worker.starts++;
+        const { id } = msg;
+        const hang = worker.starts === 1;
+        queueMicrotask(() => {
+          worker.onmessage?.({
+            data: { type: 'progress', id, stage: 'trace', status: 'running', progress: 0.5 },
+          });
+          if (!hang) worker.onmessage?.({ data: { type: 'result', id, result: okResult() } });
+        });
+      },
+      terminate() {
+        worker.terminated = true;
+      },
+    };
+    return worker;
+  }
+
+  // Accepts starts, emits one progress, then ignores everything — including
+  // the cancel.
+  function stubbornWorker() {
+    const worker = {
+      onmessage: null,
+      onerror: null,
+      onmessageerror: null,
+      terminated: false,
+      starts: 0,
+      postMessage(msg) {
+        if (msg.type !== 'start') return;
+        worker.starts++;
+        const { id } = msg;
+        queueMicrotask(() => {
+          worker.onmessage?.({ data: { type: 'progress', id, stage: 'trace', status: 'running' } });
+        });
+      },
+      terminate() {
+        worker.terminated = true;
+      },
+    };
+    return worker;
+  }
+
+  it('rejects with AbortError immediately when the signal is already aborted', async () => {
+    const bridge = createExtractionBridge({ workerFactory: null });
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      bridge.extract(squareImage(), {}, undefined, { signal: controller.signal })
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    bridge.dispose();
+  });
+
+  it('cancels a worker extraction: AbortError to the caller, worker acked + reused', async () => {
+    const w = cancelAwareWorker();
+    let factoryCalls = 0;
+    const bridge = createExtractionBridge({
+      workerFactory: () => {
+        factoryCalls++;
+        return w;
+      },
+    });
+    const controller = new AbortController();
+    const sawProgress = new Promise((resolve) => {
+      var progress = (p) => p.progress != null && resolve();
+      bridge
+        .extract(squareImage(), {}, progress, { signal: controller.signal })
+        .catch((err) => {
+          expect(err.name).toBe('AbortError');
+        });
+    });
+    await sawProgress; // the run is genuinely in flight
+    controller.abort();
+    await Promise.resolve(); // let the cancel ack drain
+    expect(w.cancels).toBe(1);
+    expect(w.terminated).toBe(false); // warm worker survives a cancel
+
+    const again = await bridge.extract(squareImage(), {});
+    expect(again.tile.fills).toHaveLength(1);
+    expect(factoryCalls).toBe(1); // SAME worker, not a fresh one
+    expect(w.starts).toBe(2);
+    bridge.dispose();
+  });
+
+  it('rejects a new extract while a cancelled run is still draining', async () => {
+    const w = stubbornWorker();
+    const bridge = createExtractionBridge({ workerFactory: () => w, watchdogMs: 5000 });
+    const controller = new AbortController();
+    const p = bridge.extract(squareImage(), {}, undefined, { signal: controller.signal });
+    controller.abort();
+    await expect(p).rejects.toMatchObject({ name: 'AbortError' });
+    await expect(bridge.extract(squareImage(), {})).rejects.toThrow(/in progress/i);
+    bridge.dispose();
+  });
+
+  it('replaces a worker that ignores the cancel: fresh worker on the next extract', async () => {
+    const workers = [];
+    const bridge = createExtractionBridge({
+      workerFactory: () => {
+        const w = workers.length === 0 ? stubbornWorker() : cancelAwareWorker();
+        workers.push(w);
+        return w;
+      },
+      watchdogMs: 20,
+    });
+    const controller = new AbortController();
+    const p = bridge.extract(squareImage(), {}, undefined, { signal: controller.signal });
+    controller.abort();
+    await expect(p).rejects.toMatchObject({ name: 'AbortError' });
+    await new Promise((r) => setTimeout(r, 40)); // drain watchdog elapses
+
+    expect(workers[0].terminated).toBe(true); // the deaf worker was replaced
+    // First start on the fresh cancelAwareWorker hangs by design; use its
+    // second-start path by pre-warming: extract → cancel-free result comes
+    // only on start 2, so drive one hanging call via a cancel first.
+    const c2 = new AbortController();
+    const p2 = bridge.extract(squareImage(), {}, undefined, { signal: c2.signal });
+    c2.abort();
+    await expect(p2).rejects.toMatchObject({ name: 'AbortError' });
+    await Promise.resolve();
+    const result = await bridge.extract(squareImage(), {});
+    expect(result.tile.fills).toHaveLength(1);
+    expect(workers).toHaveLength(2);
+    bridge.dispose();
+  });
+
+  it('forwards fractional stage progress from the worker protocol', async () => {
+    const w = cancelAwareWorker();
+    const bridge = createExtractionBridge({ workerFactory: () => w });
+    const controller = new AbortController();
+    const events = [];
+    const done = new Promise((resolve) => {
+      bridge
+        .extract(squareImage(), {}, (p) => {
+          events.push(p);
+          resolve();
+        }, { signal: controller.signal })
+        .catch(() => {});
+    });
+    await done;
+    controller.abort();
+    expect(events).toContainEqual({ stage: 'trace', status: 'running', progress: 0.5 });
     bridge.dispose();
   });
 });

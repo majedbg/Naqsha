@@ -8,7 +8,7 @@
 // a pattern into the picker's custom family.
 
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 
 const TRACE_RESULT = {
   tile: {
@@ -97,6 +97,41 @@ describe('ExtractStepper — step flow', () => {
     // Review: traced geometry proposal + shape count.
     expect(await screen.findByText(/1 shape/i)).toBeTruthy();
     expect(mocks.extract).toHaveBeenCalledTimes(1);
+  });
+
+  // S2 (issue #51): the stepper renders PER-STAGE progress from the pipeline's
+  // staged events — every stage listed, each showing its latest status
+  // (waiting/loading/running+fraction/done/skipped) while extraction runs.
+  it('shows per-stage progress from the staged pipeline events', async () => {
+    let emitProgress;
+    let resolveExtract;
+    mocks.extract.mockImplementation((_img, _opts, onProgress) => {
+      emitProgress = onProgress;
+      return new Promise((resolve) => {
+        resolveExtract = () => resolve(TRACE_RESULT);
+      });
+    });
+    render(<ExtractStepper onClose={() => {}} />);
+    await walkToSelect();
+    fireEvent.click(screen.getByRole('button', { name: /trace region/i }));
+
+    const rail = await screen.findByRole('list', { name: /extraction progress/i });
+    // Every pipeline stage is listed up front, waiting.
+    expect(rail.textContent).toMatch(/Flatten/);
+    expect(rail.textContent).toMatch(/Trace/);
+    expect(rail.textContent).toMatch(/waiting/i);
+
+    await act(async () => emitProgress({ stage: 'flatten', status: 'skipped' }));
+    expect(rail.textContent).toMatch(/skipped/i);
+
+    await act(async () => emitProgress({ stage: 'trace', status: 'running', progress: 0.42 }));
+    expect(rail.textContent).toMatch(/running/i);
+    expect(rail.textContent).toMatch(/42%/);
+
+    await act(async () => resolveExtract());
+    // Extraction finished → Review, rail gone.
+    expect(await screen.findByText(/1 shape/i)).toBeTruthy();
+    expect(screen.queryByRole('list', { name: /extraction progress/i })).toBeNull();
   });
 
   it('stays on Select with a message when nothing traces (no dead end)', async () => {

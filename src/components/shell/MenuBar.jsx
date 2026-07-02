@@ -127,6 +127,9 @@ export default function MenuBar({
   onGenerateAI,
   // Photo → Pattern stepper opener (issue #49) — OPTIONAL; gated upstream.
   onExtractPattern,
+  // Pattern Library opener (S1, issue #50) — OPTIONAL; gated upstream the same
+  // way as extraction (feature flag + tier gate).
+  onOpenLibrary,
   buildShareState,
   // Admin entry point (relocated from the now-removed studio TopNav). `showAdmin`
   // is gated upstream (useShowAdmin); `onOpenAdmin` navigates to /admin. Both come
@@ -250,6 +253,13 @@ export default function MenuBar({
           label: "Extract from Photo…",
           onSelect: onExtractPattern,
           disabled: !onExtractPattern,
+        },
+        // The Library surface for those extractions (S1, issue #50): browse
+        // saved entries, open one, jump back into the Studio with it.
+        {
+          label: "Pattern Library…",
+          onSelect: onOpenLibrary,
+          disabled: !onOpenLibrary,
         },
       ],
     },

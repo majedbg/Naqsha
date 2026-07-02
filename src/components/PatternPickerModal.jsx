@@ -120,12 +120,16 @@ export default function PatternPickerModal({ open, onClose, onPick }) {
     const ready = !!getPatternClass(id);
     const gate = check('pattern', id);
     const label = labelFor(id, dynamicTypes);
+    // Provenance badge (S1, issue #50): resolved here — once, for BOTH views —
+    // so extracted library patterns read 📷 wherever the card renders.
+    const origin = dynamicTypes.find((t) => t.id === id)?.origin;
     const Card = sortable ? SortablePatternCard : PatternCard;
     return (
       <Card
         key={id}
         id={id}
         meta={meta}
+        origin={origin}
         symbol={PATTERN_SYMBOLS[id] || label.slice(0, 2)}
         label={label}
         ready={ready}

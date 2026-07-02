@@ -18,8 +18,13 @@
 // NOT isAI, so later slices can badge it 📷 without a registry migration.
 
 import { Pattern } from './drawingContext';
-import { registerPattern } from '../patternRegistry';
+import {
+  registerPattern,
+  unregisterPattern,
+  getDynamicTypes,
+} from '../patternRegistry';
 import { escapeAttr } from '../extraction/extractedPattern';
+import { addLibraryEntry, clearLibraryEntries } from '../libraryStore';
 
 const CURVE_SEGMENTS = 12;
 
@@ -162,12 +167,38 @@ export function makeExtractedPatternClass(entity) {
  * Register an ExtractedPattern into the dynamic registry so it appears in the
  * picker's custom family and is placeable/exportable like any pattern.
  * No params in S0 (free tier = fixed tile; live knobs are the paid v-next).
+ *
+ * This is the SINGLE write path for both library surfaces (locked decision 6):
+ * it also indexes the entity into libraryStore so the Library view (S1, issue
+ * #50) lists exactly what the picker registered — cloud-loaded and
+ * session-only entries alike. `extras` carries transient display data:
+ *   - photoURL:  session dataURL of the source photo (guest saves have no
+ *                storage path but should still show their photo this session)
+ *   - createdAt: the row's created_at ISO string (cloud loads) for ordering.
  */
-export function registerExtractedPattern(entity) {
+export function registerExtractedPattern(entity, extras = {}) {
   const PatternClass = makeExtractedPatternClass(entity);
   registerPattern(entity.patternId, PatternClass, entity.title, {}, [], {
     isAI: false,
     origin: 'extracted',
   });
+  addLibraryEntry(entity, extras);
   return PatternClass;
+}
+
+/**
+ * Sign-out hygiene (S1 review): drop EVERY extracted-origin pattern from both
+ * library surfaces — the dynamic registry (picker custom family) and the
+ * libraryStore (Library view) — so the next account on a shared browser never
+ * sees the previous account's entries. Selective on `origin === 'extracted'`:
+ * builtin extras and AI patterns follow their own lifecycle and are untouched.
+ * (The store itself only ever holds extracted entities — single write path —
+ * so clearing it wholesale is exact, not approximate.)
+ */
+export function clearExtractedPatterns() {
+  const extractedIds = getDynamicTypes()
+    .filter((t) => t.origin === 'extracted')
+    .map((t) => t.id); // snapshot first: unregisterPattern splices the live array
+  extractedIds.forEach(unregisterPattern);
+  clearLibraryEntries();
 }

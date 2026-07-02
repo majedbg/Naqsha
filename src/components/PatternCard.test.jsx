@@ -108,4 +108,31 @@ describe("PatternCard", () => {
     // Sanity: the constant itself is the neutral gray.
     expect(CUSTOM_FAMILY.color).toBe("#8a8f99");
   });
+
+  // S1 (issue #50): extracted patterns carry a distinct 📷 origin badge so
+  // library-sourced is visually distinct from AI-generated at a glance.
+  it("shows the 📷 Extracted badge when origin='extracted'", () => {
+    renderCard({
+      id: "extracted-thing",
+      meta: { family: "custom", det: "seeded", mark: "line", sym: false },
+      symbol: "Ex",
+      label: "Uppsala ceiling",
+      origin: "extracted",
+    });
+    const badge = screen.getByRole("img", { name: /extracted from a photo/i });
+    expect(badge).toBeInTheDocument();
+    expect(badge.textContent).toBe("📷");
+  });
+
+  it("shows NO extracted badge for AI/custom patterns without the origin", () => {
+    renderCard({
+      id: "ai-thing",
+      meta: { family: "custom", det: "seeded", mark: "line", sym: false },
+      symbol: "Ai",
+      label: "AI Thing",
+    });
+    expect(
+      screen.queryByRole("img", { name: /extracted from a photo/i })
+    ).not.toBeInTheDocument();
+  });
 });

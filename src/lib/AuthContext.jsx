@@ -7,6 +7,7 @@ import {
 } from "react";
 import { supabase } from "./supabase";
 import { maybeClaimOnLogin } from "./org/claimOnLogin";
+import { clearExtractedPatterns } from "./patterns/ExtractedPatternGenerator";
 
 const AuthContext = createContext(null);
 
@@ -159,6 +160,16 @@ export function AuthProvider({ children }) {
         setProfile(null);
         clearCachedProfile();
       }
+      // Account hygiene (S1 review, issue #50): a real sign-out clears the
+      // previous account's extracted patterns from BOTH module-global library
+      // surfaces (registry + store) so the next user on this browser never
+      // sees them. Gated on SIGNED_OUT specifically — other null-session
+      // events (e.g. INITIAL_SESSION for a guest) must not wipe a guest's
+      // session-only extractions. AI/builtin patterns are untouched (they
+      // have no sign-out lifecycle today; extracted-only keeps this surgical).
+      if (event === "SIGNED_OUT") {
+        clearExtractedPatterns();
+      }
       if (mounted) setLoading(false);
     });
 
@@ -192,6 +203,10 @@ export function AuthProvider({ children }) {
     setSession(null);
     setProfile(null);
     clearCachedProfile();
+    // Belt-and-braces twin of the SIGNED_OUT branch above: the UI treats the
+    // user as signed out even when supabase.auth.signOut() errored (no event
+    // fires then), so the extracted library must clear here too. Idempotent.
+    clearExtractedPatterns();
   }, []);
 
   const tier = getEffectiveTier(profile);

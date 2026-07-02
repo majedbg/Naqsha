@@ -16,10 +16,12 @@ import {
   listExtractedPatterns,
   deleteExtractedPattern,
   loadAndRegisterExtractedPatterns,
+  getPhotoURL,
   PHOTO_BUCKET,
 } from './libraryRepository';
 import { makeExtractedPattern, serializeExtractedPattern } from './extraction/extractedPattern';
 import { getDynamicPatternClass, unregisterPattern } from './patternRegistry';
+import { getLibraryEntry, clearLibraryEntries } from './libraryStore';
 
 const USER = { id: 'user-1' };
 
@@ -45,6 +47,7 @@ beforeEach(() => {
 afterEach(() => {
   unregisterPattern('extracted-lr-1');
   unregisterPattern('extracted-lr-2');
+  clearLibraryEntries();
 });
 
 describe('saveExtractedPattern', () => {
@@ -210,6 +213,54 @@ describe('deleteExtractedPattern', () => {
     await deleteExtractedPattern('extracted-lr-1');
     expect(seed.user_patterns).toHaveLength(0);
     expect(getDynamicPatternClass('extracted-lr-1')).toBeNull();
+  });
+
+  it('also drops the entry from the library store (one entity, two surfaces)', async () => {
+    await saveExtractedPattern(entity());
+    await loadAndRegisterExtractedPatterns('user-1');
+    expect(getLibraryEntry('extracted-lr-1')).toBeTruthy();
+    await deleteExtractedPattern('extracted-lr-1');
+    expect(getLibraryEntry('extracted-lr-1')).toBeNull();
+  });
+});
+
+describe('getPhotoURL', () => {
+  it('resolves a signed URL for a stored photo path', async () => {
+    const mock = createSupabaseMock(seed, { user: USER });
+    mock.storage = {
+      from(bucket) {
+        return {
+          async createSignedUrl(path, ttl) {
+            return {
+              data: { signedUrl: `https://cdn.test/${bucket}/${path}?ttl=${ttl}` },
+              error: null,
+            };
+          },
+        };
+      },
+    };
+    _ref.client = mock;
+    await expect(getPhotoURL('user-1/extracted-lr-1.png')).resolves.toBe(
+      `https://cdn.test/${PHOTO_BUCKET}/user-1/extracted-lr-1.png?ttl=3600`
+    );
+  });
+
+  it('degrades to null on missing path, signing error, or no supabase', async () => {
+    const mock = createSupabaseMock(seed, { user: USER });
+    mock.storage = {
+      from() {
+        return {
+          async createSignedUrl() {
+            return { data: null, error: { message: 'object not found' } };
+          },
+        };
+      },
+    };
+    _ref.client = mock;
+    await expect(getPhotoURL(null)).resolves.toBeNull();
+    await expect(getPhotoURL('user-1/missing.png')).resolves.toBeNull();
+    _ref.client = null;
+    await expect(getPhotoURL('user-1/extracted-lr-1.png')).resolves.toBeNull();
   });
 });
 

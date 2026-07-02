@@ -79,7 +79,13 @@ export function getVisiblePatterns(dynamicTypes = []) {
   for (const t of dynamicTypes) {
     if (taxIds.has(t.id)) continue;
     if (!getPatternClass(t.id)) continue; // not ready
-    out.push({ id: t.id, meta: { ...CUSTOM_META }, familyKey: 'custom' });
+    // Provenance rides along (S1, issue #50): 'extracted' drives the 📷 badge
+    // now and the source facet filter in S10.
+    out.push({
+      id: t.id,
+      meta: { ...CUSTOM_META, ...(t.origin ? { origin: t.origin } : {}) },
+      familyKey: 'custom',
+    });
   }
 
   return out;

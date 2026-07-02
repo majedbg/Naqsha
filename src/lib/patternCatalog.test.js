@@ -75,6 +75,20 @@ describe('getVisiblePatterns', () => {
     expect(ids).not.toContain('not-ready');
   });
 
+  // S1 (issue #50): the registry's provenance tag rides along on the catalog
+  // meta so downstream surfaces (badges now, facet filters in S10) can read it.
+  it('threads a dynamic type origin into the custom meta', () => {
+    getPatternClass.mockImplementation((id) =>
+      id === 'extracted-1' || id === 'ai-thing' ? function FakeClass() {} : null
+    );
+    const list = getVisiblePatterns([
+      { id: 'extracted-1', label: 'Ceiling', origin: 'extracted' },
+      { id: 'ai-thing', label: 'AI Thing' },
+    ]);
+    expect(list.find((p) => p.id === 'extracted-1').meta.origin).toBe('extracted');
+    expect(list.find((p) => p.id === 'ai-thing').meta.origin).toBeUndefined();
+  });
+
   it('does not duplicate a dynamic type that already exists in the taxonomy', () => {
     getPatternClass.mockImplementation(() => function FakeClass() {});
     const list = getVisiblePatterns([{ id: 'spiral', label: 'Spiral' }]);

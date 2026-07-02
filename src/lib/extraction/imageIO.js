@@ -46,3 +46,30 @@ export function cropToImageData(img, rect, maxDim = 1024) {
   const { data } = ctx.getImageData(0, 0, outW, outH);
   return { data, width: outW, height: outH };
 }
+
+/**
+ * Whole image → ImageData (S3, issue #52: the Flatten step warps the FULL
+ * photo, so the source keeps more resolution than the trace-bound crops —
+ * the rectified output is capped separately by the Rectifier's maxDim).
+ */
+export function imageToImageData(img, maxDim = 2048) {
+  return cropToImageData(
+    img,
+    { x: 0, y: 0, w: img.naturalWidth, h: img.naturalHeight },
+    maxDim
+  );
+}
+
+/**
+ * ImageData-shaped object → PNG data URL (S3: displaying the rectified
+ * raster and handing it back to the Select step as a normal image).
+ */
+export function imageDataToDataURL({ data, width, height }) {
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('Canvas 2D is not supported');
+  ctx.putImageData(new ImageData(data, width, height), 0, 0);
+  return canvas.toDataURL('image/png');
+}

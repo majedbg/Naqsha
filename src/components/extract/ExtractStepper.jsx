@@ -3,12 +3,18 @@
 //
 //   Upload  : pick/capture a photo (file input; camera arrives via `capture`
 //             on mobile for free).
-//   Flatten : SKIP-ONLY stub in S0 — the stage exists so auto plane detection
-//             + manual quad drop in behind it later (locked decision 2).
+//   Flatten : manual 4-corner rectify + skip (S3, issue #52; FlattenStep).
+//             The warp runs through bridge.rectify (in the worker where
+//             available); the accepted rectified raster BECOMES the working
+//             image, so Select/trace operate in flattened space. S4 adds
+//             auto quad detection via the initialQuad/onQuadChange seam.
 //   Select  : manual region crop — drag a rectangle over the photo (locked
 //             decision 3: one pattern per extraction, manual select).
-//   Review  : the traced proposal (shape count + preview). Crude S0 review;
-//             editable proposals/confidence badges deepen in later slices.
+//   Review  : the traced proposal as EDITABLE per-shape rows (S6, issue #55):
+//             each motif carries both representations from the pipeline
+//             (contour + centerline when non-degenerate), so the user can
+//             toggle centerline↔contour and flip the engrave/cut/score role
+//             per shape (locked decision 9). The preview colors by role.
 //   Save    : title + save → registers into the picker's custom family AND
 //             persists via LibraryRepository (one entity, two surfaces).
 //
@@ -17,13 +23,71 @@
 // component stays jsdom-testable with that seam mocked.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { fileToDataURL, loadImage, cropToImageData } from '../../lib/extraction/imageIO';
+import {
+  fileToDataURL,
+  loadImage,
+  cropToImageData,
+  imageToImageData,
+  imageDataToDataURL,
+} from '../../lib/extraction/imageIO';
 import { createExtractionBridge } from '../../lib/extraction/workerBridge';
+import { listStages } from '../../lib/extraction/pipeline';
 import { makeExtractedPattern } from '../../lib/extraction/extractedPattern';
+import { FABRICATION_ROLES } from '../../lib/extraction/vectorizer';
 import { registerExtractedPattern } from '../../lib/patterns/ExtractedPatternGenerator';
 import { saveExtractedPattern } from '../../lib/libraryRepository';
+import FlattenStep, { DEFAULT_QUAD } from './FlattenStep';
 
 const STEPS = ['Upload', 'Flatten', 'Select', 'Review', 'Save'];
+
+// Preview color per fabrication role — a visible distinction between what the
+// laser engraves (dark), cuts (red), and scores (blue). Preview-only; export
+// colors stay the layer color.
+const ROLE_COLORS = { engrave: '#1a1a1a', cut: '#dc2626', score: '#2563eb' };
+
+// --- Review model (S6, issue #55) -------------------------------------------
+// The pipeline's components[] carries BOTH representations per motif. Results
+// without components (older worker payloads) degrade to single-representation
+// shapes whose toggle is disabled — same rows, no dead end.
+
+function shapesFromResult(result) {
+  if (result.components?.length) {
+    return result.components.map((c) => ({
+      contour: c.contour ?? null,
+      centerline: c.centerline ?? null,
+      kind: c.kind,
+      role: c.role,
+    }));
+  }
+  return [
+    ...result.tile.fills.map((f) => ({
+      contour: { d: f.d },
+      centerline: null,
+      kind: 'fill',
+      role: f.role,
+    })),
+    ...result.tile.strokes.map((s) => ({
+      contour: null,
+      centerline: { d: s.d },
+      kind: 'stroke',
+      role: s.role,
+    })),
+  ];
+}
+
+// Apply the user's Review edits: each shape lands in fills or strokes under
+// its chosen representation + role. Kinds are only ever toggled toward a
+// representation the shape HAS, so the picked d always exists.
+function buildTile(result, shapes, edits) {
+  const fills = [];
+  const strokes = [];
+  shapes.forEach((shape, i) => {
+    const { kind, role } = edits[i] ?? shape;
+    if (kind === 'stroke') strokes.push({ d: shape.centerline.d, role });
+    else fills.push({ d: shape.contour.d, role });
+  });
+  return { width: result.tile.width, height: result.tile.height, fills, strokes };
+}
 
 function StepRail({ current }) {
   return (
@@ -56,21 +120,88 @@ const REASON_LABELS = {
   'no-supabase': 'cloud storage is not configured',
 };
 
+// The extraction stages, in order, for the progress rail (serializable
+// descriptors — importing them pulls no heavy stage deps, which stay lazy).
+const EXTRACTION_STAGES = listStages();
+
+// Human-readable status for a stage's latest pipeline progress event.
+const STAGE_STATUS_TEXT = {
+  pending: 'waiting',
+  loading: 'loading…',
+  running: 'running…',
+  done: 'done',
+  skipped: 'skipped',
+  failed: 'failed',
+};
+
+// Per-stage progress rail shown while the pipeline runs (issue #51: staged
+// progress in the stepper). `events` maps stage id → latest progress event.
+function StageProgress({ events }) {
+  return (
+    <ol aria-label="Extraction progress" className="flex items-center gap-3 text-xs">
+      {EXTRACTION_STAGES.map(({ id, label }) => {
+        const ev = events[id];
+        const status = ev?.status ?? 'pending';
+        const pct =
+          typeof ev?.progress === 'number' ? ` ${Math.round(ev.progress * 100)}%` : '';
+        return (
+          <li key={id} className="flex items-center gap-1">
+            <span
+              className={
+                status === 'running' || status === 'loading'
+                  ? 'text-ink font-medium'
+                  : status === 'pending'
+                    ? 'text-ink-faint'
+                    : 'text-ink-soft'
+              }
+            >
+              {label}
+            </span>
+            <span className={status === 'failed' ? 'text-red-500' : 'text-ink-faint'}>
+              {STAGE_STATUS_TEXT[status] ?? status}
+              {pct}
+            </span>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
 const PRIMARY_BTN =
   'px-4 py-1.5 text-sm font-medium rounded-xs bg-saffron text-ink hover:bg-saffron-hover disabled:opacity-40 disabled:cursor-default transition-colors duration-fast ease-out-quart';
 const GHOST_BTN =
   'px-4 py-1.5 text-sm font-medium rounded-xs bg-paper-warm text-ink-soft hover:bg-muted hover:text-ink transition-colors duration-fast ease-out-quart';
 
-export default function ExtractStepper({ onClose, onSaved }) {
+/**
+ * @param {object} props
+ * @param {() => void} [props.onClose]
+ * @param {(res: object) => void} [props.onSaved]
+ * @param {{x:number,y:number}[]} [props.initialQuad] S4 seam: programmatic
+ *   pre-fill for the Flatten corners (fractional [TL,TR,BR,BL] in 0..1 image
+ *   coords — the auto-detect slice supplies detected corners here; the user
+ *   can always adjust them before applying).
+ */
+export default function ExtractStepper({ onClose, onSaved, initialQuad }) {
   const [step, setStep] = useState(0);
   const [file, setFile] = useState(null);
   const [imageURL, setImageURL] = useState(null);
   const [natural, setNatural] = useState(null); // { w, h }
   const [crop, setCrop] = useState(null); // fractional {x,y,w,h}, null = full image
+  // Flatten (S3, issue #52): fractional corner quad + the pending/accepted
+  // rectified working image. `origRef` keeps the untouched upload so
+  // "adjust corners" / "use original" can always restore it.
+  const [quad, setQuad] = useState(initialQuad || DEFAULT_QUAD);
+  const [rectified, setRectified] = useState(null); // { img, url, w, h }
+  const [flattening, setFlattening] = useState(false);
+  const origRef = useRef(null); // { img, url, natural }
   const [drag, setDrag] = useState(null); // in-flight drag {x0,y0,x1,y1}
   const [tracing, setTracing] = useState(false);
-  const [stageMsg, setStageMsg] = useState('');
+  const [stageEvents, setStageEvents] = useState({}); // stage id → latest progress event
   const [result, setResult] = useState(null);
+  // Per-shape Review edits ({kind, role} parallel to shapesFromResult(result));
+  // reset whenever a new trace lands (S6, issue #55).
+  const [shapeEdits, setShapeEdits] = useState([]);
   const [error, setError] = useState('');
   const [title, setTitle] = useState('');
   const [saving, setSaving] = useState(false);
@@ -101,17 +232,81 @@ export default function ExtractStepper({ onClose, onSaved }) {
     try {
       const url = await fileToDataURL(f);
       const img = await loadImage(url);
+      const nat = { w: img.naturalWidth, h: img.naturalHeight };
       imgElRef.current = img;
-      setNatural({ w: img.naturalWidth, h: img.naturalHeight });
+      origRef.current = { img, url, natural: nat };
+      setNatural(nat);
       setFile(f);
       setImageURL(url);
       setCrop(null);
       setResult(null);
+      setQuad(initialQuad || DEFAULT_QUAD);
+      setRectified(null);
       setStep(1);
     } catch (err) {
       setError(err.message || 'Could not read that image.');
     }
+  }, [initialQuad]);
+
+  // --- Flatten (S3, issue #52) -----------------------------------------------
+
+  const handleApplyFlatten = useCallback(async () => {
+    const orig = origRef.current;
+    if (!orig) return;
+    setError('');
+    setFlattening(true);
+    try {
+      // Warp the FULL original photo (never a previously rectified result).
+      const imageData = imageToImageData(orig.img);
+      const quadPx = quad.map((p) => ({
+        x: p.x * imageData.width,
+        y: p.y * imageData.height,
+      }));
+      if (!bridgeRef.current) bridgeRef.current = createExtractionBridge();
+      const { rectified: raster } = await bridgeRef.current.rectify(imageData, quadPx);
+      const url = imageDataToDataURL(raster);
+      const img = await loadImage(url);
+      setRectified({ img, url, w: raster.width, h: raster.height });
+    } catch (err) {
+      setError(err.message || 'Could not flatten that photo.');
+    } finally {
+      setFlattening(false);
+    }
+  }, [quad]);
+
+  const restoreOriginal = useCallback(() => {
+    const orig = origRef.current;
+    if (!orig) return;
+    imgElRef.current = orig.img;
+    setNatural(orig.natural);
+    setImageURL(orig.url);
   }, []);
+
+  // Before/after → back to the handles: the rectified proposal is discarded
+  // and the working image reverts (editable proposals, locked decision 8).
+  const handleAdjustCorners = useCallback(() => {
+    setRectified(null);
+    restoreOriginal();
+  }, [restoreOriginal]);
+
+  // "Already flat — skip" / "Use original": bypass rectification entirely.
+  const handleSkipFlatten = useCallback(() => {
+    setRectified(null);
+    restoreOriginal();
+    setCrop(null);
+    setStep(2);
+  }, [restoreOriginal]);
+
+  // Accept: the rectified raster becomes the working image Select crops from
+  // (the rectified raster flows into the existing extraction path).
+  const handleAcceptRectified = useCallback(() => {
+    if (!rectified) return;
+    imgElRef.current = rectified.img;
+    setNatural({ w: rectified.w, h: rectified.h });
+    setImageURL(rectified.url);
+    setCrop(null);
+    setStep(2);
+  }, [rectified]);
 
   // --- Select (manual crop) ---------------------------------------------------
 
@@ -159,6 +354,7 @@ export default function ExtractStepper({ onClose, onSaved }) {
     if (!imgElRef.current || !natural) return;
     setError('');
     setTracing(true);
+    setStageEvents({});
     try {
       const f = crop || { x: 0, y: 0, w: 1, h: 1 };
       const rect = {
@@ -170,19 +366,20 @@ export default function ExtractStepper({ onClose, onSaved }) {
       const imageData = cropToImageData(imgElRef.current, rect);
       if (!bridgeRef.current) bridgeRef.current = createExtractionBridge();
       const res = await bridgeRef.current.extract(imageData, {}, (p) =>
-        setStageMsg(`${p.stage}: ${p.status}`)
+        setStageEvents((m) => ({ ...m, [p.stage]: p }))
       );
       if (!res.tile.fills.length && !res.tile.strokes.length) {
         setError('No shapes found in that region — try a tighter or higher-contrast selection.');
         return;
       }
       setResult(res);
+      setShapeEdits(shapesFromResult(res).map(({ kind, role }) => ({ kind, role })));
       setStep(3);
     } catch (err) {
       setError(err.message || 'Extraction failed.');
     } finally {
       setTracing(false);
-      setStageMsg('');
+      setStageEvents({});
     }
   }, [crop, natural]);
 
@@ -197,7 +394,7 @@ export default function ExtractStepper({ onClose, onSaved }) {
     try {
       const entity = makeExtractedPattern({
         title: title.trim() || defaultTitle,
-        tile: result.tile,
+        tile: buildTile(result, shapesFromResult(result), shapeEdits),
         lattice: result.lattice,
       });
       // Register FIRST (one entity, two surfaces): the pattern is usable this
@@ -221,27 +418,61 @@ export default function ExtractStepper({ onClose, onSaved }) {
     } finally {
       setSaving(false);
     }
-  }, [result, title, defaultTitle, file, imageURL, onSaved, onClose]);
+  }, [result, shapeEdits, title, defaultTitle, file, imageURL, onSaved, onClose]);
+
+  // --- Review edits (S6) --------------------------------------------------------
+
+  const setShapeRole = (i, role) =>
+    setShapeEdits((edits) => edits.map((e, j) => (j === i ? { ...e, role } : e)));
+
+  // Toggling representation resets the role to the target kind's default —
+  // centerline→score, contour→engrave (locked decision 9) — so the pairing
+  // stays predictable; the user can re-pick after.
+  const toggleShapeKind = (i) =>
+    setShapeEdits((edits) =>
+      edits.map((e, j) =>
+        j === i
+          ? e.kind === 'stroke'
+            ? { kind: 'fill', role: 'engrave' }
+            : { kind: 'stroke', role: 'score' }
+          : e
+      )
+    );
 
   // --- render -------------------------------------------------------------------
 
-  const preview = result ? (
+  const shapes = result ? shapesFromResult(result) : [];
+  const editedTile = result ? buildTile(result, shapes, shapeEdits) : null;
+  const shapeCount = shapes.length;
+
+  const preview = editedTile ? (
     <svg
-      viewBox={`0 0 ${result.tile.width} ${result.tile.height}`}
+      viewBox={`0 0 ${editedTile.width} ${editedTile.height}`}
       className="max-h-64 w-auto border border-hairline bg-white"
       role="img"
       aria-label="Traced pattern preview"
     >
-      {result.tile.fills.map((f, i) => (
-        <path key={`f${i}`} d={f.d} fill="#1a1a1a" fillRule="evenodd" stroke="none" />
+      {editedTile.fills.map((f, i) => (
+        <path
+          key={`f${i}`}
+          d={f.d}
+          fill={ROLE_COLORS[f.role] || '#1a1a1a'}
+          fillRule="evenodd"
+          stroke="none"
+        />
       ))}
-      {result.tile.strokes.map((s, i) => (
-        <path key={`s${i}`} d={s.d} fill="none" stroke="#1a1a1a" strokeWidth="1" />
+      {editedTile.strokes.map((s, i) => (
+        <path
+          key={`s${i}`}
+          d={s.d}
+          fill="none"
+          stroke={ROLE_COLORS[s.role] || '#1a1a1a'}
+          strokeWidth="1.5"
+          strokeLinecap="round"
+        />
       ))}
     </svg>
   ) : null;
-
-  const shapeCount = result ? result.tile.fills.length + result.tile.strokes.length : 0;
 
   return (
     <div className="fixed inset-0 z-50 bg-ink/70 flex items-center justify-center px-4">
@@ -290,23 +521,18 @@ export default function ExtractStepper({ onClose, onSaved }) {
           )}
 
           {step === 1 && (
-            <>
-              {imageURL && (
-                <img src={imageURL} alt="Uploaded ornament" className="max-h-72 w-auto rounded-xs border border-hairline" />
-              )}
-              <p className="text-xs text-ink-soft max-w-md text-center">
-                Auto-flatten (perspective correction) arrives in a later update. For now the photo
-                is used as-is — best results come from a straight-on shot.
-              </p>
-              <div className="flex gap-2">
-                <button type="button" className={GHOST_BTN} onClick={() => setStep(0)}>
-                  Back
-                </button>
-                <button type="button" className={PRIMARY_BTN} onClick={() => setStep(2)}>
-                  Skip flatten →
-                </button>
-              </div>
-            </>
+            <FlattenStep
+              imageURL={origRef.current?.url || imageURL}
+              quad={quad}
+              onQuadChange={setQuad}
+              rectifiedURL={rectified?.url || null}
+              flattening={flattening}
+              onApply={handleApplyFlatten}
+              onSkip={handleSkipFlatten}
+              onBack={() => setStep(0)}
+              onAdjust={handleAdjustCorners}
+              onContinue={handleAcceptRectified}
+            />
           )}
 
           {step === 2 && (
@@ -337,7 +563,7 @@ export default function ExtractStepper({ onClose, onSaved }) {
                   />
                 )}
               </div>
-              {tracing && <p className="text-xs text-ink-soft">Tracing… {stageMsg}</p>}
+              {tracing && <StageProgress events={stageEvents} />}
               <div className="flex gap-2">
                 <button type="button" className={GHOST_BTN} onClick={() => setStep(1)}>
                   Back
@@ -358,9 +584,69 @@ export default function ExtractStepper({ onClose, onSaved }) {
             <>
               {preview}
               <p className="text-xs text-ink-soft">
-                {shapeCount} shape{shapeCount === 1 ? '' : 's'} traced · engrave by default —
-                per-shape cut/score roles arrive with the Review editor.
+                {shapeCount} shape{shapeCount === 1 ? '' : 's'} traced — line-work as single
+                centerline strokes, solid shapes as contours. Flip a shape's role or switch its
+                representation below.
               </p>
+              <p className="text-[10px] text-ink-faint flex items-center gap-3" aria-hidden>
+                {FABRICATION_ROLES.map((role) => (
+                  <span key={role} className="flex items-center gap-1">
+                    <span
+                      className="inline-block w-2 h-2 rounded-full"
+                      style={{ backgroundColor: ROLE_COLORS[role] }}
+                    />
+                    {role}
+                  </span>
+                ))}
+              </p>
+              <ul aria-label="Traced shapes" className="w-full max-w-md flex flex-col gap-1">
+                {shapes.map((shape, i) => {
+                  const edit = shapeEdits[i] ?? shape;
+                  const isStroke = edit.kind === 'stroke';
+                  // Toggle needs the OTHER representation to exist (a blob with
+                  // a degenerate skeleton has no centerline — contour floor).
+                  const canToggle = isStroke ? !!shape.contour : !!shape.centerline;
+                  return (
+                    <li
+                      key={i}
+                      className="flex items-center gap-2 bg-paper-warm rounded-xs px-2.5 py-1.5"
+                    >
+                      <span
+                        className="inline-block w-2 h-2 rounded-full shrink-0"
+                        style={{ backgroundColor: ROLE_COLORS[edit.role] || '#1a1a1a' }}
+                        aria-hidden
+                      />
+                      <span className="text-xs text-ink flex-1">Shape {i + 1}</span>
+                      <button
+                        type="button"
+                        className="px-2 py-0.5 text-[11px] font-medium rounded-xs bg-panel text-ink-soft border border-hairline hover:text-ink disabled:opacity-40 disabled:cursor-default transition-colors duration-fast ease-out-quart"
+                        aria-label={`Representation for shape ${i + 1}: ${isStroke ? 'centerline' : 'contour'}`}
+                        title={
+                          canToggle
+                            ? `Switch to ${isStroke ? 'contour' : 'centerline'}`
+                            : 'Only one representation available for this shape'
+                        }
+                        disabled={!canToggle}
+                        onClick={() => toggleShapeKind(i)}
+                      >
+                        {isStroke ? 'Centerline' : 'Contour'}
+                      </button>
+                      <select
+                        aria-label={`Fabrication role for shape ${i + 1}`}
+                        value={edit.role}
+                        onChange={(e) => setShapeRole(i, e.target.value)}
+                        className="bg-panel text-ink text-[11px] px-1.5 py-0.5 rounded-xs border border-hairline outline-none focus:border-violet"
+                      >
+                        {FABRICATION_ROLES.map((role) => (
+                          <option key={role} value={role}>
+                            {role}
+                          </option>
+                        ))}
+                      </select>
+                    </li>
+                  );
+                })}
+              </ul>
               <div className="flex gap-2">
                 <button type="button" className={GHOST_BTN} onClick={() => setStep(2)}>
                   Back

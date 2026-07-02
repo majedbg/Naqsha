@@ -18,9 +18,13 @@
 // NOT isAI, so later slices can badge it 📷 without a registry migration.
 
 import { Pattern } from './drawingContext';
-import { registerPattern } from '../patternRegistry';
+import {
+  registerPattern,
+  unregisterPattern,
+  getDynamicTypes,
+} from '../patternRegistry';
 import { escapeAttr } from '../extraction/extractedPattern';
-import { addLibraryEntry } from '../libraryStore';
+import { addLibraryEntry, clearLibraryEntries } from '../libraryStore';
 
 const CURVE_SEGMENTS = 12;
 
@@ -180,4 +184,21 @@ export function registerExtractedPattern(entity, extras = {}) {
   });
   addLibraryEntry(entity, extras);
   return PatternClass;
+}
+
+/**
+ * Sign-out hygiene (S1 review): drop EVERY extracted-origin pattern from both
+ * library surfaces — the dynamic registry (picker custom family) and the
+ * libraryStore (Library view) — so the next account on a shared browser never
+ * sees the previous account's entries. Selective on `origin === 'extracted'`:
+ * builtin extras and AI patterns follow their own lifecycle and are untouched.
+ * (The store itself only ever holds extracted entities — single write path —
+ * so clearing it wholesale is exact, not approximate.)
+ */
+export function clearExtractedPatterns() {
+  const extractedIds = getDynamicTypes()
+    .filter((t) => t.origin === 'extracted')
+    .map((t) => t.id); // snapshot first: unregisterPattern splices the live array
+  extractedIds.forEach(unregisterPattern);
+  clearLibraryEntries();
 }

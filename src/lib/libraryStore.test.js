@@ -13,8 +13,16 @@ import {
   clearLibraryEntries,
 } from './libraryStore';
 import { makeExtractedPattern } from './extraction/extractedPattern';
-import { registerExtractedPattern } from './patterns/ExtractedPatternGenerator';
-import { getDynamicPatternClass, getDynamicTypes, unregisterPattern } from './patternRegistry';
+import {
+  registerExtractedPattern,
+  clearExtractedPatterns,
+} from './patterns/ExtractedPatternGenerator';
+import {
+  registerPattern,
+  getDynamicPatternClass,
+  getDynamicTypes,
+  unregisterPattern,
+} from './patternRegistry';
 
 const entity = (patternId, title = 'Tile') =>
   makeExtractedPattern({
@@ -85,6 +93,42 @@ describe('libraryStore', () => {
     expect(getLibraryEntries()).toBe(first);
     addLibraryEntry(entity('extracted-s1-b'));
     expect(getLibraryEntries()).not.toBe(first);
+  });
+});
+
+describe('clearExtractedPatterns (sign-out hygiene)', () => {
+  class FakeDynamic {}
+
+  afterEach(() => {
+    unregisterPattern('ai-keep');
+    unregisterPattern('builtin-keep');
+  });
+
+  it('removes ONLY extracted-origin patterns from the registry and empties the store', () => {
+    registerExtractedPattern(entity('extracted-s1-a'));
+    registerExtractedPattern(entity('extracted-s1-b'));
+    registerPattern('ai-keep', FakeDynamic, 'AI Keep', {}, []); // isAI default
+    registerPattern('builtin-keep', FakeDynamic, 'Extra', {}, [], { isAI: false });
+
+    clearExtractedPatterns();
+
+    // Both surfaces emptied of extracted patterns…
+    expect(getDynamicPatternClass('extracted-s1-a')).toBeNull();
+    expect(getDynamicPatternClass('extracted-s1-b')).toBeNull();
+    expect(getLibraryEntries()).toEqual([]);
+    // …while AI and builtin dynamic registrations are untouched.
+    expect(getDynamicPatternClass('ai-keep')).toBeTruthy();
+    expect(getDynamicPatternClass('builtin-keep')).toBeTruthy();
+    expect(getDynamicTypes().some((t) => t.origin === 'extracted')).toBe(false);
+  });
+
+  it('lets the next account load a clean slate (re-register after clear)', () => {
+    registerExtractedPattern(entity('extracted-s1-a', 'User A tile'));
+    clearExtractedPatterns();
+    registerExtractedPattern(entity('extracted-s1-b', 'User B tile'));
+    const list = getLibraryEntries();
+    expect(list).toHaveLength(1);
+    expect(list[0].entity.title).toBe('User B tile');
   });
 });
 

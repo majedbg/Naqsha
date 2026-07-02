@@ -15,7 +15,7 @@
 // Visibility is surfaced read-only, defaulting to 'private' (PRD data-safety:
 // the field exists so future sharing is a flag flip, not a migration).
 
-import { useEffect, useState, useSyncExternalStore } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { subscribeLibrary, getLibraryEntries } from '../../lib/libraryStore';
 import { getPhotoURL } from '../../lib/libraryRepository';
 
@@ -167,38 +167,49 @@ export default function LibraryView({ onClose, onUseInStudio, onNewExtraction })
   const [signedURLs, setSignedURLs] = useState({});
 
   // Lazily resolve signed URLs for entries that have a storage path but no
-  // transient session photoURL. The `!== undefined` guard makes re-runs (on
-  // each resolution landing) no-ops, so this settles after one pass per entry.
+  // transient session photoURL. `requestedRef` tracks every id we have ever
+  // fired for (in-flight AND resolved), so each entry is requested exactly
+  // once — a sibling's resolution re-rendering the grid never re-fires a
+  // still-pending request. `mountedRef` only guards the final setState after
+  // unmount; effect re-runs must NOT cancel in-flight resolutions.
+  const requestedRef = useRef(new Set());
+  const mountedRef = useRef(true);
   useEffect(() => {
-    let alive = true;
+    // Re-arm on every (re)mount — StrictMode mounts, cleans up, and mounts
+    // again, and the ref must not stay false after that rehearsal unmount.
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+  useEffect(() => {
     for (const entry of entries) {
       const { patternId, photoPath } = entry.entity;
       if (entry.photoURL || !photoPath) continue;
-      if (signedURLs[patternId] !== undefined) continue;
+      if (requestedRef.current.has(patternId)) continue;
+      requestedRef.current.add(patternId);
       getPhotoURL(photoPath).then((url) => {
-        if (alive) setSignedURLs((m) => ({ ...m, [patternId]: url }));
+        if (mountedRef.current) setSignedURLs((m) => ({ ...m, [patternId]: url }));
       });
     }
-    return () => {
-      alive = false;
-    };
-  }, [entries, signedURLs]);
+  }, [entries]);
 
   const photoFor = (entry) =>
     entry.photoURL ?? signedURLs[entry.entity.patternId] ?? null;
 
-  // Escape backs out one level: detail → grid, grid → closed.
+  // Escape backs out one level: detail → grid, grid → closed. The branch is
+  // decided OUTSIDE any setState updater (updaters must stay pure — StrictMode
+  // double-invokes them, which would double-fire onClose); the effect simply
+  // re-subscribes when openId changes.
   useEffect(() => {
     const onKey = (e) => {
       if (e.key !== 'Escape') return;
-      setOpenId((id) => {
-        if (id === null) onClose?.();
-        return null;
-      });
+      if (openId !== null) setOpenId(null);
+      else onClose?.();
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [openId, onClose]);
 
   const openEntry = openId
     ? entries.find((e) => e.entity.patternId === openId) ?? null

@@ -9,6 +9,7 @@
 // supabase-backed photo-URL signer is mocked.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { StrictMode } from 'react';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 
 const mocks = vi.hoisted(() => ({ getPhotoURL: vi.fn() }));
@@ -112,6 +113,47 @@ describe('LibraryView — card grid', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByRole('button', { name: /^close$/i }));
     expect(onClose).toHaveBeenCalledTimes(2);
+  });
+
+  // Review follow-up: Escape must fire onClose exactly once even under
+  // StrictMode's double-invoked updaters (the side-effect must not live
+  // inside a setState updater).
+  it('Escape closes exactly once under StrictMode', () => {
+    const onClose = vi.fn();
+    render(
+      <StrictMode>
+        <LibraryView onClose={onClose} onUseInStudio={() => {}} onNewExtraction={() => {}} />
+      </StrictMode>
+    );
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  // Review follow-up: each cloud photo is signed exactly once — a sibling's
+  // resolution re-render must not re-fire the still-pending entry's request.
+  it('requests each photo signature once, even while a sibling is in flight', async () => {
+    let resolveSlow;
+    mocks.getPhotoURL.mockImplementation((path) =>
+      path === 'u1/slow.png'
+        ? new Promise((r) => {
+            resolveSlow = r;
+          })
+        : Promise.resolve('https://cdn.test/fast.png')
+    );
+    addLibraryEntry(entity('extracted-lv-a', 'Slow photo', 'u1/slow.png'));
+    addLibraryEntry(entity('extracted-lv-b', 'Fast photo', 'u1/fast.png'));
+    renderView();
+    await waitFor(() =>
+      expect(screen.getByRole('img', { name: /photo of fast photo/i })).toBeInTheDocument()
+    );
+    // The fast resolution re-rendered the grid; the pending entry must NOT
+    // have been requested again.
+    expect(mocks.getPhotoURL).toHaveBeenCalledTimes(2);
+    resolveSlow('https://cdn.test/slow.png');
+    await waitFor(() =>
+      expect(screen.getByRole('img', { name: /photo of slow photo/i })).toBeInTheDocument()
+    );
+    expect(mocks.getPhotoURL).toHaveBeenCalledTimes(2);
   });
 });
 

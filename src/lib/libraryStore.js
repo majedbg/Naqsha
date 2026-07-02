@@ -64,7 +64,10 @@ export function subscribeLibrary(fn) {
   };
 }
 
-/** Test helper — the store is module-global, so suites reset it between tests. */
+/**
+ * Empty the store. Called on sign-out (via clearExtractedPatterns — account
+ * hygiene on shared browsers) and by test suites resetting the module-global.
+ */
 export function clearLibraryEntries() {
   entries.clear();
   notify();

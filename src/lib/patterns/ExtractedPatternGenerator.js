@@ -20,6 +20,7 @@
 import { Pattern } from './drawingContext';
 import { registerPattern } from '../patternRegistry';
 import { escapeAttr } from '../extraction/extractedPattern';
+import { addLibraryEntry } from '../libraryStore';
 
 const CURVE_SEGMENTS = 12;
 
@@ -162,12 +163,21 @@ export function makeExtractedPatternClass(entity) {
  * Register an ExtractedPattern into the dynamic registry so it appears in the
  * picker's custom family and is placeable/exportable like any pattern.
  * No params in S0 (free tier = fixed tile; live knobs are the paid v-next).
+ *
+ * This is the SINGLE write path for both library surfaces (locked decision 6):
+ * it also indexes the entity into libraryStore so the Library view (S1, issue
+ * #50) lists exactly what the picker registered — cloud-loaded and
+ * session-only entries alike. `extras` carries transient display data:
+ *   - photoURL:  session dataURL of the source photo (guest saves have no
+ *                storage path but should still show their photo this session)
+ *   - createdAt: the row's created_at ISO string (cloud loads) for ordering.
  */
-export function registerExtractedPattern(entity) {
+export function registerExtractedPattern(entity, extras = {}) {
   const PatternClass = makeExtractedPatternClass(entity);
   registerPattern(entity.patternId, PatternClass, entity.title, {}, [], {
     isAI: false,
     origin: 'extracted',
   });
+  addLibraryEntry(entity, extras);
   return PatternClass;
 }

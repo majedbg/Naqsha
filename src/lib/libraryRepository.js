@@ -18,6 +18,7 @@ import {
 } from './extraction/extractedPattern';
 import { registerExtractedPattern } from './patterns/ExtractedPatternGenerator';
 import { unregisterPattern } from './patternRegistry';
+import { removeLibraryEntry } from './libraryStore';
 
 export const PHOTO_BUCKET = 'pattern-photos';
 const TABLE = 'user_patterns';
@@ -103,13 +104,32 @@ export async function listExtractedPatterns(userId) {
     .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
 }
 
-/** Delete one extracted pattern row and drop it from the runtime registry. */
+/** Delete one extracted pattern row and drop it from BOTH runtime surfaces
+ *  (picker registry + library store — one entity, two surfaces). */
 export async function deleteExtractedPattern(patternId) {
   if (supabase) {
     const { error } = await supabase.from(TABLE).delete().eq('pattern_id', patternId);
     if (error) console.warn('Failed to delete extracted pattern:', error.message);
   }
   unregisterPattern(patternId);
+  removeLibraryEntry(patternId);
+}
+
+/**
+ * Resolve a short-lived signed URL for a private library photo. Best-effort:
+ * guests / missing supabase / missing object all resolve to null — the Library
+ * view falls back to the tile preview, never a dead end.
+ */
+export async function getPhotoURL(photoPath, ttlSeconds = 3600) {
+  if (!supabase || !photoPath) return null;
+  const { data, error } = await supabase.storage
+    .from(PHOTO_BUCKET)
+    .createSignedUrl(photoPath, ttlSeconds);
+  if (error) {
+    console.warn('Failed to sign library photo URL:', error.message);
+    return null;
+  }
+  return data?.signedUrl ?? null;
 }
 
 /**
@@ -123,7 +143,9 @@ export async function loadAndRegisterExtractedPatterns(userId) {
   for (const row of rows) {
     try {
       const entity = deserializeExtractedPattern(row);
-      registerExtractedPattern(entity);
+      // created_at threads into the library store so the Library view keeps
+      // its newest-first order across reloads.
+      registerExtractedPattern(entity, { createdAt: row.created_at ?? null });
       entities.push(entity);
     } catch (err) {
       console.warn(`Skipping corrupt extracted pattern ${row.pattern_id}:`, err.message);

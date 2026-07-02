@@ -7,6 +7,8 @@
 // contract either way:
 //
 //   bridge.extract(image, options, onProgress) → Promise<result>
+//   bridge.rectify(image, quad, onProgress)    → Promise<{rectified, homography}>
+//     (S3, issue #52 — the Flatten step's warp, same worker/inline duality)
 //   bridge.dispose()
 //
 // The image buffer is transferred (zero-copy) on the worker path, so callers
@@ -63,7 +65,15 @@ export function createExtractionBridge(opts = {}) {
     return runExtraction({ image, options }, onProgress);
   }
 
-  function extractInWorker(w, image, options, onProgress) {
+  async function rectifyInline(image, quad, onProgress) {
+    const { runRectify } = await import('./pipeline');
+    return runRectify({ image, quad }, onProgress);
+  }
+
+  // `type`/`extra` (S3, issue #52) let bridge.rectify() reuse the same
+  // watchdog/failover machinery with a 'start-rectify' message; extract()
+  // callers are untouched by the added optional parameters.
+  function extractInWorker(w, image, options, onProgress, type = 'start', extra = null) {
     const id = nextId++;
     return new Promise((resolve, reject) => {
       let settled = false;
@@ -106,7 +116,7 @@ export function createExtractionBridge(opts = {}) {
 
       const transfer =
         image?.data?.buffer instanceof ArrayBuffer ? [image.data.buffer] : [];
-      w.postMessage({ type: 'start', id, image, options }, transfer);
+      w.postMessage({ type, id, image, options, ...(extra || {}) }, transfer);
     });
   }
 
@@ -132,6 +142,32 @@ export function createExtractionBridge(opts = {}) {
         worker = null;
         workerBroken = true;
         return extractInline(retained, options, onProgress);
+      } finally {
+        inFlight = false;
+      }
+    },
+    // Flatten-step warp (S3, issue #52): identical worker/inline duality and
+    // failure containment as extract(); shares the one-in-flight guard so a
+    // rectify can never clobber a running extraction (or vice versa).
+    async rectify(image, quad, onProgress) {
+      if (!workerBroken && !worker && typeof factory === 'function') worker = factory();
+      if (!worker) return rectifyInline(image, quad, onProgress);
+      if (inFlight) {
+        throw new Error('extraction already in progress — one operation at a time');
+      }
+      inFlight = true;
+      const retained = image?.data
+        ? { ...image, data: new Uint8ClampedArray(image.data) }
+        : image;
+      try {
+        return await extractInWorker(worker, image, {}, onProgress, 'start-rectify', { quad });
+      } catch (err) {
+        if (!err?.[WORKER_FAILURE]) throw err;
+        console.warn(`Extraction worker failed, falling back inline: ${err.message}`);
+        worker.terminate?.();
+        worker = null;
+        workerBroken = true;
+        return rectifyInline(retained, quad, onProgress);
       } finally {
         inFlight = false;
       }

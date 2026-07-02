@@ -123,6 +123,100 @@ describe('detectQuad', () => {
     expect(detectQuad(noise)).toBeNull();
   });
 
+  // --- adversarial composites (S4 review probes A/C/D) ------------------------
+  // Root cause probed by review: extreme points return the convex hull of ALL
+  // content, and the original confidence never asked whether that hull was ONE
+  // coherent region. Each probe is a composed synthetic on which the detector
+  // used to be confidently WRONG (0.85–0.89); the contract is null — a wrong
+  // proposal is worse than no proposal (the manual default is the floor).
+
+  // Reviewer probes ran at 240×240; build the composites at that size.
+  const PW = 240;
+  const PH = 240;
+
+  // Deterministic 6px checker used for "textured" content patches.
+  const checkerAt = (x, y) =>
+    (((x / 6) | 0) + ((y / 6) | 0)) % 2 ? [20, 20, 20] : [238, 238, 238];
+
+  // Probe A — a real plane on the left PLUS an off-plane clutter blob to the
+  // right (the modal "ornament on a wall with decor beside it" photo). The old
+  // hull merged plane+clutter at 0.89 confidence.
+  function planePlusClutter() {
+    const plane = [
+      { x: 36, y: 36 },
+      { x: 110, y: 48 },
+      { x: 106, y: 192 },
+      { x: 31, y: 180 },
+    ];
+    const Hs = computeHomography(plane, [
+      { x: 0, y: 0 },
+      { x: 64, y: 0 },
+      { x: 64, y: 64 },
+      { x: 0, y: 64 },
+    ]);
+    return makeImage(PW, PH, (x, y) => {
+      // clutter blob: textured square, inset from the frame (not probe E)
+      if (x >= 180 && x < 216 && y >= 96 && y < 144) return checkerAt(x, y);
+      const g = applyHomography(Hs, { x: x + 0.5, y: y + 0.5 });
+      if (g.x < 0 || g.x >= 64 || g.y < 0 || g.y >= 64) return [130, 130, 130];
+      const parity = (Math.floor(g.x / 8) + Math.floor(g.y / 8)) % 2;
+      const v = parity ? 20 : 235;
+      return [v, v, v];
+    });
+  }
+
+  // Probe C — two separated content regions; the old hull enclosed both at 0.85.
+  function twoRegions() {
+    return makeImage(PW, PH, (x, y) => {
+      const inA = x >= 24 && x < 84 && y >= 24 && y < 84;
+      const inB = x >= 144 && x < 204 && y >= 132 && y < 192;
+      return inA || inB ? checkerAt(x, y) : [130, 130, 130];
+    });
+  }
+
+  // Probe D — an exact axis-symmetric diamond: every pixel of each 45° edge
+  // ties the x±y extreme objectives, so scan order collapses TL≈TR into a
+  // sliver that validateQuad's relative tolerance admits (old: 0.85 on a
+  // degenerate quad whose bottom vertex was never selected).
+  function diamond() {
+    const cx = PW / 2;
+    const cy = PH / 2;
+    const r = 72;
+    return makeImage(PW, PH, (x, y) =>
+      Math.abs(x - cx) + Math.abs(y - cy) <= r ? [20, 20, 20] : [230, 230, 230]
+    );
+  }
+
+  it('probe A: plane + interior off-plane clutter → null (never a merged hull)', () => {
+    expect(detectQuad(planePlusClutter())).toBeNull();
+  });
+
+  it('probe C: two separated content regions → null (never a spanning hull)', () => {
+    expect(detectQuad(twoRegions())).toBeNull();
+  });
+
+  it('probe D: exact axis-symmetric diamond → null (never a degenerate sliver)', () => {
+    expect(detectQuad(diamond())).toBeNull();
+  });
+
+  // Guard against over-gating: a hollow frame-only motif is ONE coherent
+  // region (its bars keep every projection row/column occupied and all four
+  // hull edges gradient-backed) — it must still propose the quad around the
+  // frame, not be mistaken for split content.
+  it('a hollow rectangular frame motif still proposes its bounding quad', () => {
+    const frame = makeImage(PW, PH, (x, y) => {
+      const inOuter = x >= 36 && x < 204 && y >= 36 && y < 204;
+      const inInner = x >= 60 && x < 180 && y >= 60 && y < 180;
+      return inOuter && !inInner ? checkerAt(x, y) : [130, 130, 130];
+    });
+    const res = detectQuad(frame);
+    expect(res).not.toBeNull();
+    expect(res.confidence).toBeGreaterThanOrEqual(MIN_QUAD_CONFIDENCE);
+    // Corners near the OUTER frame corners.
+    expect(res.quad[0].x).toBeCloseTo(36 / PW, 1);
+    expect(res.quad[2].x).toBeCloseTo(204 / PW, 1);
+  });
+
   it('is pure — the same image yields the same proposal', () => {
     const a = detectQuad(perspectiveGrid());
     const b = detectQuad(perspectiveGrid());

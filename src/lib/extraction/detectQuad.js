@@ -26,11 +26,18 @@
 //     vertices — this recovers a perspective trapezoid's corners exactly, no
 //     Hough/VP machinery needed (that is the classical stand-in for the VP
 //     analysis; the M-LSD LineDetector seam is left clean below).
-//   · confidence rewards a plane that is genuinely BOUNDED: a quiet (non-mask)
-//     border ring + a healthy mid-band area + edge-support along the four
-//     proposed sides. Full-frame texture / random noise hugs the frame and is
-//     rejected (area gate) — it is not a plane, so it must read as "nothing
-//     found" and fall to the manual default.
+//   · the extremes are really the convex hull of ALL content, so a stack of
+//     gates asks whether that hull is ONE coherent, well-formed plane before
+//     anything is proposed: bounded (quiet border ring + frame-inset corners +
+//     area band), non-degenerate (min edge length + min corner angle — extreme-
+//     point ties on 45° edges collapse corners into slivers), and coherent
+//     (EVERY edge gradient-backed along most of its length + no empty row/
+//     column band splitting the content into disjoint regions). A hull that
+//     merges the plane with off-plane clutter, spans two separate regions, or
+//     degenerates returns null — a wrong proposal is worse than none.
+//   · confidence then scores the survivors: border emptiness + area band +
+//     the WEAKEST edge's support (min, not mean — an average lets a merged
+//     hull flatter itself past one unsupported bridging edge).
 //
 // PLACEMENT — main thread, synchronous. The detector is pure JS over a small
 // (≤ maxDim) downscale of the already-decoded upload; the cost is a few ms, so
@@ -60,6 +67,31 @@ const MIN_AREA_FRAC = 0.03; // quad below this → spurious speck
 // frame. Requiring every corner this far off the frame edge is the decisive
 // noise discriminator (coverage/border-emptiness alone do not catch it).
 const FRAME_MARGIN = 0.04;
+
+// --- coherence + degeneracy gates (S4 adversarial review) --------------------
+// The extreme points are the convex hull of ALL content; these gates ask
+// whether that hull is ONE coherent, well-formed region. Anything that fails
+// is a wrong-but-plausible hull (plane merged with off-plane clutter, two
+// separate regions spanned, a 45°-tie sliver) — worse than no proposal, so
+// the answer is null, never a lowered-confidence guess.
+
+// Shortest quad edge (fractional) / smallest interior corner angle. Extreme-
+// point TIES (an axis-symmetric diamond: every pixel of a 45° edge scores the
+// same x±y) collapse two corners into a sliver that rectifier.validateQuad's
+// deliberately permissive relative tolerance admits — so detectQuad gates
+// degeneracy itself (do NOT tighten validateQuad; other callers rely on it).
+const MIN_EDGE_FRAC = 0.05;
+const MIN_CORNER_ANGLE = Math.PI / 12; // 15°
+
+// EVERY proposed edge must ride a real gradient boundary along most of its
+// length — a hull edge that crosses empty background (plane→clutter bridge)
+// is not the border of one plane.
+const MIN_EDGE_SUPPORT = 0.55;
+
+// An empty row/column band this wide (fraction of the quad bbox span),
+// strictly inside the content extent, means the "plane" is really two or more
+// disjoint regions the hull merged (probes A and C).
+const MAX_INTERIOR_GAP = 0.12;
 
 /** Longest-side working resolution: enough to localize corners, cheap to scan. */
 const DEFAULT_MAX_DIM = 240;
@@ -193,39 +225,116 @@ export function detectQuad(image, { maxDim = DEFAULT_MAX_DIM } = {}) {
   );
   if (minInset < FRAME_MARGIN) return null;
 
+  // Degenerate hull (extreme-point ties, e.g. an axis-aligned diamond):
+  // collapsed corners / needle angles → sliver quad → no proposal.
+  const { minEdge, minAngle } = quadShape(quad);
+  if (minEdge < MIN_EDGE_FRAC || minAngle < MIN_CORNER_ANGLE) return null;
+
+  // Per-edge gradient backing: a hull edge bridging empty background (the
+  // plane→clutter merge) disqualifies the whole proposal.
+  const edgeSupport = measureEdgeSupport(quad, mag, w, h, threshold);
+  if (edgeSupport.min < MIN_EDGE_SUPPORT) return null;
+
+  // Disjoint content (two regions, plane + separated clutter): an empty
+  // row/column band inside the content extent splits the hull → no proposal.
+  if (hasInteriorGap(quad, mag, w, h, threshold)) return null;
+
   // --- confidence: how convincingly BOUNDED is this plane? --------------------
   // 1. A quiet border ring (mask does not bleed to the frame edge).
   const borderEmptiness = borderTotal ? 1 - borderMask / borderTotal : 0;
   // 2. Area in a healthy mid-band (peak ~0.4, tapering toward the gates).
   const areaScore = Math.max(0, 1 - Math.abs(area - 0.4) / 0.5);
-  // 3. Edge support: the four proposed sides ride real gradient boundaries.
-  const edgeSupport = measureEdgeSupport(quad, mag, w, h, threshold);
-
+  // 3. The WEAKEST edge's support (min, not mean — one unsupported side is
+  //    exactly how a merged hull flatters itself past an average).
   const confidence = clamp01(
-    0.45 * borderEmptiness + 0.2 * areaScore + 0.35 * edgeSupport
+    0.4 * borderEmptiness + 0.2 * areaScore + 0.4 * edgeSupport.min
   );
   if (confidence < MIN_QUAD_CONFIDENCE) return null;
 
   return { quad, confidence };
 }
 
+/** Shortest edge length + smallest interior angle of a fractional quad. */
+function quadShape(quad) {
+  let minEdge = Infinity;
+  let minAngle = Infinity;
+  for (let i = 0; i < 4; i++) {
+    const p = quad[(i + 3) % 4];
+    const q = quad[i];
+    const r = quad[(i + 1) % 4];
+    const v1x = p.x - q.x, v1y = p.y - q.y;
+    const v2x = r.x - q.x, v2y = r.y - q.y;
+    const l1 = Math.hypot(v1x, v1y);
+    const l2 = Math.hypot(v2x, v2y);
+    minEdge = Math.min(minEdge, l2);
+    const cos = (v1x * v2x + v1y * v2y) / (l1 * l2 || 1);
+    minAngle = Math.min(minAngle, Math.acos(Math.max(-1, Math.min(1, cos))));
+  }
+  return { minEdge, minAngle };
+}
+
 /**
- * Fraction of samples along the four quad edges that sit near a mask pixel —
- * i.e. how much of the proposed boundary is backed by an actual gradient edge.
+ * Split-content check: project the mask inside the quad's bbox onto each axis
+ * and look for an empty band strictly inside the occupied extent. One coherent
+ * textured plane has none (every row/column crosses some ornament boundary);
+ * a hull merging two separated regions has the separating band.
+ */
+function hasInteriorGap(quad, mag, w, h, threshold) {
+  const x0 = Math.max(0, Math.floor(Math.min(...quad.map((c) => c.x)) * w));
+  const x1 = Math.min(w - 1, Math.ceil(Math.max(...quad.map((c) => c.x)) * w));
+  const y0 = Math.max(0, Math.floor(Math.min(...quad.map((c) => c.y)) * h));
+  const y1 = Math.min(h - 1, Math.ceil(Math.max(...quad.map((c) => c.y)) * h));
+  const cols = new Uint8Array(x1 - x0 + 1);
+  const rows = new Uint8Array(y1 - y0 + 1);
+  for (let y = y0; y <= y1; y++) {
+    for (let x = x0; x <= x1; x++) {
+      if (mag[y * w + x] > threshold) {
+        cols[x - x0] = 1;
+        rows[y - y0] = 1;
+      }
+    }
+  }
+  const maxGapFrac = (occ) => {
+    let first = -1;
+    let last = -1;
+    for (let i = 0; i < occ.length; i++) {
+      if (occ[i]) {
+        if (first < 0) first = i;
+        last = i;
+      }
+    }
+    if (first < 0 || last <= first) return 1;
+    let run = 0;
+    let maxRun = 0;
+    for (let i = first; i <= last; i++) {
+      if (occ[i]) run = 0;
+      else if (++run > maxRun) maxRun = run;
+    }
+    return maxRun / (last - first + 1);
+  };
+  return maxGapFrac(cols) > MAX_INTERIOR_GAP || maxGapFrac(rows) > MAX_INTERIOR_GAP;
+}
+
+/**
+ * PER-EDGE gradient backing: for each of the four proposed sides, the fraction
+ * of samples along it that sit near a mask pixel. Returned per edge plus the
+ * minimum — a merged hull hides its unsupported bridging edge inside a mean,
+ * so both the gate and the confidence use the WEAKEST edge.
+ *
+ * @returns {{ perEdge: number[], min: number }}
  */
 function measureEdgeSupport(quad, mag, w, h, threshold) {
   const SAMPLES = 16;
   const RADIUS = 2;
-  let supported = 0;
-  let total = 0;
+  const perEdge = [];
   for (let e = 0; e < 4; e++) {
     const a = quad[e];
     const b = quad[(e + 1) % 4];
+    let supported = 0;
     for (let s = 0; s < SAMPLES; s++) {
       const t = (s + 0.5) / SAMPLES;
       const px = Math.round((a.x + (b.x - a.x) * t) * w);
       const py = Math.round((a.y + (b.y - a.y) * t) * h);
-      total++;
       let hit = false;
       for (let dy = -RADIUS; dy <= RADIUS && !hit; dy++) {
         for (let dx = -RADIUS; dx <= RADIUS && !hit; dx++) {
@@ -237,17 +346,34 @@ function measureEdgeSupport(quad, mag, w, h, threshold) {
       }
       if (hit) supported++;
     }
+    perEdge.push(supported / SAMPLES);
   }
-  return total ? supported / total : 0;
+  return { perEdge, min: Math.min(...perEdge) };
 }
 
 const clamp01 = (v) => Math.min(1, Math.max(0, v));
 
-// SEAM (deferred) — the M-LSD LineDetector path. To upgrade to genuine
-// vanishing-point rectification without touching callers: add a
-// LineDetector(image) → segments[] module (M-LSD via tfjs, lazy-loaded through
-// a Worker stage's loadDeps() so it never enters the entry bundle), cluster the
-// segments into two vanishing points (Liebowitz–Zisserman), and emit the same
-// { quad: fractionalTLTRBRBL, confidence } shape from here. The classical path
-// above stays as the offline / no-model floor. Nothing downstream — the
-// initialQuad seam, FlattenStep, rectify() — changes.
+// KNOWN LIMITS of the classical path — every one of these deliberately falls
+// to null (manual default corners, no badge), verified by tests; none produces
+// a wrong-but-confident quad:
+//   · a plane rotated near 45° (axis-symmetric diamond): the x±y objectives
+//     tie along its edges → collapsed corners → degeneracy gate → null.
+//   · a frame-filling plane (no quiet border): FRAME_MARGIN / area gate → null.
+//   · a plane WITH separated off-plane clutter, or several distinct pattern
+//     regions: coherence gates (per-edge support, interior-gap) → null. When
+//     the clutter sits CLOSER than the gap threshold (~12% of the extent) it
+//     can still merge into the hull — irreducible for a hull-based detector;
+//     the human adjusts the editable proposal (locked decision 8).
+// (A hollow frame-only motif is NOT a limit: its bars keep every projection
+// row/column occupied and all four hull edges gradient-backed, so it proposes
+// the quad around the frame — which is the plane. Test-covered.)
+//
+// SEAM (deferred) — the M-LSD LineDetector path, which is what CLOSES the
+// limits above (lines + vanishing points see structure, not hulls). To upgrade
+// without touching callers: add a LineDetector(image) → segments[] module
+// (M-LSD via tfjs, lazy-loaded through a Worker stage's loadDeps() so it never
+// enters the entry bundle), cluster the segments into two vanishing points
+// (Liebowitz–Zisserman), and emit the same { quad: fractionalTLTRBRBL,
+// confidence } shape from here. The classical path above stays as the
+// offline / no-model floor. Nothing downstream — the initialQuad seam,
+// FlattenStep, rectify() — changes.

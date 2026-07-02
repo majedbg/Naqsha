@@ -43,6 +43,22 @@ export function removeLibraryEntry(patternId) {
   if (entries.delete(patternId)) notify();
 }
 
+/**
+ * Patch the entity of an existing entry IN PLACE (S9 editable-later, issue #58
+ * AC: "metadata editable from the entry detail view"). Preserves the entry's
+ * transient photoURL, createdAt, and seq — a metadata edit must not drop the
+ * session photo or reorder the Library. No-op if the entry is unknown.
+ */
+export function updateLibraryEntry(patternId, patch) {
+  const existing = entries.get(patternId);
+  if (!existing) return;
+  entries.set(patternId, {
+    ...existing,
+    entity: { ...existing.entity, ...patch },
+  });
+  notify();
+}
+
 /** All entries, newest first. Stable array identity between mutations. */
 export function getLibraryEntries() {
   if (!cache) {

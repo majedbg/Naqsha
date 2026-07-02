@@ -365,3 +365,97 @@ describe('deserializeExtractedPattern — crafted-row hardening', () => {
     expect(JSON.stringify(back.tile)).not.toContain('<');
   });
 });
+
+// S9 (issue #58): organization + provenance metadata + palette facet round-trip
+// and validate-and-null hardening on the entity.
+describe('ExtractedPattern — S9 provenance + palette metadata', () => {
+  const META = {
+    note: 'Vault rib crossing',
+    favorite: true,
+    tags: ['gothic', 'tracery'],
+    collectionId: '123e4567-e89b-42d3-a456-426614174000',
+    sourceType: 'in_person',
+    material: 'stone',
+    tradition: 'Gothic tracery',
+    palette: [
+      { hex: '#a08040', coverage: 0.6 },
+      { hex: '#101010', coverage: 0.4 },
+    ],
+  };
+
+  it('carries all metadata onto the entity, normalized', () => {
+    const e = makeExtractedPattern({ title: 't', tile: TILE, ...META });
+    expect(e.note).toBe('Vault rib crossing');
+    expect(e.favorite).toBe(true);
+    expect(e.tags).toEqual(['gothic', 'tracery']);
+    expect(e.collectionId).toBe(META.collectionId);
+    expect(e.sourceType).toBe('in_person');
+    expect(e.material).toBe('stone');
+    expect(e.tradition).toBe('Gothic tracery');
+    expect(e.palette).toEqual(META.palette);
+  });
+
+  it('defaults metadata to empty/null when omitted', () => {
+    const e = makeExtractedPattern({ title: 't', tile: TILE });
+    expect(e.note).toBeNull();
+    expect(e.favorite).toBe(false);
+    expect(e.tags).toEqual([]);
+    expect(e.collectionId).toBeNull();
+    expect(e.sourceType).toBeNull();
+    expect(e.material).toBeNull();
+    expect(e.tradition).toBeNull();
+    expect(e.palette).toEqual([]);
+  });
+
+  it('serializes metadata to the migration-011 column names', () => {
+    const row = serializeExtractedPattern(makeExtractedPattern({ title: 't', tile: TILE, ...META }));
+    expect(row.note).toBe('Vault rib crossing');
+    expect(row.favorite).toBe(true);
+    expect(row.tags).toEqual(['gothic', 'tracery']);
+    expect(row.collection_id).toBe(META.collectionId);
+    expect(row.source_type).toBe('in_person');
+    expect(row.material).toBe('stone');
+    expect(row.tradition).toBe('Gothic tracery');
+    expect(row.palette).toEqual(META.palette);
+  });
+
+  it('round-trips all metadata through serialize → deserialize', () => {
+    const row = serializeExtractedPattern(makeExtractedPattern({ patternId: 'extracted-rt', title: 't', tile: TILE, ...META }));
+    const back = deserializeExtractedPattern(row);
+    expect(back.note).toBe(META.note);
+    expect(back.favorite).toBe(true);
+    expect(back.tags).toEqual(META.tags);
+    expect(back.collectionId).toBe(META.collectionId);
+    expect(back.sourceType).toBe(META.sourceType);
+    expect(back.material).toBe(META.material);
+    expect(back.tradition).toBe(META.tradition);
+    expect(back.palette).toEqual(META.palette);
+  });
+
+  it('drops malformed palette / tags from an attacker-writable row without throwing', () => {
+    const row = {
+      ...serializeExtractedPattern(makeExtractedPattern({ patternId: 'extracted-bad', title: 't', tile: TILE })),
+      palette: [{ hex: '#000"><script>', coverage: 1 }, { hex: '#00ff00', coverage: 0.5 }],
+      tags: ['ok', 123, '<b>x</b>'],
+      material: 'has spaces',
+      favorite: 'yes',
+    };
+    const back = deserializeExtractedPattern(row);
+    expect(back.palette).toEqual([{ hex: '#00ff00', coverage: 0.5 }]); // bad hex dropped
+    expect(back.tags).toEqual(['ok', '<b>x</b>']); // non-string dropped, markup kept inert as text
+    expect(back.material).toBeNull(); // invalid slug → null
+    expect(back.favorite).toBe(false); // non-boolean → false
+  });
+
+  it('still deserializes a pre-S9 row (missing metadata columns)', () => {
+    const row = serializeExtractedPattern(makeExtractedPattern({ patternId: 'extracted-old', title: 't', tile: TILE }));
+    delete row.note;
+    delete row.favorite;
+    delete row.tags;
+    delete row.palette;
+    const back = deserializeExtractedPattern(row);
+    expect(back.tags).toEqual([]);
+    expect(back.palette).toEqual([]);
+    expect(back.favorite).toBe(false);
+  });
+});

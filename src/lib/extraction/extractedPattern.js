@@ -34,6 +34,7 @@ import {
   normalizeCaptureDate,
   normalizeExif,
 } from './locationMeta';
+import { normalizeProvenance } from './provenanceMeta';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -92,6 +93,17 @@ export function makeExtractedPattern({
   location = null,
   captureDate = null,
   exif = null,
+  // S9 (issue #58): organization + provenance metadata + palette facet. Same
+  // validate-and-null discipline — none of it may block a save or destroy a
+  // good entry (progressive disclosure; nothing but the title matters).
+  note = null,
+  favorite = false,
+  tags = [],
+  collectionId = null,
+  sourceType = null,
+  material = null,
+  tradition = null,
+  palette = [],
 } = {}) {
   const fills = tile?.fills ?? [];
   const strokes = tile?.strokes ?? [];
@@ -117,6 +129,17 @@ export function makeExtractedPattern({
     location: normalizeLocation(location),
     captureDate: normalizeCaptureDate(captureDate),
     exif: normalizeExif(exif),
+    // S9 metadata — one shared validation surface (see provenanceMeta).
+    ...normalizeProvenance({
+      note,
+      favorite,
+      tags,
+      collectionId,
+      sourceType,
+      material,
+      tradition,
+      palette,
+    }),
   };
 }
 
@@ -162,6 +185,19 @@ export function serializeExtractedPattern(entity) {
     location: entity.location,
     capture_date: entity.captureDate,
     exif: entity.exif,
+    // S9: organization + provenance + palette → columns added by migration 011
+    // (additive, human-gated, ships after 010). A deployment on 009/010 but not
+    // 011 fails this insert on the unknown columns; saveExtractedPattern
+    // degrades to a session-only save (persisted:false) — never a dead end,
+    // exactly like S8's 009-only path. jsonb columns hold arrays directly.
+    note: entity.note,
+    favorite: entity.favorite,
+    tags: entity.tags,
+    collection_id: entity.collectionId,
+    source_type: entity.sourceType,
+    material: entity.material,
+    tradition: entity.tradition,
+    palette: entity.palette,
   };
 }
 
@@ -228,5 +264,17 @@ export function deserializeExtractedPattern(record) {
     location: record.location ?? null,
     captureDate: record.capture_date ?? null,
     exif: record.exif ?? null,
+    // S9: metadata is validate-and-null inside makeExtractedPattern — a corrupt
+    // tag/material/palette on an attacker-writable row drops the bad piece, it
+    // never throws, so a good pattern is never lost to bad metadata. Palette hex
+    // is hard-validated before it can reach a chip's style attribute.
+    note: record.note ?? null,
+    favorite: record.favorite ?? false,
+    tags: record.tags ?? [],
+    collectionId: record.collection_id ?? null,
+    sourceType: record.source_type ?? null,
+    material: record.material ?? null,
+    tradition: record.tradition ?? null,
+    palette: record.palette ?? [],
   });
 }

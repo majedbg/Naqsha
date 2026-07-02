@@ -91,7 +91,11 @@ function monthYear(isoDate) {
   if (!isoDate) return null;
   const d = new Date(isoDate);
   if (!Number.isFinite(d.getTime())) return null;
-  return `${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
+  // LOCAL getters (S9 follow-up): the Save step and Library detail render the
+  // capture date in LOCAL time (toLocaleDateString), so the suggested title's
+  // month/year must agree with them. Using getUTC* here made a near-midnight
+  // capture read "June 2026" in the title but "July 1, 2026" in the display.
+  return `${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
 }
 
 /**

@@ -17,11 +17,12 @@ import {
   deleteExtractedPattern,
   loadAndRegisterExtractedPatterns,
   getPhotoURL,
+  updateExtractedPatternMeta,
   PHOTO_BUCKET,
 } from './libraryRepository';
 import { makeExtractedPattern, serializeExtractedPattern } from './extraction/extractedPattern';
 import { getDynamicPatternClass, unregisterPattern } from './patternRegistry';
-import { getLibraryEntry, clearLibraryEntries } from './libraryStore';
+import { getLibraryEntry, clearLibraryEntries, addLibraryEntry } from './libraryStore';
 
 const USER = { id: 'user-1' };
 
@@ -312,5 +313,57 @@ describe('loadAndRegisterExtractedPatterns', () => {
     expect(entities).toHaveLength(1);
     expect(getDynamicPatternClass('extracted-evil')).toBeNull();
     expect(getDynamicPatternClass('extracted-lr-1')).toBeTruthy();
+  });
+});
+
+// S9 (issue #58): editable-later metadata. Updates the store ALWAYS; persists
+// best-effort. Palette + geometry are not editable here.
+describe('updateExtractedPatternMeta', () => {
+  it('persists a normalized metadata patch to the row and the store', async () => {
+    seed.user_patterns = [
+      { ...serializeExtractedPattern(entity()), user_id: 'user-1', created_at: '2026-07-01' },
+    ];
+    addLibraryEntry(entity());
+
+    const res = await updateExtractedPatternMeta('extracted-lr-1', {
+      title: '  New title  ',
+      note: 'edited note',
+      favorite: true,
+      tags: ['Gothic', 'gothic', 'tracery'],
+      material: 'Glass',
+      tradition: 'Gothic tracery',
+      palette: [{ hex: '#fff', coverage: 1 }], // not an editable field → ignored
+    });
+
+    expect(res.persisted).toBe(true);
+    const row = seed.user_patterns[0];
+    expect(row.name).toBe('New title');
+    expect(row.note).toBe('edited note');
+    expect(row.favorite).toBe(true);
+    expect(row.tags).toEqual(['Gothic', 'tracery']); // deduped
+    expect(row.material).toBe('glass'); // slug-normalized
+    expect(row.palette).toEqual([]); // palette untouched by a metadata edit
+
+    const stored = getLibraryEntry('extracted-lr-1').entity;
+    expect(stored.title).toBe('New title');
+    expect(stored.favorite).toBe(true);
+    expect(stored.material).toBe('glass');
+  });
+
+  it('ignores a blank title edit so a name is never wiped', async () => {
+    seed.user_patterns = [{ ...serializeExtractedPattern(entity()), user_id: 'user-1' }];
+    addLibraryEntry(entity());
+    await updateExtractedPatternMeta('extracted-lr-1', { title: '   ', note: 'kept' });
+    expect(seed.user_patterns[0].name).toBe('Repo tile'); // unchanged
+    expect(seed.user_patterns[0].note).toBe('kept');
+  });
+
+  it('updates the store but reports session-only for a guest', async () => {
+    _ref.client = createSupabaseMock(seed, { user: null });
+    addLibraryEntry(entity());
+    const res = await updateExtractedPatternMeta('extracted-lr-1', { favorite: true });
+    expect(res.persisted).toBe(false);
+    expect(res.reason).toBe('guest');
+    expect(getLibraryEntry('extracted-lr-1').entity.favorite).toBe(true);
   });
 });

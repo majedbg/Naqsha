@@ -134,7 +134,7 @@ function LibraryCard({ entry, photoURL, onOpen }) {
   );
 }
 
-// Google Maps geo link for a coordinate — read-only, opened only on click
+// OpenStreetMap geo link for a coordinate — read-only, opened only on click
 // (never auto-fetched). Kept keyless + external so the Library view stays pure.
 function mapsHref(lat, lng) {
   return `https://www.openstreetmap.org/?mlat=${lat}&mlon=${lng}#map=16/${lat}/${lng}`;

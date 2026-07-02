@@ -508,7 +508,7 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad }) {
   // --- Location (S8, issue #57) -----------------------------------------------
 
   const hasCoords =
-    location && typeof location.lat === 'number' && typeof location.lng === 'number';
+    location && Number.isFinite(location.lat) && Number.isFinite(location.lng);
 
   // Patch a location field. Any MANUAL edit stamps source 'manual' (overriding
   // an earlier 'exif'/'geocoded'); explicit callers (geocode) pass their own.

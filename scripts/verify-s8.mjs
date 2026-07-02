@@ -159,10 +159,32 @@ async function main() {
 
   await page.screenshot({ path: OUT + '02-geocoded.png', fullPage: false });
 
-  // Save it.
+  // Save it. Guest / no-supabase → session-only notice; the entity is still
+  // registered in-session, so it browses in the Library.
   await page.getByRole('button', { name: /save to library/i }).click();
-  await page.waitForTimeout(1500);
+  await page.waitForTimeout(1200);
   await page.screenshot({ path: OUT + '03-after-save.png', fullPage: false });
+
+  // Dismiss any session-only notice. Studio may auto-open the Library after a
+  // save; open it via the Object menu only if it isn't already up.
+  const cont = page.getByRole('button', { name: /^continue$/i });
+  if (await cont.count()) await cont.click();
+  await page.waitForTimeout(500);
+  // Studio opens the pattern picker after a save (the extraction registers into
+  // the custom family). Close any post-save modal, then open the Library.
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(400);
+  await page.getByRole('button', { name: 'Object', exact: true }).click();
+  await page.getByText('Pattern Library…', { exact: true }).click();
+  await page.getByRole('heading', { name: /pattern library/i }).waitFor();
+  await page.getByTestId('library-card').first().click();
+  const prov = page.getByTestId('provenance-meta');
+  await prov.waitFor({ timeout: 8000 });
+  const provText = await prov.textContent();
+  check('Library detail shows place', /Uppsala, Sweden/.test(provText), provText.slice(0, 80));
+  check('Library detail shows capture date', /June 28, 2026/.test(provText));
+  check('Library detail shows coordinates link', (await page.getByTestId('location-map-link').count()) === 1);
+  await page.screenshot({ path: OUT + '05-library-detail.png', fullPage: false });
 
   // ---- Run 2: EXIF-less PNG → clean empty fields ----
   await page.goto(BASE, { waitUntil: 'networkidle' });

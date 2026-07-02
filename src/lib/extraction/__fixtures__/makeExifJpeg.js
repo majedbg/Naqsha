@@ -102,15 +102,12 @@ function toDMS(coord) {
 }
 
 /**
- * Build a JPEG (Uint8Array) with an EXIF APP1 segment.
- * @param {object} opts
- * @param {string} [opts.dateTime] EXIF DateTimeOriginal ("YYYY:MM:DD HH:MM:SS").
- * @param {number} [opts.lat] decimal latitude (signed).
- * @param {number} [opts.lng] decimal longitude (signed).
- * @param {string} [opts.make]
- * @param {string} [opts.model]
+ * Build just the EXIF APP1 segment (marker + length + "Exif\0\0" + TIFF) as a
+ * plain octet array — so callers can splice known EXIF into ANY baseline JPEG
+ * (e.g. a canvas-exported, traceable photo for browser verification), not only
+ * the tiny inlined base body.
  */
-export function makeExifJpeg({
+export function buildExifApp1({
   dateTime = '2026:06:28 14:32:10',
   lat = 59.8586,
   lng = 17.6389,
@@ -171,8 +168,15 @@ export function makeExifJpeg({
   const exifHeader = [0x45, 0x78, 0x69, 0x66, 0x00, 0x00]; // "Exif\0\0"
   const app1Payload = [...exifHeader, ...tiff];
   const app1Len = app1Payload.length + 2; // length field includes itself
-  const app1 = [0xff, 0xe1, (app1Len >> 8) & 0xff, app1Len & 0xff, ...app1Payload];
+  return [0xff, 0xe1, (app1Len >> 8) & 0xff, app1Len & 0xff, ...app1Payload];
+}
 
+/**
+ * Build a JPEG (Uint8Array) with an EXIF APP1 segment, using the inlined 2×2
+ * base body. See buildExifApp1 for the metadata options.
+ */
+export function makeExifJpeg(opts = {}) {
+  const app1 = buildExifApp1(opts);
   const body = Uint8Array.from(atobBytes(BASE_JPEG_BODY_B64));
   // BASE body already starts with its own SOI (FFD8); drop it, we prepend ours.
   const bodyNoSoi = body.subarray(2);

@@ -7,8 +7,11 @@
 //             + manual quad drop in behind it later (locked decision 2).
 //   Select  : manual region crop — drag a rectangle over the photo (locked
 //             decision 3: one pattern per extraction, manual select).
-//   Review  : the traced proposal (shape count + preview). Crude S0 review;
-//             editable proposals/confidence badges deepen in later slices.
+//   Review  : the traced proposal as EDITABLE per-shape rows (S6, issue #55):
+//             each motif carries both representations from the pipeline
+//             (contour + centerline when non-degenerate), so the user can
+//             toggle centerline↔contour and flip the engrave/cut/score role
+//             per shape (locked decision 9). The preview colors by role.
 //   Save    : title + save → registers into the picker's custom family AND
 //             persists via LibraryRepository (one entity, two surfaces).
 //
@@ -20,10 +23,60 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { fileToDataURL, loadImage, cropToImageData } from '../../lib/extraction/imageIO';
 import { createExtractionBridge } from '../../lib/extraction/workerBridge';
 import { makeExtractedPattern } from '../../lib/extraction/extractedPattern';
+import { FABRICATION_ROLES } from '../../lib/extraction/vectorizer';
 import { registerExtractedPattern } from '../../lib/patterns/ExtractedPatternGenerator';
 import { saveExtractedPattern } from '../../lib/libraryRepository';
 
 const STEPS = ['Upload', 'Flatten', 'Select', 'Review', 'Save'];
+
+// Preview color per fabrication role — a visible distinction between what the
+// laser engraves (dark), cuts (red), and scores (blue). Preview-only; export
+// colors stay the layer color.
+const ROLE_COLORS = { engrave: '#1a1a1a', cut: '#dc2626', score: '#2563eb' };
+
+// --- Review model (S6, issue #55) -------------------------------------------
+// The pipeline's components[] carries BOTH representations per motif. Results
+// without components (older worker payloads) degrade to single-representation
+// shapes whose toggle is disabled — same rows, no dead end.
+
+function shapesFromResult(result) {
+  if (result.components?.length) {
+    return result.components.map((c) => ({
+      contour: c.contour ?? null,
+      centerline: c.centerline ?? null,
+      kind: c.kind,
+      role: c.role,
+    }));
+  }
+  return [
+    ...result.tile.fills.map((f) => ({
+      contour: { d: f.d },
+      centerline: null,
+      kind: 'fill',
+      role: f.role,
+    })),
+    ...result.tile.strokes.map((s) => ({
+      contour: null,
+      centerline: { d: s.d },
+      kind: 'stroke',
+      role: s.role,
+    })),
+  ];
+}
+
+// Apply the user's Review edits: each shape lands in fills or strokes under
+// its chosen representation + role. Kinds are only ever toggled toward a
+// representation the shape HAS, so the picked d always exists.
+function buildTile(result, shapes, edits) {
+  const fills = [];
+  const strokes = [];
+  shapes.forEach((shape, i) => {
+    const { kind, role } = edits[i] ?? shape;
+    if (kind === 'stroke') strokes.push({ d: shape.centerline.d, role });
+    else fills.push({ d: shape.contour.d, role });
+  });
+  return { width: result.tile.width, height: result.tile.height, fills, strokes };
+}
 
 function StepRail({ current }) {
   return (
@@ -71,6 +124,9 @@ export default function ExtractStepper({ onClose, onSaved }) {
   const [tracing, setTracing] = useState(false);
   const [stageMsg, setStageMsg] = useState('');
   const [result, setResult] = useState(null);
+  // Per-shape Review edits ({kind, role} parallel to shapesFromResult(result));
+  // reset whenever a new trace lands (S6, issue #55).
+  const [shapeEdits, setShapeEdits] = useState([]);
   const [error, setError] = useState('');
   const [title, setTitle] = useState('');
   const [saving, setSaving] = useState(false);
@@ -177,6 +233,7 @@ export default function ExtractStepper({ onClose, onSaved }) {
         return;
       }
       setResult(res);
+      setShapeEdits(shapesFromResult(res).map(({ kind, role }) => ({ kind, role })));
       setStep(3);
     } catch (err) {
       setError(err.message || 'Extraction failed.');
@@ -197,7 +254,7 @@ export default function ExtractStepper({ onClose, onSaved }) {
     try {
       const entity = makeExtractedPattern({
         title: title.trim() || defaultTitle,
-        tile: result.tile,
+        tile: buildTile(result, shapesFromResult(result), shapeEdits),
         lattice: result.lattice,
       });
       // Register FIRST (one entity, two surfaces): the pattern is usable this
@@ -219,27 +276,61 @@ export default function ExtractStepper({ onClose, onSaved }) {
     } finally {
       setSaving(false);
     }
-  }, [result, title, defaultTitle, file, onSaved, onClose]);
+  }, [result, shapeEdits, title, defaultTitle, file, onSaved, onClose]);
+
+  // --- Review edits (S6) --------------------------------------------------------
+
+  const setShapeRole = (i, role) =>
+    setShapeEdits((edits) => edits.map((e, j) => (j === i ? { ...e, role } : e)));
+
+  // Toggling representation resets the role to the target kind's default —
+  // centerline→score, contour→engrave (locked decision 9) — so the pairing
+  // stays predictable; the user can re-pick after.
+  const toggleShapeKind = (i) =>
+    setShapeEdits((edits) =>
+      edits.map((e, j) =>
+        j === i
+          ? e.kind === 'stroke'
+            ? { kind: 'fill', role: 'engrave' }
+            : { kind: 'stroke', role: 'score' }
+          : e
+      )
+    );
 
   // --- render -------------------------------------------------------------------
 
-  const preview = result ? (
+  const shapes = result ? shapesFromResult(result) : [];
+  const editedTile = result ? buildTile(result, shapes, shapeEdits) : null;
+  const shapeCount = shapes.length;
+
+  const preview = editedTile ? (
     <svg
-      viewBox={`0 0 ${result.tile.width} ${result.tile.height}`}
+      viewBox={`0 0 ${editedTile.width} ${editedTile.height}`}
       className="max-h-64 w-auto border border-hairline bg-white"
       role="img"
       aria-label="Traced pattern preview"
     >
-      {result.tile.fills.map((f, i) => (
-        <path key={`f${i}`} d={f.d} fill="#1a1a1a" fillRule="evenodd" stroke="none" />
+      {editedTile.fills.map((f, i) => (
+        <path
+          key={`f${i}`}
+          d={f.d}
+          fill={ROLE_COLORS[f.role] || '#1a1a1a'}
+          fillRule="evenodd"
+          stroke="none"
+        />
       ))}
-      {result.tile.strokes.map((s, i) => (
-        <path key={`s${i}`} d={s.d} fill="none" stroke="#1a1a1a" strokeWidth="1" />
+      {editedTile.strokes.map((s, i) => (
+        <path
+          key={`s${i}`}
+          d={s.d}
+          fill="none"
+          stroke={ROLE_COLORS[s.role] || '#1a1a1a'}
+          strokeWidth="1.5"
+          strokeLinecap="round"
+        />
       ))}
     </svg>
   ) : null;
-
-  const shapeCount = result ? result.tile.fills.length + result.tile.strokes.length : 0;
 
   return (
     <div className="fixed inset-0 z-50 bg-ink/70 flex items-center justify-center px-4">
@@ -356,9 +447,69 @@ export default function ExtractStepper({ onClose, onSaved }) {
             <>
               {preview}
               <p className="text-xs text-ink-soft">
-                {shapeCount} shape{shapeCount === 1 ? '' : 's'} traced · engrave by default —
-                per-shape cut/score roles arrive with the Review editor.
+                {shapeCount} shape{shapeCount === 1 ? '' : 's'} traced — line-work as single
+                centerline strokes, solid shapes as contours. Flip a shape's role or switch its
+                representation below.
               </p>
+              <p className="text-[10px] text-ink-faint flex items-center gap-3" aria-hidden>
+                {FABRICATION_ROLES.map((role) => (
+                  <span key={role} className="flex items-center gap-1">
+                    <span
+                      className="inline-block w-2 h-2 rounded-full"
+                      style={{ backgroundColor: ROLE_COLORS[role] }}
+                    />
+                    {role}
+                  </span>
+                ))}
+              </p>
+              <ul aria-label="Traced shapes" className="w-full max-w-md flex flex-col gap-1">
+                {shapes.map((shape, i) => {
+                  const edit = shapeEdits[i] ?? shape;
+                  const isStroke = edit.kind === 'stroke';
+                  // Toggle needs the OTHER representation to exist (a blob with
+                  // a degenerate skeleton has no centerline — contour floor).
+                  const canToggle = isStroke ? !!shape.contour : !!shape.centerline;
+                  return (
+                    <li
+                      key={i}
+                      className="flex items-center gap-2 bg-paper-warm rounded-xs px-2.5 py-1.5"
+                    >
+                      <span
+                        className="inline-block w-2 h-2 rounded-full shrink-0"
+                        style={{ backgroundColor: ROLE_COLORS[edit.role] || '#1a1a1a' }}
+                        aria-hidden
+                      />
+                      <span className="text-xs text-ink flex-1">Shape {i + 1}</span>
+                      <button
+                        type="button"
+                        className="px-2 py-0.5 text-[11px] font-medium rounded-xs bg-panel text-ink-soft border border-hairline hover:text-ink disabled:opacity-40 disabled:cursor-default transition-colors duration-fast ease-out-quart"
+                        aria-label={`Representation for shape ${i + 1}: ${isStroke ? 'centerline' : 'contour'}`}
+                        title={
+                          canToggle
+                            ? `Switch to ${isStroke ? 'contour' : 'centerline'}`
+                            : 'Only one representation available for this shape'
+                        }
+                        disabled={!canToggle}
+                        onClick={() => toggleShapeKind(i)}
+                      >
+                        {isStroke ? 'Centerline' : 'Contour'}
+                      </button>
+                      <select
+                        aria-label={`Fabrication role for shape ${i + 1}`}
+                        value={edit.role}
+                        onChange={(e) => setShapeRole(i, e.target.value)}
+                        className="bg-panel text-ink text-[11px] px-1.5 py-0.5 rounded-xs border border-hairline outline-none focus:border-violet"
+                      >
+                        {FABRICATION_ROLES.map((role) => (
+                          <option key={role} value={role}>
+                            {role}
+                          </option>
+                        ))}
+                      </select>
+                    </li>
+                  );
+                })}
+              </ul>
               <div className="flex gap-2">
                 <button type="button" className={GHOST_BTN} onClick={() => setStep(2)}>
                   Back

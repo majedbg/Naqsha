@@ -233,7 +233,82 @@ export function simplifyPolyline(points, tolerance = 1, closed = false) {
   return first.slice(0, -1).concat(second);
 }
 
+// ── Ink distance transform ─────────────────────────────────────────────────
+
+/**
+ * Chessboard distance from every ink pixel to the nearest paper pixel
+ * (multi-source BFS; outside the image counts as paper). The max value along
+ * a component's skeleton is its half stroke width — the Vectorizer's
+ * stroke-vs-blob discriminant is skeletonLength / (2·maxRadius), which is
+ * scale-invariant.
+ *
+ * @param {{data: Uint8ClampedArray, width: number, height: number}} bw
+ * @returns {Int32Array} width*height distances (paper = 0)
+ */
+export function inkDistanceTransform(bw) {
+  const { data, width, height } = bw;
+  const n = width * height;
+  const dist = new Int32Array(n).fill(-1);
+  const queue = new Int32Array(n);
+  let head = 0;
+  let tail = 0;
+  for (let i = 0, p = 0; i < n; i++, p += 4) {
+    if (data[p] >= 128) {
+      dist[i] = 0;
+      queue[tail++] = i;
+    }
+  }
+  // Virtual paper ring outside the image: border ink starts at distance 1.
+  for (let x = 0; x < width; x++) {
+    for (const i of [x, (height - 1) * width + x]) {
+      if (dist[i] === -1) {
+        dist[i] = 1;
+        queue[tail++] = i;
+      }
+    }
+  }
+  for (let y = 0; y < height; y++) {
+    for (const i of [y * width, y * width + width - 1]) {
+      if (dist[i] === -1) {
+        dist[i] = 1;
+        queue[tail++] = i;
+      }
+    }
+  }
+  while (head < tail) {
+    const i = queue[head++];
+    const x = i % width;
+    const y = (i - x) / width;
+    for (const [dx, dy] of NEIGHBOURS) {
+      const nx = x + dx;
+      const ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+      const ni = ny * width + nx;
+      if (dist[ni] === -1) {
+        dist[ni] = dist[i] + 1;
+        queue[tail++] = ni;
+      }
+    }
+  }
+  return dist;
+}
+
 // ── Composition → path data ────────────────────────────────────────────────
+
+/** Arc length of a polyline (adds the closing segment when closed). */
+export function polylineLength({ points, closed }) {
+  let len = 0;
+  for (let i = 1; i < points.length; i++) {
+    len += Math.hypot(points[i][0] - points[i - 1][0], points[i][1] - points[i - 1][1]);
+  }
+  if (closed && points.length > 2) {
+    len += Math.hypot(
+      points[0][0] - points[points.length - 1][0],
+      points[0][1] - points[points.length - 1][1]
+    );
+  }
+  return len;
+}
 
 const fmt = (n) => {
   const r = Math.round(n * 100) / 100;
@@ -268,20 +343,12 @@ export function extractCenterlines(bw, opts = {}) {
   const polylines = [];
   let total = 0;
   for (const { points, closed } of raw) {
-    const pts = simplifyPolyline(points, tolerance, closed);
-    let len = 0;
-    for (let i = 1; i < pts.length; i++) {
-      len += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
-    }
-    if (closed && pts.length > 2) {
-      len += Math.hypot(
-        pts[0][0] - pts[pts.length - 1][0],
-        pts[0][1] - pts[pts.length - 1][1]
-      );
-    }
+    const pl = { points: simplifyPolyline(points, tolerance, closed), closed };
+    const len = polylineLength(pl);
     if (len < minLength) continue;
     total += len;
-    polylines.push({ points: pts, closed });
+    pl.length = len;
+    polylines.push(pl);
   }
   return { polylines, mask, length: total };
 }

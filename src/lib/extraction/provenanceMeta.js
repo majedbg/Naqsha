@@ -26,6 +26,34 @@ import { sanitizeText } from './locationMeta';
 export const SOURCE_TYPES = ['in_person', 'book', 'screenshot', 'url'];
 export const MATERIALS = ['stone', 'glass', 'wood', 'textile', 'ceramic', 'metal', 'other'];
 
+// Display labels for the stored slugs — shared by the Save step and Library
+// detail so both surfaces read a value identically. `labelFor` falls back to a
+// humanized form so an unknown-but-tolerated slug still renders sensibly.
+export const SOURCE_TYPE_LABELS = {
+  in_person: 'In person',
+  book: 'From a book',
+  screenshot: 'Screenshot',
+  url: 'From a URL',
+};
+export const MATERIAL_LABELS = {
+  stone: 'Stone',
+  glass: 'Glass',
+  wood: 'Wood',
+  textile: 'Textile',
+  ceramic: 'Ceramic',
+  metal: 'Metal',
+  other: 'Other',
+};
+
+/** Slug → display label (from a labels map), else a humanized fallback. */
+export function labelFor(labels, slug) {
+  if (!slug) return null;
+  if (labels[slug]) return labels[slug];
+  return String(slug)
+    .replace(/[_-]+/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
 const MAX_NOTE = 2000;
 const MAX_TAG = 40;
 const MAX_TAGS = 30;

@@ -909,3 +909,96 @@ describe('ExtractStepper — chrome', () => {
     expect(onClose).toHaveBeenCalled();
   });
 });
+
+// S9 (issue #58): palette facet + provenance + organization on the Save step,
+// carried into the saved entity. Plus S8 follow-up 2 (stale suggested title).
+describe('ExtractStepper — S9 provenance + palette + organization', () => {
+  const TWO_TONE = {
+    // 2 opaque px: red + blue → palette must surface both.
+    data: new Uint8ClampedArray([255, 0, 0, 255, 0, 0, 255, 255]),
+    width: 2,
+    height: 1,
+  };
+
+  async function walkToSave() {
+    await walkToSelect();
+    fireEvent.click(screen.getByRole('button', { name: /trace region/i }));
+    await screen.findByText(/1 shape/i);
+    fireEvent.click(screen.getByRole('button', { name: /continue/i }));
+    await screen.findByRole('button', { name: /save to library/i });
+  }
+
+  it('shows read-only palette swatches derived from the selection crop', async () => {
+    mocks.cropToImageData.mockReturnValue(TWO_TONE);
+    render(<ExtractStepper onClose={() => {}} />);
+    await walkToSave();
+    const swatches = screen.getByTestId('palette-swatches');
+    expect(swatches.textContent).toContain('#ff0000');
+    expect(swatches.textContent).toContain('#0000ff');
+  });
+
+  it('carries provenance, tags, favorite and palette into the saved entity', async () => {
+    mocks.cropToImageData.mockReturnValue(TWO_TONE);
+    const onSaved = vi.fn();
+    render(<ExtractStepper onClose={() => {}} onSaved={onSaved} />);
+    await walkToSave();
+
+    fireEvent.change(screen.getByLabelText('Source type'), { target: { value: 'in_person' } });
+    fireEvent.change(screen.getByLabelText('Material'), { target: { value: 'stone' } });
+    fireEvent.change(screen.getByLabelText('Tradition or style'), { target: { value: 'Gothic tracery' } });
+    fireEvent.change(screen.getByLabelText('Note'), { target: { value: 'A rib boss' } });
+
+    const tagInput = screen.getByLabelText('Add a tag');
+    fireEvent.change(tagInput, { target: { value: 'gothic' } });
+    fireEvent.keyDown(tagInput, { key: 'Enter' });
+    fireEvent.change(tagInput, { target: { value: 'vault' } });
+    fireEvent.keyDown(tagInput, { key: 'Enter' });
+    expect(screen.getAllByTestId('tag-chip')).toHaveLength(2);
+
+    fireEvent.click(screen.getByRole('button', { name: /^favorite$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /save to library/i }));
+
+    await waitFor(() => expect(onSaved).toHaveBeenCalled());
+    const { entity } = onSaved.mock.calls[0][0];
+    registeredIds.push(entity.patternId);
+    expect(entity.sourceType).toBe('in_person');
+    expect(entity.material).toBe('stone');
+    expect(entity.tradition).toBe('Gothic tracery');
+    expect(entity.note).toBe('A rib boss');
+    expect(entity.tags).toEqual(['gothic', 'vault']);
+    expect(entity.favorite).toBe(true);
+    expect(entity.palette.map((s) => s.hex).sort()).toEqual(['#0000ff', '#ff0000']);
+  });
+
+  it('removes a tag chip on ×', async () => {
+    render(<ExtractStepper onClose={() => {}} />);
+    await walkToSave();
+    const tagInput = screen.getByLabelText('Add a tag');
+    fireEvent.change(tagInput, { target: { value: 'gothic' } });
+    fireEvent.keyDown(tagInput, { key: 'Enter' });
+    expect(screen.getAllByTestId('tag-chip')).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: /remove tag gothic/i }));
+    expect(screen.queryAllByTestId('tag-chip')).toHaveLength(0);
+  });
+
+  // S8 follow-up 2: re-uploading an EXIF-less photo must not keep the previous
+  // photo's suggested title.
+  it('clears a stale suggested title when a new EXIF-less photo is uploaded', async () => {
+    mocks.readExif.mockResolvedValueOnce({ date: '2026-06-15T12:00:00Z', gps: null, camera: null });
+    render(<ExtractStepper onClose={() => {}} />);
+
+    // Upload 1: has a capture date → a title is suggested.
+    uploadFixtureFile();
+    await screen.findByRole('button', { name: /skip flatten/i });
+    // Back to Upload, then upload 2 with NO EXIF (default mock → nulls).
+    fireEvent.click(screen.getByRole('button', { name: /^back$/i }));
+    uploadFixtureFile();
+    fireEvent.click(await screen.findByRole('button', { name: /skip flatten/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /trace region/i }));
+    await screen.findByText(/1 shape/i);
+    fireEvent.click(screen.getByRole('button', { name: /continue/i }));
+
+    const titleInput = await screen.findByLabelText('Title');
+    expect(titleInput.value).toBe(''); // no stale "Ornament — June 2026"
+  });
+});

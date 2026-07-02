@@ -12,10 +12,11 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { StrictMode } from 'react';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 
-const mocks = vi.hoisted(() => ({ getPhotoURL: vi.fn() }));
+const mocks = vi.hoisted(() => ({ getPhotoURL: vi.fn(), updateExtractedPatternMeta: vi.fn() }));
 
 vi.mock('../../lib/libraryRepository', () => ({
   getPhotoURL: mocks.getPhotoURL,
+  updateExtractedPatternMeta: mocks.updateExtractedPatternMeta,
 }));
 
 import LibraryView from './LibraryView';
@@ -46,6 +47,7 @@ function renderView(props = {}) {
 beforeEach(() => {
   clearLibraryEntries();
   mocks.getPhotoURL.mockReset().mockResolvedValue(null);
+  mocks.updateExtractedPatternMeta.mockReset().mockResolvedValue({ persisted: true });
 });
 
 afterEach(() => clearLibraryEntries());
@@ -303,5 +305,107 @@ describe('LibraryView — provenance / location detail (S8)', () => {
     renderView();
     fireEvent.click(screen.getByTestId('library-card'));
     expect(screen.queryByTestId('provenance-meta')).toBeNull();
+  });
+});
+
+// S9 (issue #58): provenance + palette + tags + favorite in the entry detail,
+// plus editable-later and the OSM credit on a geocoded place.
+describe('LibraryView — S9 provenance + palette + organization', () => {
+  const META_ENTITY = (over = {}) =>
+    makeExtractedPattern({
+      patternId: 'extracted-s9',
+      title: 'Uppsala vault',
+      tile: TILE,
+      sourceType: 'in_person',
+      material: 'stone',
+      tradition: 'Gothic tracery',
+      note: 'Rib crossing detail',
+      tags: ['gothic', 'vault'],
+      favorite: true,
+      palette: [
+        { hex: '#a08040', coverage: 0.6 },
+        { hex: '#101010', coverage: 0.4 },
+      ],
+      ...over,
+    });
+
+  async function openDetail(patternId = 'extracted-s9') {
+    renderView();
+    fireEvent.click(await screen.findByText('Uppsala vault'));
+    return screen.findByTestId('provenance-meta');
+  }
+
+  it('renders palette swatches as validated hex chips in detail', async () => {
+    addLibraryEntry(META_ENTITY());
+    await openDetail();
+    const chips = screen.getAllByTestId('palette-chip');
+    expect(chips).toHaveLength(2);
+    expect(chips[0].textContent).toContain('#a08040');
+  });
+
+  it('renders provenance, tradition, note and tags', async () => {
+    addLibraryEntry(META_ENTITY());
+    const meta = await openDetail();
+    expect(meta.textContent).toContain('In person');
+    expect(meta.textContent).toContain('Stone');
+    expect(meta.textContent).toContain('Gothic tracery');
+    expect(meta.textContent).toContain('Rib crossing detail');
+    const tags = screen.getByTestId('tag-list');
+    expect(tags.textContent).toContain('gothic');
+    expect(tags.textContent).toContain('vault');
+  });
+
+  it('shows the favorite star on the card and toggles favorite from detail', async () => {
+    addLibraryEntry(META_ENTITY());
+    renderView();
+    expect(screen.getByTestId('favorite-star')).toBeTruthy();
+    fireEvent.click(screen.getByText('Uppsala vault'));
+    fireEvent.click(screen.getByTestId('favorite-toggle'));
+    expect(mocks.updateExtractedPatternMeta).toHaveBeenCalledWith('extracted-s9', { favorite: false });
+  });
+
+  it('edits metadata from the detail view via updateExtractedPatternMeta', async () => {
+    addLibraryEntry(META_ENTITY());
+    renderView();
+    fireEvent.click(screen.getByText('Uppsala vault'));
+    fireEvent.click(screen.getByTestId('edit-details'));
+    fireEvent.change(screen.getByLabelText('Edit note'), { target: { value: 'Updated note' } });
+    fireEvent.change(screen.getByLabelText('Edit tags'), { target: { value: 'a, b, a' } });
+    fireEvent.click(screen.getByText('Save changes'));
+    await waitFor(() => expect(mocks.updateExtractedPatternMeta).toHaveBeenCalled());
+    const [id, patch] = mocks.updateExtractedPatternMeta.mock.calls[0];
+    expect(id).toBe('extracted-s9');
+    expect(patch.note).toBe('Updated note');
+    expect(patch.tags).toEqual(['a', 'b', 'a']); // normalization/dedupe happens in the repo
+  });
+
+  it('credits OpenStreetMap only for a geocoded place name', async () => {
+    addLibraryEntry(
+      META_ENTITY({
+        patternId: 'extracted-s9',
+        location: { lat: 59.86, lng: 17.63, placeName: 'Uppsala, Sweden', source: 'geocoded' },
+      })
+    );
+    await openDetail();
+    expect(screen.getByTestId('osm-credit')).toBeTruthy();
+    clearLibraryEntries();
+  });
+
+  it('omits the OSM credit for a manually typed place name', async () => {
+    addLibraryEntry(
+      META_ENTITY({
+        location: { lat: 59.86, lng: 17.63, placeName: 'My studio', source: 'manual' },
+      })
+    );
+    await openDetail();
+    expect(screen.queryByTestId('osm-credit')).toBeNull();
+  });
+
+  it('omits palette + tags when none were recorded (no empty-form look)', async () => {
+    addLibraryEntry(makeExtractedPattern({ patternId: 'extracted-bare', title: 'Bare', tile: TILE }));
+    renderView();
+    fireEvent.click(screen.getByText('Bare'));
+    expect(screen.queryByTestId('palette-facet')).toBeNull();
+    expect(screen.queryByTestId('tag-list')).toBeNull();
   });
 });

@@ -10,28 +10,34 @@
 // Pure and worker-agnostic: runs identically inline (tests, no-Worker
 // fallback) and inside extraction.worker.js.
 
-import { traceContours } from './vectorizer';
+import { vectorize } from './vectorizer';
 
 /**
  * @param {{ image: {data: Uint8ClampedArray, width: number, height: number},
  *           options?: { trace?: object } }} input
  * @param {(p: {stage: string, status: string}) => void} [onProgress]
  * @returns {Promise<{ tile: {width,height,fills,strokes}, lattice: null,
- *                     confidence: {trace: number} }>}
+ *                     components: object[], confidence: {trace: number} }>}
+ *   `components` (S6, issue #55) carries BOTH representations per motif
+ *   ({kind, role, contour, centerline}) so the Review step can flip a shape's
+ *   role and toggle centerline↔contour; tile.fills/strokes are the
+ *   centerline-default presentation derived from them (locked decision 9).
  */
 export async function runExtraction({ image, options = {} }, onProgress = () => {}) {
   // Stage: flatten. S0 ships skip-only (locked decision 2 — the stepper stage
   // exists; auto plane detection + manual quad land in a later slice).
   onProgress({ stage: 'flatten', status: 'skipped' });
 
-  // Stage: trace (guaranteed single-motif floor — locked decision 8).
+  // Stage: trace (guaranteed single-motif floor — locked decision 8). S6:
+  // contours + skeleton centerlines, classified per motif.
   onProgress({ stage: 'trace', status: 'running' });
-  const { fills, strokes } = await traceContours(image, options.trace);
+  const { fills, strokes, components } = await vectorize(image, options.trace);
   onProgress({ stage: 'trace', status: 'done' });
 
   return {
     tile: { width: image.width, height: image.height, fills, strokes },
     lattice: null, // S1 seam: lattice detection replaces this null
+    components,
     confidence: {
       // Crude S0 signal: geometry found = confident enough to proceed. The
       // real per-stage confidence model lands with the detectors.

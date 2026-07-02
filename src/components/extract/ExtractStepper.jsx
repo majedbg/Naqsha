@@ -3,8 +3,11 @@
 //
 //   Upload  : pick/capture a photo (file input; camera arrives via `capture`
 //             on mobile for free).
-//   Flatten : SKIP-ONLY stub in S0 — the stage exists so auto plane detection
-//             + manual quad drop in behind it later (locked decision 2).
+//   Flatten : manual 4-corner rectify + skip (S3, issue #52; FlattenStep).
+//             The warp runs through bridge.rectify (in the worker where
+//             available); the accepted rectified raster BECOMES the working
+//             image, so Select/trace operate in flattened space. S4 adds
+//             auto quad detection via the initialQuad/onQuadChange seam.
 //   Select  : manual region crop — drag a rectangle over the photo (locked
 //             decision 3: one pattern per extraction, manual select).
 //   Review  : the traced proposal as EDITABLE per-shape rows (S6, issue #55):
@@ -20,12 +23,20 @@
 // component stays jsdom-testable with that seam mocked.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { fileToDataURL, loadImage, cropToImageData } from '../../lib/extraction/imageIO';
+import {
+  fileToDataURL,
+  loadImage,
+  cropToImageData,
+  imageToImageData,
+  imageDataToDataURL,
+} from '../../lib/extraction/imageIO';
 import { createExtractionBridge } from '../../lib/extraction/workerBridge';
+import { listStages } from '../../lib/extraction/pipeline';
 import { makeExtractedPattern } from '../../lib/extraction/extractedPattern';
 import { FABRICATION_ROLES } from '../../lib/extraction/vectorizer';
 import { registerExtractedPattern } from '../../lib/patterns/ExtractedPatternGenerator';
 import { saveExtractedPattern } from '../../lib/libraryRepository';
+import FlattenStep, { DEFAULT_QUAD } from './FlattenStep';
 
 const STEPS = ['Upload', 'Flatten', 'Select', 'Review', 'Save'];
 
@@ -109,20 +120,84 @@ const REASON_LABELS = {
   'no-supabase': 'cloud storage is not configured',
 };
 
+// The extraction stages, in order, for the progress rail (serializable
+// descriptors — importing them pulls no heavy stage deps, which stay lazy).
+const EXTRACTION_STAGES = listStages();
+
+// Human-readable status for a stage's latest pipeline progress event.
+const STAGE_STATUS_TEXT = {
+  pending: 'waiting',
+  loading: 'loading…',
+  running: 'running…',
+  done: 'done',
+  skipped: 'skipped',
+  failed: 'failed',
+};
+
+// Per-stage progress rail shown while the pipeline runs (issue #51: staged
+// progress in the stepper). `events` maps stage id → latest progress event.
+function StageProgress({ events }) {
+  return (
+    <ol aria-label="Extraction progress" className="flex items-center gap-3 text-xs">
+      {EXTRACTION_STAGES.map(({ id, label }) => {
+        const ev = events[id];
+        const status = ev?.status ?? 'pending';
+        const pct =
+          typeof ev?.progress === 'number' ? ` ${Math.round(ev.progress * 100)}%` : '';
+        return (
+          <li key={id} className="flex items-center gap-1">
+            <span
+              className={
+                status === 'running' || status === 'loading'
+                  ? 'text-ink font-medium'
+                  : status === 'pending'
+                    ? 'text-ink-faint'
+                    : 'text-ink-soft'
+              }
+            >
+              {label}
+            </span>
+            <span className={status === 'failed' ? 'text-red-500' : 'text-ink-faint'}>
+              {STAGE_STATUS_TEXT[status] ?? status}
+              {pct}
+            </span>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
 const PRIMARY_BTN =
   'px-4 py-1.5 text-sm font-medium rounded-xs bg-saffron text-ink hover:bg-saffron-hover disabled:opacity-40 disabled:cursor-default transition-colors duration-fast ease-out-quart';
 const GHOST_BTN =
   'px-4 py-1.5 text-sm font-medium rounded-xs bg-paper-warm text-ink-soft hover:bg-muted hover:text-ink transition-colors duration-fast ease-out-quart';
 
-export default function ExtractStepper({ onClose, onSaved }) {
+/**
+ * @param {object} props
+ * @param {() => void} [props.onClose]
+ * @param {(res: object) => void} [props.onSaved]
+ * @param {{x:number,y:number}[]} [props.initialQuad] S4 seam: programmatic
+ *   pre-fill for the Flatten corners (fractional [TL,TR,BR,BL] in 0..1 image
+ *   coords — the auto-detect slice supplies detected corners here; the user
+ *   can always adjust them before applying).
+ */
+export default function ExtractStepper({ onClose, onSaved, initialQuad }) {
   const [step, setStep] = useState(0);
   const [file, setFile] = useState(null);
   const [imageURL, setImageURL] = useState(null);
   const [natural, setNatural] = useState(null); // { w, h }
   const [crop, setCrop] = useState(null); // fractional {x,y,w,h}, null = full image
+  // Flatten (S3, issue #52): fractional corner quad + the pending/accepted
+  // rectified working image. `origRef` keeps the untouched upload so
+  // "adjust corners" / "use original" can always restore it.
+  const [quad, setQuad] = useState(initialQuad || DEFAULT_QUAD);
+  const [rectified, setRectified] = useState(null); // { img, url, w, h }
+  const [flattening, setFlattening] = useState(false);
+  const origRef = useRef(null); // { img, url, natural }
   const [drag, setDrag] = useState(null); // in-flight drag {x0,y0,x1,y1}
   const [tracing, setTracing] = useState(false);
-  const [stageMsg, setStageMsg] = useState('');
+  const [stageEvents, setStageEvents] = useState({}); // stage id → latest progress event
   const [result, setResult] = useState(null);
   // Per-shape Review edits ({kind, role} parallel to shapesFromResult(result));
   // reset whenever a new trace lands (S6, issue #55).
@@ -157,17 +232,81 @@ export default function ExtractStepper({ onClose, onSaved }) {
     try {
       const url = await fileToDataURL(f);
       const img = await loadImage(url);
+      const nat = { w: img.naturalWidth, h: img.naturalHeight };
       imgElRef.current = img;
-      setNatural({ w: img.naturalWidth, h: img.naturalHeight });
+      origRef.current = { img, url, natural: nat };
+      setNatural(nat);
       setFile(f);
       setImageURL(url);
       setCrop(null);
       setResult(null);
+      setQuad(initialQuad || DEFAULT_QUAD);
+      setRectified(null);
       setStep(1);
     } catch (err) {
       setError(err.message || 'Could not read that image.');
     }
+  }, [initialQuad]);
+
+  // --- Flatten (S3, issue #52) -----------------------------------------------
+
+  const handleApplyFlatten = useCallback(async () => {
+    const orig = origRef.current;
+    if (!orig) return;
+    setError('');
+    setFlattening(true);
+    try {
+      // Warp the FULL original photo (never a previously rectified result).
+      const imageData = imageToImageData(orig.img);
+      const quadPx = quad.map((p) => ({
+        x: p.x * imageData.width,
+        y: p.y * imageData.height,
+      }));
+      if (!bridgeRef.current) bridgeRef.current = createExtractionBridge();
+      const { rectified: raster } = await bridgeRef.current.rectify(imageData, quadPx);
+      const url = imageDataToDataURL(raster);
+      const img = await loadImage(url);
+      setRectified({ img, url, w: raster.width, h: raster.height });
+    } catch (err) {
+      setError(err.message || 'Could not flatten that photo.');
+    } finally {
+      setFlattening(false);
+    }
+  }, [quad]);
+
+  const restoreOriginal = useCallback(() => {
+    const orig = origRef.current;
+    if (!orig) return;
+    imgElRef.current = orig.img;
+    setNatural(orig.natural);
+    setImageURL(orig.url);
   }, []);
+
+  // Before/after → back to the handles: the rectified proposal is discarded
+  // and the working image reverts (editable proposals, locked decision 8).
+  const handleAdjustCorners = useCallback(() => {
+    setRectified(null);
+    restoreOriginal();
+  }, [restoreOriginal]);
+
+  // "Already flat — skip" / "Use original": bypass rectification entirely.
+  const handleSkipFlatten = useCallback(() => {
+    setRectified(null);
+    restoreOriginal();
+    setCrop(null);
+    setStep(2);
+  }, [restoreOriginal]);
+
+  // Accept: the rectified raster becomes the working image Select crops from
+  // (the rectified raster flows into the existing extraction path).
+  const handleAcceptRectified = useCallback(() => {
+    if (!rectified) return;
+    imgElRef.current = rectified.img;
+    setNatural({ w: rectified.w, h: rectified.h });
+    setImageURL(rectified.url);
+    setCrop(null);
+    setStep(2);
+  }, [rectified]);
 
   // --- Select (manual crop) ---------------------------------------------------
 
@@ -215,6 +354,7 @@ export default function ExtractStepper({ onClose, onSaved }) {
     if (!imgElRef.current || !natural) return;
     setError('');
     setTracing(true);
+    setStageEvents({});
     try {
       const f = crop || { x: 0, y: 0, w: 1, h: 1 };
       const rect = {
@@ -226,7 +366,7 @@ export default function ExtractStepper({ onClose, onSaved }) {
       const imageData = cropToImageData(imgElRef.current, rect);
       if (!bridgeRef.current) bridgeRef.current = createExtractionBridge();
       const res = await bridgeRef.current.extract(imageData, {}, (p) =>
-        setStageMsg(`${p.stage}: ${p.status}`)
+        setStageEvents((m) => ({ ...m, [p.stage]: p }))
       );
       if (!res.tile.fills.length && !res.tile.strokes.length) {
         setError('No shapes found in that region — try a tighter or higher-contrast selection.');
@@ -239,7 +379,7 @@ export default function ExtractStepper({ onClose, onSaved }) {
       setError(err.message || 'Extraction failed.');
     } finally {
       setTracing(false);
-      setStageMsg('');
+      setStageEvents({});
     }
   }, [crop, natural]);
 
@@ -379,23 +519,18 @@ export default function ExtractStepper({ onClose, onSaved }) {
           )}
 
           {step === 1 && (
-            <>
-              {imageURL && (
-                <img src={imageURL} alt="Uploaded ornament" className="max-h-72 w-auto rounded-xs border border-hairline" />
-              )}
-              <p className="text-xs text-ink-soft max-w-md text-center">
-                Auto-flatten (perspective correction) arrives in a later update. For now the photo
-                is used as-is — best results come from a straight-on shot.
-              </p>
-              <div className="flex gap-2">
-                <button type="button" className={GHOST_BTN} onClick={() => setStep(0)}>
-                  Back
-                </button>
-                <button type="button" className={PRIMARY_BTN} onClick={() => setStep(2)}>
-                  Skip flatten →
-                </button>
-              </div>
-            </>
+            <FlattenStep
+              imageURL={origRef.current?.url || imageURL}
+              quad={quad}
+              onQuadChange={setQuad}
+              rectifiedURL={rectified?.url || null}
+              flattening={flattening}
+              onApply={handleApplyFlatten}
+              onSkip={handleSkipFlatten}
+              onBack={() => setStep(0)}
+              onAdjust={handleAdjustCorners}
+              onContinue={handleAcceptRectified}
+            />
           )}
 
           {step === 2 && (
@@ -426,7 +561,7 @@ export default function ExtractStepper({ onClose, onSaved }) {
                   />
                 )}
               </div>
-              {tracing && <p className="text-xs text-ink-soft">Tracing… {stageMsg}</p>}
+              {tracing && <StageProgress events={stageEvents} />}
               <div className="flex gap-2">
                 <button type="button" className={GHOST_BTN} onClick={() => setStep(1)}>
                   Back

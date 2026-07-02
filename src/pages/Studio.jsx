@@ -120,6 +120,14 @@ export default function Studio({ submitOrg = null } = {}) {
   // Whether the open stepper was launched FROM the Library ("+ New from
   // Photo"), so closing/saving returns the user there instead of the picker.
   const extractFromLibraryRef = useRef(false);
+  // Where to navigate AFTER the stepper is fully dismissed: 'library' | 'picker'
+  // | null. Set on save, consumed on close (D5). Opening the return surface
+  // straight from onSaved painted its z-50 backdrop over the still-mounted
+  // session-only notice (guest saves keep the stepper up until "Continue"),
+  // intercepting the notice's own clicks; deferring to onClose keeps the notice
+  // fully interactive and works for the persisted path too (close fires
+  // immediately after save there).
+  const pendingPostExtractRef = useRef(null);
 
   // Rehydrate this user's extracted library patterns into the dynamic registry
   // (→ picker custom family) on sign-in. Best-effort: failures only warn.
@@ -1876,17 +1884,33 @@ export default function Studio({ submitOrg = null } = {}) {
       {menuSlot && extractOpen && (
         <Suspense fallback={null}>
           <ExtractStepper
-            onClose={() => setExtractOpen(false)}
-            onSaved={() => {
-              // Round-trip UX: a stepper launched from the Library returns to
-              // the Library (the fresh entry is on top); the Object-menu path
-              // keeps opening the picker, where the pattern is ready to place.
-              if (extractFromLibraryRef.current) {
+            onClose={() => {
+              setExtractOpen(false);
+              // Navigate to the return surface only now that the stepper is
+              // truly gone (D5). Doing this in onSaved re-opened LibraryView's
+              // z-50 backdrop over the still-mounted session-only notice and
+              // blocked its "Continue" button. Continue → onClose is the
+              // completion signal, so the round-trip lands here for both the
+              // guest (notice acknowledged) and persisted (close fires right
+              // after save) paths.
+              const dest = pendingPostExtractRef.current;
+              pendingPostExtractRef.current = null;
+              if (dest === "library") {
                 setLibraryOpen(true);
-              } else {
+              } else if (dest === "picker") {
                 setPendingPanelId(undefined);
                 setUI("showPatternPicker", true);
               }
+            }}
+            onSaved={() => {
+              // Record the return surface; the actual navigation is deferred to
+              // onClose (above) so a session-only notice stays interactive.
+              // Round-trip UX: a stepper launched from the Library returns to
+              // the Library (the fresh entry is on top); the Object-menu path
+              // opens the picker, where the pattern is ready to place.
+              pendingPostExtractRef.current = extractFromLibraryRef.current
+                ? "library"
+                : "picker";
             }}
           />
         </Suspense>

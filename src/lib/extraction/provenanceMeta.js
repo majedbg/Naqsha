@@ -80,9 +80,18 @@ export function normalizeTradition(value) {
   return sanitizeText(value, MAX_TRADITION);
 }
 
-/** Free-form note → sanitized string or null. */
+// Note-specific control-char strip that PRESERVES newlines + tabs (a note is
+// multiline; the Library detail renders it whitespace-pre-wrap). CR/CRLF are
+// normalized to LF. Everything else in C0 + DEL is removed.
+// eslint-disable-next-line no-control-regex
+const CONTROL_EXCEPT_WS = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g;
+
+/** Free-form note → sanitized string (newlines/tabs kept) or null. */
 export function normalizeNote(value) {
-  return sanitizeText(value, MAX_NOTE);
+  if (typeof value !== 'string') return null;
+  const cleaned = value.replace(/\r\n?/g, '\n').replace(CONTROL_EXCEPT_WS, '').trim();
+  if (!cleaned) return null;
+  return cleaned.slice(0, MAX_NOTE);
 }
 
 /** Boolean coercion — only literal true survives; anything else is false. */
@@ -124,13 +133,15 @@ export function normalizeCollectionId(value) {
 export function normalizePalette(value) {
   if (!Array.isArray(value)) return [];
   const out = [];
-  for (const sw of value) {
+  const seen = new Set(); // dedupe hex — chips key on hex, and a crafted row
+  for (const sw of value) { //           could otherwise repeat a colour.
     if (!sw || typeof sw !== 'object') continue;
     const hex = typeof sw.hex === 'string' && HEX_RE.test(sw.hex) ? sw.hex.toLowerCase() : null;
-    if (!hex) continue;
+    if (!hex || seen.has(hex)) continue;
     let coverage = typeof sw.coverage === 'number' && Number.isFinite(sw.coverage) ? sw.coverage : 0;
     if (coverage < 0) coverage = 0;
     if (coverage > 1) coverage = 1;
+    seen.add(hex);
     out.push({ hex, coverage });
     if (out.length >= MAX_PALETTE) break;
   }

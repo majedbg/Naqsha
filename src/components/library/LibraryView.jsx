@@ -26,6 +26,8 @@ import {
   MATERIAL_LABELS,
   labelFor,
 } from '../../lib/extraction/provenanceMeta';
+import { loadCollections } from '../../lib/collectionService';
+import { supabase } from '../../lib/supabase';
 
 const PRIMARY_BTN =
   'px-4 py-1.5 text-sm font-medium rounded-xs bg-saffron text-ink hover:bg-saffron-hover disabled:opacity-40 disabled:cursor-default transition-colors duration-fast ease-out-quart';
@@ -312,13 +314,14 @@ function ProvenanceMeta({ entity }) {
 // edits title/note/tags/source/material/tradition; favorite has its own header
 // toggle. Saving goes through updateExtractedPatternMeta — store-always +
 // best-effort persist, so guest/session entries edit immediately too.
-function MetaEditForm({ entity, onDone }) {
+function MetaEditForm({ entity, collections, onDone }) {
   const [title, setTitle] = useState(entity.title || '');
   const [note, setNote] = useState(entity.note || '');
   const [tagsText, setTagsText] = useState((entity.tags || []).join(', '));
   const [sourceType, setSourceType] = useState(entity.sourceType || '');
   const [material, setMaterial] = useState(entity.material || '');
   const [tradition, setTradition] = useState(entity.tradition || '');
+  const [collectionId, setCollectionId] = useState(entity.collectionId || '');
   const [saving, setSaving] = useState(false);
 
   const field =
@@ -334,6 +337,9 @@ function MetaEditForm({ entity, onDone }) {
         sourceType: sourceType || null,
         material: material || null,
         tradition,
+        // Only touch collection when the dropdown is available (a signed-in
+        // user with collections); otherwise leave the stored value untouched.
+        ...(collections.length > 0 ? { collectionId: collectionId || null } : {}),
       });
       onDone();
     } finally {
@@ -379,6 +385,17 @@ function MetaEditForm({ entity, onDone }) {
         <span className="text-[11px] text-ink-soft">Tradition / style</span>
         <input type="text" aria-label="Edit tradition" value={tradition} onChange={(e) => setTradition(e.target.value)} className={field} />
       </label>
+      {collections.length > 0 && (
+        <label className="flex flex-col gap-1">
+          <span className="text-[11px] text-ink-soft">Collection</span>
+          <select aria-label="Edit collection" value={collectionId} onChange={(e) => setCollectionId(e.target.value)} className={field}>
+            <option value="">None</option>
+            {collections.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+        </label>
+      )}
       <div className="flex gap-2">
         <button type="button" className={GHOST_BTN} onClick={onDone} disabled={saving}>Cancel</button>
         <button type="button" className={PRIMARY_BTN} onClick={save} disabled={saving}>
@@ -392,6 +409,27 @@ function MetaEditForm({ entity, onDone }) {
 function EntryDetail({ entry, photoURL, onBack, onUseInStudio }) {
   const { entity } = entry;
   const [editing, setEditing] = useState(false);
+  const [collections, setCollections] = useState([]);
+
+  // Load the user's collections for the edit form's "assign to a collection"
+  // dropdown (REUSES the collections table). Fail-soft: guests / missing
+  // supabase / errors → no dropdown (collection editing simply isn't offered).
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const uid = (await supabase?.auth.getUser())?.data?.user?.id;
+        if (!uid) return;
+        const cols = await loadCollections(uid);
+        if (alive) setCollections(cols || []);
+      } catch {
+        /* no collection dropdown */
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   // Favorite toggle — persists immediately (store-always + best-effort DB).
   const toggleFavorite = () => updateExtractedPatternMeta(entity.patternId, { favorite: !entity.favorite });
@@ -430,7 +468,7 @@ function EntryDetail({ entry, photoURL, onBack, onUseInStudio }) {
       </div>
 
       {editing ? (
-        <MetaEditForm entity={entity} onDone={() => setEditing(false)} />
+        <MetaEditForm entity={entity} collections={collections} onDone={() => setEditing(false)} />
       ) : (
         <>
           <ProvenanceMeta entity={entity} />

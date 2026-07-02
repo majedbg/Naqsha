@@ -64,6 +64,8 @@ const mocks = vi.hoisted(() => ({
   detectQuad: vi.fn(),
   readExif: vi.fn(),
   reverseGeocode: vi.fn(),
+  loadCollections: vi.fn(),
+  getUser: vi.fn(),
 }));
 
 vi.mock('../../lib/extraction/imageIO', () => ({
@@ -87,6 +89,14 @@ vi.mock('../../lib/extraction/workerBridge', () => ({
 vi.mock('../../lib/libraryRepository', () => ({
   saveExtractedPattern: mocks.save,
 }));
+
+// S9: the collections dropdown loads the user's collections. Mock the auth +
+// service so the load path is exercised deterministically (guest by default →
+// no dropdown; a per-test user override surfaces it).
+vi.mock('../../lib/supabase', () => ({
+  supabase: { auth: { getUser: (...a) => mocks.getUser(...a) } },
+}));
+vi.mock('../../lib/collectionService', () => ({ loadCollections: mocks.loadCollections }));
 
 // S8 (issue #57): EXIF read (pure) is mocked so tests drive the auto-fill
 // deterministically; geocode is mocked so NO real request leaves the machine
@@ -122,6 +132,9 @@ beforeEach(() => {
   // Default: no EXIF (zero-friction path). S8 tests override per-case.
   mocks.readExif.mockReset().mockResolvedValue({ date: null, gps: null, camera: null });
   mocks.reverseGeocode.mockReset().mockResolvedValue(null);
+  // Default: guest (no user) → no collections dropdown. S9 test overrides.
+  mocks.getUser.mockReset().mockResolvedValue({ data: { user: null } });
+  mocks.loadCollections.mockReset().mockResolvedValue([]);
   registeredIds = [];
 });
 
@@ -968,6 +981,23 @@ describe('ExtractStepper — S9 provenance + palette + organization', () => {
     expect(entity.tags).toEqual(['gothic', 'vault']);
     expect(entity.favorite).toBe(true);
     expect(entity.palette.map((s) => s.hex).sort()).toEqual(['#0000ff', '#ff0000']);
+  });
+
+  it('assigns a collection from the dropdown into the saved entity', async () => {
+    mocks.getUser.mockResolvedValue({ data: { user: { id: 'u1' } } });
+    mocks.loadCollections.mockResolvedValue([
+      { id: '123e4567-e89b-42d3-a456-426614174000', name: 'Uppsala trip' },
+    ]);
+    const onSaved = vi.fn();
+    render(<ExtractStepper onClose={() => {}} onSaved={onSaved} />);
+    await walkToSave(); // collections load on mount; resolved by the time we save
+    const sel = await screen.findByLabelText('Collection');
+    fireEvent.change(sel, { target: { value: '123e4567-e89b-42d3-a456-426614174000' } });
+    fireEvent.click(screen.getByRole('button', { name: /save to library/i }));
+    await waitFor(() => expect(onSaved).toHaveBeenCalled());
+    const { entity } = onSaved.mock.calls[0][0];
+    registeredIds.push(entity.patternId);
+    expect(entity.collectionId).toBe('123e4567-e89b-42d3-a456-426614174000');
   });
 
   it('removes a tag chip on ×', async () => {

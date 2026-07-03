@@ -96,6 +96,31 @@ function ExtractedBadge() {
   );
 }
 
+// Symmetry-group badge (S7, issue #56 AC): the entry displays its classified
+// wallpaper group. `group` is one of the 17 canonical IUC names, whitelisted at
+// deserialize (validateSymmetry) before it can reach this text node.
+function SymmetryBadge({ symmetry }) {
+  if (!symmetry?.group) return null;
+  const pct =
+    symmetry.source === 'auto' && typeof symmetry.confidence === 'number'
+      ? ` · ${Math.round(symmetry.confidence * 100)}%`
+      : symmetry.source === 'manual'
+        ? ' · manual'
+        : '';
+  return (
+    <span
+      data-testid="symmetry-badge"
+      title={`Wallpaper group ${symmetry.group}${
+        symmetry.source === 'manual' ? ' (set by you)' : ''
+      }`}
+      className="inline-flex items-center gap-1 px-1.5 py-px text-[10px] leading-tight rounded-sm bg-paper-warm border border-hairline text-ink-soft"
+    >
+      <span aria-hidden>▦</span> {symmetry.group}
+      {pct}
+    </span>
+  );
+}
+
 function VisibilityChip({ visibility }) {
   const isPrivate = visibility !== 'public';
   return (
@@ -451,6 +476,7 @@ function EntryDetail({ entry, photoURL, onBack, onUseInStudio }) {
         <h3 className="text-base font-semibold text-ink">{entity.title}</h3>
         <ExtractedBadge />
         <VisibilityChip visibility={entity.visibility} />
+        <SymmetryBadge symmetry={entity.symmetry} />
         <button
           type="button"
           data-testid="favorite-toggle"

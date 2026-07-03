@@ -674,6 +674,77 @@ describe('ExtractStepper — lattice Review (S5)', () => {
   });
 });
 
+// --- S7 (issue #56): symmetry proposal + editable override -------------------
+
+const TRACE_RESULT_SYM = {
+  ...TRACE_RESULT_LATTICE,
+  symmetry: { group: 'p4m', confidence: 0.9, source: 'auto' },
+  confidence: { lattice: 0.87, symmetry: 0.9, trace: 1 },
+};
+
+describe('ExtractStepper — symmetry Review (S7, issue #56)', () => {
+  async function walkToReviewWithSymmetry() {
+    mocks.extract.mockResolvedValueOnce(TRACE_RESULT_SYM);
+    render(<ExtractStepper onClose={() => {}} />);
+    await walkToSelect();
+    fireEvent.click(screen.getByRole('button', { name: /trace region/i }));
+    await screen.findByTestId('symmetry-proposal');
+  }
+
+  it('shows the detected group + confidence as an editable proposal', async () => {
+    await walkToReviewWithSymmetry();
+    expect(screen.getByTestId('symmetry-badge')).toHaveTextContent('p4m');
+    expect(screen.getByTestId('symmetry-badge')).toHaveTextContent('90%');
+    const dropdown = screen.getByLabelText('Symmetry group');
+    // The 17 groups + auto + none are all offered.
+    expect(dropdown.querySelectorAll('option')).toHaveLength(17 + 2);
+    expect(dropdown).toHaveValue('__auto__');
+  });
+
+  it('accepting the auto proposal saves the detected group (source auto)', async () => {
+    await walkToReviewWithSymmetry();
+    fireEvent.click(screen.getByRole('button', { name: /continue/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /save to library/i }));
+    await waitFor(() => expect(mocks.save).toHaveBeenCalled());
+    const entity = mocks.save.mock.calls[0][0];
+    registeredIds.push(entity.patternId);
+    expect(entity.symmetry).toEqual({ group: 'p4m', confidence: 0.9, source: 'auto' });
+  });
+
+  it('the user override wins: saves the picked group as a manual classification', async () => {
+    await walkToReviewWithSymmetry();
+    fireEvent.change(screen.getByLabelText('Symmetry group'), { target: { value: 'p6' } });
+    // Badge reflects the override immediately.
+    expect(screen.getByTestId('symmetry-badge')).toHaveTextContent('p6');
+    expect(screen.getByTestId('symmetry-badge')).toHaveTextContent('manual');
+    fireEvent.click(screen.getByRole('button', { name: /continue/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /save to library/i }));
+    await waitFor(() => expect(mocks.save).toHaveBeenCalled());
+    const entity = mocks.save.mock.calls[0][0];
+    registeredIds.push(entity.patternId);
+    expect(entity.symmetry).toEqual({ group: 'p6', confidence: 1, source: 'manual' });
+  });
+
+  it('choosing "None" drops the symmetry facet to null', async () => {
+    await walkToReviewWithSymmetry();
+    fireEvent.change(screen.getByLabelText('Symmetry group'), { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: /continue/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /save to library/i }));
+    await waitFor(() => expect(mocks.save).toHaveBeenCalled());
+    const entity = mocks.save.mock.calls[0][0];
+    registeredIds.push(entity.patternId);
+    expect(entity.symmetry).toBeNull();
+  });
+
+  it('no lattice → no symmetry proposal (wallpaper groups are periodic)', async () => {
+    render(<ExtractStepper onClose={() => {}} />); // default mock = null lattice
+    await walkToSelect();
+    fireEvent.click(screen.getByRole('button', { name: /trace region/i }));
+    await screen.findByTestId('no-lattice-notice');
+    expect(screen.queryByTestId('symmetry-proposal')).toBeNull();
+  });
+});
+
 describe('ExtractStepper — save', () => {
   async function walkToSave() {
     await walkToSelect();

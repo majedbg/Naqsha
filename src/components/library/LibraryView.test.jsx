@@ -226,6 +226,46 @@ describe('LibraryView — entry detail', () => {
     expect(screen.getByRole('img', { name: /extracted pattern/i })).toBeInTheDocument();
   });
 
+  // S7 (issue #56 AC): the entry displays its wallpaper-group badge.
+  it('displays the symmetry-group badge in the detail (auto → group + confidence)', () => {
+    addLibraryEntry(
+      makeExtractedPattern({
+        patternId: 'extracted-lv-sym',
+        title: 'Symmetric vault',
+        tile: TILE,
+        lattice: { t1: [20, 0], t2: [0, 20], cell: { width: 20, height: 20 }, type: 'square', confidence: 0.9 },
+        symmetry: { group: 'p4m', confidence: 0.88, source: 'auto' },
+      })
+    );
+    renderView();
+    fireEvent.click(screen.getByTestId('library-card'));
+    const badge = screen.getByTestId('symmetry-badge');
+    expect(badge).toHaveTextContent('p4m');
+    expect(badge).toHaveTextContent('88%');
+  });
+
+  it('labels a manually-set symmetry group as manual, and shows nothing when absent', () => {
+    addLibraryEntry(
+      makeExtractedPattern({
+        patternId: 'extracted-lv-symm',
+        title: 'Overridden',
+        tile: TILE,
+        lattice: { t1: [20, 0], t2: [0, 20], cell: { width: 20, height: 20 }, type: 'square', confidence: 0.9 },
+        symmetry: { group: 'p6', confidence: 1, source: 'manual' },
+      })
+    );
+    addLibraryEntry(entity('extracted-lv-nosym', 'No symmetry'));
+    renderView();
+    // Open the manual one.
+    fireEvent.click(screen.getByRole('button', { name: /overridden/i }));
+    expect(screen.getByTestId('symmetry-badge')).toHaveTextContent('p6');
+    expect(screen.getByTestId('symmetry-badge')).toHaveTextContent('manual');
+    // Back, open the floor entry — no badge.
+    fireEvent.click(screen.getByRole('button', { name: /back to library/i }));
+    fireEvent.click(screen.getByRole('button', { name: /no symmetry/i }));
+    expect(screen.queryByTestId('symmetry-badge')).toBeNull();
+  });
+
   it('surfaces visibility, defaulting to Private', () => {
     addLibraryEntry(entity('extracted-lv-a', 'Uppsala ceiling'));
     renderView();

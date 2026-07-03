@@ -228,6 +228,35 @@ describe('runExtraction — lattice stage (S5)', () => {
     expect(result.tile.width).toBe(10);
   });
 
+  it('S5b: an OBLIQUE user cell (origin + basis) crops the parallelogram at confidence 1 and round-trips', async () => {
+    // The editor commits {x,y,t1,t2}; the stage must EXECUTE the oblique crop
+    // (not the rectangular branch), tile at the given basis, and produce a
+    // lattice that survives validateLattice unchanged.
+    const t1 = [24, 0];
+    const t2 = [8, 20];
+    const result = await runExtraction({
+      image: tilingImage(),
+      options: { lattice: { cell: { x: 8, y: 8, t1, t2 } } },
+    });
+    expect(result.lattice.type).toBe('oblique');
+    expect(result.lattice.t1).toEqual(t1);
+    expect(result.lattice.t2).toEqual(t2);
+    expect(result.lattice.confidence).toBe(1);
+    expect(result.confidence.lattice).toBe(1);
+    // The traced tile IS the parallelogram cell's bbox (width = ⌈t1x+t2x⌉ = 32).
+    expect(result.lattice.cell.width).toBe(32);
+    expect(result.lattice.cell.height).toBe(20);
+    expect(result.tile.width).toBe(result.lattice.cell.width);
+    expect(result.tile.height).toBe(result.lattice.cell.height);
+    // The overlay descriptor carries the basis + origin for the sheared editor.
+    expect(result.latticeCell.t1).toEqual(t1);
+    expect(result.latticeCell.originX).toBeDefined();
+    // Round-trip: makeExtractedPattern re-validates the lattice (unweakened).
+    const { makeExtractedPattern } = await import('./extractedPattern');
+    const entity = makeExtractedPattern({ title: 't', tile: result.tile, lattice: result.lattice });
+    expect(entity.lattice).toEqual(result.lattice);
+  });
+
   it('fails soft on an unusable user cell: failed event, confidence 0, floor trace', async () => {
     const events = [];
     const result = await runExtraction(

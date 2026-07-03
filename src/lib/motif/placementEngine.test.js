@@ -295,3 +295,399 @@ describe('selectAnchors — master determinism', () => {
     expect(ids(a.survivors)).toEqual(['a0', 'a1', 'a2', 'a4']); // a1 re-added
   });
 });
+
+// ========================================================================
+// resolvePlacements + placeMotifs — TRANSFORM + ACCEPTANCE half.
+// ========================================================================
+import { resolvePlacements, placeMotifs } from './placementEngine.js';
+import { mulberry32 } from '../patterns/rng.js';
+
+// Anchor factory that lets us set tangent/normal/junction explicitly.
+function mkA(id, x, y, { role = 'edge', tangent = 0, normal = 0, junction = false } = {}) {
+  return {
+    id,
+    role,
+    x,
+    y,
+    tangent,
+    normal,
+    s: 0,
+    meta: junction ? { junction: true } : {},
+  };
+}
+
+const toDeg = (rad) => (rad * 180) / Math.PI;
+const byAnchorId = (placements, id) => placements.find((p) => p.anchorId === id);
+
+describe('resolvePlacements — sequence + flip', () => {
+  it('sequence cycles A/B/C and flip alternates INDEPENDENTLY (odd i only)', () => {
+    // 6 anchors, far apart so fixed footprints never collide.
+    const anchors = Array.from({ length: 6 }, (_, i) => mkA(`a${i}`, i * 100, 0));
+    const { placements, rejected } = resolvePlacements(anchors, {
+      sequence: ['A', 'B', 'C'],
+      flip: true,
+      sizing: { mode: 'fixed', size: 1 },
+    });
+    expect(rejected).toEqual([]);
+    expect(placements.map((p) => p.seqId)).toEqual(['A', 'B', 'C', 'A', 'B', 'C']);
+    expect(placements.map((p) => p.flip)).toEqual([false, true, false, true, false, true]);
+    // seqId is independent of flip (3-cycle vs 2-cycle prove decoupling).
+    expect(placements.map((p) => p.index)).toEqual([0, 1, 2, 3, 4, 5]);
+  });
+
+  it('flip:false disables flip entirely', () => {
+    const anchors = Array.from({ length: 3 }, (_, i) => mkA(`a${i}`, i * 100, 0));
+    const { placements } = resolvePlacements(anchors, { sizing: { mode: 'fixed', size: 1 } });
+    expect(placements.map((p) => p.flip)).toEqual([false, false, false]);
+    expect(placements.map((p) => p.seqId)).toEqual(['A', 'A', 'A']); // default identity cycle
+  });
+});
+
+describe('resolvePlacements — orientation', () => {
+  const base = { sizing: { mode: 'fixed', size: 1 } };
+
+  it('path policy uses normal (rotation = deg(normal) + offset)', () => {
+    const anchors = [mkA('a0', 0, 0, { normal: Math.PI / 2, tangent: 0 })];
+    const { placements } = resolvePlacements(anchors, {
+      ...base,
+      orientation: { policy: 'path', useNormal: true, offset: 10 },
+    });
+    expect(placements[0].rotation).toBeCloseTo(toDeg(Math.PI / 2) + 10, 9);
+  });
+
+  it('path policy useNormal:false uses tangent', () => {
+    const anchors = [mkA('a0', 0, 0, { normal: Math.PI / 2, tangent: Math.PI })];
+    const { placements } = resolvePlacements(anchors, {
+      ...base,
+      orientation: { policy: 'path', useNormal: false, offset: 0 },
+    });
+    expect(placements[0].rotation).toBeCloseTo(toDeg(Math.PI), 9);
+  });
+
+  it('page policy uses a fixed page angle (baseDeg 0 → rotation = offset)', () => {
+    const anchors = [mkA('a0', 0, 0, { normal: Math.PI / 2, tangent: Math.PI })];
+    const { placements } = resolvePlacements(anchors, {
+      ...base,
+      orientation: { policy: 'page', offset: 25 },
+    });
+    expect(placements[0].rotation).toBeCloseTo(25, 9);
+  });
+
+  it('perRole override wins over the base orientation', () => {
+    const anchors = [
+      mkA('e0', 0, 0, { role: 'edge', normal: Math.PI / 2 }),
+      mkA('c0', 100, 0, { role: 'crossing', normal: Math.PI / 2 }),
+    ];
+    const { placements } = resolvePlacements(anchors, {
+      ...base,
+      orientation: {
+        policy: 'path',
+        useNormal: true,
+        offset: 0,
+        perRole: { crossing: { policy: 'page', offset: 5 } },
+      },
+    });
+    // edge follows base path/normal; crossing follows page override.
+    expect(byAnchorId(placements, 'e0').rotation).toBeCloseTo(toDeg(Math.PI / 2), 9);
+    expect(byAnchorId(placements, 'c0').rotation).toBeCloseTo(5, 9);
+  });
+});
+
+describe('resolvePlacements — jitter', () => {
+  it('amount 0 ⇒ no displacement / no rotation jitter / scale 1', () => {
+    const anchors = [mkA('a0', 5, 7, { normal: Math.PI / 2, tangent: 0 })];
+    const { placements } = resolvePlacements(anchors, {
+      sizing: { mode: 'fixed', size: 1 },
+      orientation: { policy: 'page', offset: 3 },
+      jitter: {
+        seed: 99,
+        lateral: 0, along: 0, rotation: 0, scale: 0,
+        lateralRange: 50, alongRange: 50, rotationRange: 90, scaleRange: 2,
+      },
+    });
+    expect(placements[0].x).toBeCloseTo(5, 9);
+    expect(placements[0].y).toBeCloseTo(7, 9);
+    expect(placements[0].rotation).toBeCloseTo(3, 9);
+    expect(placements[0].scale).toBeCloseTo(1, 9);
+  });
+
+  it('lateral moves along the NORMAL, along moves along the TANGENT', () => {
+    // tangent=+x, normal=+y so the two axes are orthogonal and separable.
+    const anchor = () => mkA('a0', 0, 0, { normal: Math.PI / 2, tangent: 0 });
+    const SEED = 12345;
+
+    // lateral-only: expect motion purely in +y (normal), x unchanged.
+    const latRun = resolvePlacements([anchor()], {
+      sizing: { mode: 'fixed', size: 1 },
+      jitter: { seed: SEED, lateral: 1, lateralRange: 10 },
+    });
+    const r1 = mulberry32(SEED);
+    const dLat = r1();
+    const expectedLatDisp = (dLat * 2 - 1) * 10;
+    expect(latRun.placements[0].x).toBeCloseTo(0, 9); // cos(π/2) ≈ 0
+    expect(latRun.placements[0].y).toBeCloseTo(expectedLatDisp, 9);
+
+    // along-only: expect motion purely in +x (tangent), y unchanged.
+    const alongRun = resolvePlacements([anchor()], {
+      sizing: { mode: 'fixed', size: 1 },
+      jitter: { seed: SEED, along: 1, alongRange: 10 },
+    });
+    const r2 = mulberry32(SEED);
+    r2(); // burn the lateral draw (always drawn, in order)
+    const dAlong = r2();
+    const expectedAlongDisp = (dAlong * 2 - 1) * 10;
+    expect(alongRun.placements[0].x).toBeCloseTo(expectedAlongDisp, 9);
+    expect(alongRun.placements[0].y).toBeCloseTo(0, 9);
+  });
+
+  it('always draws 4 per survivor in order: a later property is invariant to an earlier amount', () => {
+    // Fixed mode ⇒ scale output == scaleFactor, independent of position, so
+    // the scale (4th) draw is observable in isolation. Toggling the lateral
+    // (1st) amount must NOT change the scale draw.
+    const anchor = () => mkA('a0', 0, 0, { normal: Math.PI / 2, tangent: 0 });
+    const common = {
+      sizing: { mode: 'fixed', size: 4 },
+      jitter: { seed: 555, lateralRange: 10, scale: 1, scaleRange: 0.5 },
+    };
+    const A = resolvePlacements([anchor()], { ...common, jitter: { ...common.jitter, lateral: 0 } });
+    const B = resolvePlacements([anchor()], { ...common, jitter: { ...common.jitter, lateral: 1 } });
+    // Scale draw identical regardless of lateral amount.
+    expect(A.placements[0].scale).toBe(B.placements[0].scale);
+    // ...but B actually moved (proves lateral consumed its own draw, not scale's).
+    expect(A.placements[0].y).toBeCloseTo(0, 9);
+    expect(B.placements[0].y).not.toBeCloseTo(0, 6);
+  });
+});
+
+describe('resolvePlacements — sizing fixed', () => {
+  it('fits when empty: radius = size, scale = 1', () => {
+    const { placements, rejected } = resolvePlacements([mkA('a0', 0, 0)], {
+      sizing: { mode: 'fixed', size: 5 },
+    });
+    expect(rejected).toEqual([]);
+    expect(placements[0].radius).toBe(5);
+    expect(placements[0].scale).toBe(1);
+  });
+
+  it("rejects 'no-fit' when a big prior obstacle blocks the anchor", () => {
+    const anchors = [mkA('a0', 0, 0), mkA('a1', 3, 0)];
+    const { placements, rejected } = resolvePlacements(anchors, {
+      sizing: { mode: 'fixed', size: 5 },
+    });
+    expect(placements.map((p) => p.anchorId)).toEqual(['a0']);
+    expect(rejected).toEqual([{ anchorId: 'a1', reason: 'no-fit' }]);
+  });
+
+  it("rejects 'below-floor' when radius < min", () => {
+    const { placements, rejected } = resolvePlacements([mkA('a0', 0, 0)], {
+      sizing: { mode: 'fixed', size: 2, min: 5 },
+    });
+    expect(placements).toEqual([]);
+    expect(rejected).toEqual([{ anchorId: 'a0', reason: 'below-floor' }]);
+  });
+});
+
+describe('resolvePlacements — sizing proportional', () => {
+  const boundary = { type: 'rect', width: 100, height: 100 };
+
+  it('radius scales DOWN to the empty circle (margin*R), capped at the natural size', () => {
+    // Contract (refined after adversarial review): proportional = natural size
+    // (size*scaleFactor), shrunk to fit context, never exceeding it. Here the
+    // context (margin*R) is the binding constraint and shrinks the motif below
+    // its natural size of 50.
+    const { placements } = resolvePlacements(
+      [mkA('a0', 50, 50)],
+      { sizing: { mode: 'proportional', size: 50, margin: 0.4 } },
+      { boundary },
+    );
+    // R = min(50,50,50,50) = 50 ⇒ margin*R = 0.4*50 = 20 < natural 50 ⇒ radius 20, scale = 20/50 = 0.4.
+    expect(placements[0].radius).toBeCloseTo(20, 9);
+    expect(placements[0].scale).toBeCloseTo(0.4, 9);
+  });
+
+  it('proportional caps at the natural size when the empty circle is larger', () => {
+    // Spacious context: margin*R (0.9*50=45) exceeds natural size (10) ⇒ the
+    // motif stays at its natural size, it does not balloon to fill the room.
+    const { placements } = resolvePlacements(
+      [mkA('a0', 50, 50)],
+      { sizing: { mode: 'proportional', size: 10, margin: 0.9 } },
+      { boundary },
+    );
+    expect(placements[0].radius).toBeCloseTo(10, 9);
+    expect(placements[0].scale).toBeCloseTo(1, 9);
+  });
+
+  it('greedy obstacle accumulation: a near neighbour gets a smaller radius than if alone', () => {
+    const cfg = { sizing: { mode: 'proportional', size: 10, margin: 0.3 } };
+    // a1 alone.
+    const alone = resolvePlacements([mkA('a1', 60, 50)], cfg, { boundary });
+    // a0 then a1 — a0's footprint shrinks a1.
+    const together = resolvePlacements(
+      [mkA('a0', 30, 50), mkA('a1', 60, 50)],
+      cfg,
+      { boundary },
+    );
+    const a1Alone = alone.placements[0].radius;
+    const a1After = byAnchorId(together.placements, 'a1').radius;
+    expect(a1After).toBeLessThan(a1Alone);
+  });
+});
+
+describe('resolvePlacements — junction policy', () => {
+  const jitterCfg = {
+    sizing: { mode: 'fixed', size: 1 },
+    jitter: {
+      seed: 2024,
+      lateral: 1, lateralRange: 5,
+      rotation: 1, rotationRange: 20,
+      scale: 1, scaleRange: 0.3,
+    },
+  };
+
+  it("'skip' rejects junction anchors but leaves other anchors' jitter UNCHANGED (RNG independence)", () => {
+    const anchors = [
+      mkA('a0', 0, 0, { normal: Math.PI / 2 }),
+      mkA('a1', 1000, 0, { normal: Math.PI / 2, junction: true }),
+      mkA('a2', 2000, 0, { normal: Math.PI / 2 }),
+    ];
+    const skipRun = resolvePlacements(anchors, { ...jitterCfg, junction: 'skip' });
+    const centerRun = resolvePlacements(anchors, { ...jitterCfg, junction: 'center' });
+
+    expect(skipRun.rejected).toEqual([{ anchorId: 'a1', reason: 'junction-skip' }]);
+    expect(skipRun.placements.map((p) => p.anchorId)).toEqual(['a0', 'a2']);
+    // 'center' keeps the junction anchor.
+    expect(centerRun.placements.map((p) => p.anchorId)).toEqual(['a0', 'a1', 'a2']);
+
+    // a2 (index 2) draws d8..d11 in BOTH runs because the skipped junction
+    // still consumed d4..d7. Its full placement must be byte-identical.
+    const a2Skip = byAnchorId(skipRun.placements, 'a2');
+    const a2Center = byAnchorId(centerRun.placements, 'a2');
+    expect(a2Skip).toEqual(a2Center);
+  });
+});
+
+describe('resolvePlacements / placeMotifs — MASTER DETERMINISM', () => {
+  function scene() {
+    // 8 anchors in a 200x200 region, mixed roles/normals; one junction; some
+    // packed close so proportional sizing produces real rejections too.
+    return [
+      mkA('a0', 30, 30, { role: 'edge', normal: 0.2, tangent: 1.3 }),
+      mkA('a1', 40, 35, { role: 'crossing', normal: 1.1, tangent: 0.4, junction: true }),
+      mkA('a2', 100, 60, { role: 'edge', normal: 2.0, tangent: 0.9 }),
+      mkA('a3', 105, 62, { role: 'edge', normal: 0.7, tangent: 2.6 }),
+      mkA('a4', 160, 40, { role: 'crossing', normal: 1.5, tangent: 0.1 }),
+      mkA('a5', 60, 150, { role: 'edge', normal: 2.7, tangent: 1.9 }),
+      mkA('a6', 150, 160, { role: 'edge', normal: 0.9, tangent: 3.0 }),
+      mkA('a7', 155, 165, { role: 'crossing', normal: 1.8, tangent: 2.2 }),
+    ];
+  }
+  const boundary = { type: 'rect', width: 200, height: 200 };
+  const placement = {
+    sequence: ['A', 'B', 'C'],
+    flip: true,
+    orientation: {
+      policy: 'path',
+      useNormal: true,
+      offset: 15,
+      perRole: { crossing: { policy: 'page', offset: 90 } },
+    },
+    jitter: {
+      seed: 7,
+      lateral: 0.6, along: 0.4, rotation: 0.5, scale: 0.5,
+      lateralRange: 8, alongRange: 6, rotationRange: 30, scaleRange: 0.4,
+    },
+    sizing: { mode: 'proportional', size: 10, min: 1, margin: 0.4 },
+    junction: 'skip',
+  };
+
+  it('resolvePlacements twice ⇒ byte-identical placements AND rejected', () => {
+    const a = resolvePlacements(scene(), placement, { boundary });
+    const b = resolvePlacements(scene(), placement, { boundary });
+    expect(a.placements).toEqual(b.placements);
+    expect(a.rejected).toEqual(b.rejected);
+    // Sanity: the config actually exercises acceptance AND rejection.
+    expect(a.placements.length).toBeGreaterThan(0);
+    expect(a.rejected.length).toBeGreaterThan(0);
+    // The junction anchor was skipped.
+    expect(a.rejected).toContainEqual({ anchorId: 'a1', reason: 'junction-skip' });
+  });
+
+  it('placeMotifs end-to-end twice ⇒ identical placements, orphans, rejected', () => {
+    const binding = {
+      selection: { roles: ['edge', 'crossing'] },
+      placement,
+    };
+    const opts = { boundary, canvasW: 200, canvasH: 200 };
+    const a = placeMotifs(scene(), binding, opts);
+    const b = placeMotifs(scene(), binding, opts);
+    expect(a.placements).toEqual(b.placements);
+    expect(a.orphans).toEqual(b.orphans);
+    expect(a.rejected).toEqual(b.rejected);
+  });
+});
+
+// --- review-driven acceptance-contract tests (the no-overlap invariant that
+//     the original suite failed to assert; plus the proportional Infinity /
+//     margin>1 fixes and the rate.n=0 clamp) ------------------------------
+describe('acceptance contract (no-overlap invariant + review fixes)', () => {
+  // Assert every accepted pair of footprints is non-overlapping: for centers
+  // pᵢ,pⱼ with radii rᵢ,rⱼ, dist(pᵢ,pⱼ) ≥ rᵢ+rⱼ. This is the load-bearing
+  // Wong test-before-place guarantee — the whole point of empty-circle sizing.
+  function assertNoOverlap(placements) {
+    for (let a = 0; a < placements.length; a++) {
+      for (let b = a + 1; b < placements.length; b++) {
+        const pa = placements[a];
+        const pb = placements[b];
+        const dist = Math.hypot(pa.x - pb.x, pa.y - pb.y);
+        // small epsilon for float noise; tangency (dist === r1+r2) is allowed.
+        expect(dist + 1e-6).toBeGreaterThanOrEqual(pa.radius + pb.radius);
+      }
+    }
+  }
+
+  const boundary = { type: 'rect', width: 200, height: 200 };
+
+  it('proportional sizing never accepts overlapping footprints (graded shrink)', () => {
+    // First anchor grows to natural size 50; the second, 70px away, must be
+    // capped to 20 so the two are exactly tangent (margin=1) — not overlapping.
+    const anchors = [mkAnchor('edge', 100, 100, 'p0'), mkAnchor('edge', 170, 100, 'p1')];
+    const { placements } = resolvePlacements(anchors, {
+      sizing: { mode: 'proportional', size: 50, min: 0, margin: 1 },
+    }, { boundary });
+    expect(placements.length).toBe(2);
+    expect(placements[0].radius).toBeCloseTo(50, 6);
+    expect(placements[1].radius).toBeCloseTo(20, 6); // capped by the empty circle
+    assertNoOverlap(placements);
+  });
+
+  it('margin > 1 is clamped to 1 — cannot force overlap', () => {
+    const anchors = [mkAnchor('edge', 100, 100, 'q0'), mkAnchor('edge', 170, 100, 'q1')];
+    const { placements } = resolvePlacements(anchors, {
+      sizing: { mode: 'proportional', size: 50, min: 0, margin: 2 }, // abusive margin
+    }, { boundary });
+    expect(placements.length).toBe(2);
+    // Clamped: identical to margin=1, still tangent, still non-overlapping.
+    expect(placements[1].radius).toBeCloseTo(20, 6);
+    assertNoOverlap(placements);
+  });
+
+  it('proportional + null boundary falls back to natural size — no Infinity, no obstacle poisoning', () => {
+    const anchors = [mkAnchor('edge', 100, 100, 'z0'), mkAnchor('edge', 300, 100, 'z1')];
+    const { placements, rejected } = resolvePlacements(anchors, {
+      sizing: { mode: 'proportional', size: 10, min: 0, margin: 1 },
+    }, {}); // no boundary → empty-circle radius is Infinity
+    expect(rejected).toEqual([]);
+    expect(placements.length).toBe(2);
+    for (const p of placements) {
+      expect(Number.isFinite(p.radius)).toBe(true);
+      expect(Number.isFinite(p.scale)).toBe(true);
+      expect(p.radius).toBeCloseTo(10, 6); // natural size, not Infinity
+    }
+  });
+
+  it('rate.n = 0 with a non-zero offset deterministically keeps all (clamped to 1)', () => {
+    const anchors = [mkAnchor('edge', 0, 0, 'r0'), mkAnchor('edge', 1, 0, 'r1'), mkAnchor('edge', 2, 0, 'r2')];
+    const { survivors } = selectAnchors(anchors, { rate: { n: 0, offset: 3 } });
+    expect(survivors.map((a) => a.id)).toEqual(['r0', 'r1', 'r2']);
+  });
+});

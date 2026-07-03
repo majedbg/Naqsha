@@ -19,16 +19,25 @@
 //                            the extracted motif — the HONESTY ANCHOR, with a
 //                            FLOOR so structural mismatch buys nothing.
 //
-//   sym + lattice max out at 6 < 7, so IoU is ARITHMETICALLY NECESSARY. But
-//   "6 < 7" is trivial; the real requirement (advisor MAJOR) is that IoU
-//   MEANINGFULLY gates. IOU_FLOOR / IOU_FULL below were set from measured raw
-//   IoU on adversarial fixtures (raster.test + fitEvaluator.test honesty
-//   battery): constructed stars self-fit at IoU ≈ 1.0, while floral / random /
-//   calligraphic motifs top out at ≈ 0.44 no matter which star is tried. The
-//   floor sits ABOVE that non-star ceiling, so a non-star earns 0 overlap
-//   points and, even with a perfect (coincidental) sym+lattice = 6, lands < 7
-//   and falls through. A non-star cannot reach 7 without real overlap it does
-//   not have.
+//   sym + lattice max out at 6 < 7, so IoU is ARITHMETICALLY NECESSARY: any
+//   family that clears 7 MUST bank ≥ 1 overlap point, which the FLOOR makes cost
+//   real ink. IOU_FLOOR / IOU_FULL below were set from measured raw IoU on
+//   adversarial fixtures (raster.test + fitEvaluator.test honesty battery):
+//   constructed stars self-fit at IoU ≈ 1.0. The non-star ceiling depends on the
+//   motif's convexity — scattered/non-star ink (floral ≈ 0.44, random ≈ 0.31,
+//   calligraphic ≈ 0.22) stays well under the floor, but a CONVEX periodic shape
+//   (a filled hexagon or a ring/circle) can climb to IoU ≈ 0.54, because a
+//   shallow high-fold star is nearly a hexagon/circle. That is ABOVE the 0.5
+//   floor, so such a shape banks a partial overlap point — but ≥ 1 full overlap
+//   point needs IoU ≥ 0.5875 (0.5 + 0.35/4), which NO measured non-star reaches.
+//   The worst adversarial non-star (a hexagon on its natural hex/p6m lattice,
+//   full sym+lattice = 6) tops out at total ≈ 6.5 and falls through: it is the
+//   sym+lattice ≤ 6 CEILING that guarantees rejection, with the IoU floor doing
+//   the work of denying it the last point. Margin is only ≈ 0.04 IoU — a
+//   deliberately conservative calibration; recall (offering a noisy real star)
+//   is the reviewer's dial to loosen, never a mid-build one, because the graceful
+//   fall-through to S5 tiling makes a false negative cheap and a false positive
+//   ("your hexagon, parameterized as a star") the feature's worst failure.
 //
 // Pure + deterministic (raster IoU is deterministic), main-thread-cheap (a ~64²
 // grid over a gated handful of candidates).
@@ -155,7 +164,11 @@ export function evaluateFit(motif, family, { lattice, symmetry } = {}) {
   const overlap = overlapPoints(iouValue);
 
   const total = sym + lat + overlap;
-  const score = clamp(Math.round(total), 0, 10);
+  // FLOOR (not round) so the badge never over-states: score ≥ 7 ⟺ accepted.
+  // Rounding could show "fit 7/10" for a total of 6.5 that is NOT offered (e.g. a
+  // hexagon at sym+lat=6 + 0.5 overlap) — a self-contradicting badge. Flooring
+  // keeps `score` and `accepted` (both keyed off `total`) in lockstep.
+  const score = clamp(Math.floor(total), 0, 10);
   const accepted = total >= FIT_THRESHOLD;
 
   const pct = Math.round(iouValue * 100);

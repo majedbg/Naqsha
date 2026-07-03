@@ -85,7 +85,7 @@ const LibraryView = lazy(() => import("../components/library/LibraryView"));
 
 export default function Studio({ submitOrg = null } = {}) {
   const { loading, user, signIn } = useAuth();
-  const { limits, check } = useGate();
+  const { tier, limits, check } = useGate();
   // Admin entry point, relocated into the MenuBar now that TopNav no longer
   // renders over the studio route (the standalone Naqsha bar was dropped).
   const navigate = useNavigate();
@@ -1938,6 +1938,7 @@ export default function Studio({ submitOrg = null } = {}) {
       {menuSlot && extractOpen && (
         <Suspense fallback={null}>
           <ExtractStepper
+            tier={tier}
             onClose={() => {
               setExtractOpen(false);
               // Navigate to the return surface only now that the stepper is

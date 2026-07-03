@@ -26,7 +26,7 @@
 // Workers exist). All DOM/canvas work lives in lib/extraction/imageIO so this
 // component stays jsdom-testable with that seam mocked.
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   fileToDataURL,
   loadImage,
@@ -54,6 +54,11 @@ import { FABRICATION_ROLES } from '../../lib/extraction/vectorizer';
 import { registerExtractedPattern } from '../../lib/patterns/ExtractedPatternGenerator';
 import { saveExtractedPattern } from '../../lib/libraryRepository';
 import { tilePlacements } from '../../lib/extraction/tileComposer';
+// S12 (issue #61): the parameterize step — fit a Kaplan star family, adjudicate
+// the EVAL fit, adopt it (fixed tile / live knobs) or keep the traced tile.
+import { kaplanStarFamily } from '../../lib/extraction/families/kaplanStar';
+import { evaluateFit } from '../../lib/extraction/fitEvaluator';
+import { resolveParameterizeGate, adoptFittedFamily } from '../../lib/extraction/adoptFamily';
 import FlattenStep, { DEFAULT_QUAD } from './FlattenStep';
 import LatticeCellEditor from './LatticeCellEditor';
 
@@ -215,7 +220,7 @@ const GHOST_BTN =
  *   coords — the auto-detect slice supplies detected corners here; the user
  *   can always adjust them before applying).
  */
-export default function ExtractStepper({ onClose, onSaved, initialQuad }) {
+export default function ExtractStepper({ onClose, onSaved, initialQuad, tier = 'guest' }) {
   const [step, setStep] = useState(0);
   const [file, setFile] = useState(null);
   const [imageURL, setImageURL] = useState(null);
@@ -250,6 +255,12 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad }) {
   // classifier's group (result.symmetry); '' means the user says "none"; a group
   // name is a manual override (source 'manual', confidence 1). Reset per trace.
   const [symmetryChoice, setSymmetryChoice] = useState('__auto__');
+  // S12 (issue #61): the parameterize adjudication. `adoptStar` = the user
+  // accepted the fitted star family; `starParams` = the editable {n,contactAngle,
+  // scale} (paid tier live knobs). Reset per trace. `tier` (prop, default guest)
+  // resolves the parameterize gate + flag → fixed-tile vs live-knobs.
+  const [adoptStar, setAdoptStar] = useState(false);
+  const [starParams, setStarParams] = useState(null);
   const [error, setError] = useState('');
   const [title, setTitle] = useState('');
   // S8 (issue #57): capture metadata. `exifMeta` = {date,gps,camera}|null read
@@ -536,6 +547,10 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad }) {
       setResult(res);
       setSymmetryChoice('__auto__'); // accept the fresh classifier proposal
       setShapeEdits(shapesFromResult(res).map(({ kind, role }) => ({ kind, role })));
+      // S12: a fresh trace resets the parameterize adjudication to "keep the
+      // traced tile" — the fit re-evaluates against the new motif.
+      setAdoptStar(false);
+      setStarParams(null);
       return true;
     } catch (err) {
       setError(err.message || 'Extraction failed.');
@@ -641,6 +656,28 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad }) {
     setSaving(true);
     setError('');
     try {
+      // S12 (issue #61): the user ADOPTED the fitted star family. Render it at
+      // the (possibly edited) params and register the parametric/fixed pattern
+      // instead of the traced tile — then persist through the SAME repository
+      // path (the entity carries a tile_svg + param columns; no new migration).
+      if (adoptStar && starParams) {
+        const gate = resolveParameterizeGate(tier);
+        const { entity } = adoptFittedFamily({
+          family: kaplanStarFamily,
+          params: starParams,
+          lattice: result.lattice,
+          symmetry: resolveSymmetry(symmetryChoice, result.symmetry),
+          title: title.trim() || defaultTitle,
+          liveKnobs: gate.liveKnobs,
+          photoURL: imageURL,
+        });
+        const photoExt = (file?.name?.split('.').pop() || 'png').toLowerCase();
+        const res = await saveExtractedPattern(entity, { photoBlob: file, photoExt });
+        onSaved?.(res);
+        if (res.persisted) onClose?.();
+        else setSessionOnlyReason(REASON_LABELS[res.reason] || res.reason || 'cloud save unavailable');
+        return;
+      }
       const entity = makeExtractedPattern({
         title: title.trim() || defaultTitle,
         tile: buildTile(result, shapesFromResult(result), shapeEdits),
@@ -684,7 +721,7 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad }) {
     } finally {
       setSaving(false);
     }
-  }, [result, shapeEdits, symmetryChoice, title, defaultTitle, file, imageURL, location, exifMeta, note, favorite, tags, collectionId, sourceType, material, tradition, palette, onSaved, onClose]);
+  }, [result, shapeEdits, symmetryChoice, title, defaultTitle, file, imageURL, location, exifMeta, note, favorite, tags, collectionId, sourceType, material, tradition, palette, adoptStar, starParams, tier, onSaved, onClose]);
 
   // S9: tag chip entry — Enter or comma commits the current input as a tag
   // (deduped case-insensitively); Backspace on an empty input removes the last.
@@ -770,6 +807,43 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad }) {
   // S7 (issue #56): the auto proposal and the effective (post-override) group.
   const autoSym = result?.symmetry ?? null;
   const effectiveSym = result ? resolveSymmetry(symmetryChoice, autoSym) : null;
+
+  // S12 (issue #61): the parameterize gate (flag + tier) and the EVAL fit. The
+  // fit runs only when the feature is offered AND a lattice exists (wallpaper
+  // families are the PERIODIC ones — no lattice → the single-motif floor). Cheap
+  // (a ~64² raster over a gated handful of star candidates); memoized on the
+  // motif + lattice + symmetry so it doesn't re-run on unrelated keystrokes.
+  const parameterizeGate = useMemo(() => resolveParameterizeGate(tier), [tier]);
+  const fitEval = useMemo(() => {
+    if (!parameterizeGate.offer || !lattice || !editedTile) return null;
+    try {
+      return evaluateFit(editedTile, kaplanStarFamily, { lattice, symmetry: effectiveSym });
+    } catch {
+      return null; // fit is best-effort — a failure never blocks the traced tile
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [parameterizeGate.offer, lattice, JSON.stringify(editedTile), JSON.stringify(effectiveSym)]);
+  // Only an ACCEPTED fit (score ≥ 7) surfaces the proposal; below threshold the
+  // flow silently keeps the traced tile — the fall-through (never a dead end).
+  const starOffer = fitEval?.accepted ? fitEval : null;
+  // The live-editable star geometry (paid tier) — regenerated as the knobs move.
+  const starPreviewTile =
+    adoptStar && starParams && lattice
+      ? kaplanStarFamily.generate(starParams, { lattice })
+      : null;
+
+  const acceptStar = () => {
+    if (!starOffer) return;
+    setStarParams({ ...kaplanStarFamily.defaults, ...starOffer.params });
+    setAdoptStar(true);
+  };
+  const declineStar = () => {
+    setAdoptStar(false);
+    setStarParams(null);
+  };
+  const setStarParam = (key, value) =>
+    setStarParams((p) => ({ ...(p ?? kaplanStarFamily.defaults), [key]: value }));
+
   const preview = !editedTile ? null : lattice ? (
     <svg
       viewBox={`0 0 ${lattice.cell.width * 3} ${lattice.cell.height * 3}`}
@@ -1036,6 +1110,105 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad }) {
                       tile may have more symmetry than detected. Adjust the repeat cell, or pick a
                       group above to override.
                     </p>
+                  )}
+                </div>
+              )}
+              {/* S12 (issue #61): the parameterize PROPOSAL. Shown only when the
+                  EVAL fit clears the honest threshold (≥7); below it, nothing
+                  renders and the traced tile stands (the fall-through). Never a
+                  silent replacement — an editable proposal the user adjudicates. */}
+              {starOffer && (
+                <div
+                  className="w-full max-w-md flex flex-col gap-2 border border-violet/40 rounded-xs p-3 bg-violet/5"
+                  data-testid="star-proposal"
+                >
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs text-ink">
+                      Looks like a{starOffer.params.n === 8 ? 'n' : ''} {starOffer.params.n}-fold star
+                    </span>
+                    <span
+                      data-testid="star-fit-badge"
+                      className="inline-flex items-center px-1.5 py-px text-[10px] leading-tight rounded-sm bg-violet/15 border border-violet/40 text-violet"
+                    >
+                      fit {starOffer.score}/10
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-ink-faint leading-snug">{starOffer.explanation}</p>
+                  {!adoptStar ? (
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        className={PRIMARY_BTN}
+                        data-testid="adopt-star"
+                        onClick={acceptStar}
+                      >
+                        Edit its structure
+                      </button>
+                      <button type="button" className={GHOST_BTN} onClick={declineStar}>
+                        Keep the traced tile
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      {/* Live structural knobs — PAID tier; a gated tier adopts a
+                          FIXED tile instead (still a real, exportable pattern). */}
+                      {parameterizeGate.liveKnobs ? (
+                        <div className="flex flex-col gap-2" data-testid="star-knobs">
+                          <label className="flex items-center gap-2 text-[11px] text-ink-soft">
+                            <span className="w-24">Star fold (n)</span>
+                            <input
+                              type="range"
+                              aria-label="Star fold"
+                              min={3}
+                              max={12}
+                              step={1}
+                              value={starParams?.n ?? 8}
+                              onChange={(e) => setStarParam('n', Number(e.target.value))}
+                              className="flex-1"
+                            />
+                            <span className="w-6 text-right tabular-nums">{starParams?.n ?? 8}</span>
+                          </label>
+                          <label className="flex items-center gap-2 text-[11px] text-ink-soft">
+                            <span className="w-24">Contact angle</span>
+                            <input
+                              type="range"
+                              aria-label="Contact angle"
+                              min={15}
+                              max={75}
+                              step={1}
+                              value={starParams?.contactAngle ?? 45}
+                              onChange={(e) => setStarParam('contactAngle', Number(e.target.value))}
+                              className="flex-1"
+                            />
+                            <span className="w-8 text-right tabular-nums">
+                              {starParams?.contactAngle ?? 45}°
+                            </span>
+                          </label>
+                        </div>
+                      ) : (
+                        <p className="text-[10px] text-tone-mild leading-snug" data-testid="star-fixed-note">
+                          Adopting as a fixed tile. Upgrade for live structural knobs (star fold,
+                          contact angle).
+                        </p>
+                      )}
+                      {starPreviewTile && (
+                        <svg
+                          viewBox={`0 0 ${starPreviewTile.width} ${starPreviewTile.height}`}
+                          width="120"
+                          height="120"
+                          className="self-center border border-hairline rounded-xs bg-paper-warm"
+                          aria-label="Star preview"
+                          data-testid="star-preview"
+                        >
+                          {starPreviewTile.strokes.map((s, i) => (
+                            <path key={i} d={s.d} fill="none" stroke="#7c3aed" strokeWidth="1.5" />
+                          ))}
+                        </svg>
+                      )}
+                      <button type="button" className={GHOST_BTN} onClick={declineStar}>
+                        Keep the traced tile instead
+                      </button>
+                    </>
                   )}
                 </div>
               )}

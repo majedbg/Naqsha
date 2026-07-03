@@ -57,6 +57,32 @@ export function randomFixture(seed = 7) {
   return { width: 100, height: 100, fills: [], strokes };
 }
 
+/**
+ * Honeycomb: a single FILLED regular hexagon centered in the cell — the motif a
+ * hex/p6m dot-grid or honeycomb repeats. This is the SHARPEST honesty test in
+ * the battery (S12 task 3a): unlike the scattered floral/random/calligraphic
+ * negatives — which fall through cheaply because they never earn full sym+lattice
+ * — a hexagon on its NATURAL hex lattice earns the MAXIMUM structural sub-scores
+ * (symmetry 3 + lattice 3 = 6, the p6m/hex the star family itself lives on). It
+ * is a genuine periodic geometric tile, NOT a star, and it must still fall
+ * through — proving the ONLY thing keeping it under the offer threshold is IoU
+ * (a filled hexagon does not overlap a star's linework). A convex hexagon is the
+ * adversarial worst case because a shallow high-fold star is nearly a hexagon;
+ * see fitEvaluator.js header for the measured margin. Default r=45 fills most of
+ * the cell (a tight honeycomb). NOT a star.
+ */
+export function hexagonFixture(radius = 45) {
+  const cx = 50;
+  const cy = 50;
+  const pts = [];
+  for (let k = 0; k < 6; k++) {
+    const a = (2 * Math.PI * k) / 6 + Math.PI / 6; // flat-top hexagon
+    pts.push([cx + radius * Math.cos(a), cy + radius * Math.sin(a)]);
+  }
+  const d = `M${pts.map((p) => p.map((v) => Math.round(v * 100) / 100).join(' ')).join(' L ')} Z`;
+  return { width: 100, height: 100, fills: [{ d, role: 'engrave' }], strokes: [] };
+}
+
 /** Calligraphic sweeping cubic curves. NOT a star. */
 export function calligraphicFixture() {
   return {

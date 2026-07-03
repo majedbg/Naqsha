@@ -12,12 +12,24 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { StrictMode } from 'react';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 
-const mocks = vi.hoisted(() => ({ getPhotoURL: vi.fn(), updateExtractedPatternMeta: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  getPhotoURL: vi.fn(),
+  updateExtractedPatternMeta: vi.fn(),
+  getUser: vi.fn(),
+  loadCollections: vi.fn(),
+}));
 
 vi.mock('../../lib/libraryRepository', () => ({
   getPhotoURL: mocks.getPhotoURL,
   updateExtractedPatternMeta: mocks.updateExtractedPatternMeta,
 }));
+
+// S9 review: EntryDetail loads the user's collections (edit-form dropdown +
+// read-only assigned-collection line). Guest by default → no collections.
+vi.mock('../../lib/supabase', () => ({
+  supabase: { auth: { getUser: (...a) => mocks.getUser(...a) } },
+}));
+vi.mock('../../lib/collectionService', () => ({ loadCollections: mocks.loadCollections }));
 
 import LibraryView from './LibraryView';
 import { makeExtractedPattern } from '../../lib/extraction/extractedPattern';
@@ -48,6 +60,8 @@ beforeEach(() => {
   clearLibraryEntries();
   mocks.getPhotoURL.mockReset().mockResolvedValue(null);
   mocks.updateExtractedPatternMeta.mockReset().mockResolvedValue({ persisted: true });
+  mocks.getUser.mockReset().mockResolvedValue({ data: { user: null } });
+  mocks.loadCollections.mockReset().mockResolvedValue([]);
 });
 
 afterEach(() => clearLibraryEntries());
@@ -407,5 +421,70 @@ describe('LibraryView — S9 provenance + palette + organization', () => {
     fireEvent.click(screen.getByText('Bare'));
     expect(screen.queryByTestId('palette-facet')).toBeNull();
     expect(screen.queryByTestId('tag-list')).toBeNull();
+  });
+});
+
+// S9 review follow-ups: assigned-collection visibility + the deleted-collection
+// edge in the edit form.
+describe('LibraryView — collection display + deleted-collection edge', () => {
+  const MINE = '123e4567-e89b-42d3-a456-426614174000';
+  const STALE = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+
+  const withCollection = (collectionId) =>
+    makeExtractedPattern({
+      patternId: 'extracted-col',
+      title: 'Col entry',
+      tile: TILE,
+      collectionId,
+    });
+
+  beforeEach(() => {
+    mocks.getUser.mockResolvedValue({ data: { user: { id: 'u1' } } });
+    mocks.loadCollections.mockResolvedValue([
+      { id: MINE, name: 'Uppsala trip' },
+    ]);
+  });
+
+  it('shows the assigned collection name read-only in the detail view', async () => {
+    addLibraryEntry(withCollection(MINE));
+    renderView();
+    fireEvent.click(screen.getByText('Col entry'));
+    const line = await screen.findByTestId('collection-name');
+    expect(line.textContent).toContain('Uppsala trip');
+  });
+
+  it('shows no collection line for a stale (deleted) collection id', async () => {
+    addLibraryEntry(withCollection(STALE));
+    renderView();
+    fireEvent.click(screen.getByText('Col entry'));
+    // Wait for the collections load to settle, then assert absence.
+    await waitFor(() => expect(mocks.loadCollections).toHaveBeenCalled());
+    expect(screen.queryByTestId('collection-name')).toBeNull();
+  });
+
+  it('treats a stale collection id as unassigned in the edit form and strips it on save', async () => {
+    addLibraryEntry(withCollection(STALE));
+    renderView();
+    fireEvent.click(screen.getByText('Col entry'));
+    await waitFor(() => expect(mocks.loadCollections).toHaveBeenCalled());
+    fireEvent.click(screen.getByTestId('edit-details'));
+
+    const sel = await screen.findByLabelText('Edit collection');
+    expect(sel.value).toBe(''); // stale id → unassigned, not a blank select
+
+    fireEvent.click(screen.getByText('Save changes'));
+    await waitFor(() => expect(mocks.updateExtractedPatternMeta).toHaveBeenCalled());
+    const [, patch] = mocks.updateExtractedPatternMeta.mock.calls[0];
+    expect(patch.collectionId).toBeNull(); // stale uuid never written back
+  });
+
+  it('keeps a valid assignment selected in the edit form', async () => {
+    addLibraryEntry(withCollection(MINE));
+    renderView();
+    fireEvent.click(screen.getByText('Col entry'));
+    await waitFor(() => expect(mocks.loadCollections).toHaveBeenCalled());
+    fireEvent.click(screen.getByTestId('edit-details'));
+    const sel = await screen.findByLabelText('Edit collection');
+    expect(sel.value).toBe(MINE);
   });
 });

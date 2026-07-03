@@ -321,7 +321,13 @@ function MetaEditForm({ entity, collections, onDone }) {
   const [sourceType, setSourceType] = useState(entity.sourceType || '');
   const [material, setMaterial] = useState(entity.material || '');
   const [tradition, setTradition] = useState(entity.tradition || '');
-  const [collectionId, setCollectionId] = useState(entity.collectionId || '');
+  // Deleted-collection edge (review): the entity can carry a collectionId whose
+  // collection no longer exists. Treat it as unassigned — otherwise the select
+  // renders blank and re-saving writes the stale uuid back into an FK
+  // violation. Saving then genuinely clears the stale reference.
+  const [collectionId, setCollectionId] = useState(
+    collections.some((c) => c.id === entity.collectionId) ? entity.collectionId : ''
+  );
   const [saving, setSaving] = useState(false);
 
   const field =
@@ -472,6 +478,20 @@ function EntryDetail({ entry, photoURL, onBack, onUseInStudio }) {
       ) : (
         <>
           <ProvenanceMeta entity={entity} />
+          {/* Assigned collection, read-only (review: assignment needs visible
+              confirmation outside the edit form). Resolved against the loaded
+              list — a stale/deleted collection id simply shows nothing, the
+              same treat-as-null the edit form applies. */}
+          {entity.collectionId &&
+            (() => {
+              const name = collections.find((c) => c.id === entity.collectionId)?.name;
+              return name ? (
+                <p className="text-xs" data-testid="collection-name">
+                  <span className="text-ink-soft">Collection </span>
+                  <span className="text-ink">{name}</span>
+                </p>
+              ) : null;
+            })()}
           <PaletteSwatches palette={entity.palette} />
         </>
       )}

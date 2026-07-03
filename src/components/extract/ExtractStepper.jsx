@@ -501,10 +501,12 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad }) {
       // Snapshot the selection raster BEFORE extract(): the worker path
       // TRANSFERS image.data zero-copy, detaching this buffer.
       const selURL = imageDataToDataURL(imageData);
-      // S9: derive the palette facet from the SAME crop, also BEFORE the
-      // transfer detaches the buffer. Deterministic + cheap (strided median-cut
-      // on the cell crop) — fail-soft, an empty palette is simply no facet.
-      setPalette(extractPalette(imageData, { maxColors: 6 }));
+      // S9: derive the palette facet from the SAME crop. COMPUTED here, before
+      // the transfer detaches the buffer; COMMITTED only after the no-shapes
+      // bail below, so a failed trace can never pair a fresh palette with the
+      // previous result. Deterministic + cheap (strided median-cut) — an empty
+      // palette is simply no facet.
+      const cropPalette = extractPalette(imageData, { maxColors: 6 });
       if (!bridgeRef.current) bridgeRef.current = createExtractionBridge();
       const options = latticeOpt === undefined ? {} : { lattice: latticeOpt };
       const res = await bridgeRef.current.extract(imageData, options, (p) =>
@@ -514,6 +516,7 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad }) {
         setError('No shapes found in that region — try a tighter or higher-contrast selection.');
         return false;
       }
+      setPalette(cropPalette);
       setSel({ rect, url: selURL, w: rect.w, h: rect.h });
       setManualCell(null);
       setResult(res);

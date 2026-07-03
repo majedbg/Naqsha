@@ -21,7 +21,14 @@ import {
   PHOTO_BUCKET,
 } from './libraryRepository';
 import { makeExtractedPattern, serializeExtractedPattern } from './extraction/extractedPattern';
-import { getDynamicPatternClass, unregisterPattern } from './patternRegistry';
+import {
+  getDynamicPatternClass,
+  unregisterPattern,
+  getDynamicLabel,
+  getDynamicTypes,
+  onRegistryChange,
+} from './patternRegistry';
+import { registerExtractedPattern } from './patterns/ExtractedPatternGenerator';
 import { getLibraryEntry, clearLibraryEntries, addLibraryEntry } from './libraryStore';
 
 const USER = { id: 'user-1' };
@@ -365,5 +372,86 @@ describe('updateExtractedPatternMeta', () => {
     expect(res.persisted).toBe(false);
     expect(res.reason).toBe('guest');
     expect(getLibraryEntry('extracted-lr-1').entity.favorite).toBe(true);
+  });
+});
+
+// S9 adversarial-review MAJOR: a title edit must not diverge the two surfaces.
+// The Library store AND the dynamic registry (picker custom-family card label,
+// getDynamicLabel → layer auto-naming, D6) must both reflect the new title —
+// including for guests, whose edits are session-only.
+describe('updateExtractedPatternMeta — title syncs the picker label', () => {
+  it('updates getDynamicLabel for a signed-in edit', async () => {
+    seed.user_patterns = [{ ...serializeExtractedPattern(entity()), user_id: 'user-1' }];
+    registerExtractedPattern(entity()); // one entity, two surfaces
+    expect(getDynamicLabel('extracted-lr-1')).toBe('Repo tile');
+
+    const res = await updateExtractedPatternMeta('extracted-lr-1', { title: 'Renamed tile' });
+    expect(res.persisted).toBe(true);
+    expect(getDynamicLabel('extracted-lr-1')).toBe('Renamed tile');
+    expect(getLibraryEntry('extracted-lr-1').entity.title).toBe('Renamed tile');
+  });
+
+  it('updates getDynamicLabel for a guest (session-only) edit', async () => {
+    _ref.client = createSupabaseMock(seed, { user: null });
+    registerExtractedPattern(entity());
+
+    const res = await updateExtractedPatternMeta('extracted-lr-1', { title: 'Guest rename' });
+    expect(res.persisted).toBe(false);
+    expect(getDynamicLabel('extracted-lr-1')).toBe('Guest rename');
+  });
+
+  it('notifies registry subscribers so the picker re-renders live', async () => {
+    registerExtractedPattern(entity());
+    let notified = 0;
+    const off = onRegistryChange(() => { notified += 1; });
+    await updateExtractedPatternMeta('extracted-lr-1', { title: 'Live rename' });
+    off();
+    expect(notified).toBeGreaterThan(0);
+    expect(getDynamicTypes().find((t) => t.id === 'extracted-lr-1').label).toBe('Live rename');
+  });
+
+  it('leaves the label untouched when the patch has no title', async () => {
+    registerExtractedPattern(entity());
+    await updateExtractedPatternMeta('extracted-lr-1', { favorite: true });
+    expect(getDynamicLabel('extracted-lr-1')).toBe('Repo tile');
+  });
+});
+
+// S9 adversarial-review MINOR: collection assignment defense-in-depth. The uuid
+// must belong to THIS user's collections (RI bypasses RLS, so a crafted call
+// could otherwise point the row at a foreign collection).
+describe('updateExtractedPatternMeta — collection ownership verification', () => {
+  const MINE = '123e4567-e89b-42d3-a456-426614174000';
+  const FOREIGN = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+
+  beforeEach(() => {
+    seed.user_patterns = [{ ...serializeExtractedPattern(entity()), user_id: 'user-1' }];
+    seed.collections = [
+      { id: MINE, user_id: 'user-1', name: 'Uppsala trip', updated_at: '2026-07-01' },
+      { id: FOREIGN, user_id: 'user-2', name: 'Not yours', updated_at: '2026-07-01' },
+    ];
+    addLibraryEntry(entity());
+  });
+
+  it('persists a collection the user owns', async () => {
+    const res = await updateExtractedPatternMeta('extracted-lr-1', { collectionId: MINE });
+    expect(res.persisted).toBe(true);
+    expect(res.reason).toBeUndefined();
+    expect(seed.user_patterns[0].collection_id).toBe(MINE);
+  });
+
+  it('nulls a collection uuid that is not in the user’s collections', async () => {
+    const res = await updateExtractedPatternMeta('extracted-lr-1', { collectionId: FOREIGN });
+    expect(res.persisted).toBe(true);
+    expect(res.reason).toBe('unknown-collection');
+    expect(seed.user_patterns[0].collection_id).toBeNull();
+    expect(getLibraryEntry('extracted-lr-1').entity.collectionId).toBeNull();
+  });
+
+  it('clears an assignment with an explicit null (no verification round-trip)', async () => {
+    seed.user_patterns[0].collection_id = MINE;
+    const res = await updateExtractedPatternMeta('extracted-lr-1', { collectionId: null });
+    expect(res.persisted).toBe(true);
+    expect(seed.user_patterns[0].collection_id).toBeNull();
   });
 });

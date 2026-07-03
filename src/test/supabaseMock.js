@@ -36,6 +36,10 @@ function makeBuilder(state) {
       state.op = 'delete';
       return builder;
     },
+    order(col, { ascending = true } = {}) {
+      state.order = { col, ascending };
+      return builder;
+    },
     single() {
       state.single = true;
       return builder;
@@ -90,7 +94,16 @@ function resolveBuilder(state) {
   }
 
   // select
-  const matched = bucket.filter(matches);
+  let matched = bucket.filter(matches);
+  if (state.order) {
+    const { col, ascending } = state.order;
+    matched = matched.slice().sort((a, b) => {
+      const av = a[col];
+      const bv = b[col];
+      const cmp = av < bv ? -1 : av > bv ? 1 : 0;
+      return ascending ? cmp : -cmp;
+    });
+  }
   if (state.single) {
     return { data: matched.length ? matched[0] : null, error: null };
   }

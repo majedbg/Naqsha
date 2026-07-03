@@ -146,11 +146,30 @@ async function main() {
   // ---- Editable-later ----
   await page.getByTestId('edit-details').click();
   await page.getByLabel('Edit note').fill('Edited note from detail view');
+  await page.getByLabel('Edit title').fill('Renamed vault');
   await page.getByRole('button', { name: /save changes/i }).click();
   await page.waitForTimeout(500);
   const provText2 = await page.getByTestId('provenance-meta').textContent();
   check('metadata edit persisted in-session', /Edited note from detail view/.test(provText2), provText2.slice(0, 100));
+  check(
+    'title edit reflected in detail',
+    (await page.getByRole('heading', { name: 'Renamed vault' }).count()) === 1
+  );
   await page.screenshot({ path: OUT + '03-after-edit.png', fullPage: false });
+
+  // ---- Title edit propagates to the picker (adversarial-review MAJOR) ----
+  // Close the Library, open the pattern picker via the Inspector's "Change"
+  // trigger, and confirm the custom-family card carries the NEW title with no
+  // stale copy left behind (one entity, two surfaces).
+  await page.keyboard.press('Escape'); // detail → grid
+  await page.keyboard.press('Escape'); // grid → closed
+  await page.waitForTimeout(300);
+  await page.getByRole('button', { name: /change/i }).first().click();
+  await page.getByText('Renamed vault', { exact: true }).waitFor({ timeout: 8000 });
+  check('picker card label follows the title edit', true);
+  const stale = await page.getByText('Uppsala vault', { exact: true }).count();
+  check('no stale title left in the picker', stale === 0, `stale=${stale}`);
+  await page.screenshot({ path: OUT + '04-picker-renamed.png', fullPage: false });
 
   await browser.close();
 

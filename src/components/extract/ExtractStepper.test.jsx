@@ -1000,6 +1000,40 @@ describe('ExtractStepper — S9 provenance + palette + organization', () => {
     expect(entity.collectionId).toBe('123e4567-e89b-42d3-a456-426614174000');
   });
 
+  it('keeps the previous palette when a re-extract fails (no fresh palette without a result)', async () => {
+    const GREEN = {
+      data: new Uint8ClampedArray([0, 255, 0, 255]),
+      width: 1,
+      height: 1,
+    };
+    // First trace: lattice-bearing result on the red/blue crop → Review.
+    mocks.cropToImageData.mockReturnValue(TWO_TONE);
+    mocks.extract.mockResolvedValueOnce(TRACE_RESULT_LATTICE);
+    render(<ExtractStepper onClose={() => {}} />);
+    await walkToSelect();
+    fireEvent.click(screen.getByRole('button', { name: /trace region/i }));
+    await screen.findByTestId('lattice-cell-editor');
+
+    // Opt-out re-extracts the same selection — but this run finds NO shapes on
+    // a (mocked) green crop. The old result stays current on Review.
+    mocks.cropToImageData.mockReturnValue(GREEN);
+    mocks.extract.mockResolvedValueOnce({
+      tile: { width: 10, height: 10, fills: [], strokes: [] },
+      lattice: null,
+    });
+    fireEvent.click(screen.getByRole('button', { name: /use single motif/i }));
+    await screen.findByRole('alert'); // "No shapes found…"
+
+    // Continue → Save: the palette must still pair with the SURVIVING result
+    // (red/blue), never the failed trace's green crop.
+    fireEvent.click(screen.getByRole('button', { name: /continue/i }));
+    await screen.findByRole('button', { name: /save to library/i });
+    const sw = screen.getByTestId('palette-swatches').textContent;
+    expect(sw).toContain('#ff0000');
+    expect(sw).toContain('#0000ff');
+    expect(sw).not.toContain('#00ff00');
+  });
+
   it('removes a tag chip on ×', async () => {
     render(<ExtractStepper onClose={() => {}} />);
     await walkToSave();

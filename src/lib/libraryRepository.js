@@ -17,7 +17,8 @@ import {
   deserializeExtractedPattern,
 } from './extraction/extractedPattern';
 import { registerExtractedPattern } from './patterns/ExtractedPatternGenerator';
-import { unregisterPattern } from './patternRegistry';
+import { unregisterPattern, updateDynamicLabel } from './patternRegistry';
+import { loadCollections } from './collectionService';
 import { removeLibraryEntry, updateLibraryEntry } from './libraryStore';
 import {
   normalizeNote,
@@ -132,13 +133,41 @@ export async function updateExtractedPatternMeta(patternId, patch = {}) {
     rowPatch[field.column] = normalized;
   }
 
-  // Store first — the edit is visible this session regardless of persistence.
+  // BOTH runtime surfaces first — the edit is visible this session regardless
+  // of persistence (guests included). One entity, two surfaces: the Library
+  // store AND the dynamic registry, whose label drives the picker custom-family
+  // card and layer auto-naming (getDynamicLabel, D6). Skipping the registry
+  // here would let a rename silently diverge the picker from the Library.
   updateLibraryEntry(patternId, entityPatch);
+  if (entityPatch.title) updateDynamicLabel(patternId, entityPatch.title);
 
   if (!supabase) return { entity: entityPatch, persisted: false, reason: 'no-supabase' };
   const user = await authedUser();
   if (!user) return { entity: entityPatch, persisted: false, reason: 'guest' };
   if (Object.keys(rowPatch).length === 0) return { entity: entityPatch, persisted: true };
+
+  // Defense-in-depth on collection assignment: normalizeCollectionId only
+  // checks uuid SHAPE, and Postgres referential integrity bypasses RLS — a
+  // crafted call could point this row at another user's collection. Verify the
+  // uuid is one of THIS user's collections before writing; unknown (or the
+  // list is unfetchable) → null, surfaced via `reason` (no read leak either
+  // way; this keeps the row honest).
+  let reason;
+  if (rowPatch.collection_id) {
+    let owned = false;
+    try {
+      const cols = await loadCollections(user.id);
+      owned = (cols || []).some((c) => c.id === rowPatch.collection_id);
+    } catch {
+      owned = false; // unverifiable → treat as unknown
+    }
+    if (!owned) {
+      rowPatch.collection_id = null;
+      entityPatch.collectionId = null;
+      updateLibraryEntry(patternId, { collectionId: null }); // keep surfaces consistent
+      reason = 'unknown-collection';
+    }
+  }
 
   const { error } = await supabase
     .from(TABLE)
@@ -148,7 +177,7 @@ export async function updateExtractedPatternMeta(patternId, patch = {}) {
   if (error) {
     return { entity: entityPatch, persisted: false, reason: `save failed: ${error.message}` };
   }
-  return { entity: entityPatch, persisted: true };
+  return { entity: entityPatch, persisted: true, ...(reason ? { reason } : {}) };
 }
 
 /** All extracted rows for a user, newest first. */

@@ -47,6 +47,7 @@ import {
   SOURCE_TYPE_LABELS,
   MATERIAL_LABELS,
 } from '../../lib/extraction/provenanceMeta';
+import { WALLPAPER_GROUPS } from '../../lib/extraction/symmetry';
 import { loadCollections } from '../../lib/collectionService';
 import { supabase } from '../../lib/supabase';
 import { FABRICATION_ROLES } from '../../lib/extraction/vectorizer';
@@ -110,6 +111,15 @@ function buildTile(result, shapes, edits) {
     else fills.push({ d: shape.contour.d, role });
   });
   return { width: result.tile.width, height: result.tile.height, fills, strokes };
+}
+
+// Resolve the effective symmetry from the Review choice (S7, issue #56):
+// '__auto__' accepts the classifier proposal (may be null); '' → the user chose
+// "none"; a group name → a manual override. makeExtractedPattern re-validates.
+function resolveSymmetry(choice, autoSym) {
+  if (choice === '__auto__') return autoSym ?? null;
+  if (choice === '') return null;
+  return { group: choice, confidence: 1, source: 'manual' };
 }
 
 function StepRail({ current }) {
@@ -236,6 +246,10 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad }) {
   // selection space) the user is positioning before the first commit.
   const [sel, setSel] = useState(null);
   const [manualCell, setManualCell] = useState(null);
+  // S7 (issue #56): the symmetry proposal is editable. '__auto__' accepts the
+  // classifier's group (result.symmetry); '' means the user says "none"; a group
+  // name is a manual override (source 'manual', confidence 1). Reset per trace.
+  const [symmetryChoice, setSymmetryChoice] = useState('__auto__');
   const [error, setError] = useState('');
   const [title, setTitle] = useState('');
   // S8 (issue #57): capture metadata. `exifMeta` = {date,gps,camera}|null read
@@ -520,6 +534,7 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad }) {
       setSel({ rect, url: selURL, w: rect.w, h: rect.h });
       setManualCell(null);
       setResult(res);
+      setSymmetryChoice('__auto__'); // accept the fresh classifier proposal
       setShapeEdits(shapesFromResult(res).map(({ kind, role }) => ({ kind, role })));
       return true;
     } catch (err) {
@@ -630,6 +645,8 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad }) {
         title: title.trim() || defaultTitle,
         tile: buildTile(result, shapesFromResult(result), shapeEdits),
         lattice: result.lattice,
+        // S7: the detected group, or the user's Review override.
+        symmetry: resolveSymmetry(symmetryChoice, result.symmetry),
         // Metadata is normalized (validate-and-null) inside the entity: an empty
         // location draft → null (zero friction), out-of-range coords dropped.
         location,
@@ -667,7 +684,7 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad }) {
     } finally {
       setSaving(false);
     }
-  }, [result, shapeEdits, title, defaultTitle, file, imageURL, location, exifMeta, note, favorite, tags, collectionId, sourceType, material, tradition, palette, onSaved, onClose]);
+  }, [result, shapeEdits, symmetryChoice, title, defaultTitle, file, imageURL, location, exifMeta, note, favorite, tags, collectionId, sourceType, material, tradition, palette, onSaved, onClose]);
 
   // S9: tag chip entry — Enter or comma commits the current input as a tag
   // (deduped case-insensitively); Backspace on an empty input removes the last.
@@ -750,6 +767,9 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad }) {
   // shows the pattern the save will actually produce. Dragging the cell
   // re-extracts, which re-renders this preview: "dragging updates the tiling".
   const lattice = result?.lattice ?? null;
+  // S7 (issue #56): the auto proposal and the effective (post-override) group.
+  const autoSym = result?.symmetry ?? null;
+  const effectiveSym = result ? resolveSymmetry(symmetryChoice, autoSym) : null;
   const preview = !editedTile ? null : lattice ? (
     <svg
       viewBox={`0 0 ${lattice.cell.width * 3} ${lattice.cell.height * 3}`}
@@ -945,6 +965,67 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad }) {
                   </span>
                 ))}
               </p>
+              {/* Symmetry proposal (S7, issue #56): the classified wallpaper
+                  group with its confidence, as an editable dropdown (the 17 +
+                  "none"). Shown only with a lattice — wallpaper groups are the
+                  PERIODIC groups; the single-motif floor has none. */}
+              {lattice && (
+                <div
+                  className="w-full max-w-md flex flex-col gap-1.5 border border-hairline rounded-xs p-3"
+                  data-testid="symmetry-proposal"
+                >
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs text-ink-soft">Symmetry group</span>
+                    {effectiveSym ? (
+                      <span
+                        data-testid="symmetry-badge"
+                        className="inline-flex items-center gap-1 px-1.5 py-px text-[10px] leading-tight rounded-sm bg-paper-warm border border-hairline text-ink-soft"
+                      >
+                        {effectiveSym.group}
+                        {effectiveSym.source === 'auto'
+                          ? ` · ${Math.round(effectiveSym.confidence * 100)}% confidence`
+                          : ' · manual'}
+                      </span>
+                    ) : (
+                      <span className="text-[10px] text-ink-faint">none</span>
+                    )}
+                  </div>
+                  <select
+                    aria-label="Symmetry group"
+                    value={symmetryChoice}
+                    onChange={(e) => setSymmetryChoice(e.target.value)}
+                    className="bg-panel text-ink text-[11px] px-1.5 py-1 rounded-xs border border-hairline outline-none focus:border-violet"
+                  >
+                    <option value="__auto__">
+                      {autoSym
+                        ? `Detected: ${autoSym.group} (${Math.round(autoSym.confidence * 100)}%)`
+                        : 'Auto — none detected'}
+                    </option>
+                    <option value="">None</option>
+                    {WALLPAPER_GROUPS.map((g) => (
+                      <option key={g} value={g}>
+                        {g}
+                      </option>
+                    ))}
+                  </select>
+                  {/* Phase-collapse caveat (adversarial-review MAJOR): the
+                      classifier found a rotation OFF the crop-anchored search
+                      centers (hiddenRotation), so the detected group may be a
+                      collapsed subgroup of the truth — say so in words, next to
+                      the already-capped confidence. Hidden once the user
+                      overrides (their pick is an assertion, not a proposal). */}
+                  {autoSym?.hiddenRotation && symmetryChoice === '__auto__' && (
+                    <p
+                      className="text-[10px] text-ink-faint leading-snug"
+                      data-testid="symmetry-caveat"
+                    >
+                      Detected {autoSym.group} — an off-center crop can hide rotations, so this
+                      tile may have more symmetry than detected. Adjust the repeat cell, or pick a
+                      group above to override.
+                    </p>
+                  )}
+                </div>
+              )}
               <ul aria-label="Traced shapes" className="w-full max-w-md flex flex-col gap-1">
                 {shapes.map((shape, i) => {
                   const edit = shapeEdits[i] ?? shape;

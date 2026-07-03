@@ -13,6 +13,7 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { runExtraction, createPipeline, listStages } from './pipeline';
+import { WALLPAPER_GROUPS } from './symmetry';
 import { runRectify } from './stages';
 import { createExtractionBridge } from './workerBridge';
 
@@ -58,6 +59,7 @@ describe('runExtraction', () => {
       'flatten:skipped',
       'lattice:running',
       'lattice:done',
+      'symmetry:skipped', // no repeat detected → no lattice → no wallpaper group
       'trace:running',
       'trace:done',
     ]);
@@ -123,6 +125,36 @@ function tilingImage(period = 16, size = 80) {
   }
   return { data, width: size, height: size };
 }
+
+describe('runExtraction — symmetry stage (S7, issue #56)', () => {
+  it('classifies a wallpaper group on the cropped cell when a lattice is found', async () => {
+    const result = await runExtraction({ image: tilingImage() });
+    expect(result.lattice).not.toBeNull(); // precondition: the cell was cropped
+    expect(result.symmetry).toBeTruthy();
+    expect(WALLPAPER_GROUPS).toContain(result.symmetry.group);
+    expect(result.symmetry.source).toBe('auto');
+    expect(typeof result.confidence.symmetry).toBe('number'); // rides confidence map
+    // S12 seam: the group lands on the result payload for parameterize/EVAL.
+    expect(result.symmetry).toBe(result.symmetry); // (documented entry point)
+  });
+
+  it('emits symmetry:running→done (not skipped) when a lattice is present', async () => {
+    const events = [];
+    await runExtraction({ image: tilingImage() }, (p) => events.push(p));
+    const seq = statusSequence(events);
+    expect(seq).toContain('symmetry:running');
+    expect(seq).toContain('symmetry:done');
+    expect(seq).not.toContain('symmetry:skipped');
+  });
+
+  it('skips symmetry (no wallpaper group) on the single-motif floor', async () => {
+    const events = [];
+    const result = await runExtraction({ image: squareImage() }, (p) => events.push(p));
+    expect(result.lattice).toBeNull();
+    expect(result.symmetry ?? null).toBeNull();
+    expect(statusSequence(events)).toContain('symmetry:skipped');
+  });
+});
 
 describe('runExtraction — lattice stage (S5)', () => {
   it('detects the repeat, crops the tile to ONE cell, and reports the lattice', async () => {
@@ -327,6 +359,7 @@ describe('createPipeline — stage harness', () => {
     expect(listStages()).toEqual([
       { id: 'flatten', label: 'Flatten', optional: true },
       { id: 'lattice', label: 'Detect repeat', optional: true },
+      { id: 'symmetry', label: 'Symmetry', optional: true },
       { id: 'trace', label: 'Trace', optional: false },
     ]);
     expect(
@@ -796,6 +829,7 @@ describe('runExtraction — flatten stage (S3)', () => {
       'flatten:done',
       'lattice:running',
       'lattice:done',
+      'symmetry:skipped',
       'trace:running',
       'trace:done',
     ]);

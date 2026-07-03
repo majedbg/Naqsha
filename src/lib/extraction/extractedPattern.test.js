@@ -23,6 +23,15 @@ const TILE = {
   strokes: [],
 };
 
+// S7 (issue #56): a valid square lattice, for symmetry-bearing entries.
+const LATTICE_S = {
+  t1: [30, 0],
+  t2: [0, 30],
+  cell: { width: 30, height: 30 },
+  type: 'square',
+  confidence: 0.82,
+};
+
 // S6 (issue #55): tile carrying centerline strokes alongside fills.
 const MIXED_TILE = {
   width: 80,
@@ -105,6 +114,56 @@ describe('round-trip', () => {
     const e = makeExtractedPattern({ title: 'l', tile: TILE, lattice });
     const back = deserializeExtractedPattern(serializeExtractedPattern(e));
     expect(back.lattice).toEqual(lattice);
+  });
+
+  // S7 (issue #56): the wallpaper-group facet round-trips as a small jsonb
+  // object, and — unlike lattice — a bad value is validate-and-nulled (dropped),
+  // never thrown, so an entry is never lost to a bad facet.
+  it('round-trips an auto symmetry classification (S7, issue #56)', () => {
+    const symmetry = { group: 'p4m', confidence: 0.91, source: 'auto' };
+    const e = makeExtractedPattern({ title: 's', tile: TILE, lattice: LATTICE_S, symmetry });
+    const rec = serializeExtractedPattern(e);
+    expect(rec.symmetry).toEqual(symmetry);
+    expect(deserializeExtractedPattern(rec).symmetry).toEqual(symmetry);
+  });
+
+  it('round-trips a manual symmetry override (S7)', () => {
+    const symmetry = { group: 'p6', confidence: 1, source: 'manual' };
+    const e = makeExtractedPattern({ title: 's', tile: TILE, lattice: LATTICE_S, symmetry });
+    expect(deserializeExtractedPattern(serializeExtractedPattern(e)).symmetry).toEqual(symmetry);
+  });
+
+  it('round-trips the hiddenRotation caveat flag (S7 review fix — S10/S12 soft signal)', () => {
+    const symmetry = { group: 'pm', confidence: 0.5, source: 'auto', hiddenRotation: true };
+    const e = makeExtractedPattern({ title: 's', tile: TILE, lattice: LATTICE_S, symmetry });
+    expect(e.symmetry).toEqual(symmetry);
+    expect(deserializeExtractedPattern(serializeExtractedPattern(e)).symmetry).toEqual(symmetry);
+    // A crafted non-boolean flag on a stored row is dropped, the facet survives.
+    const row = serializeExtractedPattern(e);
+    const tampered = { ...row, symmetry: { ...symmetry, hiddenRotation: 'yes' } };
+    expect(deserializeExtractedPattern(tampered).symmetry).toEqual({
+      group: 'pm',
+      confidence: 0.5,
+      source: 'auto',
+    });
+  });
+
+  it('defaults symmetry to null (single-motif floor / no lattice)', () => {
+    const e = makeExtractedPattern({ title: 's', tile: TILE });
+    expect(e.symmetry).toBeNull();
+    expect(serializeExtractedPattern(e).symmetry).toBeNull();
+  });
+
+  it.each([
+    ['non-whitelisted name', { group: 'p7', confidence: 0.9, source: 'auto' }],
+    ['markup-crafted name', { group: '<script>', confidence: 1, source: 'auto' }],
+    ['wrong case', { group: 'P4M', confidence: 1, source: 'auto' }],
+    ['missing group', { confidence: 0.5, source: 'auto' }],
+  ])('drops a bad symmetry (%s) to null on construction AND deserialize', (_l, symmetry) => {
+    const e = makeExtractedPattern({ title: 'x', tile: TILE, lattice: LATTICE_S, symmetry });
+    expect(e.symmetry).toBeNull();
+    const goodRow = serializeExtractedPattern(makeExtractedPattern({ title: 'x', tile: TILE }));
+    expect(deserializeExtractedPattern({ ...goodRow, symmetry }).symmetry).toBeNull();
   });
 
   it('round-trips an oblique lattice with fractional vectors (S5)', () => {

@@ -40,6 +40,7 @@ import {
   classifyLatticeType,
   MIN_LATTICE_CONFIDENCE,
 } from './lattice';
+import { classifySymmetry } from './symmetry';
 
 // Stage: flatten (S3, issue #52 — manual 4-corner rectify; locked decision 2).
 // Runs when the caller supplies `options.flatten.quad` ([TL,TR,BR,BL] in image
@@ -211,6 +212,38 @@ export const latticeStage = {
   },
 };
 
+// Stage: symmetry (S7, issue #56) — classify the wallpaper group of the repeat
+// cell.
+//
+// PLACEMENT (the documented slot, S5 brief): between lattice and trace. It runs
+// AFTER lattice because it needs the repeat cell + the detected basis, and it
+// reads ctx.image — which the lattice stage has cropped to ONE repeat cell on
+// success — plus ctx.lattice. No lattice (floor / opt-out / oblique) → no
+// periodic group exists, so the stage SKIPS: wallpaper groups are the periodic
+// symmetry groups, and #56 does not ask for lone-motif point-group
+// classification. The single-motif floor is untouched (locked decision 8).
+//
+// Fail-soft (`optional`): a classifier throw emits {status:'failed'} +
+// confidence 0 and the flow continues — symmetry is an optional facet, never a
+// blocker. A null classification (flat/degenerate cell) patches nothing.
+//
+// Patches on success:
+//   symmetry → { group, confidence, source:'auto' } (validated against the 17
+//              canonical names; rides user_patterns.symmetry, and is the S12
+//              parameterize/EVAL entry point via result.symmetry).
+export const symmetryStage = {
+  id: 'symmetry',
+  label: 'Symmetry',
+  optional: true,
+  skip: (ctx) => !ctx.lattice,
+  async run(ctx, { signal } = {}) {
+    signal?.throwIfAborted?.();
+    const symmetry = classifySymmetry(ctx.image, ctx.lattice);
+    if (!symmetry) return { patch: {}, confidence: 0 };
+    return { patch: { symmetry }, confidence: symmetry.confidence };
+  },
+};
+
 // Stage: trace — the guaranteed single-motif floor (locked decision 8). S6
 // (issue #55): the full Vectorizer pass — closed contours + skeleton
 // centerlines, classified per motif (line-work → centerline-default tagged
@@ -238,6 +271,4 @@ export const traceStage = {
 
 // The v1 pipeline. Later slices insert stages here (flatten → lattice →
 // symmetry → trace → palette…) without touching the harness or the callers.
-// S7 note: the symmetry stage belongs between lattice and trace — it reads
-// the cell raster + ctx.lattice.
-export const DEFAULT_STAGES = [flattenStage, latticeStage, traceStage];
+export const DEFAULT_STAGES = [flattenStage, latticeStage, symmetryStage, traceStage];

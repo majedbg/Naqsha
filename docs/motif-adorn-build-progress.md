@@ -9,11 +9,11 @@ A **second, concurrent Claude session** (long-running process since Wed 23:00; r
 **Resolution:** isolated all further motif work into a **dedicated git worktree** (own working dir + index; git serializes ref writes safely). See updated Run identity below. The main `~/Documents/Sonoform_all/Naqsha` checkout is LEFT ALONE for the other session. **For the human in the morning:** decide whether to keep #69 in the motif branch or rebase it out; the other session's activity in the main checkout is not mine.
 
 ## Run identity
-- **Repo (build here):** `~/Documents/Sonoform_all/Naqsha` (the S12 clone; `main` @ `0270351`, has `docs/motif-adorn-research.md`). NOTE: a *second, older* clone exists at `~/Documents/Sonoform_all/Sonoform_generativeArt/generative-art-studio` (S1 era) — **do NOT build there.**
-- **Branch:** `feat/motif-adorn` (off `main` @ `0270351`).
-- **Orchestrator session id (pinned):** `3424bc48-ae4a-4e33-b5c7-30ec37328e4b`
-- **Session project dir:** `~/.claude/projects/-Users-jadembg-Documents-Sonoform-all-Sonoform-generativeArt/`
-- **Watchdog:** `/tmp/revive-motif-orchestrator.sh` — PID **86560** (bash) + 86563 (caffeinate). Sleeps 12600s then up to 6 `claude --resume` attempts 20min apart. Log: `~/naqsha-motif-rev.log`. Session id is PINNED literal (NOT globbed — the original spec's `ls -t` was a hazard; fixed).
+- **BUILD HERE (isolated worktree):** `~/Documents/Sonoform_all/Naqsha-motif` on branch **`feat/motif-adorn-iso`**. `node_modules` is a symlink → `../Naqsha/node_modules`; `docs/motif-adorn-research.md` copied in (untracked). **All slices, tests, commits happen HERE now.**
+- **DO NOT TOUCH:** the shared main checkout `~/Documents/Sonoform_all/Naqsha` (branch `feat/motif-adorn`, used by a concurrent session), nor `~/Documents/Sonoform_all/Naqsha-wt-69`, nor the old S1 clone `~/…/Sonoform_generativeArt/generative-art-studio`.
+- **Branch lineage:** `feat/motif-adorn-iso` forked from `feat/motif-adorn` @ `71f9dec` (= `main`@`0270351` + #69-collision + my 4 motif slices).
+- **Orchestrator session id (pinned):** `3424bc48-ae4a-4e33-b5c7-30ec37328e4b`; project dir `~/.claude/projects/-Users-jadembg-Documents-Sonoform-all-Sonoform-generativeArt/`.
+- **Watchdog v2:** `/tmp/revive-motif-orchestrator.sh` — PID **15633** (bash) + 15635 (caffeinate). Repointed at the worktree. Sleeps 12600s then up to 6 pinned-id `claude --resume` attempts 20min apart. Log `~/naqsha-motif-rev.log`.
 - **Design spec (locked):** `docs/motif-adorn-research.md` §0 as amended by §1 (16 adopted amendments; §1 supersedes §0). PRD: `gh issue view 67 --repo majedbg/Naqsha`.
 
 ## Baseline (known-good start)

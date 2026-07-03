@@ -37,7 +37,7 @@
 // and the entity as `entity.symmetry`.
 //
 // SEAM (deferred, anchor-phase — parallels lattice.js's anchor-phase seam):
-// rotation classification is PHASE-SENSITIVE. Rotation centers are searched only
+// rotation CLASSIFICATION is PHASE-SENSITIVE. Rotation centers are searched only
 // at the {0,½} sublattice (+ hex thirds), which is where an origin-centered
 // pattern's n-fold center sits — but the lattice stage anchors the cropped cell
 // at the SELECTION ORIGIN (an arbitrary user drag), so on a real photo the
@@ -46,14 +46,20 @@
 // the mirror line anywhere; translating along it preserves the parallel offset),
 // so the failure is asymmetric: mirrors survive an off-phase crop, rotations do
 // not — a rotational group (p2/p3/p4/p6/p4m/p6m) can under-classify toward
-// p1/pm/cm on an uncentered real crop. This is INSIDE the locked contract
-// (editable proposal + confidence; fail-soft floor untouched): the Review
-// override is the recourse, and both S10 (group facet filter) and S12 (uses the
-// group as a parameterize seed) must treat the AUTO value as SOFT on real input.
-// The fix is anchor-phase alignment (recenter the cell on its rotation center
-// before scoring), deliberately NOT a wider/global center scan — that would
-// reintroduce the spurious-peak false positives the constrained offsets exist to
-// prevent (a random tile crossing threshold into a bogus p2).
+// p1/pm/cm on an uncentered real crop.
+//
+// MITIGATED (adversarial review, MAJOR): the classification still collapses,
+// but it is now DISCLOSED — the hidden-rotation diagnostic (maxCorrAnywhere)
+// re-scans rotations over all offsets after classification; a hit flags the
+// result `hiddenRotation: true` and caps the reported confidence at
+// HIDDEN_ROT_CONFIDENCE_CAP, so a phase-collapsed subgroup can never carry a
+// confident badge, and Review renders an explicit caveat. S10 (group facet
+// filter) and S12 (parameterize seed) must still treat a flagged AUTO value as
+// SOFT. The full fix remains anchor-phase alignment (recenter the cell on its
+// rotation center before scoring), deliberately NOT classifying from the free
+// scan — that would reintroduce the spurious-peak false positives the
+// constrained offsets exist to prevent (a random tile crossing threshold into
+// a bogus p2).
 
 const N = 24; // fractional grid: divisible by 2,3,4,6 → every rotation center
               // ({0,½} and hex thirds) lands on an integer index.
@@ -86,6 +92,7 @@ export const GROUPS_BY_LATTICE = {
 
 // ── Point-group operations, as integer matrices in fractional coords ─────────
 // Applied to a grid index (i,j) as (a*i + b*j, c*i + d*j).
+const IDENT = [1, 0, 0, 1]; // identity — used with a (½,½) offset to test centering
 const ROT2 = [-1, 0, 0, -1];
 const ROT4 = [0, -1, 1, 0]; // 90° (square lattice only)
 const ROT3 = [0, -1, 1, -1]; // 120° (hex lattice)
@@ -98,9 +105,41 @@ const M_H = { m: [1, 0, 0, -1], perp: [0, 1], par: [1, 0] }; // line ∥ u-axis
 const M_V = { m: [-1, 0, 0, 1], perp: [1, 0], par: [0, 1] }; // line ∥ v-axis
 const M_D1 = { m: [0, 1, 1, 0], perp: [1, -1], par: [1, 1] }; // main diagonal
 const M_D2 = { m: [0, -1, -1, 0], perp: [1, 1], par: [1, -1] }; // anti-diagonal
-// Hex reflection (one representative class — swap axes u↔v). Enough to detect a
-// mirror-bearing hex group; the p3m1/p31m split is left conservative (see tree).
-const M_HEX = { m: [0, 1, 1, 0], perp: [1, -1], par: [1, 1] };
+// Hex reflections: BOTH mirror classes of 6mm, as the two diagonal integer
+// matrices. Class A ((u,v)→(v,u)) with rot3 names p3m1; class B ((u,v)→(−v,−u))
+// with rot3 names p31m — the two groups differ exactly in which mirror class
+// they contain (their composition A·B = rot2, so both classes + rot3 ⇒ 6-fold
+// ⇒ p6m, which contains both). Assignment of A→p3m1 is the torus convention
+// the constructed fixtures (and the adversarial review's) use.
+const M_HEX_A = M_D1;
+const M_HEX_B = M_D2;
+
+// A symmetry op counts as "present" from here down; see PRESENT above.
+// The hidden-rotation DIAGNOSTIC (finding: phase-collapsed subgroups) uses a
+// laxer bar: it only raises a caveat + confidence cap, never classifies, so a
+// borderline peak is acceptable (a spurious caveat is mild; a confident wrong
+// badge is not) and a sub-grid real-photo center still clears it.
+const HIDDEN_ROT = 0.6;
+/** Displayed confidence is capped here when a hidden rotation is diagnosed. */
+export const HIDDEN_ROT_CONFIDENCE_CAP = 0.5;
+
+// Rotation order carried by each group — drives the hidden-rotation scan
+// (only rotations of HIGHER order than the chosen group are scanned).
+const ROTATION_ORDER = {
+  p1: 1, pm: 1, pg: 1, cm: 1,
+  p2: 2, pmm: 2, pmg: 2, pgg: 2, cmm: 2,
+  p3: 3, p3m1: 3, p31m: 3,
+  p4: 4, p4m: 4, p4g: 4,
+  p6: 6, p6m: 6,
+};
+
+// Rotation candidates per lattice type, highest order first.
+const ROTATIONS_BY_LATTICE = {
+  oblique: [[ROT2, 2]],
+  rect: [[ROT2, 2]],
+  square: [[ROT4, 4], [ROT2, 2]],
+  hex: [[ROT6, 6], [ROT3, 3], [ROT2, 2]],
+};
 
 const mod = (x) => ((x % N) + N) % N;
 
@@ -195,6 +234,29 @@ function scoreRotation(Fc, S, m, centers) {
 }
 
 /**
+ * Hidden-rotation DIAGNOSTIC (adversarial-review MAJOR): max correlation of an
+ * operation over ALL N² offsets — the free scan the CLASSIFIER deliberately
+ * avoids (spurious-peak leak). Used only after classification, to detect the
+ * phase-collapse failure: mirrors/glides are crop-invariant (their line is
+ * found by the free perpendicular scan), but a rotation's center moves with the
+ * crop and off {0,½} its constrained score collapses — so a rolled p4m reads
+ * pm with the mirror generators at ~1.0. The true rotation still exists
+ * SOMEWHERE on the torus, and this scan finds it; a genuinely mirror-only
+ * pattern has no rotation anywhere, so it stays confident. N⁴ ≈ 331k
+ * multiply-adds per matrix — trivial.
+ */
+function maxCorrAnywhere(Fc, S, m) {
+  let best = -1;
+  for (let oi = 0; oi < N; oi++) {
+    for (let oj = 0; oj < N; oj++) {
+      const c = corrAt(Fc, S, m, oi, oj);
+      if (c > best) best = c;
+    }
+  }
+  return best;
+}
+
+/**
  * Score a reflection family. Scans the mirror line freely (perp offset) with
  * the along-line offset pinned to 0 (mirror) and ½ (glide) — the two are the
  * pm/pg distinction. Returns { mirror, glide } best correlations.
@@ -246,8 +308,14 @@ function decide(scores, type) {
   const gH = scores.glideH ?? -1;
   const gV = scores.glideV ?? -1;
   const mD = Math.max(scores.mirrorD1 ?? -1, scores.mirrorD2 ?? -1);
-  const mHex = scores.mirrorHex ?? -1;
-  const gHex = scores.glideHex ?? -1;
+  // Hex mirror classes A/B — the p3m1/p31m distinction.
+  const mHexA = scores.mirrorHexA ?? -1;
+  const mHexB = scores.mirrorHexB ?? -1;
+  const mHex = Math.max(mHexA, mHexB);
+  const gHex = Math.max(scores.glideHexA ?? -1, scores.glideHexB ?? -1);
+  // Centering translation (½,½) — the pmm/cmm (and pm/cm) distinction on the
+  // rectangular family's conventional cell.
+  const center = scores.center ?? -1;
 
   const axisMirror = present(mH) || present(mV);
   const anyGlide = present(gH) || present(gV) || present(gHex);
@@ -277,9 +345,12 @@ function decide(scores, type) {
         ? { group: 'p4m', confidence: gen(scores.rot4, Math.max(mH, mV)) }
         : { group: 'p4g', confidence: gen(scores.rot4, mD) };
     case 3:
-      return hasMirror
-        ? { group: 'p3m1', confidence: gen(scores.rot3, mHex) }
-        : { group: 'p3', confidence: gen(scores.rot3) };
+      // The two 3-fold mirror groups differ in WHICH mirror class they carry
+      // (both classes present would compose to a 2-fold ⇒ 6-fold ⇒ n=6 above).
+      if (!hasMirror) return { group: 'p3', confidence: gen(scores.rot3) };
+      return mHexB > mHexA
+        ? { group: 'p31m', confidence: gen(scores.rot3, mHexB) }
+        : { group: 'p3m1', confidence: gen(scores.rot3, mHexA) };
     case 2:
       if (!hasMirror) {
         return anyGlide
@@ -287,7 +358,12 @@ function decide(scores, type) {
           : { group: 'p2', confidence: gen(scores.rot2) };
       }
       if (present(mH) && present(mV)) {
-        return { group: 'pmm', confidence: gen(scores.rot2, mH, mV) };
+        // pmm and cmm both carry 2mm mirrors; cmm's conventional cell is
+        // CENTERED — the (½,½) translation is the distinction (equivalently:
+        // cmm has 2-fold centers off the mirror lines).
+        return present(center)
+          ? { group: 'cmm', confidence: gen(scores.rot2, mH, mV, center) }
+          : { group: 'pmm', confidence: gen(scores.rot2, mH, mV) };
       }
       // one axis mirror + a perpendicular glide → pmg; else fall to cmm/pmm.
       return anyGlide
@@ -333,17 +409,22 @@ export function classifySymmetry(cell, lattice) {
   if (type === 'hex') {
     scores.rot3 = scoreRotation(Fc, S, ROT3, HEX_CENTERS);
     scores.rot6 = scoreRotation(Fc, S, ROT6, HEX_CENTERS);
-    const hex = scoreReflection(Fc, S, M_HEX);
-    scores.mirrorHex = hex.mirror;
-    scores.glideHex = hex.glide;
+    const hexA = scoreReflection(Fc, S, M_HEX_A);
+    const hexB = scoreReflection(Fc, S, M_HEX_B);
+    scores.mirrorHexA = hexA.mirror;
+    scores.glideHexA = hexA.glide;
+    scores.mirrorHexB = hexB.mirror;
+    scores.glideHexB = hexB.glide;
   } else if (type !== 'oblique') {
-    // rect + square host axis reflections/glides.
+    // rect + square host axis reflections/glides + the centering translation
+    // (the pmm/cmm distinction on the rectangular family).
     const h = scoreReflection(Fc, S, M_H);
     const v = scoreReflection(Fc, S, M_V);
     scores.mirrorH = h.mirror;
     scores.glideH = h.glide;
     scores.mirrorV = v.mirror;
     scores.glideV = v.glide;
+    scores.center = corrAt(Fc, S, IDENT, HALF, HALF);
     if (type === 'square') {
       scores.rot4 = scoreRotation(Fc, S, ROT4, BASE_CENTERS);
       scores.mirrorD1 = scoreReflection(Fc, S, M_D1).mirror;
@@ -352,7 +433,32 @@ export function classifySymmetry(cell, lattice) {
   }
 
   const { group, confidence } = decide(scores, type);
-  return { group, confidence: Math.max(0, Math.min(1, confidence)), source: 'auto' };
+  const bounded = Math.max(0, Math.min(1, confidence));
+
+  // Hidden-rotation diagnostic (adversarial-review MAJOR — phase-collapsed
+  // subgroups). The constrained classification above can only see rotations
+  // centered on {0,½} (+hex thirds); the lattice stage anchors the cell at the
+  // arbitrary selection origin, so a real crop's rotation centers generally sit
+  // elsewhere and the classification collapses to the crop-invariant subgroup
+  // (mirrors/glides) at FULL generator correlation. Scan every rotation of
+  // higher order than the chosen group over ALL offsets: if one exists, the
+  // group may be a phase-collapsed subgroup of the truth — flag it and cap the
+  // reported confidence so the badge can never read certain-and-wrong. A
+  // genuinely rotation-free pattern has no such peak and keeps its confidence.
+  const chosenOrder = ROTATION_ORDER[group] ?? 1;
+  for (const [m, order] of ROTATIONS_BY_LATTICE[type]) {
+    if (order <= chosenOrder) continue;
+    if (maxCorrAnywhere(Fc, S, m) >= HIDDEN_ROT) {
+      return {
+        group,
+        confidence: Math.min(bounded, HIDDEN_ROT_CONFIDENCE_CAP),
+        source: 'auto',
+        hiddenRotation: true,
+      };
+    }
+  }
+
+  return { group, confidence: bounded, source: 'auto' };
 }
 
 // ── Validate-and-null (round-trip safety) ────────────────────────────────────
@@ -363,8 +469,9 @@ export function classifySymmetry(cell, lattice) {
 // it can reach the badge text or an S10 facet query.
 
 /**
- * @param {*} sym candidate { group, confidence, source }.
- * @returns {null | { group: string, confidence: number, source: 'auto'|'manual' }}
+ * @param {*} sym candidate { group, confidence, source, hiddenRotation? }.
+ * @returns {null | { group: string, confidence: number, source: 'auto'|'manual',
+ *                    hiddenRotation?: true }}
  */
 export function validateSymmetry(sym) {
   if (!sym || typeof sym !== 'object') return null;
@@ -376,5 +483,13 @@ export function validateSymmetry(sym) {
   if (confidence < 0) confidence = 0;
   if (confidence > 1) confidence = 1;
   const source = sym.source === 'manual' ? 'manual' : 'auto';
-  return { group: sym.group, confidence, source };
+  // The phase-collapse caveat only makes sense on an AUTO classification (a
+  // manual override is the user's assertion); only literal true survives.
+  const hidden = source === 'auto' && sym.hiddenRotation === true;
+  return {
+    group: sym.group,
+    confidence,
+    source,
+    ...(hidden ? { hiddenRotation: true } : {}),
+  };
 }

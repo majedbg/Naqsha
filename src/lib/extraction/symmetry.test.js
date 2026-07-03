@@ -35,6 +35,9 @@ const R3 = [0, -1, 1, -1, 0, 0];
 const R6 = [1, -1, 1, 0, 0, 0];
 const MH = [1, 0, 0, -1, 0, 0]; // mirror about v=0
 const GH = [1, 0, 0, -1, HALF, 0]; // glide along u, reflecting v
+const MA = [0, 1, 1, 0, 0, 0]; // hex mirror class A ((u,v)→(v,u))
+const MB = [0, -1, -1, 0, 0, 0]; // hex mirror class B ((u,v)→(−v,−u))
+const TC = [1, 0, 0, 1, HALF, HALF]; // centering translation (½,½)
 
 const applyEl = ([a, b, c, d, oi, oj], i, j) => [mod(a * i + b * j + oi), mod(c * i + d * j + oj)];
 
@@ -131,15 +134,34 @@ function toCellSmooth(F, M) {
   return { data, width: M, height: M };
 }
 
+// Cyclic roll of the field by (a,b) grid units — the crop-phase model: a real
+// selection anchors the cell at an arbitrary origin, which on the torus is
+// exactly a roll. Rolling moves rotation centers OFF the {0,½} search set
+// (mirrors survive: their line is found by the free perpendicular scan).
+function roll(F, a, b) {
+  const out = new Float64Array(N * N);
+  for (let i = 0; i < N; i++) {
+    for (let j = 0; j < N; j++) {
+      out[i * N + j] = F[mod(i - a) * N + mod(j - b)];
+    }
+  }
+  return out;
+}
+
 const GENERATORS = {
   p1: [I],
   p2: [R2],
   pm: [MH],
   pg: [GH],
+  pmm: [R2, MH],
+  cmm: [R2, MH, TC], // centered: 2mm point ops × the (½,½) translation (order 8)
   p4: [R4],
   p4m: [R4, MH],
   p3: [R3],
+  p3m1: [R3, MA],
+  p31m: [R3, MB],
   p6: [R6],
+  p6m: [R6, MA],
 };
 
 const LATTICE = {
@@ -147,10 +169,15 @@ const LATTICE = {
   p2: { type: 'oblique' },
   pm: { type: 'rect' },
   pg: { type: 'rect' },
+  pmm: { type: 'rect' },
+  cmm: { type: 'rect' },
   p4: { type: 'square' },
   p4m: { type: 'square' },
   p3: { type: 'hex' },
+  p3m1: { type: 'hex' },
+  p31m: { type: 'hex' },
   p6: { type: 'hex' },
+  p6m: { type: 'hex' },
 };
 
 describe('classifySymmetry — known groups classify to themselves', () => {
@@ -162,14 +189,103 @@ describe('classifySymmetry — known groups classify to themselves', () => {
       expect(res).not.toBeNull();
       expect(res.group).toBe(group);
       expect(res.source).toBe('auto');
-      // A crisp constructed symmetry reads as meaningful confidence.
+      // A crisp constructed symmetry reads as meaningful confidence, and a
+      // centered construction must NOT trip the hidden-rotation diagnostic
+      // (which would cap the confidence below the 0.85 bar anyway).
       if (group === 'p1') {
         expect(res.confidence).toBeGreaterThan(0);
       } else {
         expect(res.confidence).toBeGreaterThan(0.85);
       }
+      expect(res.hiddenRotation).toBeUndefined();
     });
   }
+});
+
+// Adversarial-review MAJOR regression: a crop-phase roll moves rotation centers
+// off the {0,½} search set, so a rolled p4m/p6m collapses to its crop-invariant
+// mirror subgroup (pm/cm) — previously at generator-perfect confidence 1.000.
+// The hidden-rotation diagnostic must flag it and cap the reported confidence,
+// while genuinely rotation-free constructions stay confident and unflagged.
+describe('classifySymmetry — phase-collapsed subgroups are flagged + capped', () => {
+  // The reviewer's reproduction rolls.
+  it.each([[5, 7], [3, 3], [1, 0], [7, 11]])(
+    'rolled p4m (roll %i,%i) never displays a confident collapse',
+    (a, b) => {
+      const F = roll(symmetrize(11, GENERATORS.p4m), a, b);
+      const res = classifySymmetry(toCell(F), { type: 'square' });
+      expect(res).not.toBeNull();
+      expect(res.hiddenRotation).toBe(true);
+      expect(res.confidence).toBeLessThanOrEqual(0.5); // capped, never ≥ threshold
+    }
+  );
+
+  it('rolled p6m collapses to a mirror group but is flagged + capped', () => {
+    const F = roll(symmetrize(21, GENERATORS.p6m), 2, 5);
+    const res = classifySymmetry(toCell(F), { type: 'hex' });
+    expect(res).not.toBeNull();
+    expect(res.hiddenRotation).toBe(true);
+    expect(res.confidence).toBeLessThanOrEqual(0.5);
+  });
+
+  it('rolled p2 collapses toward p1 but is flagged', () => {
+    const F = roll(symmetrize(31, GENERATORS.p2), 5, 7);
+    const res = classifySymmetry(toCell(F), { type: 'oblique' });
+    expect(res.hiddenRotation).toBe(true);
+    expect(res.confidence).toBeLessThanOrEqual(0.5);
+  });
+
+  it('a CENTERED p4m (roll 6,6 lands the center back on {½,½}) stays unflagged', () => {
+    const F = roll(symmetrize(11, GENERATORS.p4m), 6, 6);
+    const res = classifySymmetry(toCell(F), { type: 'square' });
+    expect(res.group).toBe('p4m');
+    expect(res.hiddenRotation).toBeUndefined();
+    expect(res.confidence).toBeGreaterThan(0.85);
+  });
+
+  it('genuinely rotation-free pm/pg stay confident and unflagged (no blanket punishment)', () => {
+    for (const [group, seed] of [['pm', 1234 + 14], ['pg', 77]]) {
+      const res = classifySymmetry(toCell(symmetrize(seed, GENERATORS[group])), { type: 'rect' });
+      expect(res.group).toBe(group);
+      expect(res.hiddenRotation).toBeUndefined();
+      expect(res.confidence).toBeGreaterThan(0.85);
+    }
+  });
+
+  it('even a ROLLED pm stays unflagged (mirrors are crop-invariant; no rotation exists)', () => {
+    const F = roll(symmetrize(1234 + 14, GENERATORS.pm), 5, 7);
+    const res = classifySymmetry(toCell(F), { type: 'rect' });
+    expect(res.group).toBe('pm');
+    expect(res.hiddenRotation).toBeUndefined();
+    expect(res.confidence).toBeGreaterThan(0.85);
+  });
+});
+
+// Adversarial-review MINOR regressions: cmm was unreachable (read as pmm at
+// 1.000), p31m could never be emitted (only one hex mirror class was scored).
+describe('classifySymmetry — cmm centering + p31m mirror class', () => {
+  it('a true centered cmm classifies cmm, not pmm', () => {
+    const res = classifySymmetry(toCell(symmetrize(51, GENERATORS.cmm)), { type: 'rect' });
+    expect(res.group).toBe('cmm');
+    expect(res.confidence).toBeGreaterThan(0.85);
+  });
+
+  it('a true (primitive) pmm still classifies pmm', () => {
+    const res = classifySymmetry(toCell(symmetrize(52, GENERATORS.pmm)), { type: 'rect' });
+    expect(res.group).toBe('pmm');
+  });
+
+  it('the two 3-fold mirror groups are told apart by mirror class', () => {
+    const a = classifySymmetry(toCell(symmetrize(61, GENERATORS.p3m1)), { type: 'hex' });
+    const b = classifySymmetry(toCell(symmetrize(62, GENERATORS.p31m)), { type: 'hex' });
+    expect(a.group).toBe('p3m1');
+    expect(b.group).toBe('p31m');
+  });
+
+  it('mirror-free p3 is not leaked into either mirror group', () => {
+    const res = classifySymmetry(toCell(symmetrize(63, GENERATORS.p3)), { type: 'hex' });
+    expect(res.group).toBe('p3');
+  });
 });
 
 describe('classifySymmetry — near-misses score lower / gating', () => {
@@ -279,6 +395,24 @@ describe('validateSymmetry — whitelist + validate-and-null', () => {
     expect(validateSymmetry(null)).toBeNull();
     expect(validateSymmetry(undefined)).toBeNull();
     expect(validateSymmetry('p4')).toBeNull();
+  });
+
+  it('keeps hiddenRotation:true on an auto classification', () => {
+    expect(
+      validateSymmetry({ group: 'pm', confidence: 0.5, source: 'auto', hiddenRotation: true })
+    ).toEqual({ group: 'pm', confidence: 0.5, source: 'auto', hiddenRotation: true });
+  });
+
+  it('drops hiddenRotation on manual (the override is the user\'s assertion) and non-true values', () => {
+    expect(
+      validateSymmetry({ group: 'pm', confidence: 1, source: 'manual', hiddenRotation: true })
+    ).toEqual({ group: 'pm', confidence: 1, source: 'manual' });
+    expect(
+      validateSymmetry({ group: 'pm', confidence: 0.5, source: 'auto', hiddenRotation: 'yes' })
+    ).toEqual({ group: 'pm', confidence: 0.5, source: 'auto' });
+    expect(
+      validateSymmetry({ group: 'pm', confidence: 0.5, source: 'auto', hiddenRotation: 1 })
+    ).toEqual({ group: 'pm', confidence: 0.5, source: 'auto' });
   });
 
   it('exposes lattice-type candidate groups', () => {

@@ -38,6 +38,8 @@ import {
   detectLattice,
   snapRectangular,
   classifyLatticeType,
+  cellBounds,
+  pointInCell,
   MIN_LATTICE_CONFIDENCE,
 } from './lattice';
 import { classifySymmetry } from './symmetry';
@@ -97,6 +99,78 @@ function cropImage(image, { x, y, width, height }) {
   return { data, width, height };
 }
 
+// Parallelogram cell clip (S5b, issue #66). An oblique/hex basis has a
+// PARALLELOGRAM repeat cell; cropping its axis-aligned bbox pulls in
+// neighbouring-cell content, so the tiled tile bleeds/seams. The fix: crop the
+// bbox raster, then blank every pixel OUTSIDE the half-open parallelogram to
+// paper (white, alpha 0 — paper to `thresholdImage`, and a CONSTANT luma to the
+// symmetry sampler, so neither surface traces neighbour bleed). Placed at every
+// lattice vector i·t1+j·t2 by tileComposer, the masked cells tile the plane
+// exactly once → seamless. Pure typed-array (no canvas): worker- and node-safe.
+const MIN_CELL_RASTER = 4; // below this a cell carries no traceable geometry
+
+/** Blank pixels outside the parallelogram (origin at local ox,oy) to paper. */
+function maskParallelogram(image, ox, oy, t1, t2) {
+  const { data, width, height } = image;
+  const out = new Uint8ClampedArray(data);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (!pointInCell(x - ox, y - oy, t1, t2)) {
+        const i = (y * width + x) * 4;
+        out[i] = 255;
+        out[i + 1] = 255;
+        out[i + 2] = 255;
+        out[i + 3] = 0;
+      }
+    }
+  }
+  return { data: out, width, height };
+}
+
+/**
+ * Crop one parallelogram repeat cell for the oblique/hex path. Samples the
+ * bbox of the cell (anchored so the parallelogram origin lands at `originImg` in
+ * image px, clamped in-bounds) and masks to the parallelogram.
+ *
+ * @returns null when the cell is degenerate or larger than the image (→ floor),
+ *   else { image (masked cell raster), cell:{width,height} (bbox), latticeCell }.
+ */
+function cropParallelogramCell(image, t1, t2, originImg = { x: 0, y: 0 }) {
+  const { minX, minY, maxX, maxY } = cellBounds(t1, t2);
+  const minXi = Math.floor(minX);
+  const minYi = Math.floor(minY);
+  const bboxW = Math.ceil(maxX) - minXi;
+  const bboxH = Math.ceil(maxY) - minYi;
+  if (bboxW < MIN_CELL_RASTER || bboxH < MIN_CELL_RASTER) return null;
+  if (bboxW > image.width || bboxH > image.height) return null;
+  // Crop bbox top-left in image px; clamp so the whole bbox stays in-bounds.
+  const cx = Math.max(0, Math.min(image.width - bboxW, Math.round(originImg.x + minXi)));
+  const cy = Math.max(0, Math.min(image.height - bboxH, Math.round(originImg.y + minYi)));
+  // Parallelogram origin in the crop's LOCAL frame (fixed by the bbox geometry,
+  // independent of where we sampled). Every copy carries this same offset, so
+  // the constant shift never breaks seamlessness.
+  const ox = -minXi;
+  const oy = -minYi;
+  const bbox = cropImage(image, { x: cx, y: cy, width: bboxW, height: bboxH });
+  const masked = maskParallelogram(bbox, ox, oy, t1, t2);
+  return {
+    image: masked,
+    cell: { width: bboxW, height: bboxH },
+    // Review overlay (UI-only): the bbox rect + the basis + the parallelogram
+    // origin, all in selection px, so the editor draws the sheared cell.
+    latticeCell: {
+      x: cx,
+      y: cy,
+      width: bboxW,
+      height: bboxH,
+      t1,
+      t2,
+      originX: cx + ox,
+      originY: cy + oy,
+    },
+  };
+}
+
 /** Clamp + round a caller cell rect into the image, or null when degenerate. */
 function clampCell(cell, image) {
   const x = Math.max(0, Math.min(image.width - 4, Math.round(Number(cell?.x) || 0)));
@@ -139,11 +213,16 @@ function clampCell(cell, image) {
 //   latticeCell → { x, y, width, height } in SELECTION pixels, for the Review
 //                 overlay (UI-only; never persisted)
 //
+// S5b (issue #66): oblique AND hex bases now auto-tile. snapRectangular still
+// gates the byte-identical rectangular path (near-axis bases); a genuinely
+// sheared basis takes the parallelogram-clip path (cropParallelogramCell) and
+// tiles at the detected t1/t2 through the same tileComposer/generator surfaces.
+//
 // SEAMS (deferred, documented in lattice.js): Park TPAMI-2009 deformable
-// refine; oblique parallelogram cells (detected + reported by detectLattice,
-// tests prove basis recovery, but the v1 crop-and-tile path is rectangular —
-// oblique falls to the floor); anchor-phase optimization (v1 anchors the cell
-// at the selection origin — the user can drag it).
+// refine; anchor-phase optimization (v1 anchors the cell at the selection
+// origin — the user can drag it). Oblique LIMIT: a motif that straddles the
+// parallelogram boundary is cut at that edge (same in kind as the rectangular
+// crop) — no vector-space unioning across the seam.
 export const latticeStage = {
   id: 'lattice',
   label: 'Detect repeat',
@@ -155,6 +234,31 @@ export const latticeStage = {
     // User-corrected cell (Review drag): authoritative, confidence 1.
     const userCell = ctx.options?.lattice?.cell;
     if (userCell) {
+      // Oblique correction (S5b, issue #66): the editor commits an origin +
+      // basis {x, y, t1, t2}; crop the parallelogram, same masked path as auto.
+      if (Array.isArray(userCell.t1) && Array.isArray(userCell.t2)) {
+        const t1 = userCell.t1;
+        const t2 = userCell.t2;
+        const cropped = cropParallelogramCell(ctx.image, t1, t2, {
+          x: Number(userCell.x) || 0,
+          y: Number(userCell.y) || 0,
+        });
+        if (!cropped) throw new Error('lattice: repeat cell is outside the image');
+        return {
+          patch: {
+            image: cropped.image,
+            lattice: {
+              t1,
+              t2,
+              cell: cropped.cell,
+              type: classifyLatticeType(t1, t2),
+              confidence: 1,
+            },
+            latticeCell: cropped.latticeCell,
+          },
+          confidence: 1,
+        };
+      }
       const cell = clampCell(userCell, ctx.image);
       if (!cell) throw new Error('lattice: repeat cell is outside the image');
       const t1 = [cell.width, 0];
@@ -187,9 +291,31 @@ export const latticeStage = {
     }
     const snapped = snapRectangular(detected);
     if (!snapped) {
-      // Genuinely oblique basis: detection worked but the v1 rectangular
-      // crop-and-tile path cannot represent it — floor (documented seam).
-      return { patch: {}, confidence: detected.confidence };
+      // Genuinely oblique / hex basis (S5b, issue #66). snapRectangular keeps
+      // NEAR-axis bases on the byte-identical rectangular path above; only a
+      // truly sheared basis reaches here. Crop the parallelogram cell (masked,
+      // seamless) and tile at the detected t1/t2. Confidence is the SAME honest
+      // verified-correlation gate rectangular passed — no oblique-specific
+      // relaxation, so a marginal/1D-periodic basis floors exactly as before.
+      const cropped = cropParallelogramCell(ctx.image, detected.t1, detected.t2);
+      if (!cropped) {
+        // Cell degenerate or bigger than the selection — nothing clean to crop.
+        return { patch: {}, confidence: detected.confidence };
+      }
+      return {
+        patch: {
+          image: cropped.image,
+          lattice: {
+            t1: detected.t1,
+            t2: detected.t2,
+            cell: cropped.cell,
+            type: detected.type,
+            confidence: detected.confidence,
+          },
+          latticeCell: cropped.latticeCell,
+        },
+        confidence: detected.confidence,
+      };
     }
     const cell = clampCell({ x: 0, y: 0, ...snapped }, ctx.image);
     if (!cell) return { patch: {}, confidence: detected.confidence };

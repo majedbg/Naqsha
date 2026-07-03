@@ -928,6 +928,19 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad }) {
                           }
                         : manualCell
                     }
+                    basis={
+                      // S5b (issue #66): an oblique/hex lattice carries its basis
+                      // + parallelogram origin on latticeCell → the editor draws
+                      // the sheared cell with two draggable basis handles.
+                      lattice && result.latticeCell?.t1
+                        ? { t1: result.latticeCell.t1, t2: result.latticeCell.t2 }
+                        : null
+                    }
+                    origin={
+                      lattice && result.latticeCell?.originX != null
+                        ? { x: result.latticeCell.originX, y: result.latticeCell.originY }
+                        : null
+                    }
                     confidence={lattice ? lattice.confidence : null}
                     busy={tracing}
                     onCommit={handleCellCommit}

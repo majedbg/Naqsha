@@ -1008,6 +1008,22 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad }) {
                       </option>
                     ))}
                   </select>
+                  {/* Phase-collapse caveat (adversarial-review MAJOR): the
+                      classifier found a rotation OFF the crop-anchored search
+                      centers (hiddenRotation), so the detected group may be a
+                      collapsed subgroup of the truth — say so in words, next to
+                      the already-capped confidence. Hidden once the user
+                      overrides (their pick is an assertion, not a proposal). */}
+                  {autoSym?.hiddenRotation && symmetryChoice === '__auto__' && (
+                    <p
+                      className="text-[10px] text-ink-faint leading-snug"
+                      data-testid="symmetry-caveat"
+                    >
+                      Detected {autoSym.group} — an off-center crop can hide rotations, so this
+                      tile may have more symmetry than detected. Adjust the repeat cell, or pick a
+                      group above to override.
+                    </p>
+                  )}
                 </div>
               )}
               <ul aria-label="Traced shapes" className="w-full max-w-md flex flex-col gap-1">

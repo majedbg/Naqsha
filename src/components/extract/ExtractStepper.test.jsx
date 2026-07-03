@@ -743,6 +743,62 @@ describe('ExtractStepper — symmetry Review (S7, issue #56)', () => {
     await screen.findByTestId('no-lattice-notice');
     expect(screen.queryByTestId('symmetry-proposal')).toBeNull();
   });
+
+  it('a confident (unflagged) classification shows no phase-collapse caveat', async () => {
+    await walkToReviewWithSymmetry();
+    expect(screen.queryByTestId('symmetry-caveat')).toBeNull();
+  });
+});
+
+// Adversarial-review MAJOR: a phase-collapsed subgroup (hiddenRotation) must be
+// disclosed in Review — capped confidence on the badge + an explicit caveat —
+// and the flag must ride the saved entity for S10/S12 to treat as soft.
+describe('ExtractStepper — hidden-rotation caveat (S7 review fix)', () => {
+  const TRACE_RESULT_SYM_HIDDEN = {
+    ...TRACE_RESULT_LATTICE,
+    symmetry: { group: 'pm', confidence: 0.5, source: 'auto', hiddenRotation: true },
+    confidence: { lattice: 0.87, symmetry: 0.5, trace: 1 },
+  };
+
+  async function walkToReviewHidden() {
+    mocks.extract.mockResolvedValueOnce(TRACE_RESULT_SYM_HIDDEN);
+    render(<ExtractStepper onClose={() => {}} />);
+    await walkToSelect();
+    fireEvent.click(screen.getByRole('button', { name: /trace region/i }));
+    await screen.findByTestId('symmetry-proposal');
+  }
+
+  it('shows the caveat and the capped (non-1.0) confidence', async () => {
+    await walkToReviewHidden();
+    const caveat = screen.getByTestId('symmetry-caveat');
+    expect(caveat).toHaveTextContent(/off-center crop/i);
+    expect(caveat).toHaveTextContent(/pm/);
+    expect(caveat).toHaveTextContent(/adjust the repeat cell/i);
+    expect(screen.getByTestId('symmetry-badge')).toHaveTextContent('50%');
+    expect(screen.getByTestId('symmetry-badge')).not.toHaveTextContent('100%');
+  });
+
+  it('the caveat disappears once the user overrides (their pick is an assertion)', async () => {
+    await walkToReviewHidden();
+    fireEvent.change(screen.getByLabelText('Symmetry group'), { target: { value: 'p4m' } });
+    expect(screen.queryByTestId('symmetry-caveat')).toBeNull();
+    expect(screen.getByTestId('symmetry-badge')).toHaveTextContent('manual');
+  });
+
+  it('the hiddenRotation flag rides the saved entity (S10/S12 treat it as soft)', async () => {
+    await walkToReviewHidden();
+    fireEvent.click(screen.getByRole('button', { name: /continue/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /save to library/i }));
+    await waitFor(() => expect(mocks.save).toHaveBeenCalled());
+    const entity = mocks.save.mock.calls[0][0];
+    registeredIds.push(entity.patternId);
+    expect(entity.symmetry).toEqual({
+      group: 'pm',
+      confidence: 0.5,
+      source: 'auto',
+      hiddenRotation: true,
+    });
+  });
 });
 
 describe('ExtractStepper — save', () => {

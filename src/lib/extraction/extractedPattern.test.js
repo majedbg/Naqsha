@@ -133,6 +133,21 @@ describe('round-trip', () => {
     expect(deserializeExtractedPattern(serializeExtractedPattern(e)).symmetry).toEqual(symmetry);
   });
 
+  it('round-trips the hiddenRotation caveat flag (S7 review fix — S10/S12 soft signal)', () => {
+    const symmetry = { group: 'pm', confidence: 0.5, source: 'auto', hiddenRotation: true };
+    const e = makeExtractedPattern({ title: 's', tile: TILE, lattice: LATTICE_S, symmetry });
+    expect(e.symmetry).toEqual(symmetry);
+    expect(deserializeExtractedPattern(serializeExtractedPattern(e)).symmetry).toEqual(symmetry);
+    // A crafted non-boolean flag on a stored row is dropped, the facet survives.
+    const row = serializeExtractedPattern(e);
+    const tampered = { ...row, symmetry: { ...symmetry, hiddenRotation: 'yes' } };
+    expect(deserializeExtractedPattern(tampered).symmetry).toEqual({
+      group: 'pm',
+      confidence: 0.5,
+      source: 'auto',
+    });
+  });
+
   it('defaults symmetry to null (single-motif floor / no lattice)', () => {
     const e = makeExtractedPattern({ title: 's', tile: TILE });
     expect(e.symmetry).toBeNull();

@@ -17,11 +17,16 @@
 -- it NULL. The value is a small jsonb object, NOT a bare text, so the full
 -- classification round-trips with the entity:
 --
---   symmetry  jsonb  { group, confidence, source } — `group` is one of the 17
---                    canonical IUC names (p1,p2,pm,pg,cm,pmm,pmg,pgg,cmm,
---                    p4,p4m,p4g,p3,p3m1,p31m,p6,p6m); validated app-side
---                    (symmetry.js validateSymmetry — whitelist + validate-and-
---                    null). NO database CHECK: the whitelist is enforced in the
+--   symmetry  jsonb  { group, confidence, source, hiddenRotation? } — `group`
+--                    is one of the 17 canonical IUC names (p1,p2,pm,pg,cm,pmm,
+--                    pmg,pgg,cmm,p4,p4m,p4g,p3,p3m1,p31m,p6,p6m); validated
+--                    app-side (symmetry.js validateSymmetry — whitelist +
+--                    validate-and-null). `hiddenRotation: true` (auto only)
+--                    marks a possible phase-collapsed subgroup — a rotation was
+--                    found off the crop-anchored search centers, so the group
+--                    may under-state the true symmetry; consumers (S10 facet
+--                    filter, S12 parameterize seed) treat such a value as SOFT.
+--                    NO database CHECK: the whitelist is enforced in the
 --                    application layer exactly like the soft source_type/material
 --                    vocabularies (011), so a future canonical-name reconcile is
 --                    a value change, not a migration.

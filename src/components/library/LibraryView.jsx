@@ -111,7 +111,11 @@ function SymmetryBadge({ symmetry }) {
     <span
       data-testid="symmetry-badge"
       title={`Wallpaper group ${symmetry.group}${
-        symmetry.source === 'manual' ? ' (set by you)' : ''
+        symmetry.source === 'manual'
+          ? ' (set by you)'
+          : symmetry.hiddenRotation
+            ? ' (may be partial — an off-center crop can hide rotations)'
+            : ''
       }`}
       className="inline-flex items-center gap-1 px-1.5 py-px text-[10px] leading-tight rounded-sm bg-paper-warm border border-hairline text-ink-soft"
     >

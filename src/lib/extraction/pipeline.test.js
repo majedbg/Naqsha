@@ -14,7 +14,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import { runExtraction, createPipeline, listStages } from './pipeline';
 import { WALLPAPER_GROUPS } from './symmetry';
-import { runRectify } from './stages';
+import { runRectify, latticeStage } from './stages';
+import { pointInCell } from './lattice';
 import { createExtractionBridge } from './workerBridge';
 
 function squareImage() {
@@ -247,6 +248,159 @@ describe('runExtraction — lattice stage (S5)', () => {
     const { makeExtractedPattern } = await import('./extractedPattern');
     const entity = makeExtractedPattern({ title: 't', tile: result.tile, lattice: result.lattice });
     expect(entity.lattice).toEqual(result.lattice);
+  });
+});
+
+// --- S5b (issue #66): oblique / hex auto-tiling + parallelogram cell clip ----
+
+// A tiling with a known (possibly sheared) translation lattice: an asymmetric
+// motif (two discs of different size) per lattice point, so the only exact
+// self-overlaps are true lattice translations (same discipline as
+// lattice.test.js's makeTiling).
+function makeLatticeTiling(w, h, t1, t2) {
+  const data = new Uint8ClampedArray(w * h * 4).fill(255);
+  for (let i = 3; i < data.length; i += 4) data[i] = 255;
+  const set = (x, y, v) => {
+    if (x < 0 || y < 0 || x >= w || y >= h) return;
+    const i = (y * w + x) * 4;
+    data[i] = v; data[i + 1] = v; data[i + 2] = v;
+  };
+  const disc = (cx, cy, r, v) => {
+    for (let y = Math.floor(cy - r); y <= Math.ceil(cy + r); y++)
+      for (let x = Math.floor(cx - r); x <= Math.ceil(cx + r); x++)
+        if ((x - cx) ** 2 + (y - cy) ** 2 <= r * r) set(x, y, v);
+  };
+  const det = t1[0] * t2[1] - t1[1] * t2[0];
+  let iMin = Infinity, iMax = -Infinity, jMin = Infinity, jMax = -Infinity;
+  for (const [x, y] of [[0, 0], [w, 0], [0, h], [w, h]]) {
+    const i = (x * t2[1] - y * t2[0]) / det;
+    const j = (y * t1[0] - x * t1[1]) / det;
+    iMin = Math.min(iMin, Math.floor(i) - 1);
+    iMax = Math.max(iMax, Math.ceil(i) + 1);
+    jMin = Math.min(jMin, Math.floor(j) - 1);
+    jMax = Math.max(jMax, Math.ceil(j) + 1);
+  }
+  for (let j = jMin; j <= jMax; j++)
+    for (let i = iMin; i <= iMax; i++) {
+      const x = i * t1[0] + j * t2[0];
+      const y = i * t1[1] + j * t2[1];
+      disc(x + 5, y + 5, 3, 0);
+      disc(x + 12, y + 9, 1.6, 60);
+    }
+  return { data, width: w, height: h };
+}
+
+describe('runExtraction — oblique / hex lattice auto-tiling (S5b, issue #66)', () => {
+  it('auto-tiles an oblique lattice: sheared basis recovered, tile cropped to the parallelogram cell', async () => {
+    const truth = { t1: [26, 0], t2: [9, 24] };
+    const result = await runExtraction({
+      image: makeLatticeTiling(156, 144, truth.t1, truth.t2),
+    });
+    expect(result.lattice).not.toBeNull();
+    expect(result.lattice.type).toBe('oblique');
+    expect(result.confidence.lattice).toBeGreaterThan(0.4);
+    // Basis recovered within tolerance (NOT snapped to axis-aligned).
+    expect(result.lattice.t2[0]).not.toBe(0); // genuinely sheared
+    // The traced tile IS the parallelogram cell's bbox raster.
+    expect(result.tile.width).toBe(result.lattice.cell.width);
+    expect(result.tile.height).toBe(result.lattice.cell.height);
+    expect(result.tile.fills.length + result.tile.strokes.length).toBeGreaterThanOrEqual(1);
+    // The overlay descriptor carries the basis for the sheared editor.
+    expect(result.latticeCell.t1).toBeTruthy();
+    expect(result.latticeCell.t2).toBeTruthy();
+  });
+
+  it('crops the cell with NO neighbour bleed — every pixel is paper iff outside the parallelogram', async () => {
+    const truth = { t1: [26, 0], t2: [9, 24] };
+    const cell = await latticeStage.run(
+      { image: makeLatticeTiling(156, 144, truth.t1, truth.t2), options: {} },
+      {}
+    );
+    const { image, lattice, latticeCell } = cell.patch;
+    expect(lattice.type).toBe('oblique');
+    const { t1, t2 } = lattice;
+    const ox = latticeCell.originX - latticeCell.x; // origin in local crop coords
+    const oy = latticeCell.originY - latticeCell.y;
+    let masked = 0;
+    let kept = 0;
+    for (let y = 0; y < image.height; y++) {
+      for (let x = 0; x < image.width; x++) {
+        const inside = pointInCell(x - ox, y - oy, t1, t2);
+        const alpha = image.data[(y * image.width + x) * 4 + 3];
+        if (inside) {
+          expect(alpha).toBe(255); // parallelogram interior kept opaque
+          kept++;
+        } else {
+          expect(alpha).toBe(0); // everything outside blanked to paper — no bleed
+          masked++;
+        }
+      }
+    }
+    expect(kept).toBeGreaterThan(0);
+    expect(masked).toBeGreaterThan(0); // an oblique cell genuinely masks its bbox corners
+  });
+
+  it('auto-tiles a hex lattice', async () => {
+    const truth = { t1: [24, 0], t2: [12, Math.round(12 * Math.sqrt(3))] };
+    const result = await runExtraction({
+      image: makeLatticeTiling(168, 156, truth.t1, truth.t2),
+    });
+    expect(result.lattice).not.toBeNull();
+    expect(result.lattice.type).toBe('hex');
+    expect(result.confidence.lattice).toBeGreaterThan(0.4);
+    expect(result.tile.width).toBe(result.lattice.cell.width);
+  });
+
+  it('classifies symmetry on the oblique cell without throwing or over-claiming', async () => {
+    const truth = { t1: [26, 0], t2: [9, 24] };
+    const result = await runExtraction({
+      image: makeLatticeTiling(156, 144, truth.t1, truth.t2),
+    });
+    expect(result.symmetry).toBeTruthy();
+    // An oblique lattice can only host p1 or p2 (no axis mirror is a lattice
+    // symmetry) — the classifier must not leak a reflective group.
+    expect(['p1', 'p2']).toContain(result.symmetry.group);
+    expect(result.symmetry.confidence).toBeGreaterThanOrEqual(0);
+    expect(result.symmetry.confidence).toBeLessThanOrEqual(1);
+  });
+
+  it('the oblique result round-trips into a valid entity (validateLattice unweakened)', async () => {
+    const truth = { t1: [26, 0], t2: [9, 24] };
+    const result = await runExtraction({
+      image: makeLatticeTiling(156, 144, truth.t1, truth.t2),
+    });
+    const { makeExtractedPattern } = await import('./extractedPattern');
+    const entity = makeExtractedPattern({ title: 't', tile: result.tile, lattice: result.lattice });
+    expect(entity.lattice).toEqual(result.lattice);
+    expect(entity.lattice.type).toBe('oblique');
+  });
+
+  it('CONFIDENCE HONESTY: a 1D-periodic image with cross-axis variation floors, never a confident oblique tiling', async () => {
+    // Strong horizontal period (columns repeat every 16px) but a non-repeating
+    // vertical ramp — there is no true 2D repeat. The detector must NOT accept a
+    // spurious sheared second basis at a confident score: fall to the floor,
+    // same as any non-repeating input (the S4/S7 flatter-on-hard-input lesson).
+    const w = 128, h = 128;
+    const data = new Uint8ClampedArray(w * h * 4).fill(255);
+    for (let i = 3; i < data.length; i += 4) data[i] = 255;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        // periodic in x (period 16), monotone ramp in y (non-periodic)
+        const stripe = x % 16 < 3 ? 0 : 255;
+        const ramp = Math.round((y / h) * 120);
+        const v = Math.max(0, Math.min(255, stripe === 0 ? ramp : 255 - Math.round(ramp / 4)));
+        const i = (y * w + x) * 4;
+        data[i] = v; data[i + 1] = v; data[i + 2] = v;
+      }
+    }
+    const result = await runExtraction({ image: { data, width: w, height: h } });
+    // Honest outcome: either no lattice (floor) or, if a basis is proposed, its
+    // confidence is below the gate so the stage floored it.
+    if (result.lattice) {
+      expect(result.confidence.lattice).toBeLessThan(0.4);
+    } else {
+      expect(result.lattice).toBeNull();
+    }
   });
 });
 

@@ -14,6 +14,8 @@ import {
   classifyLatticeType,
   snapRectangular,
   validateLattice,
+  cellBounds,
+  pointInCell,
   MIN_LATTICE_CONFIDENCE,
 } from './lattice';
 
@@ -256,6 +258,51 @@ describe('snapRectangular', () => {
   it('rejects a degenerate basis', () => {
     expect(snapRectangular({ t1: [24, 0], t2: [24.2, 0.4] })).toBeNull();
     expect(snapRectangular({ t1: [0.4, 0.2], t2: [0.1, 0.5] })).toBeNull();
+  });
+});
+
+// --- cellBounds / pointInCell (S5b, issue #66 — oblique parallelogram crop) ---
+
+describe('cellBounds', () => {
+  it('bounds an axis-aligned cell at the origin', () => {
+    expect(cellBounds([20, 0], [0, 30])).toEqual({
+      minX: 0, minY: 0, maxX: 20, maxY: 30, width: 20, height: 30,
+    });
+  });
+
+  it('captures the negative extent of a sheared cell (t2 leans up-left)', () => {
+    // t2 = [-10, 24]: the parallelogram reaches x = -10 (min corner), so a
+    // bbox crop must offset by +10 to sit at a non-negative raster origin.
+    const b = cellBounds([26, 0], [-10, 24]);
+    expect(b.minX).toBe(-10);
+    expect(b.minY).toBe(0);
+    expect(b.maxX).toBe(26);
+    expect(b.maxY).toBe(24);
+    expect(b.width).toBe(36);
+    expect(b.height).toBe(24);
+  });
+});
+
+describe('pointInCell', () => {
+  const t1 = [26, 0];
+  const t2 = [9, 24];
+
+  it('includes the origin corner and excludes the far corners (half-open)', () => {
+    expect(pointInCell(0, 0, t1, t2)).toBe(true); // a=0,b=0
+    expect(pointInCell(t1[0], t1[1], t1, t2)).toBe(false); // a=1 → neighbour
+    expect(pointInCell(t2[0], t2[1], t1, t2)).toBe(false); // b=1 → neighbour
+    expect(pointInCell(t1[0] + t2[0], t1[1] + t2[1], t1, t2)).toBe(false);
+  });
+
+  it('includes an interior point and excludes a bbox corner outside the shear', () => {
+    // Centroid a=b=0.5 → inside.
+    expect(pointInCell((t1[0] + t2[0]) / 2, (t1[1] + t2[1]) / 2, t1, t2)).toBe(true);
+    // Top-right of the bbox (x=t1x+t2x, y=0) is OUTSIDE the leaning cell.
+    expect(pointInCell(t1[0] + t2[0] - 1, 0.5, t1, t2)).toBe(false);
+  });
+
+  it('is false for a degenerate (collinear) basis', () => {
+    expect(pointInCell(5, 0, [10, 0], [20, 0])).toBe(false);
   });
 });
 

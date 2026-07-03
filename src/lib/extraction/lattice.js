@@ -189,14 +189,47 @@ function normalizeSigns(v) {
   return v;
 }
 
-/** Axis-aligned bounding box of the cell parallelogram {0, t1, t2, t1+t2}. */
-function cellBBox(t1, t2) {
+/**
+ * Full axis-aligned bounds of the cell parallelogram {0, t1, t2, t1+t2}:
+ * min/max corners plus width/height. `cellBBox` is the {width,height}-only view.
+ * Exported (S5b, issue #66): the oblique crop needs the min corner to place the
+ * parallelogram inside its bounding-box raster.
+ */
+export function cellBounds(t1, t2) {
   const xs = [0, t1[0], t2[0], t1[0] + t2[0]];
   const ys = [0, t1[1], t2[1], t1[1] + t2[1]];
-  return {
-    width: Math.max(...xs) - Math.min(...xs),
-    height: Math.max(...ys) - Math.min(...ys),
-  };
+  const minX = Math.min(...xs);
+  const minY = Math.min(...ys);
+  const maxX = Math.max(...xs);
+  const maxY = Math.max(...ys);
+  return { minX, minY, maxX, maxY, width: maxX - minX, height: maxY - minY };
+}
+
+/** Axis-aligned bounding box of the cell parallelogram {0, t1, t2, t1+t2}. */
+function cellBBox(t1, t2) {
+  const { width, height } = cellBounds(t1, t2);
+  return { width, height };
+}
+
+/**
+ * Half-open membership of a point (relative to the cell ORIGIN) in the
+ * parallelogram spanned by t1, t2 (S5b, issue #66). The point p = a·t1 + b·t2 is
+ * inside iff 0 ≤ a < 1 AND 0 ≤ b < 1 — half-open so a lattice of these cells
+ * covers the plane exactly once (shared edges belong to the +t neighbour), which
+ * is exactly what makes the masked cell tile seamlessly. Exported for the
+ * parallelogram crop mask and its tests.
+ *
+ * @param {number} px  point x, RELATIVE to the cell origin
+ * @param {number} py  point y, RELATIVE to the cell origin
+ * @param {[number,number]} t1
+ * @param {[number,number]} t2
+ */
+export function pointInCell(px, py, t1, t2) {
+  const det = t1[0] * t2[1] - t1[1] * t2[0];
+  if (!det) return false;
+  const a = (px * t2[1] - py * t2[0]) / det;
+  const b = (py * t1[0] - px * t1[1]) / det;
+  return a >= 0 && a < 1 && b >= 0 && b < 1;
 }
 
 /** square | rect | hex | oblique from basis lengths + angle. */

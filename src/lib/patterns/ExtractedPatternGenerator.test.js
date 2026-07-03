@@ -358,6 +358,44 @@ describe('makeExtractedPatternClass — lattice tiling (S5)', () => {
       expect(m[1]).toMatch(/^-?[\d.]+ -?[\d.]+$/);
     }
   });
+
+  // S5b (issue #66): the oblique tiling must carry BOTH fills and strokes with
+  // their fabrication roles preserved per copy (not just fills) — the same
+  // guarantee S5 gives rectangular, now on a sheared basis.
+  it('tiles an oblique lattice with fills AND strokes, roles preserved per copy', () => {
+    const e = makeExtractedPattern({
+      patternId: 'extracted-test-1',
+      title: 'oblique-strokes',
+      tile: {
+        width: 30,
+        height: 20,
+        fills: [{ d: 'M4 4 L16 4 L16 16 Z', role: 'engrave' }],
+        strokes: [{ d: 'M0 10 L20 10', role: 'score' }],
+      },
+      lattice: {
+        t1: [20, 0],
+        t2: [8, 18],
+        cell: { width: 28, height: 18 },
+        type: 'oblique',
+        confidence: 0.6,
+      },
+    });
+    const Cls = makeExtractedPatternClass(e);
+    const inst = new Cls();
+    // Canvas render tiles both representations across the sheared grid.
+    const ctx = new RecordingContext();
+    inst.generateWithContext(ctx, 1, {}, 60, 40, '#000', 100);
+    const begins = ctx.calls.filter((c) => c.op === 'beginShape');
+    const copyCount = begins.length / 2; // 1 fill + 1 stroke per copy
+    expect(copyCount).toBeGreaterThan(1);
+    // Export: every copy carries both roles, and a sheared row shifts in x.
+    const svg = inst.toSVGGroup('l', '#223344', 100);
+    const groups = svg.match(/<g transform="translate\(/g).length;
+    expect(svg.match(/data-role="engrave"/g)).toHaveLength(groups);
+    expect(svg.match(/data-role="score"/g)).toHaveLength(groups);
+    expect(svg.match(/fill="none"/g)).toHaveLength(groups); // strokes tile too
+    expect(svg).toMatch(/translate\(8 18\)/); // the +t2 copy is genuinely sheared
+  });
 });
 
 describe('registerExtractedPattern', () => {

@@ -92,6 +92,20 @@ describe('facet rail — rendering', () => {
     renderView();
     expect(screen.getAllByTestId('library-card')).toHaveLength(3);
   });
+
+  it('marks a soft (hiddenRotation) symmetry chip as partial (scope item 4)', () => {
+    clearLibraryEntries();
+    addLibraryEntry(makeExtractedPattern({
+      patternId: 'extracted-soft', title: 'Soft', tile: TILE,
+      symmetry: { group: 'p4', confidence: 0.4, source: 'auto', hiddenRotation: true },
+    }));
+    renderView();
+    const chip = screen.getByTestId('facet-chip-symmetry-p4');
+    // The rail must not present a phase-collapsed auto group as authoritative:
+    // a visible marker + an explanatory title.
+    expect(chip).toHaveTextContent('~');
+    expect(chip).toHaveAttribute('title', expect.stringMatching(/partial/i));
+  });
 });
 
 describe('facet rail — single + combined filtering', () => {

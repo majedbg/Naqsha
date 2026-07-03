@@ -24,29 +24,44 @@
 //   real ink. IOU_FLOOR / IOU_FULL below were set from measured raw IoU on
 //   adversarial fixtures (raster.test + fitEvaluator.test honesty battery):
 //   constructed stars self-fit at IoU ≈ 1.0. The non-star ceiling depends on the
-//   motif's convexity — scattered/non-star ink (floral ≈ 0.44, random ≈ 0.31,
-//   calligraphic ≈ 0.22) stays well under the floor, but a CONVEX periodic shape
-//   (a filled hexagon or a ring/circle) can climb to IoU ≈ 0.54, because a
-//   shallow high-fold star is nearly a hexagon/circle. That is ABOVE the 0.5
-//   floor, so such a shape banks a partial overlap point — but ≥ 1 full overlap
-//   point needs IoU ≥ 0.5875 (0.5 + 0.35/4), which NO measured non-star reaches.
-//   The worst adversarial non-star (a hexagon on its natural hex/p6m lattice,
-//   full sym+lattice = 6) tops out at total ≈ 6.5 and falls through: it is the
-//   sym+lattice ≤ 6 CEILING that guarantees rejection, with the IoU floor doing
-//   the work of denying it the last point. Margin is only ≈ 0.04 IoU — a
-//   deliberately conservative calibration; recall (offering a noisy real star)
-//   is the reviewer's dial to loosen, never a mid-build one, because the graceful
-//   fall-through to S5 tiling makes a false negative cheap and a false positive
-//   ("your hexagon, parameterized as a star") the feature's worst failure.
+//   motif's SHAPE:
+//     - SCATTERED / non-star ink (floral ≈ 0.44, random ≈ 0.31, calligraphic
+//       ≈ 0.22) stays well under the floor → 0 overlap points.
+//     - CONVEX periodic shapes (a filled hexagon, a ring/circle) climb to IoU
+//       ≈ 0.54, ABOVE the 0.5 floor, so they bank a PARTIAL overlap point — but
+//       a FULL overlap point needs IoU ≥ 0.5875 (0.5 + 0.35/4), and no convex
+//       shape reaches that. A hexagon on its natural hex/p6m lattice (full
+//       sym+lattice = 6) tops out at total ≈ 6.5 and falls through.
+//     - RADIAL-LINEWORK motifs (an asterisk/sunburst, a hexagram or star
+//       OUTLINE) DO exceed 0.5875 and DO clear ≥ 7 — measured e.g. a 12-spoke
+//       asterisk at IoU ≈ 0.81 → score 9. This is NOT the flattery failure mode
+//       and NOT a bug: a sharp Kaplan star's own linework IS 2n near-radial
+//       spokes (tip→center→tip…), so an asterisk/hexagram genuinely COINCIDES
+//       with star ink. They surface as legitimate, editable/declinable star
+//       offers (a hexagram IS a star), and fall through to S5 if the user
+//       declines. THE GUARANTEE IS NARROW AND EXACT: nothing can clear ≥ 7 on
+//       symmetry+lattice ALONE (they cap at 6) — IoU is arithmetically necessary
+//       — NOT "no non-star is ever offered." A radial motif that coincides with
+//       star linework SHOULD be offered as a star.
+//
+//   Recall (offering a noisy real star) is the reviewer's dial to loosen, never a
+//   mid-build one: the graceful fall-through to S5 tiling makes a false negative
+//   cheap, and the failure mode we actually guard is the CONVEX/scattered
+//   non-star ("your hexagon, parameterized as a star") — which the sym+lattice
+//   ≤ 6 ceiling plus the IoU floor together reject.
 //
 // Pure + deterministic (raster IoU is deterministic), main-thread-cheap (a ~64²
 // grid over a gated handful of candidates).
 
 import { rasterizeTile, iou } from './raster';
 
-// IoU → overlap-points mapping. FLOOR is set ABOVE the measured non-star IoU
-// ceiling (~0.44) so structural mismatch earns nothing; FULL is where a clean
-// star saturates the sub-score. See file header for the empirical basis.
+// IoU → overlap-points mapping. FLOOR sits just BELOW the CONVEX non-star ceiling
+// (~0.54 for a filled hexagon/ring), so a convex shape banks only a partial
+// overlap point and cannot reach a full one (needs IoU ≥ 0.5875) — scattered ink
+// (~0.44) earns nothing. Radial-linework motifs (asterisk/star-outline) DO clear
+// the floor and earn real points, because they coincide with a sharp star's
+// spokes; that is intended (see file header). FULL is where a clean star
+// saturates the sub-score.
 export const IOU_FLOOR = 0.5;
 export const IOU_FULL = 0.85;
 

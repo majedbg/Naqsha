@@ -83,6 +83,30 @@ export function hexagonFixture(radius = 45) {
   return { width: 100, height: 100, fills: [{ d, role: 'engrave' }], strokes: [] };
 }
 
+/**
+ * Asterisk / sunburst: n radial spokes from the cell center. This is the HONEST
+ * TRUE-POSITIVE counterpart to the hexagon (S12 reviewer finding): it is not a
+ * Kaplan star, yet it SHOULD clear the offer, because a sharp Kaplan star's own
+ * linework IS 2n near-radial spokes (tip→center→tip…), so an asterisk genuinely
+ * COINCIDES with star ink (measured IoU ≈ 0.81 → score 9 at n=12 on hex/p6m). It
+ * proves the moat's guarantee is exact — "cannot clear on sym+lattice ALONE" —
+ * NOT the overclaim "no non-star is ever offered": a radial motif that overlaps
+ * star linework earns its ≥7 via GENUINE IoU, not flattery, and surfaces as a
+ * legitimate editable/declinable star proposal. Radial-linework, NOT a star.
+ */
+export function asteriskFixture(n = 12, radius = 45) {
+  const cx = 50;
+  const cy = 50;
+  const strokes = [];
+  for (let k = 0; k < n; k++) {
+    const a = -Math.PI / 2 + (2 * Math.PI * k) / n;
+    const ex = Math.round((cx + radius * Math.cos(a)) * 100) / 100;
+    const ey = Math.round((cy + radius * Math.sin(a)) * 100) / 100;
+    strokes.push({ d: `M${cx} ${cy} L${ex} ${ey}`, role: 'score' });
+  }
+  return { width: 100, height: 100, fills: [], strokes };
+}
+
 /** Calligraphic sweeping cubic curves. NOT a star. */
 export function calligraphicFixture() {
   return {

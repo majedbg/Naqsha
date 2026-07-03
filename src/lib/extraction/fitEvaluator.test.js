@@ -16,6 +16,7 @@ import {
   randomFixture,
   calligraphicFixture,
   hexagonFixture,
+  asteriskFixture,
 } from './families/__testFixtures';
 import { SUPPORTED_FOLDS } from './families/kaplanStar';
 
@@ -129,6 +130,27 @@ describe('THE HONESTY BATTERY — star clears, non-stars fall through', () => {
     // searching every fold × contact-angle × scale to MAXIMISE overlap. The
     // returned params are the single most-overlapping star it could find — a
     // real supported fold — and even THAT best case banks 0 overlap points.
+    expect(SUPPORTED_FOLDS).toContain(ev.params.n);
+  });
+
+  // THE TRUE-POSITIVE COUNTERPART (S12 reviewer finding). The guarantee is EXACT
+  // — "cannot clear ≥7 on sym+lattice ALONE" — NOT the overclaim "no non-star is
+  // ever offered." A 12-spoke asterisk is not a Kaplan star, yet it MUST clear:
+  // a sharp star's linework IS 2n radial spokes, so the asterisk genuinely
+  // coincides with star ink and earns its ≥7 through REAL IoU (not flattery). It
+  // is the honest mirror of the hexagon: same full sym+lattice=6, opposite
+  // verdict, and the difference is entirely the overlap sub-score.
+  it('RADIAL non-star (12-spoke asterisk) CLEARS ≥7 via genuine IoU — offered as a legit star, not flattery', () => {
+    const ev = evaluateFit(asteriskFixture(12, 45), kaplanStarFamily, { lattice: hexLat, symmetry: p6m });
+    expect(ev.accepted).toBe(true);
+    expect(ev.score).toBeGreaterThanOrEqual(FIT_THRESHOLD);
+    // Full structural match, SAME as the rejected hexagon…
+    expect(ev.breakdown.symmetry + ev.breakdown.lattice).toBe(6);
+    // …but here the ink genuinely overlaps star linework, so overlap is REAL and
+    // above the floor — this is honest coincidence, the hexagon's opposite.
+    expect(ev.breakdown.overlap).toBeGreaterThan(0);
+    expect(ev.iou).toBeGreaterThan(IOU_FLOOR); // real ink overlap, not a sym+lat pass
+    // Optimizer picked a real fold via the internal fit() search.
     expect(SUPPORTED_FOLDS).toContain(ev.params.n);
   });
 

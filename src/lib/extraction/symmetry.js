@@ -35,6 +35,25 @@
 // SEAM (S12, parameterize/EVAL): the classified group is the entry point for
 // the parametric-family fit — it rides the pipeline result as `result.symmetry`
 // and the entity as `entity.symmetry`.
+//
+// SEAM (deferred, anchor-phase — parallels lattice.js's anchor-phase seam):
+// rotation classification is PHASE-SENSITIVE. Rotation centers are searched only
+// at the {0,½} sublattice (+ hex thirds), which is where an origin-centered
+// pattern's n-fold center sits — but the lattice stage anchors the cropped cell
+// at the SELECTION ORIGIN (an arbitrary user drag), so on a real photo the
+// n-fold center generally lands off {0,½} and the rotation correlations fall
+// below threshold. Reflections are crop-INVARIANT (the perpendicular scan finds
+// the mirror line anywhere; translating along it preserves the parallel offset),
+// so the failure is asymmetric: mirrors survive an off-phase crop, rotations do
+// not — a rotational group (p2/p3/p4/p6/p4m/p6m) can under-classify toward
+// p1/pm/cm on an uncentered real crop. This is INSIDE the locked contract
+// (editable proposal + confidence; fail-soft floor untouched): the Review
+// override is the recourse, and both S10 (group facet filter) and S12 (uses the
+// group as a parameterize seed) must treat the AUTO value as SOFT on real input.
+// The fix is anchor-phase alignment (recenter the cell on its rotation center
+// before scoring), deliberately NOT a wider/global center scan — that would
+// reintroduce the spurious-peak false positives the constrained offsets exist to
+// prevent (a random tile crossing threshold into a bogus p2).
 
 const N = 24; // fractional grid: divisible by 2,3,4,6 → every rotation center
               // ({0,½} and hex thirds) lands on an integer index.

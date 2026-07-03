@@ -183,7 +183,8 @@ describe('deriveFacets — drill-down counts', () => {
     const facets = deriveFacets(entries, state);
     const material = facets.find((f) => f.key === 'material');
     const mvals = Object.fromEntries(material.values.map((v) => [v.value, v.count]));
-    expect(mvals).toEqual({ stone: 1, wood: 1 }); // glass (b, Gothic) is gone
+    // Options stay stable (full store); counts drill down: glass (b, Gothic) → 0.
+    expect(mvals).toEqual({ stone: 1, wood: 1, glass: 0 });
   });
 
   it("a facet's OWN selection does NOT shrink its OWN value list", () => {

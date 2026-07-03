@@ -15,8 +15,15 @@
 // Visibility is surfaced read-only, defaulting to 'private' (PRD data-safety:
 // the field exists so future sharing is a flag flip, not a migration).
 
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { subscribeLibrary, getLibraryEntries } from '../../lib/libraryStore';
+import FacetRail from './FacetRail';
+import {
+  deriveFacets,
+  filterEntries,
+  emptyFacetState,
+  isFacetStateEmpty,
+} from '../../lib/library/facets';
 import { getPhotoURL, updateExtractedPatternMeta } from '../../lib/libraryRepository';
 import { tilePlacements } from '../../lib/extraction/tileComposer';
 import {
@@ -572,6 +579,23 @@ export default function LibraryView({ onClose, onUseInStudio, onNewExtraction })
   // patternId -> signed URL (or null once resolution failed) for cloud photos.
   const [signedURLs, setSignedURLs] = useState({});
 
+  // Facet selection lives HERE, in component-local state — never in libraryStore
+  // (locked invariant: Library filters must not affect the picker). The rail is
+  // derived from the FULL store; the grid renders the filtered subset.
+  const [facetState, setFacetState] = useState(emptyFacetState);
+  const facets = useMemo(() => deriveFacets(entries, facetState), [entries, facetState]);
+  const visibleEntries = useMemo(() => filterEntries(entries, facetState), [entries, facetState]);
+  const filtering = !isFacetStateEmpty(facetState);
+
+  // Toggle one facet value (multi-select within a facet). Pure updater.
+  const toggleFacet = (key, value) =>
+    setFacetState((prev) => {
+      const cur = prev[key] || [];
+      const next = cur.includes(value) ? cur.filter((v) => v !== value) : [...cur, value];
+      return { ...prev, [key]: next };
+    });
+  const clearFacets = () => setFacetState(emptyFacetState());
+
   // Lazily resolve signed URLs for entries that have a storage path but no
   // transient session photoURL. `requestedRef` tracks every id we have ever
   // fired for (in-flight AND resolved), so each entry is requested exactly
@@ -629,8 +653,11 @@ export default function LibraryView({ onClose, onUseInStudio, onNewExtraction })
           <div>
             <h2 className="text-sm font-semibold text-ink">Pattern Library</h2>
             <p className="text-[11px] text-ink-soft mt-0.5">
-              Ornament you have captured · {entries.length}{' '}
-              {entries.length === 1 ? 'entry' : 'entries'} · private to you
+              Ornament you have captured ·{' '}
+              {filtering && !openEntry
+                ? `${visibleEntries.length} of ${entries.length} shown`
+                : `${entries.length} ${entries.length === 1 ? 'entry' : 'entries'}`}{' '}
+              · private to you
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -672,16 +699,41 @@ export default function LibraryView({ onClose, onUseInStudio, onNewExtraction })
               )}
             </div>
           ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-              {entries.map((entry) => (
-                <LibraryCard
-                  key={entry.entity.patternId}
-                  entry={entry}
-                  photoURL={photoFor(entry)}
-                  onOpen={setOpenId}
-                />
-              ))}
-            </div>
+            <>
+              <FacetRail
+                facets={facets}
+                facetState={facetState}
+                onToggle={toggleFacet}
+                onClear={clearFacets}
+              />
+              {visibleEntries.length === 0 ? (
+                // Zero-result never dead-ends: an explicit clear CTA (guaranteed
+                // reachable — this branch only renders while a filter is active,
+                // since an unfiltered non-empty store always has entries).
+                <div
+                  className="flex flex-col items-center gap-3 py-16 text-center"
+                  data-testid="facet-zero-result"
+                >
+                  <p className="text-sm text-ink-soft max-w-md">
+                    No entries match these filters.
+                  </p>
+                  <button type="button" className={GHOST_BTN} onClick={clearFacets}>
+                    Clear filters
+                  </button>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+                  {visibleEntries.map((entry) => (
+                    <LibraryCard
+                      key={entry.entity.patternId}
+                      entry={entry}
+                      photoURL={photoFor(entry)}
+                      onOpen={setOpenId}
+                    />
+                  ))}
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>

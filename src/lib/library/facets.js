@@ -114,11 +114,13 @@ function valueLabel(key, value) {
 }
 
 /**
- * Derive the facet rail from the current store, DRILL-DOWN counted: each
- * facet's counts are computed against the entries matching all OTHER active
- * facets (so counts reflect the rest of the query), but a facet's OWN selection
- * never shrinks its OWN value list (selecting blue must not hide red — you have
- * to be able to OR red back in).
+ * Derive the facet rail from the current store. The value LIST for each facet
+ * comes from the FULL store, so a facet's options never vanish mid-interaction
+ * and a facet's OWN selection never shrinks its OWN list (selecting blue must
+ * not hide red — you must be able to OR red back in). COUNTS are DRILL-DOWN:
+ * each value's count is the number of entries matching all OTHER active facets,
+ * so counts reflect the rest of the query and a value can legitimately show 0
+ * (which is how the zero-result combination is reachable at all).
  *
  * Returns [{ key, label, values: [{ value, label, count, selected, swatch?,
  * soft? }] }], empty facets omitted. Values sort by count desc, then label;
@@ -132,37 +134,41 @@ export function deriveFacets(entries, facetState = emptyFacetState()) {
   const out = [];
 
   for (const key of FACET_KEYS) {
-    // Count against everything EXCEPT this facet's own selection.
-    const otherState = { ...facetState, [key]: [] };
-    const subset = filterEntries(list, otherState);
-
-    const counts = new Map();
-    const softGroups = new Set(); // symmetry values that are soft on ≥1 entry
-    for (const entry of subset) {
+    // Value LIST: every value present anywhere in the full store (options are
+    // stable regardless of the active selection). Soft is intrinsic to a group,
+    // so it too is read over the full store.
+    const values = new Set();
+    const softGroups = new Set();
+    for (const entry of list) {
       for (const v of entityFacetValues(entry.entity, key)) {
-        counts.set(v, (counts.get(v) || 0) + 1);
+        values.add(v);
         if (key === 'symmetry' && entry.entity.symmetry?.hiddenRotation) softGroups.add(v);
       }
     }
-    // Keep a selected value visible (count 0) so it can be de-selected even when
-    // the other facets have filtered every matching entry away.
-    for (const s of facetState?.[key] ?? []) if (!counts.has(s)) counts.set(s, 0);
 
     // Location: only meaningful once at least one entry actually HAS a location.
     // A store with zero locations shows only "No location" → hide the facet.
     if (key === 'location') {
-      const anyLocated = [...counts.keys()].some((v) => v !== LOCATION_NONE);
+      const anyLocated = [...values].some((v) => v !== LOCATION_NONE);
       if (!anyLocated) continue;
     }
+    if (values.size === 0) continue; // empty facet — hidden
 
-    if (counts.size === 0) continue; // empty facet — hidden
+    // COUNTS: drill-down against every facet EXCEPT this one.
+    const subset = filterEntries(list, { ...facetState, [key]: [] });
+    const counts = new Map();
+    for (const entry of subset) {
+      for (const v of entityFacetValues(entry.entity, key)) {
+        if (values.has(v)) counts.set(v, (counts.get(v) || 0) + 1);
+      }
+    }
 
     const selectedSet = new Set(facetState?.[key] ?? []);
-    const values = [...counts.entries()]
-      .map(([value, count]) => ({
+    const valueList = [...values]
+      .map((value) => ({
         value,
         label: valueLabel(key, value),
-        count,
+        count: counts.get(value) || 0,
         selected: selectedSet.has(value),
         ...(key === 'color' ? { swatch: colorBin(value)?.swatch } : {}),
         ...(key === 'symmetry' && softGroups.has(value) ? { soft: true } : {}),
@@ -175,7 +181,7 @@ export function deriveFacets(entries, facetState = emptyFacetState()) {
         return String(a.label).localeCompare(String(b.label));
       });
 
-    out.push({ key, label: FACET_LABELS[key], values });
+    out.push({ key, label: FACET_LABELS[key], values: valueList });
   }
   return out;
 }

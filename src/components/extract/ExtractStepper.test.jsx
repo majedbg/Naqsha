@@ -1265,3 +1265,47 @@ describe('ExtractStepper — S9 provenance + palette + organization', () => {
     expect(titleInput.value).toBe(''); // no stale "Ornament — June 2026"
   });
 });
+
+// #69: invert/polarity control. The binarizer defaults to DARK = ink; the
+// toggle lets a LIGHT ornament on a DARK ground (a pierced jali screen) trace
+// its members instead of the negative space. Off preserves the current flow.
+describe('ExtractStepper — invert/polarity (#69)', () => {
+  it('offers an invert toggle in Select, defaults OFF, and threads it into the trace', async () => {
+    render(<ExtractStepper onClose={() => {}} />);
+    await walkToSelect();
+    const toggle = screen.getByRole('checkbox', { name: /invert/i });
+    expect(toggle.checked).toBe(false); // default OFF preserves current behavior
+
+    // Off → the options carry NO trace key (byte-identical to the pre-#69 flow).
+    fireEvent.click(screen.getByRole('button', { name: /trace region/i }));
+    await screen.findByText(/1 shape/i);
+    expect(mocks.extract.mock.calls[0][1]).toEqual({});
+  });
+
+  it('tracing with invert ON passes options.trace.invert = true', async () => {
+    render(<ExtractStepper onClose={() => {}} />);
+    await walkToSelect();
+    fireEvent.click(screen.getByRole('checkbox', { name: /invert/i }));
+    fireEvent.click(screen.getByRole('button', { name: /trace region/i }));
+    await screen.findByText(/1 shape/i);
+    expect(mocks.extract).toHaveBeenCalledTimes(1);
+    expect(mocks.extract.mock.calls[0][1]).toEqual({ trace: { invert: true } });
+  });
+
+  it('toggling invert in Review re-runs the trace in place with the new polarity', async () => {
+    render(<ExtractStepper onClose={() => {}} />);
+    await walkToSelect();
+    fireEvent.click(screen.getByRole('button', { name: /trace region/i }));
+    await screen.findByText(/1 shape/i);
+    expect(mocks.extract).toHaveBeenCalledTimes(1);
+    expect(mocks.extract.mock.calls[0][1]).toEqual({}); // first trace: not inverted
+
+    // Flip it in Review → a second extract on the SAME selection, now inverted.
+    fireEvent.click(screen.getByRole('checkbox', { name: /invert/i }));
+    await waitFor(() => expect(mocks.extract).toHaveBeenCalledTimes(2));
+    expect(mocks.extract.mock.calls[1][1]).toEqual({ trace: { invert: true } });
+    expect(mocks.cropToImageData.mock.calls[1][1]).toEqual(
+      mocks.cropToImageData.mock.calls[0][1]
+    );
+  });
+});

@@ -101,6 +101,71 @@ describe('runExtraction', () => {
   });
 });
 
+// --- #69: invert/polarity flows through options.trace to the trace stage -----
+
+// Light-on-dark: OPAQUE dark ground (luma 30) + an OPAQUE light square (luma
+// 230) at 24..40. Opaque ground is load-bearing — a transparent ground reads
+// as paper under either polarity, so invert would be a silent no-op.
+function lightOnDarkImage(size = 64) {
+  const data = new Uint8ClampedArray(size * size * 4);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const v = x >= 24 && x < 40 && y >= 24 && y < 40 ? 230 : 30;
+      const i = (y * size + x) * 4;
+      data[i] = v; data[i + 1] = v; data[i + 2] = v; data[i + 3] = 255;
+    }
+  }
+  return { data, width: size, height: size };
+}
+
+// Absolute on-path points from a `d` string (relative deltas handled).
+function absolutePointsIn(d) {
+  const tokens = d.match(/[a-zA-Z]|-?\d*\.?\d+/g) || [];
+  const pts = [];
+  let x = 0, y = 0, cmd = null, i = 0;
+  const num = () => Number(tokens[i++]);
+  while (i < tokens.length) {
+    if (/[a-zA-Z]/.test(tokens[i])) cmd = tokens[i++];
+    switch (cmd) {
+      case 'M': case 'L': x = num(); y = num(); break;
+      case 'm': case 'l': x += num(); y += num(); break;
+      case 'H': x = num(); break;
+      case 'h': x += num(); break;
+      case 'V': y = num(); break;
+      case 'v': y += num(); break;
+      case 'C': i += 4; x = num(); y = num(); break;
+      case 'c': i += 4; x += num(); y += num(); break;
+      case 'Z': case 'z': break;
+      default: throw new Error(`unexpected command ${cmd}`);
+    }
+    if (cmd !== 'Z' && cmd !== 'z') pts.push([x, y]);
+  }
+  return pts;
+}
+
+describe('runExtraction — invert/polarity (#69)', () => {
+  const contourXs = (res) =>
+    res.components.flatMap((c) => absolutePointsIn(c.contour.d)).map((p) => p[0]);
+
+  it('traces the dark ground by default (negative space — contour reaches the edges)', async () => {
+    const res = await runExtraction({ image: lightOnDarkImage() });
+    const xs = contourXs(res);
+    expect(Math.min(...xs)).toBeLessThanOrEqual(2);
+    expect(Math.max(...xs)).toBeGreaterThanOrEqual(62);
+  });
+
+  it('traces the light square members when options.trace.invert is set', async () => {
+    const res = await runExtraction({
+      image: lightOnDarkImage(),
+      options: { trace: { invert: true } },
+    });
+    const xs = contourXs(res);
+    // The compact members, off the image frame — the flip the ticket asks for.
+    expect(Math.min(...xs)).toBeGreaterThanOrEqual(22);
+    expect(Math.max(...xs)).toBeLessThanOrEqual(42);
+  });
+});
+
 // --- S5 (issue #54): the lattice stage — repeat detection + cell crop -------
 
 // A repeating tiling with a known 16×16 square lattice: an asymmetric motif

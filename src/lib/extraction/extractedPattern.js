@@ -29,6 +29,7 @@
 
 import { FABRICATION_ROLES } from './vectorizer';
 import { validateLattice } from './lattice';
+import { validateSymmetry } from './symmetry';
 import {
   normalizeLocation,
   normalizeCaptureDate,
@@ -86,6 +87,11 @@ export function makeExtractedPattern({
   title,
   tile,
   lattice = null,
+  // S7 (issue #56): auto/manual wallpaper-group classification { group,
+  // confidence, source }. Optional facet — validate-and-null (never throws): a
+  // non-whitelisted group on an attacker-writable row is dropped, the entry
+  // survives (unlike lattice/path-data which throw the whole row out).
+  symmetry = null,
   photoPath = null,
   visibility = 'private',
   // S8 (issue #57): optional capture metadata. All validate-and-null (never
@@ -124,6 +130,8 @@ export function makeExtractedPattern({
     // Throws on a malformed lattice (same corrupt-row discipline as the path
     // data below); null stays null — the single-motif floor.
     lattice: validateLattice(lattice),
+    // Validate-and-null (facet discipline): a bad group/confidence → null.
+    symmetry: validateSymmetry(symmetry),
     photoPath,
     // Optional metadata — normalized, never fatal (see locationMeta).
     location: normalizeLocation(location),
@@ -175,6 +183,12 @@ export function serializeExtractedPattern(entity) {
       strokes: entity.tile.strokes.map((s) => s.role),
     },
     lattice: entity.lattice,
+    // S7: wallpaper group → column added by migration 012 (additive jsonb,
+    // human-gated, ships after 011). A deployment on 009–011 but not 012 fails
+    // this insert on the unknown column; saveExtractedPattern degrades to a
+    // session-only save (persisted:false) — never a dead end, exactly like the
+    // S8/S9 unapplied-migration paths. Queryable for the S10 symmetry facet.
+    symmetry: entity.symmetry,
     photo_path: entity.photoPath,
     // S8: capture metadata → columns added by migration 010 (soft jsonb/text).
     // 010 is human-gated and ships WITH 009 (apply 010 after/with 009). If a
@@ -256,6 +270,10 @@ export function deserializeExtractedPattern(record) {
     title: record.name,
     tile: { width, height, fills, strokes },
     lattice: record.lattice ?? null,
+    // S7: symmetry is validate-and-null inside makeExtractedPattern — a corrupt
+    // or non-whitelisted group on an attacker-writable row drops to null, never
+    // throws, so a good pattern is never lost to a bad facet.
+    symmetry: record.symmetry ?? null,
     photoPath: record.photo_path ?? null,
     visibility: record.visibility || 'private',
     // S8: metadata is validate-and-null inside makeExtractedPattern — a corrupt

@@ -674,6 +674,78 @@ describe('ExtractStepper — lattice Review (S5)', () => {
   });
 });
 
+// --- S5b (issue #66): oblique lattice Review — sheared editable cell ----------
+
+const LATTICE_OBLIQUE = {
+  t1: [40, 0],
+  t2: [12, 30],
+  cell: { width: 52, height: 30 },
+  type: 'oblique',
+  confidence: 0.72,
+};
+
+const TRACE_RESULT_OBLIQUE = {
+  tile: {
+    width: 52,
+    height: 30,
+    fills: [{ d: 'M4 4 L16 4 L16 16 L4 16 Z', role: 'engrave' }],
+    strokes: [],
+  },
+  lattice: LATTICE_OBLIQUE,
+  latticeCell: { x: 0, y: 0, width: 52, height: 30, t1: [40, 0], t2: [12, 30], originX: 0, originY: 0 },
+  confidence: { lattice: 0.72, trace: 1 },
+};
+
+describe('ExtractStepper — oblique lattice Review (S5b, issue #66)', () => {
+  const BOX = { left: 0, top: 0, width: 200, height: 150, right: 200, bottom: 150 };
+  let gbcr;
+  beforeEach(() => {
+    gbcr = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(BOX);
+  });
+  afterEach(() => gbcr.mockRestore());
+
+  async function walkToReviewOblique() {
+    mocks.extract.mockResolvedValueOnce(TRACE_RESULT_OBLIQUE);
+    render(<ExtractStepper onClose={() => {}} />);
+    await walkToSelect();
+    fireEvent.click(screen.getByRole('button', { name: /trace region/i }));
+    await screen.findByTestId('lattice-cell-editor');
+  }
+
+  it('renders the sheared parallelogram editor (basis handles), not an axis rect', async () => {
+    await walkToReviewOblique();
+    expect(screen.getByTestId('lattice-cell-oblique')).toBeTruthy();
+    expect(screen.getByTestId('cell-handle-t1')).toBeTruthy();
+    expect(screen.getByTestId('cell-handle-t2')).toBeTruthy();
+    // Preview still tiles through the shared placement source.
+    expect(screen.getByTestId('tiled-preview')).toBeTruthy();
+  });
+
+  it('dragging a basis handle re-extracts with an oblique origin+basis cell', async () => {
+    await walkToReviewOblique();
+    const handle = screen.getByTestId('cell-handle-t2');
+    const box = screen.getByTestId('lattice-cell-box');
+    fireEvent.pointerDown(handle, { clientX: 0, clientY: 0, pointerId: 1 });
+    // +10 display px → +20 image px x; +5 → +10 image px y.
+    fireEvent.pointerMove(box, { clientX: 10, clientY: 5, pointerId: 1 });
+    fireEvent.pointerUp(box, { pointerId: 1 });
+    await waitFor(() => expect(mocks.extract).toHaveBeenCalledTimes(2));
+    expect(mocks.extract.mock.calls[1][1]).toEqual({
+      lattice: { cell: { x: 0, y: 0, t1: [40, 0], t2: [32, 40] } },
+    });
+  });
+
+  it('saves the oblique lattice entity (one entity, oblique tiling on both surfaces)', async () => {
+    await walkToReviewOblique();
+    fireEvent.click(screen.getByRole('button', { name: /continue/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /save to library/i }));
+    await waitFor(() => expect(mocks.save).toHaveBeenCalled());
+    const entity = mocks.save.mock.calls[0][0];
+    registeredIds.push(entity.patternId);
+    expect(entity.lattice).toEqual(LATTICE_OBLIQUE);
+  });
+});
+
 // --- S7 (issue #56): symmetry proposal + editable override -------------------
 
 const TRACE_RESULT_SYM = {

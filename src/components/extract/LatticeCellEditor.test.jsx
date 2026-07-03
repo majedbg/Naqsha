@@ -120,3 +120,71 @@ describe('LatticeCellEditor', () => {
     expect(screen.getByRole('button', { name: /use single motif/i })).toBeDisabled();
   });
 });
+
+// --- S5b (issue #66): oblique parallelogram mode ------------------------------
+
+describe('LatticeCellEditor — oblique cell', () => {
+  const OBL = {
+    basis: { t1: [80, 0], t2: [24, 60] }, // sheared cell
+    origin: { x: 40, y: 30 },
+    cell: { x: 40, y: 30, width: 104, height: 60 },
+  };
+
+  it('renders the sheared parallelogram overlay with basis handles (not a rect)', () => {
+    renderEditor(OBL);
+    // The oblique SVG overlay is present; the cell is a polygon, not a div.
+    expect(screen.getByTestId('lattice-cell-oblique')).toBeTruthy();
+    expect(screen.getByTestId('lattice-cell').tagName.toLowerCase()).toBe('polygon');
+    expect(screen.getByTestId('cell-handle-t1')).toBeTruthy();
+    expect(screen.getByTestId('cell-handle-t2')).toBeTruthy();
+  });
+
+  it('draws 8 neighbour ghosts on the ACTUAL (sheared) lattice', () => {
+    renderEditor(OBL);
+    const svg = screen.getByTestId('lattice-cell-oblique');
+    expect(svg.querySelectorAll('polygon[aria-hidden]')).toHaveLength(8);
+  });
+
+  it('drags the t2 endpoint independently and commits origin + basis', () => {
+    const { onCommit } = renderEditor(OBL);
+    const handle = screen.getByTestId('cell-handle-t2');
+    const box = screen.getByTestId('lattice-cell-box');
+    fireEvent.pointerDown(handle, { clientX: 0, clientY: 0, pointerId: 1 });
+    // +10 display px x → +20 image px; +5 display y → +10 image px.
+    fireEvent.pointerMove(box, { clientX: 10, clientY: 5, pointerId: 1 });
+    fireEvent.pointerUp(box, { pointerId: 1 });
+    expect(onCommit).toHaveBeenCalledWith({
+      x: 40,
+      y: 30,
+      t1: [80, 0], // t1 untouched — vectors move independently
+      t2: [44, 70], // t2 += (20,10)
+    });
+  });
+
+  it('drags the whole cell by its origin, keeping the basis fixed', () => {
+    const { onCommit } = renderEditor(OBL);
+    const cell = screen.getByTestId('lattice-cell');
+    const box = screen.getByTestId('lattice-cell-box');
+    fireEvent.pointerDown(cell, { clientX: 0, clientY: 0, pointerId: 1 });
+    fireEvent.pointerMove(box, { clientX: 5, clientY: 5, pointerId: 1 });
+    fireEvent.pointerUp(box, { pointerId: 1 });
+    expect(onCommit).toHaveBeenCalledWith({
+      x: 50, // 40 + 10 image px
+      y: 40, // 30 + 10 image px
+      t1: [80, 0],
+      t2: [24, 60],
+    });
+  });
+
+  it('refuses to commit a degenerate (near-collinear) basis', () => {
+    const { onCommit } = renderEditor(OBL);
+    const handle = screen.getByTestId('cell-handle-t2');
+    const box = screen.getByTestId('lattice-cell-box');
+    // Drag t2 onto the t1 direction (make it ~collinear with t1=[80,0]).
+    fireEvent.pointerDown(handle, { clientX: 0, clientY: 0, pointerId: 1 });
+    // Need image delta ≈ (+56, -60) to reach t2≈(80,0): display = image/2.
+    fireEvent.pointerMove(box, { clientX: 28, clientY: -30, pointerId: 1 });
+    fireEvent.pointerUp(box, { pointerId: 1 });
+    expect(onCommit).not.toHaveBeenCalled();
+  });
+});

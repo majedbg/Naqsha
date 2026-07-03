@@ -77,6 +77,64 @@ function assertKnownRole(role) {
   }
 }
 
+// ── Parameterization payload validation (S12) ───────────────────────────────
+// Same validate-and-null discipline as the metadata facets: a corrupt param
+// payload on an attacker-writable row is dropped (the tile still renders), never
+// thrown. Family ids are whitelisted; param keys are identifier-safe; numeric
+// bounds/values must be finite and in range so nothing crafted can reach a
+// slider's attributes or a generator loop.
+const FAMILY_IDS = new Set(['kaplan-star']);
+const PARAM_KEY_RE = /^[A-Za-z][A-Za-z0-9_]*$/;
+const MAX_PARAM_DEFS = 24;
+
+function validateParamDefs(defs) {
+  if (!Array.isArray(defs) || defs.length === 0 || defs.length > MAX_PARAM_DEFS) return null;
+  const out = [];
+  for (const d of defs) {
+    if (!d || typeof d !== 'object' || !PARAM_KEY_RE.test(String(d.key ?? ''))) return null;
+    const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+    const min = num(d.min);
+    const max = num(d.max);
+    const step = num(d.step);
+    if (min === null || max === null || step === null || max <= min) return null;
+    out.push({
+      key: d.key,
+      label: typeof d.label === 'string' ? d.label : d.key,
+      min,
+      max,
+      step,
+      ...(typeof d.unit === 'string' ? { unit: d.unit } : {}),
+      ...(typeof d.tooltip === 'string' ? { tooltip: d.tooltip } : {}),
+    });
+  }
+  return out;
+}
+
+function validateDefaultParams(params) {
+  if (!params || typeof params !== 'object') return null;
+  const out = {};
+  let n = 0;
+  for (const [k, v] of Object.entries(params)) {
+    if (!PARAM_KEY_RE.test(k) || typeof v !== 'number' || !Number.isFinite(v)) return null;
+    out[k] = v;
+    if (++n > MAX_PARAM_DEFS) return null;
+  }
+  return n ? out : null;
+}
+
+/**
+ * Normalize the whole parameterization payload as an all-or-nothing unit: a
+ * valid adoption needs a whitelisted family AND coherent defs AND default
+ * params; any piece missing/corrupt drops the entry to a fixed tile (nulls).
+ */
+export function normalizeParameterization({ family, paramDefs, defaultParams } = {}) {
+  if (!FAMILY_IDS.has(family)) return { family: null, paramDefs: null, defaultParams: null };
+  const defs = validateParamDefs(paramDefs);
+  const defaults = validateDefaultParams(defaultParams);
+  if (!defs || !defaults) return { family: null, paramDefs: null, defaultParams: null };
+  return { family, paramDefs: defs, defaultParams: defaults };
+}
+
 /**
  * Build an ExtractedPattern entity. Throws when the tile carries no geometry —
  * the extraction flow guarantees a single-motif floor (locked decision 8), so
@@ -110,6 +168,17 @@ export function makeExtractedPattern({
   material = null,
   tradition = null,
   palette = [],
+  // S12 (issue #61): parameterization payload. When a user ADOPTS a fitted
+  // parametric family (paid tier), the entity carries the family id + its live
+  // knob defs + default params ALONGSIDE the rendered tile (one entity, two
+  // surfaces — the tile satisfies the user_patterns 'extracted' payload check
+  // and drives the thumbnail; the param fields drive the live generator). All
+  // optional + validate-and-null: a fixed-tile extracted pattern leaves them
+  // null, and a corrupt/oversized param payload on an attacker-writable row is
+  // dropped, never fatal (the tile still renders).
+  family = null,
+  paramDefs = null,
+  defaultParams = null,
 } = {}) {
   const fills = tile?.fills ?? [];
   const strokes = tile?.strokes ?? [];
@@ -148,6 +217,8 @@ export function makeExtractedPattern({
       tradition,
       palette,
     }),
+    // S12: all-or-nothing parameterization payload (see normalizeParameterization).
+    ...normalizeParameterization({ family, paramDefs, defaultParams }),
   };
 }
 
@@ -212,6 +283,17 @@ export function serializeExtractedPattern(entity) {
     material: entity.material,
     tradition: entity.tradition,
     palette: entity.palette,
+    // S12: parameterization → the user_patterns param columns that already exist
+    // (source_code/param_defs/default_params, nullable since migration 009 — NO
+    // new migration). `family` rides in default_params so no schema change is
+    // needed; source_code stays null (the family is code-resident, not stored
+    // JS — unlike an AI pattern). A deployment that predates 009's nullable
+    // columns simply omits them; save degrades to session-only, never a dead end.
+    family: entity.family,
+    param_defs: entity.paramDefs,
+    default_params: entity.defaultParams
+      ? { ...entity.defaultParams, __family: entity.family }
+      : null,
   };
 }
 
@@ -294,5 +376,20 @@ export function deserializeExtractedPattern(record) {
     material: record.material ?? null,
     tradition: record.tradition ?? null,
     palette: record.palette ?? [],
+    // S12: rehydrate the parameterization. `family` may live on the record
+    // directly or inside default_params.__family (the serialize convention that
+    // avoids a schema change). normalizeParameterization re-validates; a corrupt
+    // payload drops to a fixed tile — never lost, never fatal.
+    family: record.family ?? record.default_params?.__family ?? null,
+    paramDefs: record.param_defs ?? null,
+    defaultParams: stripFamilyKey(record.default_params),
   });
+}
+
+/** Drop the __family sentinel from a stored default_params object. */
+function stripFamilyKey(dp) {
+  if (!dp || typeof dp !== 'object') return null;
+  const { __family, ...rest } = dp;
+  void __family;
+  return Object.keys(rest).length ? rest : null;
 }

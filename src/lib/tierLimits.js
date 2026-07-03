@@ -163,6 +163,22 @@ export function checkGate(tier, feature, value) {
       };
     }
 
+    // S12 (issue #61, PRD decision 4 + 5): the LIVE structural knobs of an
+    // adopted parametric family. Ships DEFAULT-OPEN for every tier (undefined ⇒
+    // allowed), so today free users get the live star knobs too. Flipping to
+    // premium later = set `parameterize: false` on the free/guest tiers above —
+    // then adopting a fitted family yields a FIXED tile + export for those tiers
+    // (never a dead end), and only paid tiers get the live knobs. No caller
+    // rebuild; the on/off half of the gate is featureFlags.isFeatureEnabled.
+    case 'parameterize': {
+      const allowed = limits.parameterize !== false;
+      return {
+        allowed,
+        reason: allowed ? null : 'Upgrade to Pro for live structural knobs',
+        upgradeTarget: 'pro',
+      };
+    }
+
     case 'param': {
       // value = { paramKey, paramIndex, isUniversal }
       if (!value) return { allowed: true };

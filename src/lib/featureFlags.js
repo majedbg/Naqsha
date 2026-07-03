@@ -12,6 +12,11 @@
 
 const DEFAULTS = {
   extraction: true, // Photo → Pattern extraction (PRD #48), default-open
+  // S12 (issue #61): the "lift to parameters" step — fit a parametric family,
+  // adopt it as a pattern with LIVE structural knobs. Ships default-open (locked
+  // decision 5); flip 'off' here (or per-browser / per-deploy) to hide the
+  // family proposal entirely and always keep the traced tile.
+  parameterize: true,
 };
 
 export function isFeatureEnabled(name) {

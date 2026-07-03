@@ -64,6 +64,8 @@ const mocks = vi.hoisted(() => ({
   detectQuad: vi.fn(),
   readExif: vi.fn(),
   reverseGeocode: vi.fn(),
+  loadCollections: vi.fn(),
+  getUser: vi.fn(),
 }));
 
 vi.mock('../../lib/extraction/imageIO', () => ({
@@ -87,6 +89,14 @@ vi.mock('../../lib/extraction/workerBridge', () => ({
 vi.mock('../../lib/libraryRepository', () => ({
   saveExtractedPattern: mocks.save,
 }));
+
+// S9: the collections dropdown loads the user's collections. Mock the auth +
+// service so the load path is exercised deterministically (guest by default →
+// no dropdown; a per-test user override surfaces it).
+vi.mock('../../lib/supabase', () => ({
+  supabase: { auth: { getUser: (...a) => mocks.getUser(...a) } },
+}));
+vi.mock('../../lib/collectionService', () => ({ loadCollections: mocks.loadCollections }));
 
 // S8 (issue #57): EXIF read (pure) is mocked so tests drive the auto-fill
 // deterministically; geocode is mocked so NO real request leaves the machine
@@ -122,6 +132,9 @@ beforeEach(() => {
   // Default: no EXIF (zero-friction path). S8 tests override per-case.
   mocks.readExif.mockReset().mockResolvedValue({ date: null, gps: null, camera: null });
   mocks.reverseGeocode.mockReset().mockResolvedValue(null);
+  // Default: guest (no user) → no collections dropdown. S9 test overrides.
+  mocks.getUser.mockReset().mockResolvedValue({ data: { user: null } });
+  mocks.loadCollections.mockReset().mockResolvedValue([]);
   registeredIds = [];
 });
 
@@ -907,5 +920,149 @@ describe('ExtractStepper — chrome', () => {
     render(<ExtractStepper onClose={onClose} />);
     fireEvent.click(screen.getByRole('button', { name: /close/i }));
     expect(onClose).toHaveBeenCalled();
+  });
+});
+
+// S9 (issue #58): palette facet + provenance + organization on the Save step,
+// carried into the saved entity. Plus S8 follow-up 2 (stale suggested title).
+describe('ExtractStepper — S9 provenance + palette + organization', () => {
+  const TWO_TONE = {
+    // 2 opaque px: red + blue → palette must surface both.
+    data: new Uint8ClampedArray([255, 0, 0, 255, 0, 0, 255, 255]),
+    width: 2,
+    height: 1,
+  };
+
+  async function walkToSave() {
+    await walkToSelect();
+    fireEvent.click(screen.getByRole('button', { name: /trace region/i }));
+    await screen.findByText(/1 shape/i);
+    fireEvent.click(screen.getByRole('button', { name: /continue/i }));
+    await screen.findByRole('button', { name: /save to library/i });
+  }
+
+  it('shows read-only palette swatches derived from the selection crop', async () => {
+    mocks.cropToImageData.mockReturnValue(TWO_TONE);
+    render(<ExtractStepper onClose={() => {}} />);
+    await walkToSave();
+    const swatches = screen.getByTestId('palette-swatches');
+    expect(swatches.textContent).toContain('#ff0000');
+    expect(swatches.textContent).toContain('#0000ff');
+  });
+
+  it('carries provenance, tags, favorite and palette into the saved entity', async () => {
+    mocks.cropToImageData.mockReturnValue(TWO_TONE);
+    const onSaved = vi.fn();
+    render(<ExtractStepper onClose={() => {}} onSaved={onSaved} />);
+    await walkToSave();
+
+    fireEvent.change(screen.getByLabelText('Source type'), { target: { value: 'in_person' } });
+    fireEvent.change(screen.getByLabelText('Material'), { target: { value: 'stone' } });
+    fireEvent.change(screen.getByLabelText('Tradition or style'), { target: { value: 'Gothic tracery' } });
+    fireEvent.change(screen.getByLabelText('Note'), { target: { value: 'A rib boss' } });
+
+    const tagInput = screen.getByLabelText('Add a tag');
+    fireEvent.change(tagInput, { target: { value: 'gothic' } });
+    fireEvent.keyDown(tagInput, { key: 'Enter' });
+    fireEvent.change(tagInput, { target: { value: 'vault' } });
+    fireEvent.keyDown(tagInput, { key: 'Enter' });
+    expect(screen.getAllByTestId('tag-chip')).toHaveLength(2);
+
+    fireEvent.click(screen.getByRole('button', { name: /^favorite$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /save to library/i }));
+
+    await waitFor(() => expect(onSaved).toHaveBeenCalled());
+    const { entity } = onSaved.mock.calls[0][0];
+    registeredIds.push(entity.patternId);
+    expect(entity.sourceType).toBe('in_person');
+    expect(entity.material).toBe('stone');
+    expect(entity.tradition).toBe('Gothic tracery');
+    expect(entity.note).toBe('A rib boss');
+    expect(entity.tags).toEqual(['gothic', 'vault']);
+    expect(entity.favorite).toBe(true);
+    expect(entity.palette.map((s) => s.hex).sort()).toEqual(['#0000ff', '#ff0000']);
+  });
+
+  it('assigns a collection from the dropdown into the saved entity', async () => {
+    mocks.getUser.mockResolvedValue({ data: { user: { id: 'u1' } } });
+    mocks.loadCollections.mockResolvedValue([
+      { id: '123e4567-e89b-42d3-a456-426614174000', name: 'Uppsala trip' },
+    ]);
+    const onSaved = vi.fn();
+    render(<ExtractStepper onClose={() => {}} onSaved={onSaved} />);
+    await walkToSave(); // collections load on mount; resolved by the time we save
+    const sel = await screen.findByLabelText('Collection');
+    fireEvent.change(sel, { target: { value: '123e4567-e89b-42d3-a456-426614174000' } });
+    fireEvent.click(screen.getByRole('button', { name: /save to library/i }));
+    await waitFor(() => expect(onSaved).toHaveBeenCalled());
+    const { entity } = onSaved.mock.calls[0][0];
+    registeredIds.push(entity.patternId);
+    expect(entity.collectionId).toBe('123e4567-e89b-42d3-a456-426614174000');
+  });
+
+  it('keeps the previous palette when a re-extract fails (no fresh palette without a result)', async () => {
+    const GREEN = {
+      data: new Uint8ClampedArray([0, 255, 0, 255]),
+      width: 1,
+      height: 1,
+    };
+    // First trace: lattice-bearing result on the red/blue crop → Review.
+    mocks.cropToImageData.mockReturnValue(TWO_TONE);
+    mocks.extract.mockResolvedValueOnce(TRACE_RESULT_LATTICE);
+    render(<ExtractStepper onClose={() => {}} />);
+    await walkToSelect();
+    fireEvent.click(screen.getByRole('button', { name: /trace region/i }));
+    await screen.findByTestId('lattice-cell-editor');
+
+    // Opt-out re-extracts the same selection — but this run finds NO shapes on
+    // a (mocked) green crop. The old result stays current on Review.
+    mocks.cropToImageData.mockReturnValue(GREEN);
+    mocks.extract.mockResolvedValueOnce({
+      tile: { width: 10, height: 10, fills: [], strokes: [] },
+      lattice: null,
+    });
+    fireEvent.click(screen.getByRole('button', { name: /use single motif/i }));
+    await screen.findByRole('alert'); // "No shapes found…"
+
+    // Continue → Save: the palette must still pair with the SURVIVING result
+    // (red/blue), never the failed trace's green crop.
+    fireEvent.click(screen.getByRole('button', { name: /continue/i }));
+    await screen.findByRole('button', { name: /save to library/i });
+    const sw = screen.getByTestId('palette-swatches').textContent;
+    expect(sw).toContain('#ff0000');
+    expect(sw).toContain('#0000ff');
+    expect(sw).not.toContain('#00ff00');
+  });
+
+  it('removes a tag chip on ×', async () => {
+    render(<ExtractStepper onClose={() => {}} />);
+    await walkToSave();
+    const tagInput = screen.getByLabelText('Add a tag');
+    fireEvent.change(tagInput, { target: { value: 'gothic' } });
+    fireEvent.keyDown(tagInput, { key: 'Enter' });
+    expect(screen.getAllByTestId('tag-chip')).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: /remove tag gothic/i }));
+    expect(screen.queryAllByTestId('tag-chip')).toHaveLength(0);
+  });
+
+  // S8 follow-up 2: re-uploading an EXIF-less photo must not keep the previous
+  // photo's suggested title.
+  it('clears a stale suggested title when a new EXIF-less photo is uploaded', async () => {
+    mocks.readExif.mockResolvedValueOnce({ date: '2026-06-15T12:00:00Z', gps: null, camera: null });
+    render(<ExtractStepper onClose={() => {}} />);
+
+    // Upload 1: has a capture date → a title is suggested.
+    uploadFixtureFile();
+    await screen.findByRole('button', { name: /skip flatten/i });
+    // Back to Upload, then upload 2 with NO EXIF (default mock → nulls).
+    fireEvent.click(screen.getByRole('button', { name: /^back$/i }));
+    uploadFixtureFile();
+    fireEvent.click(await screen.findByRole('button', { name: /skip flatten/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /trace region/i }));
+    await screen.findByText(/1 shape/i);
+    fireEvent.click(screen.getByRole('button', { name: /continue/i }));
+
+    const titleInput = await screen.findByLabelText('Title');
+    expect(titleInput.value).toBe(''); // no stale "Ornament — June 2026"
   });
 });

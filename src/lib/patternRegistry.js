@@ -24,6 +24,21 @@ export function registerPattern(id, PatternClass, label, defaults, paramDefs, op
   listeners.forEach((fn) => fn());
 }
 
+/**
+ * Update the label of an already-registered dynamic pattern (S9, issue #58:
+ * a Library title edit must reach the picker card and layer auto-naming, not
+ * just the Library view — one entity, two surfaces). Replaces the type entry
+ * with a fresh object and notifies subscribers: PatternSelect / PickerModal
+ * re-read via `[...getDynamicTypes()]` on change, so the new entry object
+ * re-renders live. No-op for unknown ids or an unchanged label.
+ */
+export function updateDynamicLabel(id, label) {
+  const idx = dynamicTypes.findIndex((t) => t.id === id);
+  if (idx < 0 || !label || dynamicTypes[idx].label === label) return;
+  dynamicTypes[idx] = { ...dynamicTypes[idx], label };
+  listeners.forEach((fn) => fn());
+}
+
 export function unregisterPattern(id) {
   delete dynamicPatterns[id];
   const idx = dynamicTypes.findIndex((t) => t.id === id);

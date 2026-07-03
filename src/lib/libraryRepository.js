@@ -17,8 +17,18 @@ import {
   deserializeExtractedPattern,
 } from './extraction/extractedPattern';
 import { registerExtractedPattern } from './patterns/ExtractedPatternGenerator';
-import { unregisterPattern } from './patternRegistry';
-import { removeLibraryEntry } from './libraryStore';
+import { unregisterPattern, updateDynamicLabel } from './patternRegistry';
+import { loadCollections } from './collectionService';
+import { removeLibraryEntry, updateLibraryEntry } from './libraryStore';
+import {
+  normalizeNote,
+  normalizeFavorite,
+  normalizeTags,
+  normalizeCollectionId,
+  normalizeSlug,
+  normalizeTradition,
+} from './extraction/provenanceMeta';
+import { sanitizeText } from './extraction/locationMeta';
 
 export const PHOTO_BUCKET = 'pattern-photos';
 const TABLE = 'user_patterns';
@@ -84,6 +94,90 @@ export async function saveExtractedPattern(entity, { photoBlob, photoExt = 'png'
   }
 
   return { entity: saved, persisted: true };
+}
+
+// Editable-later fields (S9, issue #58): each maps a normalized entity field to
+// its user_patterns column. Palette + tile are NOT here — palette is auto-
+// derived (never user-edited), geometry is fixed. `title` normalizes to a
+// trimmed non-empty string (empty edits are ignored, not blanked).
+const META_FIELDS = {
+  title: { column: 'name', normalize: (v) => sanitizeText(v, 200) },
+  note: { column: 'note', normalize: normalizeNote },
+  favorite: { column: 'favorite', normalize: normalizeFavorite },
+  tags: { column: 'tags', normalize: normalizeTags },
+  collectionId: { column: 'collection_id', normalize: normalizeCollectionId },
+  sourceType: { column: 'source_type', normalize: normalizeSlug },
+  material: { column: 'material', normalize: normalizeSlug },
+  tradition: { column: 'tradition', normalize: normalizeTradition },
+};
+
+/**
+ * Edit metadata on an existing entry (S9 editable-later). Updates the in-memory
+ * store ALWAYS (so guest / session-only entries edit immediately) and, when
+ * signed in, best-effort persists the change — a guest / missing supabase /
+ * missing-column / RLS denial degrades to a session-only edit, never a dead
+ * end. Only keys present in `patch` (and in META_FIELDS) are touched; each is
+ * normalized (validate-and-null) before it reaches the store or the row.
+ * @returns {Promise<{ entity, persisted, reason? }>}
+ */
+export async function updateExtractedPatternMeta(patternId, patch = {}) {
+  const entityPatch = {};
+  const rowPatch = {};
+  for (const [key, val] of Object.entries(patch)) {
+    const field = META_FIELDS[key];
+    if (!field) continue;
+    const normalized = field.normalize(val);
+    // A blank title edit (normalize→null) is ignored so a name is never wiped.
+    if (key === 'title' && normalized == null) continue;
+    entityPatch[key === 'title' ? 'title' : key] = normalized;
+    rowPatch[field.column] = normalized;
+  }
+
+  // BOTH runtime surfaces first — the edit is visible this session regardless
+  // of persistence (guests included). One entity, two surfaces: the Library
+  // store AND the dynamic registry, whose label drives the picker custom-family
+  // card and layer auto-naming (getDynamicLabel, D6). Skipping the registry
+  // here would let a rename silently diverge the picker from the Library.
+  updateLibraryEntry(patternId, entityPatch);
+  if (entityPatch.title) updateDynamicLabel(patternId, entityPatch.title);
+
+  if (!supabase) return { entity: entityPatch, persisted: false, reason: 'no-supabase' };
+  const user = await authedUser();
+  if (!user) return { entity: entityPatch, persisted: false, reason: 'guest' };
+  if (Object.keys(rowPatch).length === 0) return { entity: entityPatch, persisted: true };
+
+  // Defense-in-depth on collection assignment: normalizeCollectionId only
+  // checks uuid SHAPE, and Postgres referential integrity bypasses RLS — a
+  // crafted call could point this row at another user's collection. Verify the
+  // uuid is one of THIS user's collections before writing; unknown (or the
+  // list is unfetchable) → null, surfaced via `reason` (no read leak either
+  // way; this keeps the row honest).
+  let reason;
+  if (rowPatch.collection_id) {
+    let owned = false;
+    try {
+      const cols = await loadCollections(user.id);
+      owned = (cols || []).some((c) => c.id === rowPatch.collection_id);
+    } catch {
+      owned = false; // unverifiable → treat as unknown
+    }
+    if (!owned) {
+      rowPatch.collection_id = null;
+      entityPatch.collectionId = null;
+      updateLibraryEntry(patternId, { collectionId: null }); // keep surfaces consistent
+      reason = 'unknown-collection';
+    }
+  }
+
+  const { error } = await supabase
+    .from(TABLE)
+    .update(rowPatch)
+    .eq('pattern_id', patternId)
+    .eq('user_id', user.id);
+  if (error) {
+    return { entity: entityPatch, persisted: false, reason: `save failed: ${error.message}` };
+  }
+  return { entity: entityPatch, persisted: true, ...(reason ? { reason } : {}) };
 }
 
 /** All extracted rows for a user, newest first. */

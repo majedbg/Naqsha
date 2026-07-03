@@ -40,6 +40,15 @@ import { listStages } from '../../lib/extraction/pipeline';
 import { makeExtractedPattern } from '../../lib/extraction/extractedPattern';
 import { readExif } from '../../lib/extraction/exifReader';
 import { reverseGeocode, placeToTitle } from '../../lib/extraction/geocode';
+import { extractPalette } from '../../lib/extraction/palette';
+import {
+  SOURCE_TYPES,
+  MATERIALS,
+  SOURCE_TYPE_LABELS,
+  MATERIAL_LABELS,
+} from '../../lib/extraction/provenanceMeta';
+import { loadCollections } from '../../lib/collectionService';
+import { supabase } from '../../lib/supabase';
 import { FABRICATION_ROLES } from '../../lib/extraction/vectorizer';
 import { registerExtractedPattern } from '../../lib/patterns/ExtractedPatternGenerator';
 import { saveExtractedPattern } from '../../lib/libraryRepository';
@@ -247,6 +256,21 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad }) {
   // short human-readable reason.
   const [sessionOnlyReason, setSessionOnlyReason] = useState(null);
 
+  // S9 (issue #58): organization + provenance + palette facet. `palette` is the
+  // auto-derived facet from the selection crop (read-only — shown, never a
+  // silent commitment to wrong data). Everything else is optional + editable,
+  // nothing blocks the save (progressive disclosure).
+  const [palette, setPalette] = useState([]);
+  const [note, setNote] = useState('');
+  const [favorite, setFavorite] = useState(false);
+  const [tags, setTags] = useState([]);
+  const [tagInput, setTagInput] = useState('');
+  const [sourceType, setSourceType] = useState('');
+  const [material, setMaterial] = useState('');
+  const [tradition, setTradition] = useState('');
+  const [collectionId, setCollectionId] = useState('');
+  const [collections, setCollections] = useState([]);
+
   const imgElRef = useRef(null); // decoded HTMLImageElement (natural size)
   const cropBoxRef = useRef(null);
   const bridgeRef = useRef(null);
@@ -258,6 +282,27 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad }) {
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
+
+  // S9: load the signed-in user's existing collections for the "assign to a
+  // collection" dropdown (REUSES the collections table — #58; no new system).
+  // Fully fail-soft: guests / missing supabase / errors → no dropdown, never a
+  // blocked save. Creating collections stays in the existing collections UI.
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const uid = (await supabase?.auth.getUser())?.data?.user?.id;
+        if (!uid) return;
+        const cols = await loadCollections(uid);
+        if (alive) setCollections(cols || []);
+      } catch {
+        /* no collections dropdown — never blocks the save */
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   // --- Upload ---------------------------------------------------------------
 
@@ -305,6 +350,20 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad }) {
       setLocation(null);
       setGeocodeFailed(false);
       setTitleTouched(false);
+      // S8 follow-up 2: also clear the TITLE, not just titleTouched. Re-uploading
+      // an EXIF-less photo previously kept the prior photo's suggested title;
+      // clearing it lets the suggestion effect re-derive (or stay empty).
+      setTitle('');
+      // S9: reset per-photo organization + provenance + palette facet.
+      setPalette([]);
+      setNote('');
+      setFavorite(false);
+      setTags([]);
+      setTagInput('');
+      setSourceType('');
+      setMaterial('');
+      setTradition('');
+      setCollectionId('');
       readExif(f)
         .then((meta) => {
           setExifMeta(meta);
@@ -442,6 +501,12 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad }) {
       // Snapshot the selection raster BEFORE extract(): the worker path
       // TRANSFERS image.data zero-copy, detaching this buffer.
       const selURL = imageDataToDataURL(imageData);
+      // S9: derive the palette facet from the SAME crop. COMPUTED here, before
+      // the transfer detaches the buffer; COMMITTED only after the no-shapes
+      // bail below, so a failed trace can never pair a fresh palette with the
+      // previous result. Deterministic + cheap (strided median-cut) — an empty
+      // palette is simply no facet.
+      const cropPalette = extractPalette(imageData, { maxColors: 6 });
       if (!bridgeRef.current) bridgeRef.current = createExtractionBridge();
       const options = latticeOpt === undefined ? {} : { lattice: latticeOpt };
       const res = await bridgeRef.current.extract(imageData, options, (p) =>
@@ -451,6 +516,7 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad }) {
         setError('No shapes found in that region — try a tighter or higher-contrast selection.');
         return false;
       }
+      setPalette(cropPalette);
       setSel({ rect, url: selURL, w: rect.w, h: rect.h });
       setManualCell(null);
       setResult(res);
@@ -569,6 +635,16 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad }) {
         location,
         captureDate: exifMeta?.date ?? null,
         exif: exifMeta?.camera ? { camera: exifMeta.camera } : null,
+        // S9: organization + provenance + palette facet. All optional; empties
+        // normalize to null/[] inside the entity (progressive disclosure).
+        note,
+        favorite,
+        tags,
+        collectionId: collectionId || null,
+        sourceType: sourceType || null,
+        material: material || null,
+        tradition,
+        palette,
       });
       // Register FIRST (one entity, two surfaces): the pattern is usable this
       // session even when persistence is unavailable (guest / migration not
@@ -591,7 +667,34 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad }) {
     } finally {
       setSaving(false);
     }
-  }, [result, shapeEdits, title, defaultTitle, file, imageURL, location, exifMeta, onSaved, onClose]);
+  }, [result, shapeEdits, title, defaultTitle, file, imageURL, location, exifMeta, note, favorite, tags, collectionId, sourceType, material, tradition, palette, onSaved, onClose]);
+
+  // S9: tag chip entry — Enter or comma commits the current input as a tag
+  // (deduped case-insensitively); Backspace on an empty input removes the last.
+  const commitTag = useCallback(() => {
+    const t = tagInput.trim();
+    if (!t) return;
+    setTags((prev) =>
+      prev.some((x) => x.toLowerCase() === t.toLowerCase()) ? prev : [...prev, t]
+    );
+    setTagInput('');
+  }, [tagInput]);
+
+  const onTagKeyDown = useCallback(
+    (e) => {
+      if (e.key === 'Enter' || e.key === ',') {
+        e.preventDefault();
+        commitTag();
+      } else if (e.key === 'Backspace' && !tagInput) {
+        setTags((prev) => prev.slice(0, -1));
+      }
+    },
+    [commitTag, tagInput]
+  );
+
+  const removeTag = useCallback((t) => {
+    setTags((prev) => prev.filter((x) => x !== t));
+  }, []);
 
   // --- Review edits (S6) --------------------------------------------------------
 
@@ -931,6 +1034,7 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad }) {
                   <span className="text-xs text-ink-soft">Title</span>
                   <input
                     type="text"
+                    aria-label="Title"
                     value={title}
                     placeholder={defaultTitle}
                     onChange={(e) => {
@@ -1036,6 +1140,25 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad }) {
                     </p>
                   )}
 
+                  {/* S8 follow-up 3: attribute the Nominatim result where the
+                      geocoded place name is shown (OSM usage policy). Only for
+                      an actual geocoded result — a hand-typed placeName is not
+                      OSM data. */}
+                  {location?.source === 'geocoded' && location?.placeName && (
+                    <p className="text-[10px] text-ink-faint" data-testid="osm-credit">
+                      Place name ©{' '}
+                      <a
+                        href="https://www.openstreetmap.org/copyright"
+                        target="_blank"
+                        rel="noreferrer noopener"
+                        className="text-violet hover:underline"
+                      >
+                        OpenStreetMap
+                      </a>{' '}
+                      contributors
+                    </p>
+                  )}
+
                   {/* Privacy disclosure: the original photo is stored as-is, so
                       its embedded EXIF (incl. GPS) travels with it even if these
                       fields are cleared. */}
@@ -1043,6 +1166,167 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad }) {
                     Your photo is saved privately with its original EXIF (which may include GPS),
                     readable only by you.
                   </p>
+                </fieldset>
+
+                {/* S9: extracted palette facet — read-only swatches (auto-
+                    derived; the user is shown, never silently committed to
+                    wrong data). Hidden when nothing was extracted. */}
+                {palette.length > 0 && (
+                  <div className="flex flex-col gap-1.5" data-testid="palette-swatches">
+                    <span className="text-[11px] text-ink-soft">Palette</span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {palette.map((sw) => (
+                        <span
+                          key={sw.hex}
+                          className="inline-flex items-center gap-1 pl-1 pr-1.5 py-0.5 rounded-xs border border-hairline bg-paper-warm text-[10px] text-ink-soft"
+                          title={`${sw.hex} · ${Math.round(sw.coverage * 100)}%`}
+                        >
+                          <span
+                            className="inline-block w-3 h-3 rounded-xs border border-hairline"
+                            style={{ backgroundColor: sw.hex }}
+                            aria-hidden
+                          />
+                          {sw.hex}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* S9: provenance — how/where this ornament was sourced. All
+                    optional. */}
+                <fieldset className="flex flex-col gap-2 border border-hairline rounded-xs p-3">
+                  <legend className="text-[11px] text-ink-soft px-1">Provenance (optional)</legend>
+                  <div className="flex gap-2">
+                    <label className="flex flex-col gap-1 flex-1">
+                      <span className="text-[11px] text-ink-soft">Source</span>
+                      <select
+                        aria-label="Source type"
+                        value={sourceType}
+                        onChange={(e) => setSourceType(e.target.value)}
+                        className="bg-paper-warm text-ink text-sm px-2 py-1.5 rounded-xs border border-hairline outline-none focus:border-violet"
+                      >
+                        <option value="">—</option>
+                        {SOURCE_TYPES.map((v) => (
+                          <option key={v} value={v}>
+                            {SOURCE_TYPE_LABELS[v] || v}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="flex flex-col gap-1 flex-1">
+                      <span className="text-[11px] text-ink-soft">Material</span>
+                      <select
+                        aria-label="Material"
+                        value={material}
+                        onChange={(e) => setMaterial(e.target.value)}
+                        className="bg-paper-warm text-ink text-sm px-2 py-1.5 rounded-xs border border-hairline outline-none focus:border-violet"
+                      >
+                        <option value="">—</option>
+                        {MATERIALS.map((v) => (
+                          <option key={v} value={v}>
+                            {MATERIAL_LABELS[v] || v}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[11px] text-ink-soft">Tradition / style</span>
+                    <input
+                      type="text"
+                      aria-label="Tradition or style"
+                      value={tradition}
+                      placeholder="e.g. Gothic tracery, Islamic geometric"
+                      onChange={(e) => setTradition(e.target.value)}
+                      className="bg-paper-warm text-ink text-sm px-2.5 py-1.5 rounded-xs border border-hairline outline-none focus:border-violet"
+                    />
+                  </label>
+                </fieldset>
+
+                {/* S9: organization — note, tags, favorite, collection. */}
+                <fieldset className="flex flex-col gap-2 border border-hairline rounded-xs p-3">
+                  <legend className="text-[11px] text-ink-soft px-1">Organize (optional)</legend>
+
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[11px] text-ink-soft">Note</span>
+                    <textarea
+                      aria-label="Note"
+                      value={note}
+                      rows={2}
+                      placeholder="What is this? Anything worth remembering."
+                      onChange={(e) => setNote(e.target.value)}
+                      className="bg-paper-warm text-ink text-sm px-2.5 py-1.5 rounded-xs border border-hairline outline-none focus:border-violet resize-y"
+                    />
+                  </label>
+
+                  <div className="flex flex-col gap-1">
+                    <span className="text-[11px] text-ink-soft">Tags</span>
+                    <div className="flex flex-wrap gap-1.5 items-center bg-paper-warm rounded-xs border border-hairline px-2 py-1.5">
+                      {tags.map((t) => (
+                        <span
+                          key={t}
+                          data-testid="tag-chip"
+                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-xs bg-panel text-[11px] text-ink-soft border border-hairline"
+                        >
+                          {t}
+                          <button
+                            type="button"
+                            aria-label={`Remove tag ${t}`}
+                            onClick={() => removeTag(t)}
+                            className="text-ink-faint hover:text-ink leading-none"
+                          >
+                            ×
+                          </button>
+                        </span>
+                      ))}
+                      <input
+                        type="text"
+                        aria-label="Add a tag"
+                        value={tagInput}
+                        placeholder={tags.length ? 'Add…' : 'e.g. tracery, vault, blue'}
+                        onChange={(e) => setTagInput(e.target.value)}
+                        onKeyDown={onTagKeyDown}
+                        onBlur={commitTag}
+                        className="flex-1 min-w-[6rem] bg-transparent text-ink text-sm outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <button
+                      type="button"
+                      aria-pressed={favorite}
+                      onClick={() => setFavorite((v) => !v)}
+                      className={`inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium rounded-xs border transition-colors duration-fast ease-out-quart ${
+                        favorite
+                          ? 'bg-saffron/15 border-saffron text-ink'
+                          : 'bg-panel border-hairline text-ink-soft hover:text-ink'
+                      }`}
+                    >
+                      <span aria-hidden>{favorite ? '★' : '☆'}</span>
+                      {favorite ? 'Favorited' : 'Favorite'}
+                    </button>
+
+                    {collections.length > 0 && (
+                      <label className="flex items-center gap-1.5 flex-1 min-w-[10rem]">
+                        <span className="text-[11px] text-ink-soft">Collection</span>
+                        <select
+                          aria-label="Collection"
+                          value={collectionId}
+                          onChange={(e) => setCollectionId(e.target.value)}
+                          className="flex-1 bg-paper-warm text-ink text-sm px-2 py-1.5 rounded-xs border border-hairline outline-none focus:border-violet"
+                        >
+                          <option value="">None</option>
+                          {collections.map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {c.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    )}
+                  </div>
                 </fieldset>
               </div>
 

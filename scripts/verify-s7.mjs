@@ -25,8 +25,12 @@ const check = (name, cond, detail = '') => {
 // A 4×4 lattice (period 64) of solid diamonds — each diamond has D4 (4-fold +
 // mirror) symmetry, centered in its cell → the whole tiling is p4m. Proven to
 // trace (the S8/S9 fixture); here the point is the SYMMETRY, not the palette.
-async function uploadImage(page) {
-  await page.evaluate(async () => {
+// `phase` shifts every diamond center: 32 = the detected cell's (½,½) → the
+// rotation centers land ON the constrained search set; 12 = an off-center crop
+// (the real-photo case) → rotations sit off {0,½} and only the crop-invariant
+// mirrors survive classification — the hidden-rotation caveat must fire.
+async function uploadImage(page, phase = 32) {
+  await page.evaluate(async (ph) => {
     const c = document.createElement('canvas');
     c.width = 256;
     c.height = 256;
@@ -34,10 +38,10 @@ async function uploadImage(page) {
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, 256, 256);
     ctx.fillStyle = '#000000';
-    for (let gy = 0; gy < 4; gy++) {
-      for (let gx = 0; gx < 4; gx++) {
-        const cx = 32 + gx * 64;
-        const cy = 32 + gy * 64;
+    for (let gy = -1; gy < 5; gy++) {
+      for (let gx = -1; gx < 5; gx++) {
+        const cx = ph + gx * 64;
+        const cy = ph + gy * 64;
         ctx.beginPath();
         ctx.moveTo(cx, cy - 22);
         ctx.lineTo(cx + 22, cy);
@@ -57,7 +61,7 @@ async function uploadImage(page) {
     dt.items.add(file);
     input.files = dt.files;
     input.dispatchEvent(new Event('change', { bubbles: true }));
-  });
+  }, phase);
 }
 
 async function openStepper(page) {
@@ -96,6 +100,11 @@ async function main() {
   const dropdown = page.getByLabel('Symmetry group');
   const optionCount = await dropdown.locator('option').count();
   check('override dropdown offers the 17 groups + auto + none', optionCount === 19, `options=${optionCount}`);
+  // Centered tiling → rotation centers on the search set → no phase caveat.
+  check(
+    'no phase-collapse caveat on the centered tiling',
+    (await page.getByTestId('symmetry-caveat').count()) === 0
+  );
   await page.screenshot({ path: OUT + '01-review-detected.png', fullPage: false });
 
   // ---- Override the group ----
@@ -129,6 +138,41 @@ async function main() {
   check('Library detail displays the symmetry badge', /p6/.test(libText), libText.trim());
   check('Library badge reflects the manual override', /manual/i.test(libText), libText.trim());
   await page.screenshot({ path: OUT + '03-library-badge.png', fullPage: true });
+
+  // ---- Scenario 2 (adversarial-review MAJOR): off-center crop ----
+  // The same p4m tiling with the motif at (12,12) of each 64px cell: the crop
+  // anchors at the selection origin, so the 4-fold centers land OFF the {0,½}
+  // search set — classification collapses to the crop-invariant mirror subgroup,
+  // and the hidden-rotation diagnostic must disclose it: caveat + capped
+  // (non-1.0) confidence.
+  await page.keyboard.press('Escape'); // library detail → grid
+  await page.keyboard.press('Escape'); // grid → closed
+  await page.waitForTimeout(300);
+  await openStepper(page);
+  await uploadImage(page, 12);
+  await page.getByRole('button', { name: /skip/i }).first().click();
+  await page.getByRole('button', { name: /trace region/i }).click();
+  await page.getByTestId('symmetry-proposal').waitFor({ timeout: 30000 });
+
+  const caveat = page.getByTestId('symmetry-caveat');
+  const caveatShown = (await caveat.count()) > 0;
+  check('off-center crop shows the phase-collapse caveat', caveatShown);
+  if (caveatShown) {
+    const cvText = (await caveat.textContent()) || '';
+    check(
+      'caveat explains hidden rotations + points at the recourse',
+      /off-center crop/i.test(cvText) && /adjust the repeat cell/i.test(cvText),
+      cvText.slice(0, 90)
+    );
+  }
+  const hiddenBadge = (await page.getByTestId('symmetry-badge').textContent()) || '';
+  const pct = parseInt((hiddenBadge.match(/(\d+)%/) || [])[1] ?? '100', 10);
+  check(
+    'off-center confidence is capped (non-1.0)',
+    pct <= 50,
+    hiddenBadge.trim()
+  );
+  await page.screenshot({ path: OUT + '04-review-hidden-rotation.png', fullPage: false });
 
   await browser.close();
 

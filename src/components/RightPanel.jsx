@@ -2,6 +2,7 @@ import { useRef, useState, useEffect, useLayoutEffect, useCallback, useMemo } fr
 import useCanvas from "../lib/useCanvas";
 import CanvasChrome from "./canvas/CanvasChrome";
 import PlotOverlay from "./canvas/PlotOverlay";
+import AnchorGhostOverlay from "./canvas/AnchorGhostOverlay";
 import FieldOverlay from "./FieldOverlay";
 import { chladniField } from "../lib/fields/chladniField";
 import { fieldForLayer } from "../lib/fields/fieldRegistry";
@@ -131,6 +132,13 @@ export default function RightPanel({
   activeTool = null,
   transforms = {},
   selectedNodeId = null,
+  // Motif anchor-ghost overlay (click-to-override). When the selected layer is a
+  // motif over a semantic host (grid/recursive/spiral), an <AnchorGhostOverlay>
+  // draws candidate/placed anchor dots inside the scaled box; clicking one writes
+  // a force-include/exclude override up via onUpdateLayer. No-op default so
+  // callers that don't wire it (mobile / ShareView / tests) render unchanged —
+  // the overlay renders (ghosts show) but a dot click is inert.
+  onUpdateLayer = () => {},
   onSelect = () => {},
   onMove = () => {},
   onCommit = () => {},
@@ -744,6 +752,18 @@ export default function RightPanel({
           onPointerUp={handlePointerUp}
           onPointerCancel={handlePointerUp}
           onDoubleClick={handleDoubleClick}
+        />
+        {/* Motif anchor-ghost overlay (click-to-override). LAST child in the
+            scaled box so its dots sit on top (top z) and capture their own
+            pointerdowns; the SVG itself is pointer-events:none so clicks in empty
+            canvas fall through to the select-overlay above. Renders only when the
+            selected layer is a motif over a semantic host — otherwise null. */}
+        <AnchorGhostOverlay
+          layers={layers}
+          selectedLayerId={selectedNodeId}
+          canvasW={canvasW}
+          canvasH={canvasH}
+          onUpdateLayer={onUpdateLayer}
         />
       </div>
 

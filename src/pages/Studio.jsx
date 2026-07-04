@@ -1439,6 +1439,9 @@ export default function Studio({ submitOrg = null } = {}) {
           activeTool={activeTool}
           transforms={canvasTransforms}
           selectedNodeId={selectedLayerId}
+          // Motif anchor-ghost overlay writes force-include/exclude overrides
+          // back onto the motif layer's binding via the shared updateLayer.
+          onUpdateLayer={updateLayer}
           onSelect={setSelectedLayerId}
           onMove={handleCanvasMove}
           onCommit={handleCanvasCommit}

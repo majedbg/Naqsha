@@ -72,6 +72,29 @@ export function motifHostId(layer) {
 }
 
 /**
+ * Recursively merge a partial binding patch into the current binding WITHOUT
+ * dropping sibling branches — a patch of only `{ selection: { rate: { n } } }`
+ * must preserve `selection.roles` AND the whole `placement` subtree. Plain
+ * objects merge; everything else (arrays like `selection.roles`, scalars)
+ * REPLACES wholesale. Used by the Motif device UI, where every write must
+ * rebuild `params.binding` whole (onUpdateLayer shallow-merges only the top
+ * level, so a partial nested patch would otherwise clobber other branches).
+ * @param {object} base
+ * @param {object} patch
+ * @returns {object} a new merged binding (inputs are never mutated).
+ */
+export function deepMergeBinding(base, patch) {
+  const isPlain = (v) => v != null && typeof v === 'object' && !Array.isArray(v);
+  const out = { ...(base || {}) };
+  for (const key of Object.keys(patch || {})) {
+    const pv = patch[key];
+    const bv = out[key];
+    out[key] = isPlain(bv) && isPlain(pv) ? deepMergeBinding(bv, pv) : pv;
+  }
+  return out;
+}
+
+/**
  * Auto-generated display name for a newly created motif layer.
  * @param {object} hostLayer
  * @param {object} glyph

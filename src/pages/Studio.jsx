@@ -265,6 +265,7 @@ export default function Studio({ submitOrg = null } = {}) {
     addLayer,
     addImportedLayer,
     addTextLayer,
+    addMotifLayer,
     updateLayer,
     reorderLayers,
     changeLayerPattern,
@@ -1742,6 +1743,11 @@ export default function Studio({ submitOrg = null } = {}) {
             onClosePreview={lensEntry.exit3D}
             threeDSubMode={threeD.subMode}
             threeDFocusLayerId={threeD.focusFieldLayerId}
+            // Motif device (host Inspector) — add a motif adorning the selected
+            // host, and remove a motif via the same delete handler the object
+            // tree uses (removeLayer / onDeleteLayer).
+            onAddMotif={addMotifLayer}
+            onRemoveLayer={removeLayer}
           />,
           inspectorSlot
         )}

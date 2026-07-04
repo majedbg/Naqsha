@@ -675,16 +675,194 @@ function spiralAnchors(params, canvasW, canvasH) {
   return anchors;
 }
 
+// ── VORONOI extractor (patternType:'voronoi', class VoronoiCells) ─────────────
+// STRATEGY = GEOMETRY-IN (host supplies the already-resolved cell polygons).
+//
+// WHY NOT REPLAY: VoronoiCells builds its cell SITES from ctx.random
+// (VoronoiCells.js:33-52, seeded by ctx.randomSeed(seed) at :7). The ADAPTER's
+// RNG is NOT reproducible outside p5 — the real on-canvas render uses P5Adapter,
+// which delegates random() to the live p5 instance (P5Adapter.js:93), while a
+// headless RecordingContext uses mulberry32 (drawingContext.js:169-175). rng.js
+// documents this divergence explicitly. So re-running Voronoi under a
+// RecordingContext (or re-deriving sites from params) yields DIFFERENT cells than
+// the actual canvas — any anchor so derived could NOT be proven to sit on the
+// real render. REPLAY is therefore dishonest and is rejected.
+//
+// GEOMETRY-IN models the real integration seam: the HOST resolves its Voronoi
+// geometry first (it already has the cells — computeVoronoiCells output), then
+// hands them to this extractor. Anchors are a PURE FUNCTION of those polygons, so
+// they sit on the cells BY CONSTRUCTION — divergence-free regardless of which RNG
+// produced the sites. Contract: getSemanticAnchors('voronoi', params, W, H, opts)
+// reads opts.drawnCells; with none it returns null (the 4-arg call — including
+// MotifPattern's — falls back to generic edge anchors, unchanged).
+//
+// opts.drawnCells: Array of cells in WORLD (canvas-pixel) coords. Each cell is
+// either a bare Array<{x,y}> of boundary vertices in order, OR an object
+// { vertices: Array<{x,y}>, site?: {x,y} }. Cells with < 3 vertices are skipped
+// (a Voronoi vertex needs ≥3 cells; a 2-vertex boundary sliver is degenerate).
+//
+// ROLE MAPPING (a tessellation's real structure):
+//   • cell     = one per polygon, at its centroid (the site if the host supplies
+//                one, else the vertex mean). Fixed convention tangent=0,
+//                normal=PI/2 (matches Grid/Recursive cell role).
+//   • crossing = the DEDUPED Voronoi vertex set (shared circumcenters are
+//                byte-identical across cells, so EXACT-coordinate keys collapse
+//                them — quantizing would risk a false merge). meta.junction=true
+//                iff the vertex is shared by ≥3 cells (a true Voronoi junction);
+//                meta.cellCount records the multiplicity. A vertex has no
+//                canonical direction → fixed convention tangent=0, normal=PI/2.
+//   • edge     = the DEDUPED cell-boundary edges (a shared edge is one Voronoi
+//                edge, keyed by its sorted endpoint pair), at each midpoint.
+//                tangent = edge direction (from the canonical endpoint order);
+//                normal = tangent+PI/2.
+//   • tip      = NONE — a tessellation has no free termini. Omitted by design.
+//
+// INTEGRATION TODO: MotifPattern.js calls the 4-arg form and CANNOT yet supply
+// opts.drawnCells (VoronoiCells does not expose its cells; computeVoronoiCells is
+// module-private and this slice must not edit that file). So the Voronoi path
+// stays null in production until a host resolves and passes drawnCells. That
+// graceful null is intentional — we never ship anchors we cannot tie to real
+// cells. Wiring the producer is a documented follow-up.
+
+const HALF = 0.5;
+
+/** Normalize a drawnCells entry to { vertices, site } (site = centroid fallback). */
+function normalizeCell(cell) {
+  const vertices = Array.isArray(cell) ? cell : cell && cell.vertices;
+  if (!Array.isArray(vertices) || vertices.length < 3) return null;
+  let site = !Array.isArray(cell) && cell.site ? cell.site : null;
+  if (!site) {
+    let sx = 0, sy = 0;
+    for (const v of vertices) { sx += v.x; sy += v.y; }
+    site = { x: sx / vertices.length, y: sy / vertices.length };
+  }
+  return { vertices, site };
+}
+
+/**
+ * Voronoi semantic extractor (GEOMETRY-IN). See the block header for the full
+ * role/coordinate/honesty contract. Emission order is fixed (cells, then
+ * crossings in first-encounter order, then edges) for determinism.
+ * @param {object} _params  unused (kept for signature parity; sites are NOT
+ *                          re-derived from params — see header)
+ * @param {number} _canvasW unused (world coords come in via drawnCells)
+ * @param {number} _canvasH unused
+ * @param {object} opts     { drawnCells } — see header
+ * @returns {Array<object>|null}
+ */
+function voronoiAnchors(_params, _canvasW, _canvasH, opts) {
+  const drawn = opts && opts.drawnCells;
+  if (!Array.isArray(drawn)) return null; // no host geometry ⇒ defer to caller.
+
+  const cells = drawn.map(normalizeCell).filter(Boolean);
+  const anchors = [];
+
+  // ── CELLS: one per polygon, at its site/centroid.
+  for (let i = 0; i < cells.length; i++) {
+    const { site } = cells[i];
+    anchors.push({
+      id: anchorId('cell', i),
+      role: 'cell',
+      x: site.x,
+      y: site.y,
+      tangent: 0,
+      normal: HALF_PI,
+      s: 0,
+      meta: { cell: i, sides: cells[i].vertices.length },
+    });
+  }
+
+  // ── CROSSINGS: deduped vertices (exact keys), junction ⇔ shared by ≥3 cells.
+  const vertOrder = [];
+  const vertInfo = new Map(); // key → { x, y, count }
+  for (const { vertices } of cells) {
+    for (const v of vertices) {
+      const key = `${v.x},${v.y}`;
+      let info = vertInfo.get(key);
+      if (!info) {
+        info = { x: v.x, y: v.y, count: 0 };
+        vertInfo.set(key, info);
+        vertOrder.push(key);
+      }
+      info.count += 1;
+    }
+  }
+  for (let i = 0; i < vertOrder.length; i++) {
+    const info = vertInfo.get(vertOrder[i]);
+    anchors.push({
+      id: anchorId('crossing', i),
+      role: 'crossing',
+      x: info.x,
+      y: info.y,
+      tangent: 0,
+      normal: HALF_PI,
+      s: 0,
+      meta: { junction: info.count >= 3, cellCount: info.count },
+    });
+  }
+
+  // ── EDGES: deduped undirected boundary edges at midpoints; tangent = edge dir.
+  //    Canonicalize endpoint order by sorted key so a shared edge yields one
+  //    stable anchor (and a deterministic tangent) no matter which cell drew it.
+  const edgeOrder = [];
+  const edgeInfo = new Map(); // key → { a, b, count }
+  for (const { vertices } of cells) {
+    const n = vertices.length;
+    for (let k = 0; k < n; k++) {
+      const p = vertices[k];
+      const q = vertices[(k + 1) % n];
+      const kp = `${p.x},${p.y}`;
+      const kq = `${q.x},${q.y}`;
+      if (kp === kq) continue; // zero-length edge — skip.
+      const forward = kp < kq;
+      const a = forward ? p : q;
+      const b = forward ? q : p;
+      const key = `${forward ? kp : kq}|${forward ? kq : kp}`;
+      let info = edgeInfo.get(key);
+      if (!info) {
+        info = { a, b, count: 0 };
+        edgeInfo.set(key, info);
+        edgeOrder.push(key);
+      }
+      info.count += 1;
+    }
+  }
+  for (let i = 0; i < edgeOrder.length; i++) {
+    const { a, b, count } = edgeInfo.get(edgeOrder[i]);
+    const tangent = Math.atan2(b.y - a.y, b.x - a.x);
+    anchors.push({
+      id: anchorId('edge', i),
+      role: 'edge',
+      x: (a.x + b.x) * HALF,
+      y: (a.y + b.y) * HALF,
+      tangent,
+      normal: tangent + HALF_PI,
+      s: 0,
+      meta: { cellCount: count },
+    });
+  }
+
+  return anchors;
+}
+
 /**
  * Return semantic anchors for a pattern, or null when no extractor exists (the
  * caller falls back to generic edge anchors from anchors.js).
+ *
+ * The optional 5th `opts` arg carries host-resolved geometry for GEOMETRY-IN
+ * extractors (currently 'voronoi', which reads opts.drawnCells). It is
+ * backward-compatible: existing 4-arg callers (including MotifPattern) pass no
+ * opts, so grid/recursive/spiral behave exactly as before and voronoi returns
+ * null (graceful fallback).
  * @param {string} patternType
  * @param {object} params
  * @param {number} canvasW
  * @param {number} canvasH
+ * @param {object} [opts]  host geometry for GEOMETRY-IN extractors, e.g.
+ *                         { drawnCells } for voronoi.
  * @returns {Array<object>|null}
  */
-export function getSemanticAnchors(patternType, params, canvasW, canvasH) {
+export function getSemanticAnchors(patternType, params, canvasW, canvasH, opts) {
   switch (patternType) {
     case 'grid':
       return gridAnchors(params, canvasW, canvasH);
@@ -692,8 +870,9 @@ export function getSemanticAnchors(patternType, params, canvasW, canvasH) {
       return recursiveAnchors(params, canvasW, canvasH);
     case 'spiral':
       return spiralAnchors(params, canvasW, canvasH);
-    // Extractors for these hosts are deferred to later slices.
     case 'voronoi':
+      return voronoiAnchors(params, canvasW, canvasH, opts);
+    // Extractors for other hosts are deferred to later slices.
     default:
       return null;
   }

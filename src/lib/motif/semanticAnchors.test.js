@@ -4,6 +4,7 @@ import { placeMotifs, selectAnchors } from './placementEngine.js';
 import Grid from '../patterns/Grid.js';
 import RecursiveGeometry from '../patterns/RecursiveGeometry.js';
 import Spiral from '../patterns/Spiral.js';
+import VoronoiCells from '../patterns/VoronoiCells.js';
 import { RecordingContext } from '../patterns/drawingContext.js';
 
 const HALF_PI = Math.PI / 2;
@@ -66,8 +67,11 @@ function uniqSorted(nums, tol = 1e-6) {
 }
 
 describe('getSemanticAnchors — non-extractor patterns defer to null', () => {
-  it('returns null for voronoi / unknown (spiral now has an extractor)', () => {
+  it('returns null for voronoi (no opts) / unknown; spiral & grid have extractors', () => {
     const p = linearParams();
+    // voronoi is GEOMETRY-IN: null unless opts.drawnCells is supplied (its own
+    // suite below exercises the populated case). This 4-arg call is the
+    // backward-compat guard for MotifPattern's existing call site.
     expect(getSemanticAnchors('voronoi', p, W, H)).toBeNull();
     expect(getSemanticAnchors('unknown-pattern', p, W, H)).toBeNull();
     // spiral is exercised in its own suite below and returns an array here.
@@ -724,6 +728,271 @@ describe('getSemanticAnchors — spiral feeds the placement engine', () => {
       {
         selection: { roles: ['tip', 'edge'] },
         placement: { sizing: { mode: 'fixed', size: 3, min: 0 } },
+      },
+      { canvasW: W, canvasH: H, boundary: { type: 'rect', width: W, height: H } }
+    );
+    expect(placements.length).toBeGreaterThan(0);
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// VORONOI extractor (patternType:'voronoi', class VoronoiCells) — GEOMETRY-IN
+// ════════════════════════════════════════════════════════════════════════════
+//
+// STEP-0 FINDING (why GEOMETRY-IN, not REPLAY): VoronoiCells seeds its cell
+// SITES from ctx.random (VoronoiCells.js:33-52, seeded by ctx.randomSeed(seed)
+// at :7). The ADAPTER's RNG is NOT reproducible outside p5: the real on-canvas
+// render uses P5Adapter, which delegates random() to the live p5 instance
+// (P5Adapter.js:93), whereas a headless RecordingContext uses mulberry32
+// (drawingContext.js:169-175). rng.js documents this divergence explicitly. So a
+// RecordingContext replay yields DIFFERENT sites → DIFFERENT cells than the
+// canvas; anchors re-derived from params could NOT be proven to sit on the real
+// render. REPLAY is therefore dishonest and is ruled out.
+//
+// GEOMETRY-IN instead reads the host's ALREADY-RESOLVED cell polygons via a 5th
+// opts arg: getSemanticAnchors('voronoi', params, W, H, { drawnCells }). Anchors
+// are a PURE FUNCTION of those polygons, so they sit on the cells by
+// construction — divergence-free regardless of which RNG produced the sites.
+// With no opts.drawnCells the extractor returns null (the 4-arg MotifPattern
+// call falls back to generic edge anchors), so existing callers are unaffected.
+//
+// The divergence guard below feeds the guard REAL cells taken from VoronoiCells'
+// OWN computeVoronoiCells output — recovered by running the pattern in
+// drawMode:'spokes' (VoronoiCells.js:97-109 draws one line() from each site to
+// each of its cell vertices) through a RecordingContext and grouping the line
+// ops by shared origin. NOTE (honesty): spokes uses computeVoronoiCells (which
+// CLAMPS vertices to bounds) while the DEFAULT 'outlines' mode uses
+// computeVoronoiEdges (which CLIPS); these differ at boundary cells. So the claim
+// is NOT "anchors sit on the on-screen outline render" — it is "anchors are a
+// pure function of the host-supplied cell polygons, validated here against the
+// pattern's own computeVoronoiCells output."
+
+const voronoiParams = (overrides = {}) => ({
+  cellCount: 12,
+  jitter: 40,
+  drawMode: 'spokes',
+  relaxationSteps: 1,
+  strokeWeight: 1,
+  symmetry: 'none',
+  startAngle: 0,
+  offsetX: 0,
+  offsetY: 0,
+  ...overrides,
+});
+
+// Recover the pattern's REAL cell polygons from a spokes-mode run. Each spoke is
+// line(site.x, site.y, vertex.x, vertex.y); consecutive spokes sharing an origin
+// belong to one cell, and their far endpoints ARE that cell's vertices in the
+// pattern's angular order. Recorded coords are CENTERED (RecordingContext logs
+// raw args, pre-translate) → lift to WORLD by adding (CX, CY). No re-derivation
+// of the site RNG — truth comes only from the recording.
+function recordVoronoiCells(params, seed = 7) {
+  const inst = new VoronoiCells();
+  const ctx = new RecordingContext({ seed });
+  inst.generateWithContext(ctx, seed, params, W, H, '#000000', 100);
+  const groups = new Map();
+  const order = [];
+  for (const { op, args } of ctx.calls) {
+    if (op !== 'line') continue;
+    const [x1, y1, x2, y2] = args;
+    const key = `${x1},${y1}`;
+    if (!groups.has(key)) {
+      groups.set(key, { site: { x: x1 + CX, y: y1 + CY }, vertices: [] });
+      order.push(key);
+    }
+    groups.get(key).vertices.push({ x: x2 + CX, y: y2 + CY });
+  }
+  // Return array of { site, vertices } in stable draw order.
+  return order.map((k) => groups.get(k));
+}
+
+const vkey = (p) => `${p.x},${p.y}`;
+const vEq = (a, b) => a.x === b.x && a.y === b.y;
+
+describe('getSemanticAnchors — voronoi GEOMETRY-IN contract', () => {
+  it('returns null without opts.drawnCells (4-arg and empty opts) — no regression', () => {
+    const p = voronoiParams();
+    expect(getSemanticAnchors('voronoi', p, W, H)).toBeNull();
+    expect(getSemanticAnchors('voronoi', p, W, H, {})).toBeNull();
+    expect(getSemanticAnchors('voronoi', p, W, H, { drawnCells: null })).toBeNull();
+  });
+
+  it('emits cell + crossing + edge roles, NO tip, with the anchors.js shape', () => {
+    const drawnCells = recordVoronoiCells(voronoiParams());
+    const anchors = getSemanticAnchors('voronoi', voronoiParams(), W, H, { drawnCells });
+    expect(Array.isArray(anchors)).toBe(true);
+    const roles = new Set(anchors.map((a) => a.role));
+    expect(roles).toEqual(new Set(['crossing', 'edge', 'cell']));
+    // A tessellation has no tips — the extractor omits them by design.
+    expect(anchors.some((a) => a.role === 'tip')).toBe(false);
+    for (const a of anchors) {
+      expect(a).toEqual(
+        expect.objectContaining({
+          id: expect.any(String),
+          role: expect.any(String),
+          x: expect.any(Number),
+          y: expect.any(Number),
+          tangent: expect.any(Number),
+          normal: expect.any(Number),
+          s: expect.any(Number),
+          meta: expect.any(Object),
+        })
+      );
+    }
+  });
+
+  it('accepts bare-array cells as well as { vertices, site } objects', () => {
+    const rich = recordVoronoiCells(voronoiParams());
+    const bare = rich.map((c) => c.vertices); // arrays of points
+    const aRich = getSemanticAnchors('voronoi', voronoiParams(), W, H, { drawnCells: rich });
+    const aBare = getSemanticAnchors('voronoi', voronoiParams(), W, H, { drawnCells: bare });
+    // Crossings + edges depend only on vertices, so both forms agree there.
+    const strip = (arr) => arr.filter((a) => a.role !== 'cell').map((a) => [a.role, a.x, a.y]);
+    expect(strip(aBare)).toEqual(strip(aRich));
+  });
+
+  it('is deterministic — byte-identical for identical input (toEqual)', () => {
+    const drawnCells = recordVoronoiCells(voronoiParams());
+    const a = getSemanticAnchors('voronoi', voronoiParams(), W, H, { drawnCells });
+    const b = getSemanticAnchors('voronoi', voronoiParams(), W, H, { drawnCells });
+    expect(a).toEqual(b);
+  });
+
+  it('skips degenerate (<3-vertex) cells', () => {
+    const good = [
+      { x: 100, y: 100 }, { x: 140, y: 100 }, { x: 120, y: 140 },
+    ];
+    const drawnCells = [good, [{ x: 10, y: 10 }, { x: 20, y: 20 }]]; // 2nd is degenerate
+    const anchors = getSemanticAnchors('voronoi', voronoiParams(), W, H, { drawnCells });
+    const cells = anchors.filter((a) => a.role === 'cell');
+    expect(cells.length).toBe(1); // degenerate cell contributes nothing
+  });
+});
+
+// ── DIVERGENCE GUARD (the honesty gate) ─────────────────────────────────────
+// Anchors are a pure function of opts.drawnCells, so they sit on those polygons
+// by construction. This guard proves the READER is correct against the pattern's
+// OWN computeVoronoiCells output (recovered via spokes), across two seeds:
+//   • cells  = one per ≥3-vertex polygon, at its vertex centroid.
+//   • crossings = the deduped Voronoi vertex set; junction ⇔ shared by ≥3 cells.
+//   • edges  = deduped cell-boundary edge midpoints, tangent = edge direction.
+describe('divergence guard — voronoi anchors are the exact reader of the real cells', () => {
+  for (const seed of [7, 21]) {
+    it(`derives cells/crossings/edges from computeVoronoiCells output (seed ${seed})`, () => {
+      const params = voronoiParams();
+      const real = recordVoronoiCells(params, seed).filter((c) => c.vertices.length >= 3);
+      expect(real.length).toBeGreaterThan(0);
+      const anchors = getSemanticAnchors('voronoi', params, W, H, { drawnCells: real });
+
+      // ── CELLS: one per real ≥3-vertex polygon, each at the pattern's actual
+      //    SITE (the Voronoi generator point recovered from the spoke origin) —
+      //    a real recorded quantity, not a re-derived approximation.
+      const cells = anchors.filter((a) => a.role === 'cell');
+      expect(cells.length).toBe(real.length);
+      const realSites = real.map((c) => c.site);
+      for (const cell of cells) {
+        const hit = realSites.some((s) => near(s.x, cell.x) && near(s.y, cell.y));
+        expect(hit).toBe(true);
+      }
+
+      // ── CROSSINGS: the deduped vertex set, with junction ⇔ multiplicity ≥ 3.
+      const mult = new Map();
+      for (const c of real) {
+        for (const v of c.vertices) mult.set(vkey(v), (mult.get(vkey(v)) || 0) + 1);
+      }
+      const crossings = anchors.filter((a) => a.role === 'crossing');
+      expect(crossings.length).toBe(mult.size); // exact dedup, no duplicates
+      for (const c of crossings) {
+        const m = mult.get(vkey(c));
+        expect(m).toBeDefined();               // every crossing is a real vertex
+        expect(c.meta.junction).toBe(m >= 3);  // junction truth from multiplicity
+        expect(c.meta.cellCount).toBe(m);
+      }
+      // Guard the guard: real Voronoi vertices where ≥3 cells meet must exist.
+      expect(crossings.some((c) => c.meta.junction === true)).toBe(true);
+
+      // ── EDGES: deduped undirected cell-boundary edges at midpoints, tangent =
+      //    edge direction. Build the real undirected edge set from the polygons.
+      const realEdges = new Map();
+      for (const c of real) {
+        const n = c.vertices.length;
+        for (let k = 0; k < n; k++) {
+          const a = c.vertices[k];
+          const b = c.vertices[(k + 1) % n];
+          const ka = vkey(a), kb = vkey(b);
+          const key = ka < kb ? `${ka}|${kb}` : `${kb}|${ka}`;
+          if (!realEdges.has(key)) {
+            realEdges.set(key, {
+              mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
+              dir: Math.atan2(b.y - a.y, b.x - a.x),
+            });
+          }
+        }
+      }
+      const edges = anchors.filter((a) => a.role === 'edge');
+      expect(edges.length).toBe(realEdges.size); // exact dedup of shared edges
+      for (const e of edges) {
+        // Position on a real boundary-edge midpoint.
+        const match = [...realEdges.values()].find(
+          (re) => near(re.mid.x, e.x) && near(re.mid.y, e.y)
+        );
+        expect(match).toBeDefined();
+        // Tangent parallel to that edge (direction OR its reverse — an undirected
+        // edge has no inherent orientation; both cells traverse it oppositely).
+        const d = Math.abs(((e.tangent - match.dir) % Math.PI + Math.PI) % Math.PI);
+        expect(Math.min(d, Math.PI - d)).toBeCloseTo(0, 9);
+      }
+    });
+  }
+
+  it('junction flag DISCRIMINATES on a controlled synthetic tessellation', () => {
+    // Three triangles sharing ONE interior vertex J=(0,0)+world, plus an outer
+    // rim. Interior vertex is shared by 3 cells (junction); each outer vertex by
+    // ≤2 (not a junction). Proves meta.junction is not hardcoded true.
+    const J = { x: CX, y: CY };
+    const A = { x: CX + 40, y: CY };
+    const B = { x: CX - 20, y: CY + 35 };
+    const C = { x: CX - 20, y: CY - 35 };
+    const drawnCells = [
+      [J, A, B], // cell 1
+      [J, B, C], // cell 2
+      [J, C, A], // cell 3
+    ];
+    const anchors = getSemanticAnchors('voronoi', voronoiParams(), W, H, { drawnCells });
+    const crossings = anchors.filter((a) => a.role === 'crossing');
+    const jAnchor = crossings.find((c) => vEq(c, J));
+    expect(jAnchor.meta.junction).toBe(true);   // 3 cells meet at J
+    expect(jAnchor.meta.cellCount).toBe(3);
+    // A, B, C are each shared by exactly 2 cells ⇒ NOT junctions.
+    for (const V of [A, B, C]) {
+      const a = crossings.find((c) => vEq(c, V));
+      expect(a.meta.junction).toBe(false);
+      expect(a.meta.cellCount).toBe(2);
+    }
+    // Shared edges (e.g. J–B, J–C, J–A) are deduped to ONE anchor apiece.
+    const edges = anchors.filter((a) => a.role === 'edge');
+    // 3 spokes from J (each shared by 2 cells) + 3 rim edges (A-B,B-C,C-A) = 6.
+    expect(edges.length).toBe(6);
+  });
+});
+
+describe('getSemanticAnchors — voronoi feeds the placement engine', () => {
+  it('roles are filterable via selectAnchors', () => {
+    const drawnCells = recordVoronoiCells(voronoiParams());
+    const anchors = getSemanticAnchors('voronoi', voronoiParams(), W, H, { drawnCells });
+    const { survivors } = selectAnchors(anchors, { roles: ['cell'] });
+    expect(survivors.length).toBeGreaterThan(0);
+    expect(survivors.every((a) => a.role === 'cell')).toBe(true);
+  });
+
+  it('produces placements through placeMotifs', () => {
+    const drawnCells = recordVoronoiCells(voronoiParams());
+    const anchors = getSemanticAnchors('voronoi', voronoiParams(), W, H, { drawnCells });
+    const { placements } = placeMotifs(
+      anchors,
+      {
+        selection: { roles: ['cell', 'crossing'] },
+        placement: { sizing: { mode: 'fixed', size: 4, min: 0 } },
       },
       { canvasW: W, canvasH: H, boundary: { type: 'rect', width: W, height: H } }
     );

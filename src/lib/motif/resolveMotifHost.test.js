@@ -94,4 +94,45 @@ describe('resolveMotifHostParams — voronoi drawn-geometry seam', () => {
     const out = resolveMotifHostParams(motif, layers);
     expect(out).not.toHaveProperty('drawnCells');
   });
+
+  it('forwards drawnEdges + sites (the boundary-hardened seam) when present', () => {
+    const layers = [voronoiHost, motif];
+    const drawnEdges = [{ x1: 1, y1: 2, x2: 3, y2: 4 }];
+    const geomSites = [{ x: 2, y: 3 }];
+    const out = resolveMotifHostParams(motif, layers, {
+      vh: { drawnEdges, sites: geomSites },
+    });
+    expect(out.hostPatternType).toBe('voronoi');
+    expect(out.drawnEdges).toBe(drawnEdges);
+    expect(out.sites).toBe(geomSites);
+    expect(out).not.toHaveProperty('drawnCells');
+  });
+
+  it('forwards drawnEdges/sites AND legacy drawnCells together (all present)', () => {
+    const layers = [voronoiHost, motif];
+    const drawnEdges = [{ x1: 0, y1: 0, x2: 5, y2: 5 }];
+    const geomSites = [{ x: 1, y: 1 }];
+    const out = resolveMotifHostParams(motif, layers, {
+      vh: { drawnEdges, sites: geomSites, drawnCells: cells },
+    });
+    expect(out.drawnEdges).toBe(drawnEdges);
+    expect(out.sites).toBe(geomSites);
+    expect(out.drawnCells).toBe(cells);
+  });
+
+  it('does NOT forward drawnEdges/sites for a formula (grid) host', () => {
+    const gridMotif = {
+      id: 'm2',
+      type: MOTIF_TYPE,
+      patternType: MOTIF_TYPE,
+      params: { glyphRef: 'leaf', hostLayerId: 'host-1', anchorMode: 'semantic' },
+    };
+    const layers = [gridHost, gridMotif];
+    const out = resolveMotifHostParams(gridMotif, layers, {
+      'host-1': { drawnEdges: [{ x1: 0, y1: 0, x2: 1, y2: 1 }], sites: [{ x: 0, y: 0 }] },
+    });
+    expect(out).toEqual({ hostPatternType: 'grid', hostParams: gridHost.params });
+    expect(out).not.toHaveProperty('drawnEdges');
+    expect(out).not.toHaveProperty('sites');
+  });
 });

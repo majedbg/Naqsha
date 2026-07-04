@@ -378,4 +378,44 @@ describe('MotifPattern voronoi drawn-geometry (GEOMETRY-IN) semantic path', () =
     const inst = runVoronoi({}); // no drawnCells, no hostPaths
     expect(inst.svgElements).toEqual([]);
   });
+
+  // ── Boundary-hardened path: drawnEdges + sites threaded through opts. ──
+  const DRAWN_EDGES = [
+    { x1: V.x, y1: V.y, x2: 150, y2: 120 }, // three drawn segments meet at V →
+    { x1: V.x, y1: V.y, x2: 650, y2: 120 }, // V is a degree-3 junction.
+    { x1: V.x, y1: V.y, x2: 400, y2: 520 },
+  ];
+  const SITES = [{ x: 300, y: 170 }, { x: 580, y: 240 }, { x: 320, y: 430 }];
+
+  it('places a glyph AT the shared drawn junction when drawnEdges+sites are supplied', () => {
+    const inst = runVoronoi({ drawnEdges: DRAWN_EDGES, sites: SITES });
+    expect(inst.svgElements.length).toBeGreaterThan(0);
+    const hit = translations(inst.svgElements).some(
+      (t) => Math.abs(t.x - V.x) < 1e-3 && Math.abs(t.y - V.y) < 1e-3
+    );
+    expect(hit).toBe(true);
+  });
+
+  it('drawnEdges is PREFERRED over drawnCells when both are threaded', () => {
+    // Supply drawnEdges (junction at V) AND a DIFFERENT drawnCells set whose only
+    // junction is at (200,200) — NOT at V, and NO cell contains V. So a crossing
+    // glyph at V can ONLY come from the drawn EDGES; if the legacy path won, V
+    // would be absent from placements. This discriminates (unlike sharing V).
+    const OTHER_CELLS = [
+      { vertices: [{ x: 200, y: 200 }, { x: 100, y: 100 }, { x: 300, y: 100 }], site: { x: 200, y: 130 } },
+      { vertices: [{ x: 200, y: 200 }, { x: 300, y: 100 }, { x: 300, y: 300 }], site: { x: 270, y: 200 } },
+      { vertices: [{ x: 200, y: 200 }, { x: 300, y: 300 }, { x: 100, y: 300 }], site: { x: 200, y: 270 } },
+    ];
+    const inst = runVoronoi({ drawnEdges: DRAWN_EDGES, sites: SITES, drawnCells: OTHER_CELLS });
+    const hit = translations(inst.svgElements).some(
+      (t) => Math.abs(t.x - V.x) < 1e-3 && Math.abs(t.y - V.y) < 1e-3
+    );
+    expect(hit).toBe(true);
+    // Sanity: the legacy junction (200,200) is NOT placed → the edge path, not
+    // the cell path, drove selection.
+    const legacyJunctionHit = translations(inst.svgElements).some(
+      (t) => Math.abs(t.x - 200) < 1e-3 && Math.abs(t.y - 200) < 1e-3
+    );
+    expect(legacyJunctionHit).toBe(false);
+  });
 });

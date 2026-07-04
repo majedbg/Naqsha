@@ -20,12 +20,14 @@ import { isMotifLayer, motifHostId } from './motifLayer.js';
  * Extra render params a motif layer needs, or null when the layer is not a
  * motif or its host is missing (dangling id tolerated → motif renders nothing).
  * Pure: reads host.patternType + host.params from the layers array; for a
- * voronoi host, also forwards captured drawnCells from hostGeometry when present.
+ * voronoi host, also forwards captured host geometry (drawnEdges + sites, and/or
+ * legacy drawnCells) from hostGeometry when present.
  * @param {object} layer
  * @param {object[]} layers
- * @param {Object<string, {drawnCells?: object[]}>} [hostGeometry] per-frame map
- *   of host layer id → geometry captured during that host's generate() run.
- * @returns {{hostPatternType: string, hostParams: object, drawnCells?: object[]}|null}
+ * @param {Object<string, {drawnEdges?: object[], sites?: object[], drawnCells?: object[]}>} [hostGeometry]
+ *   per-frame map of host layer id → geometry captured during that host's
+ *   generate() run.
+ * @returns {{hostPatternType: string, hostParams: object, drawnEdges?: object[], sites?: object[], drawnCells?: object[]}|null}
  */
 export function resolveMotifHostParams(layer, layers, hostGeometry = {}) {
   if (!isMotifLayer(layer)) return null;
@@ -34,8 +36,15 @@ export function resolveMotifHostParams(layer, layers, hostGeometry = {}) {
   if (!host) return null; // dangling host → tolerate (motif renders nothing)
   const out = { hostPatternType: host.patternType, hostParams: host.params };
   if (host.patternType === 'voronoi') {
-    const drawnCells = hostGeometry[hostId] && hostGeometry[hostId].drawnCells;
-    if (drawnCells) out.drawnCells = drawnCells;
+    // Forward the WHOLE captured host geometry: drawnEdges + sites (the
+    // boundary-hardened seam the extractor prefers) and/or legacy drawnCells.
+    // Absent → omit (graceful null anchors → nothing placed).
+    const geom = hostGeometry[hostId];
+    if (geom) {
+      if (geom.drawnEdges) out.drawnEdges = geom.drawnEdges;
+      if (geom.sites) out.sites = geom.sites;
+      if (geom.drawnCells) out.drawnCells = geom.drawnCells; // legacy
+    }
   }
   return out;
 }

@@ -689,17 +689,36 @@ function spiralAnchors(params, canvasW, canvasH) {
 // real render. REPLAY is therefore dishonest and is rejected.
 //
 // GEOMETRY-IN models the real integration seam: the HOST resolves its Voronoi
-// geometry first (it already has the cells — computeVoronoiCells output), then
-// hands them to this extractor. Anchors are a PURE FUNCTION of those polygons, so
-// they sit on the cells BY CONSTRUCTION — divergence-free regardless of which RNG
-// produced the sites. Contract: getSemanticAnchors('voronoi', params, W, H, opts)
-// reads opts.drawnCells; with none it returns null (the 4-arg call — including
-// MotifPattern's — falls back to generic edge anchors, unchanged).
+// geometry first, then hands it to this extractor. Anchors are a PURE FUNCTION of
+// that geometry, so they sit on it BY CONSTRUCTION — divergence-free regardless
+// of which RNG produced the sites.
 //
-// opts.drawnCells: Array of cells in WORLD (canvas-pixel) coords. Each cell is
-// either a bare Array<{x,y}> of boundary vertices in order, OR an object
-// { vertices: Array<{x,y}>, site?: {x,y} }. Cells with < 3 vertices are skipped
-// (a Voronoi vertex needs ≥3 cells; a 2-vertex boundary sliver is degenerate).
+// PREFERRED GEOMETRY-IN SHAPE (boundary-hardened) — opts.drawnEdges + opts.sites:
+//   • opts.drawnEdges: Array<{x1,y1,x2,y2}> — the host's ACTUAL DRAWN Voronoi
+//     segments (VoronoiCells.js voronoiEdges, lifted to WORLD/canvas-pixel
+//     coords). These are the circumcenter segments as clipped/drawn on screen, so
+//     every crossing/edge anchor derived from them sits on a VISIBLE line — no
+//     phantom outer-ring geometry. This is the FAITHFUL path.
+//   • opts.sites: Array<{x,y}> — the host's seed points for valid (≥3-vertex)
+//     cells, in WORLD coords, one per cell-role anchor.
+// When opts.drawnEdges is an array this path is taken. Its correctness rests on a
+// verified fact: clipLine returns in-bounds endpoints BYTE-EXACT, and
+// computeVoronoiEdges reads the SAME triangles[i].cc object for every edge
+// incident to triangle i, so an interior circumcenter arrives byte-identical
+// across all its incident drawn edges — hence exact-key dedup and degree-based
+// junction detection stay faithful when derived from the drawn edges.
+//
+// LEGACY GEOMETRY-IN SHAPE (fallback + differential-test oracle) — opts.drawnCells:
+//   Array of cells in WORLD coords. Each cell is either a bare Array<{x,y}> of
+//   boundary vertices in order, OR an object { vertices: Array<{x,y}>, site?:{x,y} }.
+//   Cells with < 3 vertices are skipped. This path derives anchors from CLOSED,
+//   per-vertex-CLAMPED cell polygons; it is byte-identical to the drawnEdges path
+//   in the interior but emits border-clamped vertices and synthetic hull-closing
+//   edges at the boundary (the phantom geometry the drawnEdges path eliminates).
+//   Kept for backward compatibility and as the interior oracle in tests.
+//
+// With NEITHER present the extractor returns null (the 4-arg call — including
+// MotifPattern's — falls back to generic edge anchors, unchanged).
 //
 // ROLE MAPPING (a tessellation's real structure):
 //   • cell     = one per polygon, at its centroid (the site if the host supplies
@@ -740,17 +759,129 @@ function normalizeCell(cell) {
 }
 
 /**
+ * Voronoi anchors from the host's DRAWN EDGES (boundary-hardened path). Every
+ * crossing/edge anchor is an endpoint/midpoint of an actually-drawn segment, so
+ * none sit on phantom (clamped/synthetic-hull) geometry. Emission order is fixed
+ * (cells, then crossings in first-encounter order, then edges) for determinism.
+ * @param {Array<{x1:number,y1:number,x2:number,y2:number}>} drawnEdges  world coords
+ * @param {Array<{x:number,y:number}>|undefined} sites  one per cell-role anchor
+ * @returns {Array<object>}
+ */
+function voronoiAnchorsFromEdges(drawnEdges, sites) {
+  const anchors = [];
+
+  // ── CELLS: one per host site (a valid ≥3-vertex cell's seed point). With no
+  //    sites supplied, no cell-role anchors are emitted (crossings/edges still
+  //    come from the drawn edges).
+  if (Array.isArray(sites)) {
+    for (let i = 0; i < sites.length; i++) {
+      anchors.push({
+        id: anchorId('cell', i),
+        role: 'cell',
+        x: sites[i].x,
+        y: sites[i].y,
+        tangent: 0,
+        normal: HALF_PI,
+        s: 0,
+        meta: { cell: i },
+      });
+    }
+  }
+
+  // ── CROSSINGS: every DRAWN-edge endpoint, deduped by exact key. degree = the
+  //    number of drawn segments meeting there (interior circumcenters arrive
+  //    byte-identical across their incident edges — see header). junction ⇔
+  //    degree ≥ 3. meta.degree replaces the legacy cell-path's meta.cellCount
+  //    (which counted cell-multiplicity); the two coincide in the interior.
+  const vertOrder = [];
+  const vertInfo = new Map(); // key → { x, y, count }
+  const bump = (x, y) => {
+    const key = `${x},${y}`;
+    let info = vertInfo.get(key);
+    if (!info) {
+      info = { x, y, count: 0 };
+      vertInfo.set(key, info);
+      vertOrder.push(key);
+    }
+    info.count += 1;
+  };
+  for (const e of drawnEdges) {
+    bump(e.x1, e.y1);
+    bump(e.x2, e.y2);
+  }
+  for (let i = 0; i < vertOrder.length; i++) {
+    const info = vertInfo.get(vertOrder[i]);
+    anchors.push({
+      id: anchorId('crossing', i),
+      role: 'crossing',
+      x: info.x,
+      y: info.y,
+      tangent: 0,
+      normal: HALF_PI,
+      s: 0,
+      meta: { junction: info.count >= 3, degree: info.count },
+    });
+  }
+
+  // ── EDGES: deduped drawn segments (sorted endpoint-pair key) at midpoints;
+  //    tangent = segment direction. meta.cellCount is the number of DRAWN
+  //    segments with that key — normally 1 (each Voronoi edge is drawn once),
+  //    vs 2 in the legacy cell path where two cells each contribute the shared
+  //    edge. Nothing outside this module reads it.
+  const edgeOrder = [];
+  const edgeInfo = new Map(); // key → { a, b, count }
+  for (const e of drawnEdges) {
+    const kp = `${e.x1},${e.y1}`;
+    const kq = `${e.x2},${e.y2}`;
+    if (kp === kq) continue; // zero-length drawn segment — skip.
+    const forward = kp < kq;
+    const a = forward ? { x: e.x1, y: e.y1 } : { x: e.x2, y: e.y2 };
+    const b = forward ? { x: e.x2, y: e.y2 } : { x: e.x1, y: e.y1 };
+    const key = forward ? `${kp}|${kq}` : `${kq}|${kp}`;
+    let info = edgeInfo.get(key);
+    if (!info) {
+      info = { a, b, count: 0 };
+      edgeInfo.set(key, info);
+      edgeOrder.push(key);
+    }
+    info.count += 1;
+  }
+  for (let i = 0; i < edgeOrder.length; i++) {
+    const { a, b, count } = edgeInfo.get(edgeOrder[i]);
+    const tangent = Math.atan2(b.y - a.y, b.x - a.x);
+    anchors.push({
+      id: anchorId('edge', i),
+      role: 'edge',
+      x: (a.x + b.x) * HALF,
+      y: (a.y + b.y) * HALF,
+      tangent,
+      normal: tangent + HALF_PI,
+      s: 0,
+      meta: { cellCount: count },
+    });
+  }
+
+  return anchors;
+}
+
+/**
  * Voronoi semantic extractor (GEOMETRY-IN). See the block header for the full
- * role/coordinate/honesty contract. Emission order is fixed (cells, then
- * crossings in first-encounter order, then edges) for determinism.
+ * role/coordinate/honesty contract. PREFERS opts.drawnEdges (+opts.sites) — the
+ * boundary-hardened path derived from the host's actual drawn segments; falls
+ * back to the legacy opts.drawnCells (cell-polygon) path. Emission order is fixed
+ * (cells, then crossings in first-encounter order, then edges) for determinism.
  * @param {object} _params  unused (kept for signature parity; sites are NOT
  *                          re-derived from params — see header)
- * @param {number} _canvasW unused (world coords come in via drawnCells)
+ * @param {number} _canvasW unused (world coords come in via opts)
  * @param {number} _canvasH unused
- * @param {object} opts     { drawnCells } — see header
+ * @param {object} opts     { drawnEdges, sites } (preferred) | { drawnCells } (legacy)
  * @returns {Array<object>|null}
  */
 function voronoiAnchors(_params, _canvasW, _canvasH, opts) {
+  if (opts && Array.isArray(opts.drawnEdges)) {
+    // Boundary-hardened path — faithful to the drawn outline.
+    return voronoiAnchorsFromEdges(opts.drawnEdges, opts.sites);
+  }
   const drawn = opts && opts.drawnCells;
   if (!Array.isArray(drawn)) return null; // no host geometry ⇒ defer to caller.
 
@@ -850,16 +981,17 @@ function voronoiAnchors(_params, _canvasW, _canvasH, opts) {
  * caller falls back to generic edge anchors from anchors.js).
  *
  * The optional 5th `opts` arg carries host-resolved geometry for GEOMETRY-IN
- * extractors (currently 'voronoi', which reads opts.drawnCells). It is
- * backward-compatible: existing 4-arg callers (including MotifPattern) pass no
- * opts, so grid/recursive/spiral behave exactly as before and voronoi returns
- * null (graceful fallback).
+ * extractors (currently 'voronoi', which PREFERS opts.drawnEdges + opts.sites —
+ * the boundary-hardened path — and falls back to legacy opts.drawnCells). It is
+ * backward-compatible: existing 4-arg callers pass no opts, so grid/recursive/
+ * spiral behave exactly as before and voronoi returns null (graceful fallback).
  * @param {string} patternType
  * @param {object} params
  * @param {number} canvasW
  * @param {number} canvasH
  * @param {object} [opts]  host geometry for GEOMETRY-IN extractors, e.g.
- *                         { drawnCells } for voronoi.
+ *                         { drawnEdges, sites } (preferred) or { drawnCells }
+ *                         (legacy) for voronoi.
  * @returns {Array<object>|null}
  */
 export function getSemanticAnchors(patternType, params, canvasW, canvasH, opts) {

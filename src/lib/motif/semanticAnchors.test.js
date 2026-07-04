@@ -999,3 +999,260 @@ describe('getSemanticAnchors — voronoi feeds the placement engine', () => {
     expect(placements.length).toBeGreaterThan(0);
   });
 });
+
+// ════════════════════════════════════════════════════════════════════════════
+// BOUNDARY HARDENING — anchors derived from the DRAWN EDGES (opts.drawnEdges),
+// the actual on-screen segments, so no crossing/edge anchor lands on phantom
+// (border-clamped vertex / synthetic hull-closing edge) geometry.
+// ════════════════════════════════════════════════════════════════════════════
+
+const edgeKeyOf = (x, y) => `${x},${y}`;
+const undirEdgeKey = (a, b) => {
+  const ka = edgeKeyOf(a.x, a.y), kb = edgeKeyOf(b.x, b.y);
+  return ka < kb ? `${ka}|${kb}` : `${kb}|${ka}`;
+};
+// Deduped undirected {x1,y1,x2,y2} edges of a set of polygons — the DRAWN-edge
+// representation of a closed tessellation.
+function polygonsToDrawnEdges(polys) {
+  const seen = new Set();
+  const out = [];
+  for (const verts of polys) {
+    const n = verts.length;
+    for (let k = 0; k < n; k++) {
+      const a = verts[k], b = verts[(k + 1) % n];
+      const key = undirEdgeKey(a, b);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ x1: a.x, y1: a.y, x2: b.x, y2: b.y });
+    }
+  }
+  return out;
+}
+const centroid = (verts) => ({
+  x: verts.reduce((s, v) => s + v.x, 0) / verts.length,
+  y: verts.reduce((s, v) => s + v.y, 0) / verts.length,
+});
+
+// ── DIFFERENTIAL TEST (the correctness anchor) ──────────────────────────────
+// On a FULLY-INTERIOR tessellation (no clip/clamp, no phantom hull edge), the
+// boundary-hardened drawnEdges path must yield the SAME anchor geometry as the
+// legacy drawnCells path — which is kept as the known-correct oracle. We build a
+// closed interior patch where the DRAWN edges ARE exactly the cell-boundary edges
+// (the interior invariant the fix relies on), so any divergence in the reader
+// logic (dedup, midpoints, tangents, degree/junction, cell sites) surfaces here.
+describe('boundary hardening — drawnEdges path == drawnCells path on an INTERIOR patch', () => {
+  // A central fan: interior junction J shared by 3 cells + an outer rim. Every
+  // vertex/edge is well inside [0,W]x[0,H] → no clamping, no clipping.
+  const J = { x: CX, y: CY };
+  const A = { x: CX + 70, y: CY + 5 };
+  const B = { x: CX - 35, y: CY + 62 };
+  const C = { x: CX - 40, y: CY - 58 };
+  const polys = [
+    [J, A, B],
+    [J, B, C],
+    [J, C, A],
+  ];
+  const sites = polys.map(centroid);
+  const drawnCells = polys.map((verts, i) => ({ vertices: verts, site: sites[i] }));
+  const drawnEdges = polygonsToDrawnEdges(polys);
+
+  const fromCells = getSemanticAnchors('voronoi', voronoiParams(), W, H, { drawnCells });
+  const fromEdges = getSemanticAnchors('voronoi', voronoiParams(), W, H, { drawnEdges, sites });
+
+  const setOf = (anchors, role) =>
+    new Set(anchors.filter((a) => a.role === role).map((a) => vkey(a)));
+
+  it('emits the SAME cell-site set', () => {
+    expect(setOf(fromEdges, 'cell')).toEqual(setOf(fromCells, 'cell'));
+    for (const a of fromEdges.filter((x) => x.role === 'cell')) {
+      expect(sites.some((s) => ptNear(s, a))).toBe(true);
+    }
+  });
+
+  it('emits the SAME crossing coordinate set (interior circumcenters identical)', () => {
+    expect(setOf(fromEdges, 'crossing')).toEqual(setOf(fromCells, 'crossing'));
+    const je = fromEdges.find((a) => a.role === 'crossing' && vEq(a, J));
+    const jc = fromCells.find((a) => a.role === 'crossing' && vEq(a, J));
+    expect(je.meta.junction).toBe(true);
+    expect(jc.meta.junction).toBe(true);
+    // Degree (drawn incidence) == cell-multiplicity in the interior: 3 at J.
+    expect(je.meta.degree).toBe(3);
+    expect(jc.meta.cellCount).toBe(3);
+  });
+
+  it('emits the SAME edge-midpoint set with matching (undirected) tangents', () => {
+    const em = fromEdges.filter((a) => a.role === 'edge');
+    const cm = fromCells.filter((a) => a.role === 'edge');
+    expect(setOf(fromEdges, 'edge')).toEqual(setOf(fromCells, 'edge'));
+    expect(em.length).toBe(cm.length);
+    for (const e of em) {
+      const m = cm.find((c) => ptNear(c, e));
+      expect(m).toBeDefined();
+      const d = Math.abs(((e.tangent - m.tangent) % Math.PI + Math.PI) % Math.PI);
+      expect(Math.min(d, Math.PI - d)).toBeCloseTo(0, 9);
+    }
+  });
+
+  it('tolerates the KNOWN edge meta difference: drawn-once (1) vs shared-by-2 (2)', () => {
+    const midJB = { x: (J.x + B.x) / 2, y: (J.y + B.y) / 2 };
+    const spoke = fromEdges.find((a) => a.role === 'edge' && ptNear(a, midJB));
+    const spokeCell = fromCells.find((a) => a.role === 'edge' && ptNear(a, midJB));
+    expect(spoke.meta.cellCount).toBe(1);
+    expect(spokeCell.meta.cellCount).toBe(2);
+  });
+});
+
+// ── EDGE-PATH READER unit coverage ──────────────────────────────────────────
+describe('getSemanticAnchors — voronoi drawnEdges (boundary-hardened) reader', () => {
+  // Two triangles sharing spine P–Q, all interior.
+  const P = { x: CX, y: CY - 40 };
+  const Q = { x: CX, y: CY + 40 };
+  const R = { x: CX - 55, y: CY };
+  const S = { x: CX + 55, y: CY };
+  const drawnEdges = [
+    { x1: P.x, y1: P.y, x2: Q.x, y2: Q.y }, // shared spine
+    { x1: P.x, y1: P.y, x2: R.x, y2: R.y },
+    { x1: R.x, y1: R.y, x2: Q.x, y2: Q.y },
+    { x1: P.x, y1: P.y, x2: S.x, y2: S.y },
+    { x1: S.x, y1: S.y, x2: Q.x, y2: Q.y },
+  ];
+  const sites = [{ x: CX - 20, y: CY }, { x: CX + 20, y: CY }];
+
+  it('is PREFERRED over drawnCells when both are present', () => {
+    const anchors = getSemanticAnchors('voronoi', voronoiParams(), W, H, {
+      drawnEdges,
+      sites,
+      drawnCells: [[{ x: 1, y: 1 }, { x: 2, y: 2 }, { x: 3, y: 1 }]],
+    });
+    expect(anchors.filter((a) => a.role === 'cell').length).toBe(2);
+  });
+
+  it('cells come from sites; NO tips; roles are crossing/edge/cell', () => {
+    const anchors = getSemanticAnchors('voronoi', voronoiParams(), W, H, { drawnEdges, sites });
+    expect(new Set(anchors.map((a) => a.role))).toEqual(new Set(['cell', 'crossing', 'edge']));
+    const cells = anchors.filter((a) => a.role === 'cell');
+    expect(cells.length).toBe(2);
+    expect(cells.map((c) => vkey(c))).toEqual(sites.map((s) => vkey(s)));
+  });
+
+  it('crossings = deduped drawn endpoints; degree = drawn incidence; junction ⇔ ≥3', () => {
+    const anchors = getSemanticAnchors('voronoi', voronoiParams(), W, H, { drawnEdges, sites });
+    const crossings = anchors.filter((a) => a.role === 'crossing');
+    expect(crossings.length).toBe(4); // P, Q, R, S
+    const byPt = (pt) => crossings.find((c) => vEq(c, pt));
+    expect(byPt(P).meta.degree).toBe(3);
+    expect(byPt(P).meta.junction).toBe(true);
+    expect(byPt(Q).meta.degree).toBe(3);
+    expect(byPt(Q).meta.junction).toBe(true);
+    expect(byPt(R).meta.degree).toBe(2);
+    expect(byPt(R).meta.junction).toBe(false);
+    expect(byPt(S).meta.degree).toBe(2);
+    const endpoints = new Set(
+      drawnEdges.flatMap((e) => [edgeKeyOf(e.x1, e.y1), edgeKeyOf(e.x2, e.y2)])
+    );
+    for (const c of crossings) expect(endpoints.has(vkey(c))).toBe(true);
+  });
+
+  it('edges = deduped drawn segments at midpoints, tangent = segment direction, meta.cellCount 1', () => {
+    const anchors = getSemanticAnchors('voronoi', voronoiParams(), W, H, { drawnEdges, sites });
+    const edges = anchors.filter((a) => a.role === 'edge');
+    expect(edges.length).toBe(5);
+    for (const e of edges) {
+      expect(e.meta.cellCount).toBe(1);
+      expect(e.normal).toBeCloseTo(e.tangent + HALF_PI, 9);
+    }
+    const spine = edges.find((e) => near(e.x, CX) && near(e.y, CY));
+    expect(spine).toBeDefined();
+    expect(Math.abs(Math.abs(spine.tangent) - HALF_PI)).toBeLessThan(1e-9);
+  });
+
+  it('emits crossings/edges with NO cell anchors when sites are omitted', () => {
+    const anchors = getSemanticAnchors('voronoi', voronoiParams(), W, H, { drawnEdges });
+    expect(anchors.some((a) => a.role === 'cell')).toBe(false);
+    expect(anchors.some((a) => a.role === 'crossing')).toBe(true);
+    expect(anchors.some((a) => a.role === 'edge')).toBe(true);
+  });
+
+  it('is deterministic — byte-identical for identical input', () => {
+    const a = getSemanticAnchors('voronoi', voronoiParams(), W, H, { drawnEdges, sites });
+    const b = getSemanticAnchors('voronoi', voronoiParams(), W, H, { drawnEdges, sites });
+    expect(a).toEqual(b);
+  });
+});
+
+// ── BOUNDARY TEST (the fix, on a REAL full-canvas diagram) ───────────────────
+// VoronoiCells spreads sites edge-to-edge, so a real diagram ALWAYS has boundary
+// cells. This proves the drawnEdges path stays FAITHFUL there (every anchor
+// in-bounds and on a drawn segment) while the legacy drawnCells path emits
+// phantom geometry (border-clamped vertices and/or synthetic hull-closing edges)
+// on the SAME data — the exact defect boundary hardening removes.
+describe('boundary hardening — drawnEdges stays on drawn geometry where drawnCells goes phantom', () => {
+  // One run, drawMode:'spokes' (to recover the clamped closed cells), reading the
+  // drawn-edge stash off the SAME instance → identical triangulation.
+  function recordBoth(params, seed = 7) {
+    const inst = new VoronoiCells();
+    const ctx = new RecordingContext({ seed });
+    inst.generateWithContext(ctx, seed, params, W, H, '#000000', 100);
+    const groups = new Map();
+    const order = [];
+    for (const { op, args } of ctx.calls) {
+      if (op !== 'line') continue;
+      const [x1, y1, x2, y2] = args;
+      const key = `${x1},${y1}`;
+      if (!groups.has(key)) {
+        groups.set(key, { site: { x: x1 + CX, y: y1 + CY }, vertices: [] });
+        order.push(key);
+      }
+      groups.get(key).vertices.push({ x: x2 + CX, y: y2 + CY });
+    }
+    const drawnCells = order.map((k) => groups.get(k)).filter((c) => c.vertices.length >= 3);
+    const { drawnEdges, sites } = inst.motifHostGeometry;
+    return { drawnCells, drawnEdges, sites };
+  }
+
+  const params = voronoiParams({ jitter: 40, relaxationSteps: 1 });
+  const { drawnCells, drawnEdges, sites } = recordBoth(params, 7);
+  const edgeAnchors = getSemanticAnchors('voronoi', params, W, H, { drawnEdges, sites });
+  const cellAnchors = getSemanticAnchors('voronoi', params, W, H, { drawnCells });
+
+  const endpointKeys = new Set(
+    drawnEdges.flatMap((e) => [edgeKeyOf(e.x1, e.y1), edgeKeyOf(e.x2, e.y2)])
+  );
+  const midpointKeys = new Set(
+    drawnEdges.map((e) => edgeKeyOf((e.x1 + e.x2) * 0.5, (e.y1 + e.y2) * 0.5))
+  );
+
+  it('a real diagram HAS boundary cells (a drawn edge touches the canvas edge)', () => {
+    const touching = drawnEdges.some(
+      (e) => e.x1 === 0 || e.x1 === W || e.y1 === 0 || e.y1 === H ||
+             e.x2 === 0 || e.x2 === W || e.y2 === 0 || e.y2 === H
+    );
+    expect(touching).toBe(true);
+  });
+
+  it('EDGE PATH: every crossing/edge anchor is in-bounds AND on a drawn segment', () => {
+    const ce = edgeAnchors.filter((a) => a.role === 'crossing' || a.role === 'edge');
+    expect(ce.length).toBeGreaterThan(0);
+    for (const a of ce) {
+      expect(a.x).toBeGreaterThanOrEqual(0);
+      expect(a.x).toBeLessThanOrEqual(W);
+      expect(a.y).toBeGreaterThanOrEqual(0);
+      expect(a.y).toBeLessThanOrEqual(H);
+      if (a.role === 'crossing') expect(endpointKeys.has(vkey(a))).toBe(true);
+      else expect(midpointKeys.has(vkey(a))).toBe(true);
+    }
+  });
+
+  it('CELL PATH (legacy) emits PHANTOM anchors absent from the drawn geometry', () => {
+    const phantomCrossings = cellAnchors.filter(
+      (a) => a.role === 'crossing' && !endpointKeys.has(vkey(a))
+    );
+    const phantomEdges = cellAnchors.filter(
+      (a) => a.role === 'edge' && !midpointKeys.has(vkey(a))
+    );
+    // The contrast IS the test: the OLD path lands on geometry that is NOT drawn.
+    expect(phantomCrossings.length + phantomEdges.length).toBeGreaterThan(0);
+    expect(phantomCrossings.length).toBeGreaterThan(0);
+    expect(phantomEdges.length).toBeGreaterThan(0);
+  });
+});

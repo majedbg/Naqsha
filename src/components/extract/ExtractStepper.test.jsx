@@ -1429,4 +1429,23 @@ describe('ExtractStepper — Refine step (#70b)', () => {
     await screen.findByText(/1 shape/i);
     expect(mocks.extract.mock.calls[0][1]).toEqual({}); // blur:0 → omitted → legacy trace
   });
+
+  // Task item 5 / the user's 'trace on-demand' choice: an explicit "Preview
+  // trace" that runs REAL potrace on the current knobs and shows the traced
+  // pattern INLINE — without advancing to Review — and goes stale when a knob moves.
+  it('"Preview trace" runs the real trace on the current opts inline, without leaving Refine', async () => {
+    render(<ExtractStepper onClose={() => {}} />);
+    await walkToRefine();
+    fireEvent.click(screen.getByLabelText('Adaptive threshold'));
+    fireEvent.click(screen.getByTestId('preview-trace'));
+    await waitFor(() => expect(mocks.extract).toHaveBeenCalledTimes(1));
+    // Traced with the CURRENT refine opts (the on-demand real-trace peek).
+    expect(mocks.extract.mock.calls[0][1].trace).toEqual({ adaptive: true });
+    // Shown inline; still in Refine (the trace-region button is still present).
+    expect(await screen.findByTestId('refine-trace-preview')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /trace region/i })).toBeTruthy();
+    // Moving a knob invalidates the now-stale inline preview.
+    fireEvent.change(screen.getByLabelText('Brightness'), { target: { value: '15' } });
+    await waitFor(() => expect(screen.queryByTestId('refine-trace-preview')).toBeNull());
+  });
 });

@@ -368,6 +368,11 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad, tier = '
   const [refineOpts, setRefineOpts] = useState(REFINE_DEFAULTS);
   const [refineImage, setRefineImage] = useState(null);
   const [previewBuffers, setPreviewBuffers] = useState(null);
+  // #70b: whether the on-demand "Preview trace" has run potrace for the current
+  // knobs — surfaces the ACTUAL traced pattern inline in Refine (not just the
+  // binary proxy) before committing to Review. Goes stale (hidden) when a knob
+  // moves, so the inline preview never lies about the current settings.
+  const [refinePreviewShown, setRefinePreviewShown] = useState(false);
   const refineCanvasRefs = useRef({}); // stage key → <canvas>
   const [stageEvents, setStageEvents] = useState({}); // stage id → latest progress event
   const [result, setResult] = useState(null);
@@ -484,6 +489,7 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad, tier = '
       setRefineOpts(REFINE_DEFAULTS); // #70b: knobs + preview reset per photo
       setRefineImage(null);
       setPreviewBuffers(null);
+      setRefinePreviewShown(false);
       // Flatten corners: an explicit initialQuad prop (external pre-fill) wins;
       // otherwise S4 auto-detects the ornament plane and PRE-FILLS the quad.
       // Detection is a pure, fast main-thread pass on a small downscale of the
@@ -734,6 +740,7 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad, tier = '
       setRefineImage(null); // preview is best-effort; Refine still traces on advance
     }
     setPreviewBuffers(null);
+    setRefinePreviewShown(false);
     setStep(3);
   }, [natural, selectionRect]);
 
@@ -755,6 +762,16 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad, tier = '
     setRefineOpts(REFINE_DEFAULTS);
     handleRefineTrace(REFINE_DEFAULTS);
   }, [handleRefineTrace]);
+
+  // On-demand "Preview trace" (#70b, task item 5 / the user's 'trace on demand'):
+  // run the REAL potrace on the current knobs and show the traced pattern INLINE
+  // in Refine — WITHOUT advancing to Review — so the user sees the actual pattern,
+  // not just the binary proxy, before committing. It runs only on this explicit
+  // click (never per slider tick), and disables while in flight.
+  const handleRefinePreviewTrace = useCallback(async () => {
+    if (!imgElRef.current || !natural) return;
+    if (await runExtract(selectionRect(), undefined)) setRefinePreviewShown(true);
+  }, [natural, selectionRect, runExtract]);
 
   const setRefineOpt = useCallback((key, value) => {
     setRefineOpts((o) => ({ ...o, [key]: value }));
@@ -781,6 +798,12 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad, tier = '
     // refineOptsKey captures the serialized knobs; refineOpts/invert are its inputs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step, refineImage, refineOptsKey]);
+
+  // A moved knob (opts key change) invalidates the inline traced preview — it
+  // must never show a pattern that doesn't match the current settings.
+  useEffect(() => {
+    setRefinePreviewShown(false);
+  }, [refineOptsKey]);
 
   // Paint the computed buffers onto their canvases (no-op in jsdom).
   useEffect(() => {
@@ -1379,7 +1402,22 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad, tier = '
 
               {tracing && <StageProgress events={stageEvents} />}
 
-              <div className="flex gap-2">
+              {/* On-demand real-trace peek: run potrace on the current knobs and
+                  show the ACTUAL traced pattern inline (not just the binary
+                  proxy) before committing to Review. Goes stale when a knob moves. */}
+              {refinePreviewShown && result && preview && (
+                <div
+                  className="flex flex-col items-center gap-1"
+                  data-testid="refine-trace-preview"
+                >
+                  {preview}
+                  <span className="text-[10px] text-ink-faint">
+                    Trace preview — {shapeCount} shape{shapeCount === 1 ? '' : 's'} at these settings
+                  </span>
+                </div>
+              )}
+
+              <div className="flex gap-2 flex-wrap justify-center">
                 <button type="button" className={GHOST_BTN} onClick={() => setStep(2)} disabled={tracing}>
                   Back
                 </button>
@@ -1391,6 +1429,15 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad, tier = '
                   disabled={tracing}
                 >
                   Skip / use defaults
+                </button>
+                <button
+                  type="button"
+                  className={GHOST_BTN}
+                  data-testid="preview-trace"
+                  onClick={handleRefinePreviewTrace}
+                  disabled={tracing}
+                >
+                  {tracing ? 'Tracing…' : 'Preview trace'}
                 </button>
                 <button
                   type="button"

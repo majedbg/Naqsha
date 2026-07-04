@@ -162,3 +162,9 @@ A **second, concurrent Claude session** (long-running process since Wed 23:00; r
 ## Slice log (continued — 2026-07-04 AM, post-resume)
 - Final Phase-7 adversarial review: SOUND (probe verdict recorded above).
 - 1.3 semantic anchors completed for ALL 4 flagship hosts: Recursive `de3da4a`, Spiral `4908fe4`, Voronoi `3fc1e70` (GEOMETRY-IN). Motif suite now **226 tests**, full app suite green, build green.
+
+## App/UI integration (2026-07-04 AM, user AFK ~3h, phone decisions only)
+Scope chosen by user: **render + minimal device UI**, browser-self-verified, rail/overlay/polish deferred.
+- [x] **INT-1** render plumbing (`e6c5a06`): register `motif→MotifPattern`; pure `resolveMotifHostParams(layer,layers)` injected in useCanvas (host patternType+params, no ordering dep); `addMotifLayer`. **v1 renders on grid/recursive/spiral via SEMANTIC anchors.** Voronoi/edge-arbitrary need host drawn-geometry → deferred (clean seams, no hacks). 251 tests.
+- [x] **INT-1 BROWSER-VERIFIED**: seeded a grid+leaf-motif set via localStorage, cold-loaded the app → leaf glyphs render at every grid crossing (Operation view), layer tree shows "Leaf on Grid host", PATTERN=motif. Export transitively covered (canvas render ⇒ svgElements populated; parity test ⇒ canvas==SVG; svgExport reads toSVGGroup). Only console error is a pre-existing LayerRow key-spread warning (not mine).
+- [ ] **INT-2** minimal Motif device in the host Inspector (add/remove motif, glyph picker, role checkboxes, rate/size/flip) — IN PROGRESS.

@@ -44,9 +44,10 @@
 //     arbitrarily far from the straight lattice. We CANNOT verify coincidence,
 //     so we return null (never ship anchors we can't tie to the drawing).
 
-import { anchorId } from './anchors.js';
+import { anchorId, sampleEdgeAnchors } from './anchors.js';
 
 const HALF_PI = Math.PI / 2;
+const TWO_PI = Math.PI * 2;
 
 /**
  * Replicate Grid.js distribute() EXACTLY (Grid.js:43-61): count+1 positions
@@ -499,6 +500,181 @@ function recursiveAnchors(params, canvasW, canvasH) {
   return anchors;
 }
 
+// ── SPIRAL extractor ─────────────────────────────────────────────────────────
+// Faithful to src/lib/patterns/Spiral.js `generate()`:
+//   • Draws `armCount` open arms. Arm `arm` is sampled at i=0..totalSteps
+//     (totalSteps = round(turns*stepsPerTurn)) with t=i/totalSteps:
+//       r     = innerRadius + (outerRadius-innerRadius) * t^growth      (Spiral.js:53)
+//       angle = t*turns*2π + (arm/armCount)*2π  [+ wobble]              (Spiral.js:56-61)
+//       x = r*cos(angle) [+dx],  y = r*sin(angle) [+dy]                 (Spiral.js:91-92)
+//     Wobble is a pure sin() of t (no RNG). This extractor replays those EXACT
+//     float ops (armPoint below) so ideal vertices are bit-for-bit on the drawing.
+//
+// THE SEED. Spiral is NOT seedless, but the seed touches geometry ONLY through the
+// distort branch (Spiral.js:65-89): when distortAmount>0, each vertex is displaced
+// by dx,dy = (ctx.noise(...)-0.5)*2*amt (Spiral.js:87-88). ctx.noise∈[0,1) ⇒
+// |dx|,|dy| ≤ amt ⇒ euclidean drift ≤ amt*√2, for ANY noise implementation — a
+// noise-agnostic bound, not an artifact of the test harness's RNG. So:
+//   • distortAmount===0 → geometry fully param-determined → anchors bit-exact.
+//   • distortAmount>0, no distort field → amt=distortAmount; anchors sit on the
+//     IDEAL (undistorted) curve and drift from the drawing by ≤ distortAmount*√2.
+//     The divergence guard asserts coincidence within that documented tolerance.
+//   • distortAmount>0 WITH a distort modulation field → amt = distortAmount*mask
+//     where mask = max(0, modulationTransfer(...)) is UNBOUNDED (Spiral.js:83-85),
+//     so no finite tolerance holds → return null (mirrors the grid/recursive
+//     warp→null branch: never ship anchors we can't tie to the drawing).
+//
+// Coordinate frame: the arm points are built in a CENTERED frame (origin 0,0) and
+// drawBase is wrapped by applySymmetryDraw, which for symmetry=1 translate()s by
+// (cx+offsetX, cy+offsetY). So WORLD = centered + (canvasW/2+offsetX,
+// canvasH/2+offsetY), matching Grid/Recursive.
+//
+// ROLE MAPPING (only roles that map onto a spiral's REAL structure):
+//   • tip = the endpoints of each arm — the signal terminus. Outer end (i=totalSteps)
+//     always; inner end (i=0) only when the arm actually STARTS off the origin
+//     (startR≠0). normal points radially outward from the global center.
+//   • edge = arc-length samples ALONG each arm (interior, endpoints excluded so they
+//     don't duplicate tips), via sampleEdgeAnchors — a spiral arm IS a path. tangent
+//     = arm direction.
+//   • crossing = the center HUB, emitted ONLY when armCount>1 AND every arm starts
+//     at the origin (startR===0), i.e. the arms genuinely share that vertex. This is
+//     the one place multiple arms provably meet. junction=true.
+//   • NO crossings otherwise: a single arm (r and angle both monotonic in t) never
+//     self-crosses, and for multi-arm spirals with startR≠0 the inter-arm
+//     intersections that exist geometrically are NOT enumerated (they'd need numeric
+//     root-finding) — we do not fabricate them.
+//   • NO cells: a spiral arm is an OPEN curve enclosing no region.
+//
+// DELIBERATE LIMITATIONS (documented, honesty-gated), mirroring Grid/Recursive:
+//   • symmetry>1 copies and startAngle rotation are NOT replicated — anchors
+//     describe the single base copy at the default orientation.
+//   • A single arm that starts exactly at the origin (armCount===1, startR===0)
+//     leaves that origin endpoint unanchored: no hub (needs armCount>1) and no
+//     inner tip (needs startR≠0). Deliberate — we do not ship a wrong anchor there.
+
+/**
+ * Spiral semantic extractor. See the block header for the role/limitation
+ * contract. Emission order is fixed (crossings, edges, tips) for determinism.
+ * @returns {Array<object>|null}
+ */
+function spiralAnchors(params, canvasW, canvasH) {
+  const {
+    armCount = 3,
+    turns = 8,
+    innerRadius = 5,
+    outerRadius = 400,
+    growth = 1.0,
+    distortAmount = 0,
+    wobbleAmp = 0,
+    wobbleFreq = 8,
+    stepsPerTurn = 120,
+    offsetX = 0,
+    offsetY = 0,
+    edgeSamplesPerArm = 24,
+  } = params || {};
+
+  // A distort modulation field scales the noise by an unbounded mask — the drawn
+  // vertices can't be tied to the ideal curve within any finite tolerance, so
+  // refuse to emit (see block header).
+  const mod = params && params.modulation;
+  if (distortAmount > 0 && mod && mod.channel === 'distort' && mod.field) return null;
+
+  const totalSteps = Math.round(turns * stepsPerTurn);
+  if (armCount < 1 || totalSteps < 1) return []; // nothing drawn ⇒ no anchors.
+
+  const radialRange = outerRadius - innerRadius;
+  const ox = canvasW / 2 + offsetX;
+  const oy = canvasH / 2 + offsetY;
+
+  // Ideal (undistorted) arm point in CENTERED coords, replaying Spiral.generate's
+  // exact float ops (dx/dy omitted — that's the seed-driven drift the header bounds).
+  const armPoint = (arm, i) => {
+    const armOffset = (arm / armCount) * TWO_PI;
+    const t = i / totalSteps;
+    const r = innerRadius + radialRange * Math.pow(t, growth);
+    let angle = t * turns * TWO_PI + armOffset;
+    if (wobbleAmp > 0) angle += wobbleAmp * Math.sin(t * wobbleFreq * TWO_PI) * (Math.PI / 180);
+    return { x: r * Math.cos(angle), y: r * Math.sin(angle) };
+  };
+
+  // Start radius decides whether arms share the origin. Note Math.pow(0,growth) is
+  // 0 for growth>0 but 1 for growth===0 (arms start at the rim), so derive it from
+  // the actual math — NOT from `innerRadius===0`.
+  const startR = innerRadius + radialRange * Math.pow(0, growth);
+
+  const anchors = [];
+
+  // ── CROSSINGS: the center hub, iff multiple arms provably meet at the origin.
+  if (armCount > 1 && startR === 0) {
+    anchors.push({
+      id: anchorId('crossing', 'hub'),
+      role: 'crossing',
+      x: ox,
+      y: oy,
+      tangent: 0,
+      normal: HALF_PI,
+      s: 0,
+      meta: { hub: true, junction: true },
+    });
+  }
+
+  // ── EDGES: interior arc-length samples along each arm (world coords). Endpoints
+  //    excluded so they never duplicate the tips. tangent = arm direction (from
+  //    sampleEdgeAnchors). ids: edge:<arm>:<sampleIndex>.
+  const armPaths = [];
+  for (let arm = 0; arm < armCount; arm++) {
+    const pts = [];
+    for (let i = 0; i <= totalSteps; i++) {
+      const p = armPoint(arm, i);
+      pts.push({ x: p.x + ox, y: p.y + oy });
+    }
+    armPaths.push(pts);
+  }
+  const edges = sampleEdgeAnchors(armPaths, {
+    count: edgeSamplesPerArm,
+    includeEndpoints: false,
+    idPrefix: 'edge',
+  });
+  for (const e of edges) {
+    anchors.push({ ...e, meta: { ...e.meta, arm: e.meta.pathIndex } });
+  }
+
+  // ── TIPS: arm endpoints. Outer terminus always; inner terminus only when the
+  //    arm starts off the origin. normal = radial outward from the global center.
+  for (let arm = 0; arm < armCount; arm++) {
+    const outer = armPoint(arm, totalSteps);
+    const oAng = outer.x === 0 && outer.y === 0 ? 0 : Math.atan2(outer.y, outer.x);
+    anchors.push({
+      id: anchorId('tip', arm, 'outer'),
+      role: 'tip',
+      x: outer.x + ox,
+      y: outer.y + oy,
+      tangent: oAng + HALF_PI,
+      normal: oAng,
+      s: 0,
+      meta: { arm, end: 'outer' },
+    });
+    if (startR !== 0) {
+      const inner = armPoint(arm, 0);
+      const iAng = Math.atan2(inner.y, inner.x);
+      anchors.push({
+        id: anchorId('tip', arm, 'inner'),
+        role: 'tip',
+        x: inner.x + ox,
+        y: inner.y + oy,
+        tangent: iAng + HALF_PI,
+        normal: iAng,
+        s: 0,
+        meta: { arm, end: 'inner' },
+      });
+    }
+  }
+
+  // ── CELLS: none — a spiral arm is an open curve enclosing no region.
+
+  return anchors;
+}
+
 /**
  * Return semantic anchors for a pattern, or null when no extractor exists (the
  * caller falls back to generic edge anchors from anchors.js).
@@ -514,9 +690,10 @@ export function getSemanticAnchors(patternType, params, canvasW, canvasH) {
       return gridAnchors(params, canvasW, canvasH);
     case 'recursive':
       return recursiveAnchors(params, canvasW, canvasH);
+    case 'spiral':
+      return spiralAnchors(params, canvasW, canvasH);
     // Extractors for these hosts are deferred to later slices.
     case 'voronoi':
-    case 'spiral':
     default:
       return null;
   }

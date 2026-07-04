@@ -3,6 +3,7 @@ import { getSemanticAnchors } from './semanticAnchors.js';
 import { placeMotifs, selectAnchors } from './placementEngine.js';
 import Grid from '../patterns/Grid.js';
 import RecursiveGeometry from '../patterns/RecursiveGeometry.js';
+import Spiral from '../patterns/Spiral.js';
 import { RecordingContext } from '../patterns/drawingContext.js';
 
 const HALF_PI = Math.PI / 2;
@@ -65,11 +66,12 @@ function uniqSorted(nums, tol = 1e-6) {
 }
 
 describe('getSemanticAnchors — non-extractor patterns defer to null', () => {
-  it('returns null for voronoi / spiral / unknown', () => {
+  it('returns null for voronoi / unknown (spiral now has an extractor)', () => {
     const p = linearParams();
     expect(getSemanticAnchors('voronoi', p, W, H)).toBeNull();
-    expect(getSemanticAnchors('spiral', p, W, H)).toBeNull();
     expect(getSemanticAnchors('unknown-pattern', p, W, H)).toBeNull();
+    // spiral is exercised in its own suite below and returns an array here.
+    expect(Array.isArray(getSemanticAnchors('spiral', p, W, H))).toBe(true);
   });
 });
 
@@ -489,6 +491,239 @@ describe('getSemanticAnchors — recursive feeds the placement engine', () => {
       {
         selection: { roles: ['crossing', 'tip'] },
         placement: { sizing: { mode: 'fixed', size: 4, min: 0 } },
+      },
+      { canvasW: W, canvasH: H, boundary: { type: 'rect', width: W, height: H } }
+    );
+    expect(placements.length).toBeGreaterThan(0);
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// SPIRAL extractor (patternType:'spiral', class Spiral)
+// ════════════════════════════════════════════════════════════════════════════
+//
+// Spiral CONSUMES the seed, but only through ctx.noise() in the distort branch
+// (Spiral.js:65-89). With distortAmount===0 the drawn vertices are fully
+// param-determined (wobble is a pure sin() of t — no RNG), so the extractor is
+// bit-exact. With distortAmount>0 (no field) each vertex is displaced by
+// (noise-0.5)*2*amt per axis, noise∈[0,1) ⇒ |Δ|≤amt per axis ⇒ euclidean drift
+// ≤ amt*√2 for ANY noise implementation — a noise-agnostic tolerance, NOT a
+// mulberry32 accident. A distort MODULATION field scales amt by an unbounded
+// mask, so that case is unverifiable → the extractor returns null (mirrors the
+// grid warp→null branch). Default frame: symmetry=1, no offset ⇒ world =
+// centered + (CX, CY).
+
+function spiralParams(overrides = {}) {
+  return {
+    armCount: 3,
+    turns: 4,
+    innerRadius: 10,
+    outerRadius: 150,
+    growth: 1.0,
+    distortAmount: 0,
+    distortScale: 0.01,
+    wobbleAmp: 0,
+    wobbleFreq: 8,
+    stepsPerTurn: 60,
+    strokeWeight: 0.8,
+    symmetry: 1,
+    startAngle: 0,
+    offsetX: 0,
+    offsetY: 0,
+    ...overrides,
+  };
+}
+
+// Reconstruct the REAL drawn arm polylines from the pattern's own recorded ops.
+// Each arm is one beginShape → vertex* → endShape group; vertex coords are in
+// the pattern's CENTERED space, lifted to WORLD by adding (CX, CY). NO
+// re-derivation of the spiral math — truth comes only from the recording.
+function recordSpiralArms(params, seed = 42) {
+  const inst = new Spiral();
+  const ctx = new RecordingContext({ seed });
+  inst.generateWithContext(ctx, seed, params, W, H, '#000000', 100);
+  const arms = [];
+  let cur = null;
+  for (const { op, args } of ctx.calls) {
+    if (op === 'beginShape') cur = [];
+    else if (op === 'vertex' && cur) cur.push({ x: args[0] + CX, y: args[1] + CY });
+    else if (op === 'endShape' && cur) {
+      arms.push(cur);
+      cur = null;
+    }
+  }
+  return arms;
+}
+
+function distToSeg(p, a, b) {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const l2 = dx * dx + dy * dy;
+  if (l2 === 0) return Math.hypot(p.x - a.x, p.y - a.y);
+  let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+}
+function distToPolyline(p, pts) {
+  let m = Infinity;
+  for (let i = 0; i < pts.length - 1; i++) m = Math.min(m, distToSeg(p, pts[i], pts[i + 1]));
+  return m;
+}
+
+describe('getSemanticAnchors — spiral role taxonomy', () => {
+  it('emits crossing (hub) + edge + tip with the anchors.js shape (3-arm hub)', () => {
+    // innerRadius=0 ⇒ all arms start at the origin ⇒ a real shared hub crossing.
+    const anchors = getSemanticAnchors('spiral', spiralParams({ innerRadius: 0 }), W, H);
+    expect(Array.isArray(anchors)).toBe(true);
+    const roles = new Set(anchors.map((a) => a.role));
+    expect(roles).toEqual(new Set(['crossing', 'edge', 'tip']));
+    // No cells: a spiral arm is an open curve enclosing no region.
+    expect(anchors.some((a) => a.role === 'cell')).toBe(false);
+    for (const a of anchors) {
+      expect(a).toEqual(
+        expect.objectContaining({
+          id: expect.any(String),
+          role: expect.any(String),
+          x: expect.any(Number),
+          y: expect.any(Number),
+          tangent: expect.any(Number),
+          normal: expect.any(Number),
+          s: expect.any(Number),
+          meta: expect.any(Object),
+        })
+      );
+    }
+  });
+
+  it('emits NO crossings for a single arm (never self-crosses)', () => {
+    const anchors = getSemanticAnchors('spiral', spiralParams({ armCount: 1 }), W, H);
+    expect(anchors.some((a) => a.role === 'crossing')).toBe(false);
+    // single arm with innerRadius>0 ⇒ inner + outer tip.
+    const tips = anchors.filter((a) => a.role === 'tip');
+    expect(tips.length).toBe(2);
+    expect(tips.some((t) => t.meta.end === 'inner')).toBe(true);
+    expect(tips.some((t) => t.meta.end === 'outer')).toBe(true);
+  });
+
+  it('emits NO crossings for a multi-arm spiral whose arms do NOT share the origin', () => {
+    // innerRadius>0 ⇒ arms start on a ring, not at a point ⇒ no hub. Inter-arm
+    // intersections exist geometrically but are not enumerated (documented).
+    const anchors = getSemanticAnchors('spiral', spiralParams({ armCount: 3, innerRadius: 10 }), W, H);
+    expect(anchors.some((a) => a.role === 'crossing')).toBe(false);
+  });
+
+  it('is deterministic — byte-identical for identical params (toEqual)', () => {
+    const a = getSemanticAnchors('spiral', spiralParams(), W, H);
+    const b = getSemanticAnchors('spiral', spiralParams(), W, H);
+    expect(a).toEqual(b);
+  });
+
+  it('returns null when a distort modulation field is active (unverifiable)', () => {
+    const p = spiralParams({
+      distortAmount: 20,
+      modulation: { channel: 'distort', field: { type: 'noise' }, amount: 30 },
+    });
+    expect(getSemanticAnchors('spiral', p, W, H)).toBeNull();
+  });
+});
+
+// ── DIVERGENCE GUARD (the honesty gate) ─────────────────────────────────────
+// Prove every anchor sits where Spiral actually draws, by pulling truth from the
+// pattern's own recorded arm polylines. Two regimes: (A) single arm, innerRadius>0
+// — inner+outer tips, no crossings; (B) 3 arms, innerRadius=0 — a shared hub
+// crossing + outer tips. Both with distortAmount=0 for bit-exact coincidence.
+// A THIRD regime turns distort ON (no field) to prove the ≤ distortAmount*√2
+// tolerance claim.
+describe('divergence guard — spiral anchors coincide with the pattern real drawing', () => {
+  const EXACT_TOL = 1e-6;
+
+  const cases = [
+    { name: 'single arm, innerRadius>0', params: spiralParams({ armCount: 1, innerRadius: 10 }) },
+    { name: '3 arms, innerRadius=0 hub', params: spiralParams({ armCount: 3, innerRadius: 0 }) },
+    { name: 'wobble on', params: spiralParams({ armCount: 2, wobbleAmp: 15 }) },
+  ];
+
+  for (const { name, params } of cases) {
+    it(`tips land on real arm endpoints; edges lie on the real arms (${name})`, () => {
+      const arms = recordSpiralArms(params);
+      expect(arms.length).toBe(Math.max(1, Math.floor(params.armCount)));
+
+      const anchors = getSemanticAnchors('spiral', params, W, H);
+      const tips = anchors.filter((a) => a.role === 'tip');
+      const edges = anchors.filter((a) => a.role === 'edge');
+
+      // Every OUTER tip == the last recorded vertex of its arm; every INNER tip
+      // (when emitted) == the first recorded vertex of its arm.
+      for (const t of tips) {
+        const arm = arms[t.meta.arm];
+        const real = t.meta.end === 'outer' ? arm[arm.length - 1] : arm[0];
+        expect(Math.hypot(t.x - real.x, t.y - real.y)).toBeLessThanOrEqual(EXACT_TOL);
+      }
+      // Every arm's outer terminus has exactly one outer tip.
+      expect(tips.filter((t) => t.meta.end === 'outer').length).toBe(arms.length);
+
+      // Every edge anchor lies ON its arm's real recorded polyline.
+      expect(edges.length).toBeGreaterThan(0);
+      for (const e of edges) {
+        expect(distToPolyline(e, arms[e.meta.arm])).toBeLessThanOrEqual(1e-6 + 1e-9);
+      }
+    });
+  }
+
+  it('hub crossing sits on the shared origin start-vertex of every arm', () => {
+    const params = spiralParams({ armCount: 3, innerRadius: 0 });
+    const arms = recordSpiralArms(params);
+    const anchors = getSemanticAnchors('spiral', params, W, H);
+    const crossings = anchors.filter((a) => a.role === 'crossing');
+    expect(crossings.length).toBe(1);
+    const hub = crossings[0];
+    expect(hub.meta.junction).toBe(true);
+    // Every arm's first recorded vertex coincides with the hub.
+    for (const arm of arms) {
+      expect(Math.hypot(hub.x - arm[0].x, hub.y - arm[0].y)).toBeLessThanOrEqual(EXACT_TOL);
+    }
+  });
+
+  it('with distort ON (no field) anchors stay within distortAmount*√2 of the real drawing', () => {
+    const distortAmount = 20;
+    const params = spiralParams({ armCount: 3, innerRadius: 10, distortAmount });
+    const arms = recordSpiralArms(params);
+    const anchors = getSemanticAnchors('spiral', params, W, H);
+    const tol = distortAmount * Math.SQRT2 + 1e-6;
+
+    const tips = anchors.filter((a) => a.role === 'tip');
+    const edges = anchors.filter((a) => a.role === 'edge');
+
+    for (const t of tips) {
+      const arm = arms[t.meta.arm];
+      const real = t.meta.end === 'outer' ? arm[arm.length - 1] : arm[0];
+      expect(Math.hypot(t.x - real.x, t.y - real.y)).toBeLessThanOrEqual(tol);
+    }
+    for (const e of edges) {
+      expect(distToPolyline(e, arms[e.meta.arm])).toBeLessThanOrEqual(tol);
+    }
+    // Guard the guard: distort actually moved the drawing off the ideal, so the
+    // exact (1e-6) tolerance would FAIL here — the loose tolerance is load-bearing.
+    const idealEdgeMiss = edges.some((e) => distToPolyline(e, arms[e.meta.arm]) > 1e-6);
+    expect(idealEdgeMiss).toBe(true);
+  });
+});
+
+describe('getSemanticAnchors — spiral feeds the placement engine', () => {
+  it('roles are filterable via selectAnchors', () => {
+    const anchors = getSemanticAnchors('spiral', spiralParams(), W, H);
+    const { survivors } = selectAnchors(anchors, { roles: ['tip'] });
+    expect(survivors.length).toBeGreaterThan(0);
+    expect(survivors.every((a) => a.role === 'tip')).toBe(true);
+  });
+
+  it('produces placements through placeMotifs', () => {
+    const anchors = getSemanticAnchors('spiral', spiralParams(), W, H);
+    const { placements } = placeMotifs(
+      anchors,
+      {
+        selection: { roles: ['tip', 'edge'] },
+        placement: { sizing: { mode: 'fixed', size: 3, min: 0 } },
       },
       { canvasW: W, canvasH: H, boundary: { type: 'rect', width: W, height: H } }
     );

@@ -22,6 +22,7 @@
 // selected layer; when it resolves to a layer we show its controls, otherwise we
 // show a neutral document/empty state. Multi-select is out of scope (#6).
 
+import { useState } from "react";
 import PatternSelect from "../PatternSelect";
 import PatternParams from "../PatternParams";
 import DockToggle from "./DockToggle";
@@ -538,6 +539,13 @@ const MOTIF_ROLES = [
 // deepMergeBinding so a partial patch never clobbers another branch — same
 // re-spread invariant as ModulatorDevice, extended to a nested schema.
 function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer }) {
+  // Collapsed by default (mobile discoverability: the device sits at the TOP of
+  // the Inspector for a host layer but stays folded until the user opens it).
+  // Declared BEFORE the self-hide early return — the component renders
+  // unconditionally and hides itself, so the hook must run every render
+  // (Rules of Hooks).
+  const [open, setOpen] = useState(false);
+
   // Self-hide: a motif layer isn't a host, and only anchor-capable pattern
   // types host motifs today.
   if (isMotifLayer(layer) || !MOTIF_HOSTS.has(layer.patternType)) return null;
@@ -575,15 +583,33 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer }
       className="space-y-3 border-t border-hairline pt-3"
       data-testid="motif-device"
     >
-      <h3 className="text-xs font-semibold text-ink-soft uppercase tracking-wider">
-        Motif
-      </h3>
+      <button
+        type="button"
+        data-testid="motif-toggle"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-1.5 text-left text-xs font-semibold text-ink-soft uppercase tracking-wider outline-none hover:text-ink focus:text-ink"
+      >
+        <span aria-hidden="true" className="text-[10px] leading-none">
+          {open ? "▾" : "▸"}
+        </span>
+        <span>Motif</span>
+        {!open && motifs.length > 0 && (
+          <span className="font-normal normal-case tracking-normal text-ink-soft/70">
+            · {motifs.length}
+          </span>
+        )}
+      </button>
 
-      {motifs.length === 0 && (
-        <p className="text-[11px] text-ink-soft/70">No motifs on this host.</p>
-      )}
+      {open && (
+        <>
+          {motifs.length === 0 && (
+            <p className="text-[11px] text-ink-soft/70">
+              No motifs on this host.
+            </p>
+          )}
 
-      {motifs.map((m) => {
+          {motifs.map((m) => {
         const glyphRef = m.params?.glyphRef;
         const glyph = getGlyph(glyphRef);
         const roles = Array.isArray(m.params?.binding?.selection?.roles)
@@ -733,6 +759,8 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer }
       >
         + Add Motif
       </button>
+        </>
+      )}
     </div>
   );
 }
@@ -772,6 +800,19 @@ function SelectedLayerInspector({ layer, layers, unit, profileId, onUpdateLayer,
         </h3>
         <PatternSelect active={layer.patternType} onChange={handlePatternChange} />
       </div>
+
+      {/* Motif device — add/edit/remove motifs adorning this host. Collapsed by
+          default and pinned ABOVE the pattern params so it's the first thing a
+          user sees for a host layer (mobile discoverability). Self-hides unless
+          the selected layer is an eligible host (grid/recursive/spiral) → renders
+          nothing, leaving no empty gap for non-host layers. */}
+      <MotifDevice
+        layer={layer}
+        layers={layers}
+        onUpdateLayer={onUpdateLayer}
+        onAddMotif={onAddMotif}
+        onRemoveLayer={onRemoveLayer}
+      />
 
       {/* Collapsible, grouped param controls (Structure / Scale / Variation /
           Stroke / Transform — the existing PARAM_GROUPS). */}
@@ -818,16 +859,6 @@ function SelectedLayerInspector({ layer, layers, unit, profileId, onUpdateLayer,
         onClosePreview={onClosePreview}
         threeDSubMode={threeDSubMode}
         threeDFocusLayerId={threeDFocusLayerId}
-      />
-
-      {/* Motif device — add/edit/remove motifs adorning this host. Self-hides
-          unless the selected layer is an eligible host (grid/recursive/spiral). */}
-      <MotifDevice
-        layer={layer}
-        layers={layers}
-        onUpdateLayer={onUpdateLayer}
-        onAddMotif={onAddMotif}
-        onRemoveLayer={onRemoveLayer}
       />
     </div>
   );

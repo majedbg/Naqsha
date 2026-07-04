@@ -104,6 +104,30 @@ describe("MotifDevice", () => {
       />
     );
     expect(screen.getByTestId("motif-device")).toBeInTheDocument();
+    // Collapsed by default → expand before asserting the body.
+    fireEvent.click(screen.getByTestId("motif-toggle"));
+    expect(screen.getAllByTestId("motif-row")).toHaveLength(1);
+  });
+
+  it("is collapsed by default and reveals its body when the toggle is clicked", () => {
+    const motif = motifLayer("m1", "host1", defaultBinding);
+    render(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    // Device (with its toggle) is present, but the body is hidden.
+    const toggle = screen.getByTestId("motif-toggle");
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByTestId("motif-row")).toBeNull();
+    expect(screen.queryByTestId("motif-add")).toBeNull();
+    // Expanding reveals the body.
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByTestId("motif-add")).toBeInTheDocument();
     expect(screen.getAllByTestId("motif-row")).toHaveLength(1);
   });
 
@@ -118,6 +142,7 @@ describe("MotifDevice", () => {
         onAddMotif={onAddMotif}
       />
     );
+    fireEvent.click(screen.getByTestId("motif-toggle"));
     fireEvent.click(screen.getByTestId("motif-add"));
     expect(onAddMotif).toHaveBeenCalledTimes(1);
     const [hostId, opts] = onAddMotif.mock.calls[0];
@@ -137,6 +162,7 @@ describe("MotifDevice", () => {
         onChangeLayerPattern={() => {}}
       />
     );
+    fireEvent.click(screen.getByTestId("motif-toggle"));
     // Add 'edge' (crossing already on).
     fireEvent.click(screen.getByTestId("motif-role-edge"));
     expect(onUpdateLayer).toHaveBeenCalledWith("m1", expect.anything());
@@ -157,6 +183,7 @@ describe("MotifDevice", () => {
         onChangeLayerPattern={() => {}}
       />
     );
+    fireEvent.click(screen.getByTestId("motif-toggle"));
     fireEvent.change(screen.getByTestId("motif-rate-n"), {
       target: { value: "4" },
     });
@@ -177,6 +204,7 @@ describe("MotifDevice", () => {
         onRemoveLayer={onRemoveLayer}
       />
     );
+    fireEvent.click(screen.getByTestId("motif-toggle"));
     fireEvent.click(screen.getByTestId("motif-remove"));
     expect(onRemoveLayer).toHaveBeenCalledWith("m1");
   });

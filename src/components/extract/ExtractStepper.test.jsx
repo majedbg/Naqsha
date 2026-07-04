@@ -61,6 +61,7 @@ const mocks = vi.hoisted(() => ({
   dispose: vi.fn(),
   save: vi.fn(),
   cropToImageData: vi.fn(),
+  previewCropToImageData: vi.fn(),
   detectQuad: vi.fn(),
   readExif: vi.fn(),
   reverseGeocode: vi.fn(),
@@ -74,6 +75,10 @@ vi.mock('../../lib/extraction/imageIO', () => ({
   // ORIGINAL or the RECTIFIED image reached the Select/trace path.
   loadImage: vi.fn(async (url) => ({ naturalWidth: 400, naturalHeight: 300, src: url })),
   cropToImageData: mocks.cropToImageData,
+  // #70b: the Refine live-preview crop — a SEPARATE seam from the trace crop, so
+  // the trace's cropToImageData call log stays pristine. Returns a tiny real RGBA
+  // buffer the (real, pure) preprocess() runs on for the filmstrip.
+  previewCropToImageData: mocks.previewCropToImageData,
   imageToImageData: vi.fn(() => ({ data: new Uint8ClampedArray(16), width: 200, height: 150 })),
   imageDataToDataURL: vi.fn(() => 'data:image/png;base64,rectified'),
 }));
@@ -128,6 +133,10 @@ beforeEach(() => {
   mocks.cropToImageData
     .mockReset()
     .mockReturnValue({ data: new Uint8ClampedArray(4), width: 1, height: 1 });
+  // #70b: the Refine preview crop returns a small real RGBA buffer preprocess runs on.
+  mocks.previewCropToImageData
+    .mockReset()
+    .mockReturnValue({ data: new Uint8ClampedArray(2 * 2 * 4), width: 2, height: 2 });
   mocks.detectQuad.mockReset().mockReturnValue(null);
   // Default: no EXIF (zero-friction path). S8 tests override per-case.
   mocks.readExif.mockReset().mockResolvedValue({ date: null, gps: null, camera: null });
@@ -154,26 +163,31 @@ async function walkToSelect() {
   // Flatten stage appears (skip-only stub) …
   const skip = await screen.findByRole('button', { name: /skip flatten/i });
   fireEvent.click(skip);
-  // … then Select.
+  // … then Select, whose "Continue →" advances into the Refine step (#70b),
+  // where the trace now lives. Every caller that then clicks "trace region"
+  // continues to work unchanged.
+  fireEvent.click(await screen.findByRole('button', { name: /continue/i }));
   await screen.findByRole('button', { name: /trace region/i });
 }
 
 describe('ExtractStepper — step flow', () => {
-  it('shows all five stages of the guided flow', () => {
+  it('shows all six stages of the guided flow', () => {
     render(<ExtractStepper onClose={() => {}} />);
-    for (const label of ['Upload', 'Flatten', 'Select', 'Review', 'Save']) {
+    for (const label of ['Upload', 'Flatten', 'Select', 'Refine', 'Review', 'Save']) {
       expect(screen.getByText(label)).toBeTruthy();
     }
   });
 
-  it('advances Upload → Flatten (skippable) → Select', async () => {
+  it('advances Upload → Flatten (skippable) → Select → Refine', async () => {
     render(<ExtractStepper onClose={() => {}} />);
     uploadFixtureFile();
     expect(await screen.findByRole('button', { name: /skip flatten/i })).toBeTruthy();
     // Manual rectify is offered (S3) …
     expect(screen.getByRole('button', { name: /apply flatten/i })).toBeTruthy();
-    // … but "already flat" skips straight through.
+    // … but "already flat" skips straight through to Select.
     fireEvent.click(screen.getByRole('button', { name: /skip flatten/i }));
+    // Select → Refine (#70b): the trace lives in Refine now.
+    fireEvent.click(await screen.findByRole('button', { name: /continue/i }));
     expect(await screen.findByRole('button', { name: /trace region/i })).toBeTruthy();
   });
 
@@ -392,8 +406,9 @@ describe('ExtractStepper — flatten (S3)', () => {
     render(<ExtractStepper onClose={() => {}} />);
     uploadFixtureFile();
     fireEvent.click(await screen.findByRole('button', { name: /apply flatten/i }));
-    fireEvent.click(await screen.findByRole('button', { name: /continue/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /continue/i })); // Flatten → Select
 
+    fireEvent.click(await screen.findByRole('button', { name: /continue/i })); // Select → Refine
     fireEvent.click(await screen.findByRole('button', { name: /trace region/i }));
     await screen.findByText(/1 shape/i);
     // Select cropped the RECTIFIED image at its rectified dimensions (2×2).
@@ -418,6 +433,7 @@ describe('ExtractStepper — flatten (S3)', () => {
     fireEvent.click(await screen.findByRole('button', { name: /apply flatten/i }));
     fireEvent.click(await screen.findByRole('button', { name: /use original/i }));
 
+    fireEvent.click(await screen.findByRole('button', { name: /continue/i })); // Select → Refine
     fireEvent.click(await screen.findByRole('button', { name: /trace region/i }));
     await screen.findByText(/1 shape/i);
     expect(mocks.cropToImageData.mock.calls[0][0].src).toBe('data:image/png;base64,x');
@@ -1257,9 +1273,10 @@ describe('ExtractStepper — S9 provenance + palette + organization', () => {
     fireEvent.click(screen.getByRole('button', { name: /^back$/i }));
     uploadFixtureFile();
     fireEvent.click(await screen.findByRole('button', { name: /skip flatten/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /continue/i })); // Select → Refine
     fireEvent.click(await screen.findByRole('button', { name: /trace region/i }));
     await screen.findByText(/1 shape/i);
-    fireEvent.click(screen.getByRole('button', { name: /continue/i }));
+    fireEvent.click(screen.getByRole('button', { name: /continue/i })); // Review → Save
 
     const titleInput = await screen.findByLabelText('Title');
     expect(titleInput.value).toBe(''); // no stale "Ornament — June 2026"
@@ -1307,5 +1324,109 @@ describe('ExtractStepper — invert/polarity (#69)', () => {
     expect(mocks.cropToImageData.mock.calls[1][1]).toEqual(
       mocks.cropToImageData.mock.calls[0][1]
     );
+  });
+});
+
+// #70b (issues #70/#62/#48): the glass-box "Refine" step. The vectorizer traces
+// EXACTLY the post-threshold binary, so rendering that binary live is a 1-to-1
+// view of what pattern detection sees. Tuning here must drive the REAL trace —
+// a preview that doesn't change the trace is a failure (the wiring tests below).
+describe('ExtractStepper — Refine step (#70b)', () => {
+  // walkToSelect now lands in the Refine step (the trace lives there).
+  const walkToRefine = walkToSelect;
+
+  it('renders after Select with a live binary hero + a labeled filmstrip of stages', async () => {
+    render(<ExtractStepper onClose={() => {}} />);
+    await walkToRefine();
+    // The money view: a canvas rendering the binary the trace sees.
+    expect(screen.getByTestId('refine-binary')).toBeTruthy();
+    // The filmstrip shows each intermediate stage (gray → b/c → denoised → binary).
+    expect(screen.getByTestId('refine-filmstrip')).toBeTruthy();
+    for (const key of ['gray', 'adjusted', 'denoised', 'binary']) {
+      expect(screen.getByTestId(`refine-stage-${key}`)).toBeTruthy();
+    }
+    // Refine sits between Select and Review in the rail.
+    expect(screen.getByText('Refine')).toBeTruthy();
+  });
+
+  it('is skippable: "Skip / use defaults" traces at the legacy defaults (unchanged trace)', async () => {
+    render(<ExtractStepper onClose={() => {}} />);
+    await walkToRefine();
+    fireEvent.click(screen.getByTestId('skip-refine'));
+    await screen.findByText(/1 shape/i); // lands in Review
+    expect(mocks.extract).toHaveBeenCalledTimes(1);
+    // No options.trace → byte-identical to the pre-#70 flow.
+    expect(mocks.extract.mock.calls[0][1]).toEqual({});
+  });
+
+  it('a control updates the refine state (value readout reflects the change)', async () => {
+    render(<ExtractStepper onClose={() => {}} />);
+    await walkToRefine();
+    fireEvent.change(screen.getByLabelText('Brightness'), { target: { value: '40' } });
+    expect(screen.getByTestId('refine-value-Brightness').textContent).toBe('40');
+    // Switching to adaptive reveals its window/sensitivity controls.
+    fireEvent.click(screen.getByLabelText('Adaptive threshold'));
+    expect(screen.getByLabelText('Window')).toBeTruthy();
+    expect(screen.getByLabelText('Sensitivity (k)')).toBeTruthy();
+  });
+
+  // THE WIRING TEST (crux): tuned knobs must reach options.trace so the REAL
+  // trace binarizes them — both on advance AND on a later Review-side re-extract.
+  it('carries the tuned refine opts into options.trace — on advance AND on Review re-extract', async () => {
+    render(<ExtractStepper onClose={() => {}} />);
+    await walkToRefine();
+    fireEvent.click(screen.getByLabelText('Adaptive threshold'));
+    fireEvent.change(screen.getByLabelText('Brightness'), { target: { value: '20' } });
+    fireEvent.click(screen.getByRole('button', { name: /trace region/i }));
+    await screen.findByText(/1 shape/i);
+
+    // (a) advancing traces with the chosen opts (window/k at defaults are omitted).
+    expect(mocks.extract.mock.calls[0][1].trace).toEqual({ adaptive: true, brightness: 20 });
+
+    // (b) a Review-side re-extract (invert flip) STILL carries the tuned opts —
+    // this is what makes the preview more than a toy: the cleanup is not lost.
+    fireEvent.click(screen.getByRole('checkbox', { name: /invert/i }));
+    await waitFor(() => expect(mocks.extract).toHaveBeenCalledTimes(2));
+    expect(mocks.extract.mock.calls[1][1].trace).toEqual({
+      adaptive: true,
+      brightness: 20,
+      invert: true,
+    });
+  });
+
+  it('the invert toggle works here (parity with #69)', async () => {
+    render(<ExtractStepper onClose={() => {}} />);
+    await walkToRefine();
+    fireEvent.click(screen.getByRole('checkbox', { name: /invert/i }));
+    fireEvent.click(screen.getByRole('button', { name: /trace region/i }));
+    await screen.findByText(/1 shape/i);
+    expect(mocks.extract.mock.calls[0][1]).toEqual({ trace: { invert: true } });
+  });
+
+  it('"Auto-clean" applies the jali preset and drives the real trace', async () => {
+    render(<ExtractStepper onClose={() => {}} />);
+    await walkToRefine();
+    fireEvent.click(screen.getByTestId('auto-clean'));
+    // The preset flips to adaptive with a light blur + min-area.
+    expect(screen.getByLabelText('Adaptive threshold').checked).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: /trace region/i }));
+    await screen.findByText(/1 shape/i);
+    expect(mocks.extract.mock.calls[0][1].trace).toEqual({
+      adaptive: true,
+      window: 25,
+      blur: 1,
+      minArea: 5,
+    });
+  });
+
+  it('blur=0 is treated as "off" — no blur key reaches the trace (no divide-by-zero)', async () => {
+    render(<ExtractStepper onClose={() => {}} />);
+    await walkToRefine();
+    // Nudge blur up then back to 0: 0 must mean "no blur", never a sigma-0 kernel.
+    fireEvent.change(screen.getByLabelText('Blur'), { target: { value: '2' } });
+    fireEvent.change(screen.getByLabelText('Blur'), { target: { value: '0' } });
+    fireEvent.click(screen.getByRole('button', { name: /trace region/i }));
+    await screen.findByText(/1 shape/i);
+    expect(mocks.extract.mock.calls[0][1]).toEqual({}); // blur:0 → omitted → legacy trace
   });
 });

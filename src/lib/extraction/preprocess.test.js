@@ -150,6 +150,28 @@ describe('gaussian blur', () => {
     const out = gaussianBlur(img, { sigma: 2 });
     for (let j = 0; j < 16 * 16; j++) expect(out.data[j * 4]).toBe(120);
   });
+
+  // #70b guard: blur:0 must mean "no blur" and NEVER build a sigma-0 kernel
+  // (gaussianKernel(0) divides by zero → NaN weights). The Refine UI passes 0
+  // for "off"; runChain must short-circuit it. Asserts the whole chain is
+  // finite and byte-identical to the no-blur path.
+  it('blur:0 is a no-op — no divide-by-zero, identical to the unblurred chain', () => {
+    const img = lumaImage(20, 12, (x) => 40 + x * 8);
+    expect(() => preprocess(img, { blur: 0 })).not.toThrow();
+    const withZero = preprocess(img, { blur: 0 });
+    const without = preprocess(img, {});
+    for (const key of ['gray', 'adjusted', 'denoised', 'binary']) {
+      for (let j = 0; j < withZero[key].data.length; j++) {
+        expect(Number.isFinite(withZero[key].data[j])).toBe(true);
+        expect(withZero[key].data[j]).toBe(without[key].data[j]);
+      }
+    }
+    // The mask the trace binarizes is likewise unaffected + finite.
+    expect(() => binarize(img, { blur: 0 })).not.toThrow();
+    expect(Array.from(binarize(img, { blur: 0 }).data)).toEqual(
+      Array.from(binarize(img, {}).data)
+    );
+  });
 });
 
 // --- min-area suppression ---------------------------------------------------

@@ -233,3 +233,88 @@ describe('MotifPattern dual-emit parity', () => {
     expect(ctx.calls.filter((c) => c.op === 'vertex').length).toBe(0);
   });
 });
+
+describe('MotifPattern semantic anchor mode', () => {
+  it('semantic grid host places motifs from crossing anchors even with NO hostPaths', () => {
+    const inst = new MotifPattern();
+    const ctx = new RecordingContext({ seed: 1 });
+    inst.generateWithContext(
+      ctx,
+      7,
+      {
+        glyphRef: 'leaf',
+        anchorMode: 'semantic',
+        hostPatternType: 'grid',
+        hostParams: { cols: 4, rows: 4, spacing: 60, margin: 20 },
+        binding: { selection: { roles: ['crossing'] } },
+        // no hostPaths — must NOT no-op in semantic mode.
+      },
+      W,
+      H,
+      '#123456',
+      100
+    );
+    expect(inst.svgElements.length).toBeGreaterThan(0);
+    expect(ctx.calls.filter((c) => c.op === 'vertex').length).toBeGreaterThan(0);
+  });
+
+  it('semantic mode with a null-extractor host + hostPaths falls back to EDGE anchors', () => {
+    // voronoi has no extractor (getSemanticAnchors → null); with hostPaths the
+    // pattern degrades to generic edge anchors and still produces placements.
+    const withPaths = new MotifPattern();
+    withPaths.generateWithContext(
+      new RecordingContext({ seed: 1 }),
+      7,
+      {
+        glyphRef: 'leaf',
+        anchorMode: 'semantic',
+        hostPatternType: 'voronoi',
+        hostParams: {},
+        hostPaths: DIAGONAL_HOST,
+        edgeOpts: { count: 2 },
+        binding: {},
+      },
+      W,
+      H,
+      '#123456',
+      100
+    );
+
+    // Same host + edgeOpts under explicit edge mode ⇒ identical fallback output.
+    const edgeMode = new MotifPattern();
+    edgeMode.generateWithContext(
+      new RecordingContext({ seed: 1 }),
+      7,
+      baseParams(),
+      W,
+      H,
+      '#123456',
+      100
+    );
+
+    expect(withPaths.svgElements.length).toBeGreaterThan(0);
+    expect(withPaths.svgElements).toEqual(edgeMode.svgElements);
+  });
+
+  it('semantic mode with a null-extractor host and NO hostPaths ⇒ no-op', () => {
+    const inst = new MotifPattern();
+    const ctx = new RecordingContext({ seed: 1 });
+    inst.generateWithContext(
+      ctx,
+      7,
+      {
+        glyphRef: 'leaf',
+        anchorMode: 'semantic',
+        hostPatternType: 'voronoi',
+        hostParams: {},
+        binding: {},
+      },
+      W,
+      H,
+      '#123456',
+      100
+    );
+    expect(inst.svgElements).toEqual([]);
+    expect(ctx.calls.filter((c) => c.op === 'vertex').length).toBe(0);
+  });
+});

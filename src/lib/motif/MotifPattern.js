@@ -22,6 +22,7 @@
 import { Pattern } from '../patterns/drawingContext';
 import { parsePathD } from '../plotter/pathOps';
 import { sampleEdgeAnchors } from './anchors.js';
+import { getSemanticAnchors } from './semanticAnchors.js';
 import { placeMotifs } from './placementEngine.js';
 import { getGlyph } from './glyphs.js';
 import { placementMatrix, applyMatrix, matrixToSVG } from './instancing.js';
@@ -38,16 +39,25 @@ export default class MotifPattern extends Pattern {
     const p = params || {};
     const glyph = getGlyph(p.glyphRef);
     const hostPaths = Array.isArray(p.hostPaths) ? p.hostPaths : [];
-    if (!glyph || hostPaths.length === 0) return; // no-op
+    // No glyph ⇒ nothing to stamp. (hostPaths may be empty in SEMANTIC mode —
+    // a Grid/Spiral host has no polyline geometry, so the guard cannot require
+    // it here; the anchor step below yields [] for empty edge-mode input, which
+    // no-ops naturally.)
+    if (!glyph) return;
 
     const anchorMode = p.anchorMode ?? 'edge';
     let anchors;
-    if (anchorMode === 'edge') {
-      anchors = sampleEdgeAnchors(hostPaths, p.edgeOpts || {});
+    if (anchorMode === 'semantic') {
+      // Ask the host's structural extractor for role-tagged anchors
+      // (crossing/edge/tip/cell). null ⇒ this host has no verifiable extractor
+      // (deferred/unverifiable): degrade gracefully to generic edge anchors on
+      // any provided hostPaths, else no-op.
+      anchors = getSemanticAnchors(p.hostPatternType, p.hostParams, canvasW, canvasH);
+      if (anchors == null) {
+        anchors = hostPaths.length ? sampleEdgeAnchors(hostPaths, p.edgeOpts || {}) : [];
+      }
     } else {
-      // TODO(next slice): semantic anchors (crossing/tip/cell) live in a later
-      // build. Until then only edge anchors are supported.
-      anchors = [];
+      anchors = sampleEdgeAnchors(hostPaths, p.edgeOpts || {});
     }
 
     const boundary = { type: 'rect', width: canvasW, height: canvasH };

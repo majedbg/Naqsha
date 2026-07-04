@@ -8,7 +8,7 @@
 ---
 ## ✅ FINAL HANDOFF REPORT (2026-07-04 ~02:45)
 
-**What was built:** the complete **pure core** of the Motif/Adorn feature — 12 pure modules, **191 tests across 11 files, all green; full app suite 3330+ green; `vite build` green.** Everything is headless/deterministic (no p5/DOM/React in any motif module), TDD'd, and each risky piece got a dedicated adversarial review. Location: `~/Documents/Sonoform_all/Naqsha-motif` on `feat/motif-adorn-iso` (7 commits `a57992b..1deea70`; NOT pushed, NOT merged).
+**What was built:** the complete **pure core** of the Motif/Adorn feature — 12 pure modules, **226 tests across 11 files, all green; full app suite 3450 passed / 0 failed; `vite build` green.** Everything is headless/deterministic (no p5/DOM/React in any motif module), TDD'd, and each risky piece got a dedicated adversarial review. Semantic anchors cover ALL 4 flagship hosts (Grid/Recursive/Spiral/Voronoi). Location: `~/Documents/Sonoform_all/Naqsha-motif` on `feat/motif-adorn-iso` (`a57992b..3fc1e70`, NOT pushed, NOT merged).
 
 **The pure pipeline works end-to-end** (proven by `pipeline.e2e.test.js`): a real Grid host → `getSemanticAnchors` (25 crossings) → `placeMotifs` (role filter/rate/density/field/overrides → sequence/flip/orientation/jitter/sizing → test-before-place accept) → per-instance affine matrix → `MotifPattern` dual-emits identical geometry to canvas + SVG. The Wong no-overlap guarantee survives the whole pipeline; instances land exactly on crossings; fully deterministic.
 
@@ -23,7 +23,7 @@
 | `MotifPattern.js` | `default class MotifPattern extends Pattern` | glyph→canvas+SVG dual-emit; `anchorMode:'edge'|'semantic'` | 17 + 7 e2e |
 | `motifLayer.js` | `MOTIF_TYPE`, `isMotifLayer`, `createMotifParams`, `motifHostId`, `motifAutoName` | motif-layer schema (binding lives on the motif layer) | (36 w/ graph) |
 | `adornGraph.js` | `buildAdornGraph` → `{edges,byHost,byMotif,orphans}` | host↔motif relationship derivation (mirrors buildModulationGraph) | ↑ |
-| `semanticAnchors.js` | `getSemanticAnchors(patternType, params, W, H)` | Grid Crossings/Edges/Tips/Cells (divergence-guarded); null for others | 16 |
+| `semanticAnchors.js` | `getSemanticAnchors(patternType, params, W, H, opts?)` | Crossings/Edges/Tips/Cells for ALL 4 flagship hosts — Grid/Recursive/Spiral (formula, divergence-guarded) + Voronoi (GEOMETRY-IN via `opts.drawnCells`); null otherwise | 51 |
 | `straddleCheck.js` | `straddleCheck(placements, boundarySegments)` | warn-only: motifs crossing a cut/score line | 10 |
 
 ### Key contracts (stable — downstream can depend on them)
@@ -43,7 +43,7 @@
 - `svgExport`/undo/persistence wiring (Phase 6).
 
 **Pure work still open (safe to continue overnight if resumed):**
-- Semantic anchors for **Voronoi, Spiral, Recursive** (Grid done as the template). MUST follow the same divergence-guard discipline: read the pattern's real `generate()`, tie anchors to its actual recorded drawing, emit `null` if unverifiable. Do NOT ship anchors you can't prove sit on the pattern.
+- ~~Semantic anchors for Voronoi/Spiral/Recursive~~ **DONE 2026-07-04 AM** (Grid/Recursive/Spiral formula + divergence-guarded; Voronoi GEOMETRY-IN). All four flagship hosts covered. Next pure items: the Voronoi host-cell producer wiring (needs `computeVoronoiCells` exported), and optional junction-aware corner strategies (amendment #8, v2).
 
 **Human-only (out of scope, unchanged):** real CC0-plate glyph tracing; extraction-stepper fork (user wants a grill-me first — see Deferred); DB migrations; tier gating; motifs-on-motifs.
 
@@ -104,7 +104,12 @@ A **second, concurrent Claude session** (long-running process since Wed 23:00; r
 - [x] 1.4a placementEngine **selection** — DONE (commit `36869cc`, 27 tests). `selectAnchors(anchors, rules, {canvasW,canvasH}) → {survivors, orphans}`. Deterministic role→rate→skip→density(mulberry32)→field→overrides pipeline.
 - [x] 1.4b placementEngine **transform+accept** — DONE (commit `d50d0dc`, 49 engine tests). `resolvePlacements(survivors, config, {boundary})` + `placeMotifs` composer. Opus adversarial review caught 3 real green-but-broken bugs (proportional Infinity/obstacle-poisoning; margin>1 overlap; missing no-overlap invariant test) — ALL FIXED in same commit. Proportional semantics refined: `radius = min(size*scaleFactor, margin*R)`, margin clamped (0,1] ⇒ no overlap by construction, no Infinity. Determinism+RNG+winding reviewed SOUND.
  — role filter → rate/skip → seeded density (mulberry32) → field mask (ScalarField `sampleNorm` + threshold + invert) → overrides (ID match → spatial re-bind within tol → orphan). Pure → {survivors, orphans}. Determinism tested.
-- [ ] 1.3 (moved after engine) semantic `anchorPoints()` for Grid, Spiral, Recursive, Voronoi (Crossings/Edges/Tips/Cells) from pre-flatten internal structure; stable IDs. May ship partial (Grid+Voronoi first) if time-constrained.
+- [x] 1.3 semantic anchors for ALL 4 flagship hosts — DONE. `getSemanticAnchors(patternType, params, W, H, opts?)`:
+  - **Grid** (`176dd26`, 16t) — formula, divergence-guarded (linear+nonlinear).
+  - **Recursive** (`de3da4a`, +13t) — formula (seedless), n-gon tree, guarded shallow+deep.
+  - **Spiral** (`4908fe4`, +12t) — formula; bit-exact at distortAmount=0, bounded tolerance when jittered, null when distort field active.
+  - **Voronoi** (`3fc1e70`, +10t) — **GEOMETRY-IN**: sites come from ctx.random (irreproducible headless), so anchors derive from host-supplied `opts.drawnCells`; `null` without them → graceful edge fallback. Correct integration seam.
+  - **TODO (integration):** wire a host-cell producer into MotifPattern so Voronoi semantic mode gets `drawnCells` (needs `computeVoronoiCells` exposed from VoronoiCells.js). Until then Voronoi hosts use generic edge anchors. All others work formula-only.
 
 ### Phase 2 — data model — DONE (commit `ca2d952`, 36 tests)
 - [x] 2.1/2.2/2.3 motifLayer.js (schema/isMotifLayer/createMotifParams/motifHostId/motifAutoName) + adornGraph.js (buildAdornGraph {edges,byHost,byMotif,orphans}, mirrors buildModulationGraph, tolerate-dangling, stacking order, motifs-on-motifs→orphan).
@@ -153,3 +158,7 @@ A **second, concurrent Claude session** (long-running process since Wed 23:00; r
 - 2026-07-04 02:37 — semantic wired into MotifPattern + e2e demo (`ad77991`, 17+7t). Full pure pipeline proven.
 - 2026-07-04 02:41 — 3 more glyphs + straddleCheck (`1deea70`, 30t).
 - 2026-07-04 02:45 — FINAL HANDOFF REPORT written (see top). 191 motif tests, full suite 3330+ green, build green. Pure core COMPLETE. App/UI integration deferred to human.
+
+## Slice log (continued — 2026-07-04 AM, post-resume)
+- Final Phase-7 adversarial review: SOUND (probe verdict recorded above).
+- 1.3 semantic anchors completed for ALL 4 flagship hosts: Recursive `de3da4a`, Spiral `4908fe4`, Voronoi `3fc1e70` (GEOMETRY-IN). Motif suite now **226 tests**, full app suite green, build green.

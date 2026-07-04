@@ -216,7 +216,12 @@ export default function AnchorGhostOverlay({
               stroke={s.stroke}
               strokeOpacity={s.strokeOpacity}
               strokeWidth={strokeW}
-              style={{ pointerEvents: 'auto', cursor: 'pointer' }}
+              // 'all' (not 'auto'): SVG 'auto' = visiblePainted, which makes a
+              // HOLLOW candidate/excluded dot (fill:none) clickable only on its
+              // ~2px ring stroke — a center click falls through to the select
+              // overlay below. 'all' hit-tests fill+stroke regardless of paint,
+              // so the whole dot is a target. (Found via real-browser clicking.)
+              style={{ pointerEvents: 'all', cursor: 'pointer' }}
               onPointerDown={(e) => {
                 e.stopPropagation();
                 toggleOverride(a);

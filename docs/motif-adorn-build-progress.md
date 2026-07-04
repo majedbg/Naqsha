@@ -175,3 +175,6 @@ Scope chosen by user: **render + minimal device UI**, browser-self-verified, rai
 - Phase 5 rail ("adorns" edges via ModulationRail+buildAdornGraph) + straddle badge/export-summary.
 - Anchor-ghost canvas overlay + click-to-override; preset chips (Straight/Half-drop/Brick/Mirror/Tossed); jitter/sequence full controls; device polish.
 - Undo/persistence: motif layers persist via the normal layer localStorage path (verified: seeded set cold-loaded). Undo of motif param edits rides updateLayer's recordEdit — not explicitly verified.
+- [x] **INT-3** AdornRail (`93fdbb0`): "adorns" relationship rail mirroring ModulationRail — gold/amber edges (rgb(184,134,11)) from each motif row to its host row via buildAdornGraph, distinct hue, selection emphasis, control point bowed to outer edge. **BROWSER-VERIFIED**: two motifs on one grid host → two gold edges converging on the host row with real geometry + emphasis. 4 tests. ModulationRail untouched.
+
+### Still remaining (UI, needs human at browser): anchor-ghost canvas overlay + click-to-override; straddle badge + export-summary line (straddleCheck is built, just needs UI surface); preset chips (Straight/Half-drop/Brick/Mirror/Tossed); full jitter/sequence controls + polish; Voronoi/edge-host rendering (drawn-geometry seam). Undo of motif edits rides updateLayer.recordEdit (not eyeballed).

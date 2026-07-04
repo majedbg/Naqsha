@@ -79,6 +79,45 @@ export default class VoronoiCells extends Pattern {
     const voronoiEdges = computeVoronoiEdges(triangles, halfW, halfH);
     const delaunayEdges = computeDelaunayEdges(points, triangles);
 
+    // --- Motif host-geometry capture (drawn-geometry seam) --------------------
+    // Stash the FINAL resolved cells so a Motif layer adorning this Voronoi host
+    // can place glyphs on its real vertices/edges/cells. Captured here, inside
+    // the actual draw-run, because the sites come from ctx.random — an outside
+    // recompute under a different RNG would diverge (see semanticAnchors.js
+    // voronoi block header). This capture is independent of the render loop's
+    // node transform (applied by the wrapper OUTSIDE generate), matching how the
+    // grid/recursive/spiral formula anchors ignore the host node transform.
+    //
+    // FRAME: computeVoronoiCells returns cells CENTERED at (0,0); the on-canvas
+    // base copy is drawn at translate(cx+offsetX, cy+offsetY) (symmetryUtils),
+    // so world (canvas-pixel, top-left origin) = centered + (cx+offsetX, cy+offsetY).
+    // This matches the Grid anchor origin ox = canvasW/2 + offsetX. Note the
+    // existing `cx`/`cy` above are canvasW/2 WITHOUT the offset (applySymmetryDraw
+    // adds offset itself), so we add it explicitly here.
+    //
+    // SYMMETRY v1 LIMITATION: we stash only the BASE cell set (pre-symmetry,
+    // pre-startAngle). For symmetry !== 'none' the render draws additional rotated
+    // copies and motifs land only on this base copy; for a nonzero startAngle even
+    // the base copy is rotated, so the unrotated stash matches NO visible copy.
+    //
+    // Safe to compute this BEFORE the draw block: computeVoronoiCells is
+    // side-effect-free w.r.t. points/triangles (spokes mode already re-calls it
+    // with no effect), so the existing render output stays byte-identical.
+    const shiftX = cx + offsetX;
+    const shiftY = cy + offsetY;
+    const finalCells = computeVoronoiCells(points, triangles, halfW, halfH);
+    const drawnCells = [];
+    for (let i = 0; i < points.length; i++) {
+      const cell = finalCells[i];
+      if (!cell || cell.length < 3) continue; // a Voronoi cell needs ≥3 vertices
+      const vertices = cell.map((v) => ({ x: v.x + shiftX, y: v.y + shiftY }));
+      drawnCells.push({
+        vertices,
+        site: { x: points[i].x + shiftX, y: points[i].y + shiftY },
+      });
+    }
+    this.motifHostGeometry = { drawnCells };
+
     // Collect line segments to draw based on mode
     const lines = [];
 

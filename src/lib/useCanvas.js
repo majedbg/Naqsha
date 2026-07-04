@@ -100,6 +100,14 @@ export default function useCanvas(
     const panelById = new Map((panels || []).map((pn) => [pn.id, pn]));
 
     const newInstances = {};
+    // Per-frame capture of hosts' DRAWN geometry, keyed by layer.id. A host
+    // (currently only Voronoi) stashes its resolved cells on the instance as
+    // `motifHostGeometry` during generate(); we harvest that AFTER each layer
+    // generates and thread it into the motif host-params resolve below. Because
+    // this loop runs in z-order (bottom→top) and a host generates before a motif
+    // stacked ABOVE it, a motif above its host sees the geometry; a motif below
+    // sees an absent entry → graceful no-op (no placements). Reset each render.
+    const hostGeometry = {};
     // Render bottom-to-top: last layer in array is bottom, first is top (front)
     // We iterate in reverse so bottom layers paint first
     const renderOrder = [...layers].reverse();
@@ -181,7 +189,7 @@ export default function useCanvas(
       // drawn host geometry. Non-motif layers resolve null → byte-identical
       // baseline. Hosts with no semantic extractor (voronoi/import) yield no
       // placements downstream (graceful no-op this slice).
-      const motifHost = resolveMotifHostParams(layer, layers);
+      const motifHost = resolveMotifHostParams(layer, layers, hostGeometry);
       if (motifHost) {
         renderParams = { ...renderParams, ...motifHost };
       }
@@ -200,6 +208,9 @@ export default function useCanvas(
           resolveCanvasColor(layer, { operations, outputMode, colorView }),
           layer.opacity
         );
+        // A hidden host still exports (and a motif above it may be visible), so
+        // capture its drawn geometry here too.
+        if (instance.motifHostGeometry) hostGeometry[layer.id] = instance.motifHostGeometry;
         continue;
       }
 
@@ -219,6 +230,8 @@ export default function useCanvas(
       }
 
       instance.generateWithContext(drawCtx, layer.seed, renderParams, canvasW, canvasH, resolveCanvasColor(layer, { operations, outputMode, colorView }), layer.opacity);
+      // Harvest host drawn-geometry (Voronoi cells) for any motif stacked above.
+      if (instance.motifHostGeometry) hostGeometry[layer.id] = instance.motifHostGeometry;
       p.pop();
     }
 

@@ -518,11 +518,14 @@ function ModulatorDevice({
   );
 }
 
-// Hosts that expose semantic anchors today (grid/recursive/spiral — see
-// src/lib/motif/semanticAnchors.js). Voronoi/edge hosts need host-resolved
-// geometry (drawnCells) that this UI can't yet supply, so they're excluded.
-// TODO: voronoi/edge hosts once the drawn-geometry seam lands.
-const MOTIF_HOSTS = new Set(["grid", "recursive", "spiral"]);
+// Hosts that expose semantic anchors today. Grid/recursive/spiral derive anchors
+// from params (formula); voronoi derives them from its DRAWN cells, captured at
+// render time and threaded through useCanvas → resolveMotifHostParams → the
+// MotifPattern semantic path (see src/lib/motif/semanticAnchors.js). Edge-on-
+// arbitrary hosts still need a generic drawn-geometry seam and remain excluded.
+// The anchor-ghost overlay does NOT yet support voronoi (it can't reach the
+// per-frame hostGeometry) — deferred follow-on.
+const MOTIF_HOSTS = new Set(["grid", "recursive", "spiral", "voronoi"]);
 
 const MOTIF_ROLES = [
   { key: "crossing", label: "Crossings" },

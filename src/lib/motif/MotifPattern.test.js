@@ -259,8 +259,9 @@ describe('MotifPattern semantic anchor mode', () => {
   });
 
   it('semantic mode with a null-extractor host + hostPaths falls back to EDGE anchors', () => {
-    // voronoi has no extractor (getSemanticAnchors → null); with hostPaths the
-    // pattern degrades to generic edge anchors and still produces placements.
+    // voronoi's extractor returns null WITHOUT drawnCells (none supplied here);
+    // with hostPaths the pattern degrades to generic edge anchors and still
+    // produces placements.
     const withPaths = new MotifPattern();
     withPaths.generateWithContext(
       new RecordingContext({ seed: 1 }),
@@ -316,5 +317,65 @@ describe('MotifPattern semantic anchor mode', () => {
     );
     expect(inst.svgElements).toEqual([]);
     expect(ctx.calls.filter((c) => c.op === 'vertex').length).toBe(0);
+  });
+});
+
+describe('MotifPattern voronoi drawn-geometry (GEOMETRY-IN) semantic path', () => {
+  // Three hand-authored cells sharing the interior vertex V = (400,300). The
+  // Voronoi extractor dedupes it into ONE crossing anchor (junction, cellCount 3);
+  // with roles:['crossing'] a glyph must land AT V. V is centered well inside the
+  // canvas so the test-before-place accept step keeps it.
+  const V = { x: 400, y: 300 };
+  const DRAWN_CELLS = [
+    { vertices: [V, { x: 150, y: 120 }, { x: 400, y: 80 }], site: { x: 300, y: 170 } },
+    { vertices: [V, { x: 650, y: 120 }, { x: 680, y: 300 }], site: { x: 580, y: 240 } },
+    { vertices: [V, { x: 400, y: 520 }, { x: 150, y: 480 }], site: { x: 320, y: 430 } },
+  ];
+
+  // Parse [a,b,c,d,e,f] out of a `<g transform="matrix(...)">` svgElement; the
+  // translation (e,f) is the placement's canvas-px position.
+  const translations = (svgElements) =>
+    svgElements.map((el) => {
+      const nums = el.match(/matrix\(([^)]+)\)/)[1].trim().split(/\s+/).map(Number);
+      return { x: nums[4], y: nums[5] };
+    });
+
+  function runVoronoi(extraParams) {
+    const inst = new MotifPattern();
+    const ctx = new RecordingContext({ seed: 1 });
+    inst.generateWithContext(
+      ctx,
+      7,
+      {
+        glyphRef: 'leaf',
+        anchorMode: 'semantic',
+        hostPatternType: 'voronoi',
+        hostParams: {},
+        binding: { selection: { roles: ['crossing'] } },
+        ...extraParams,
+      },
+      W,
+      H,
+      '#123456',
+      100
+    );
+    return inst;
+  }
+
+  it('places a glyph AT the shared Voronoi vertex when drawnCells are supplied', () => {
+    const inst = runVoronoi({ drawnCells: DRAWN_CELLS });
+    expect(inst.svgElements.length).toBeGreaterThan(0);
+    const hit = translations(inst.svgElements).some(
+      (t) => Math.abs(t.x - V.x) < 1e-3 && Math.abs(t.y - V.y) < 1e-3
+    );
+    expect(hit).toBe(true);
+  });
+
+  it('produces NOTHING without drawnCells (proves the 5th-arg wiring is load-bearing)', () => {
+    // If MotifPattern dropped the 5th opts arg, this case would be identical to
+    // the one above (both reach voronoiAnchors with no drawnCells) — so the
+    // ABOVE test only passes because the drawn cells are threaded through.
+    const inst = runVoronoi({}); // no drawnCells, no hostPaths
+    expect(inst.svgElements).toEqual([]);
   });
 });

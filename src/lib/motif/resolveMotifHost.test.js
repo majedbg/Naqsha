@@ -54,4 +54,44 @@ describe('resolveMotifHostParams', () => {
     const b = resolveMotifHostParams(layers[1], layers);
     expect(a).toEqual(b);
   });
+
+  it('does NOT add drawnCells for a formula host even when hostGeometry has an entry', () => {
+    const layers = [gridHost, motifLayer('host-1')];
+    const hostGeometry = { 'host-1': { drawnCells: [{ vertices: [], site: { x: 0, y: 0 } }] } };
+    const out = resolveMotifHostParams(layers[1], layers, hostGeometry);
+    expect(out).toEqual({ hostPatternType: 'grid', hostParams: gridHost.params });
+    expect(out).not.toHaveProperty('drawnCells');
+  });
+});
+
+describe('resolveMotifHostParams — voronoi drawn-geometry seam', () => {
+  const voronoiHost = { id: 'vh', patternType: 'voronoi', params: { cellCount: 40 } };
+  const motif = {
+    id: 'm',
+    type: MOTIF_TYPE,
+    patternType: MOTIF_TYPE,
+    params: { glyphRef: 'leaf', hostLayerId: 'vh', anchorMode: 'semantic' },
+  };
+  const cells = [{ vertices: [{ x: 1, y: 2 }, { x: 3, y: 4 }, { x: 5, y: 6 }], site: { x: 3, y: 4 } }];
+
+  it('forwards drawnCells when the voronoi host geometry is present', () => {
+    const layers = [voronoiHost, motif];
+    const out = resolveMotifHostParams(motif, layers, { vh: { drawnCells: cells } });
+    expect(out.hostPatternType).toBe('voronoi');
+    expect(out.hostParams).toBe(voronoiHost.params);
+    expect(out.drawnCells).toBe(cells);
+  });
+
+  it('omits drawnCells when the voronoi host has not rendered (absent geometry)', () => {
+    const layers = [voronoiHost, motif];
+    const out = resolveMotifHostParams(motif, layers, {});
+    expect(out).toEqual({ hostPatternType: 'voronoi', hostParams: voronoiHost.params });
+    expect(out).not.toHaveProperty('drawnCells');
+  });
+
+  it('omits drawnCells when hostGeometry arg is omitted entirely (2-arg call)', () => {
+    const layers = [voronoiHost, motif];
+    const out = resolveMotifHostParams(motif, layers);
+    expect(out).not.toHaveProperty('drawnCells');
+  });
 });

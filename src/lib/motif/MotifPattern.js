@@ -52,7 +52,14 @@ export default class MotifPattern extends Pattern {
       // (crossing/edge/tip/cell). null ⇒ this host has no verifiable extractor
       // (deferred/unverifiable): degrade gracefully to generic edge anchors on
       // any provided hostPaths, else no-op.
-      anchors = getSemanticAnchors(p.hostPatternType, p.hostParams, canvasW, canvasH);
+      // Thread host-captured drawn geometry (GEOMETRY-IN extractors, currently
+      // voronoi) via the 5th opts arg. For formula hosts p.drawnCells is
+      // undefined → opts.drawnCells undefined → those extractors ignore it. For a
+      // voronoi host WITHOUT captured cells, voronoiAnchors returns null and we
+      // fall through to the edge fallback / no-op below.
+      anchors = getSemanticAnchors(p.hostPatternType, p.hostParams, canvasW, canvasH, {
+        drawnCells: p.drawnCells,
+      });
       if (anchors == null) {
         anchors = hostPaths.length ? sampleEdgeAnchors(hostPaths, p.edgeOpts || {}) : [];
       }

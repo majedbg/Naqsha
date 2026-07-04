@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 // MotifDevice (host Inspector) — add/edit/remove motifs adorning a host layer
-// (grid/recursive/spiral). Exercises the device through the public <Inspector>,
+// (grid/recursive/spiral/voronoi). Exercises the device through the public <Inspector>,
 // plus the exported deepMergeBinding helper's partial-patch invariant.
 
 import { describe, it, expect, vi } from "vitest";
@@ -70,10 +70,10 @@ describe("deepMergeBinding", () => {
 });
 
 describe("MotifDevice", () => {
-  it("hides on ineligible hosts (voronoi) and on motif layers themselves", () => {
+  it("hides on ineligible hosts (no semantic extractor) and on motif layers themselves", () => {
     const { rerender } = render(
       <Inspector
-        layers={[hostLayer("h", "voronoi")]}
+        layers={[hostLayer("h", "flowField")]}
         selectedLayerId="h"
         onUpdateLayer={() => {}}
         onChangeLayerPattern={() => {}}
@@ -91,6 +91,18 @@ describe("MotifDevice", () => {
       />
     );
     expect(screen.queryByTestId("motif-device")).toBeNull();
+  });
+
+  it("shows on a voronoi host (drawn-geometry seam makes it eligible)", () => {
+    render(
+      <Inspector
+        layers={[hostLayer("vh", "voronoi")]}
+        selectedLayerId="vh"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    expect(screen.getByTestId("motif-device")).toBeInTheDocument();
   });
 
   it("shows on an eligible host and lists its motifs", () => {

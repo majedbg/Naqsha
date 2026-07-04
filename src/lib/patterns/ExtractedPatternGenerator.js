@@ -26,6 +26,7 @@ import {
 import { escapeAttr } from '../extraction/extractedPattern';
 import { tilePlacements } from '../extraction/tileComposer';
 import { addLibraryEntry, clearLibraryEntries } from '../libraryStore';
+import { roleColor } from '../fabrication.js';
 
 const CURVE_SEGMENTS = 12;
 
@@ -120,6 +121,13 @@ export function makeExtractedPatternClass(entity) {
   const lattice = entity.lattice ?? null;
 
   return class ExtractedPatternGenerator extends Pattern {
+    // Capability marker (issue #68): the export path duck-types this to decide
+    // whether a layer's per-path fabrication roles (data-role) should drive the
+    // export COLORS on a laser profile. A capability flag — not `instanceof` —
+    // because makeExtractedPatternClass mints a fresh class per entity, so a
+    // constructor-based check would fail across factory calls.
+    supportsRoleExport = true;
+
     generate(ctx, seed, params, canvasW, canvasH, color, opacity) {
       const alpha = Math.round((Math.max(0, Math.min(100, opacity ?? 100)) / 100) * 255);
       const c = ctx.color(color || '#000000');
@@ -160,7 +168,7 @@ export function makeExtractedPatternClass(entity) {
      * the canvas (same placement source), every copy carrying its
      * engrave/cut/score roles.
      */
-    toSVGGroup(layerId, color, opacity) {
+    toSVGGroup(layerId, color, opacity, opts = {}) {
       const opacityFrac = Math.max(0, Math.min(100, opacity ?? 100)) / 100;
       // Every interpolation is attribute-escaped (adversarial-review finding 1):
       // this markup reaches dangerouslySetInnerHTML (picker thumbnails) and the
@@ -168,16 +176,28 @@ export function makeExtractedPatternClass(entity) {
       // Escaping is a no-op for well-formed path data / roles, so faithful
       // digitization (locked decision 1) is unaffected. Lattice offsets are
       // validated finite numbers, formatted through fmtNum — digits only.
-      const fill = escapeAttr(color);
+      //
+      // ROLE COLORS (issue #68): on a laser profile the export path requests
+      // `opts.roleColors`, so each path is painted by ITS OWN fabrication role
+      // (engrave #000 / cut #FF0000 / score #00F — the locked LightBurn/xTool
+      // convention via roleColor) instead of the single layer color. Laser
+      // software maps operations BY COLOR, so this is what makes engrave/cut/
+      // score land as three distinct, separately-mappable operations. Without
+      // roleColors (plotter/display/thumbnail), output is byte-identical to
+      // before: every path uses the single escaped layer color.
+      const roleColors = !!opts?.roleColors;
+      const singleFill = escapeAttr(color);
+      const colorFor = (role) =>
+        roleColors ? escapeAttr(roleColor(role)) : singleFill;
       const pathsAt = (indent) =>
         [
           ...tile.fills.map(
             ({ d, role }) =>
-              `${indent}<path d="${escapeAttr(d)}" fill="${fill}" fill-rule="evenodd" stroke="none" data-role="${escapeAttr(role)}"/>`
+              `${indent}<path d="${escapeAttr(d)}" fill="${colorFor(role)}" fill-rule="evenodd" stroke="none" data-role="${escapeAttr(role)}"/>`
           ),
           ...tile.strokes.map(
             ({ d, role }) =>
-              `${indent}<path d="${escapeAttr(d)}" fill="none" stroke="${fill}" stroke-width="1" data-role="${escapeAttr(role)}"/>`
+              `${indent}<path d="${escapeAttr(d)}" fill="none" stroke="${colorFor(role)}" stroke-width="1" data-role="${escapeAttr(role)}"/>`
           ),
         ].join('\n');
 

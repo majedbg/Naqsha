@@ -59,3 +59,37 @@ describe('leaf glyph shape', () => {
     }
   });
 });
+
+describe('MOTIF_GLYPHS registry', () => {
+  it('has exactly 4 entries', () => {
+    expect(Object.keys(MOTIF_GLYPHS).length).toBe(4);
+  });
+});
+
+describe.each(['dot', 'diamond', 'rosette'])('%s glyph shape', (id) => {
+  const glyph = getGlyph(id);
+
+  it('exists', () => {
+    expect(glyph).toBeDefined();
+  });
+
+  it('has a positive viewRadius', () => {
+    expect(glyph.viewRadius).toBeGreaterThan(0);
+  });
+
+  it('every path has a non-empty d string', () => {
+    expect(glyph.paths.length).toBeGreaterThan(0);
+    for (const p of glyph.paths) {
+      expect(typeof p.d).toBe('string');
+      expect(p.d.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('every vertex fits within the bounding circle described by viewRadius', () => {
+    const allPoints = glyph.paths.flatMap((p) => parsePathD(p.d).points);
+    expect(allPoints.length).toBeGreaterThan(0);
+    for (const [x, y] of allPoints) {
+      expect(Math.hypot(x, y)).toBeLessThanOrEqual(glyph.viewRadius + 1e-6);
+    }
+  });
+});

@@ -6,6 +6,7 @@ import { PATTERN_CLASSES } from './patterns';
 import ImportedPath from './patterns/ImportedPath';
 import { resolveMoireSource } from './moirePair';
 import { resolveModulationForTarget } from './fields/resolveModulationForTarget';
+import { resolveMotifHostParams } from './motif/resolveMotifHost';
 import { handlesFor } from './transform/handles';
 import { drawTextNode } from './text/drawTextNode';
 import { isTextLayer, textNodeFromLayer } from './text/textLayer';
@@ -172,6 +173,17 @@ export default function useCanvas(
       const mod = resolveModulationForTarget(layer, layers);
       if (mod) {
         renderParams = { ...renderParams, modulation: mod };
+      }
+
+      // Motif host-params injection (semantic anchors). A motif layer reads its
+      // host's patternType + params PURELY off the layers array (like the
+      // modulation/moiré resolves above) — no render-ordering dependency, no
+      // drawn host geometry. Non-motif layers resolve null → byte-identical
+      // baseline. Hosts with no semantic extractor (voronoi/import) yield no
+      // placements downstream (graceful no-op this slice).
+      const motifHost = resolveMotifHostParams(layer, layers);
+      if (motifHost) {
+        renderParams = { ...renderParams, ...motifHost };
       }
 
       const instance = new PatternClass();

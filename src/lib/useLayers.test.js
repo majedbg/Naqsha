@@ -62,3 +62,50 @@ describe('useLayers.cap', () => {
     expect(result.current.cap).toBe(4);
   });
 });
+
+describe('useLayers.addMotifLayer', () => {
+  it('appends a motif layer bound to its host with the expected params + auto name', () => {
+    const { result } = renderHook(() => useLayers({ persistToLocal: false }));
+
+    // Seed a host to adorn, then read back its id + name.
+    act(() => {
+      result.current.addLayer('grid');
+    });
+    const host = result.current.layers[result.current.layers.length - 1];
+    const before = result.current.layers.length;
+
+    let ret;
+    act(() => {
+      ret = result.current.addMotifLayer(host.id, { glyphRef: 'leaf' });
+    });
+
+    expect(ret.ok).toBe(true);
+    expect(typeof ret.id).toBe('string');
+    expect(result.current.layers.length).toBe(before + 1);
+
+    const motif = result.current.layers.find((l) => l.id === ret.id);
+    expect(motif).toBeDefined();
+    expect(motif.type).toBe('motif');
+    expect(motif.patternType).toBe('motif');
+    expect(motif.params.hostLayerId).toBe(host.id);
+    expect(motif.params.glyphRef).toBe('leaf');
+    expect(motif.params.anchorMode).toBe('semantic'); // default
+    // Auto name is "<Glyph name> on <host name>".
+    expect(motif.name).toBe(`Leaf on ${host.name}`);
+  });
+
+  it('no-ops and reports failure at the tier cap', () => {
+    // maxLayers:1 → init seeds exactly one layer → already at cap.
+    const { result } = renderHook(() => useLayers({ persistToLocal: false, maxLayers: 1 }));
+    const host = result.current.layers[0];
+    const before = result.current.layers.length;
+
+    let ret;
+    act(() => {
+      ret = result.current.addMotifLayer(host.id, { glyphRef: 'leaf' });
+    });
+
+    expect(ret.ok).toBe(false);
+    expect(result.current.layers.length).toBe(before);
+  });
+});

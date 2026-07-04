@@ -18,10 +18,13 @@
 // a dot click is captured. Because we already know which anchor a circle is (no
 // hit-testing), onPointerDown reads data straight off the closure.
 //
-// SCOPE — semantic hosts only for now (grid / recursive / spiral). Voronoi and
-// generic edge hosts are deferred (getSemanticAnchors needs host-resolved
-// geometry for voronoi; not wired here), matching the render scope: those hosts
-// render nothing. Pure UI + wiring — the motif core is only CONSUMED, never edited.
+// SCOPE — semantic hosts (grid / recursive / spiral) PLUS voronoi. Voronoi is
+// GEOMETRY-IN (getSemanticAnchors needs the host's drawn segments), now wired via
+// the `patternInstances` prop: the real drawn host instance stashes
+// `motifHostGeometry = {drawnEdges, sites}` during generate(), and RightPanel
+// keeps `patternInstances` in React state (refreshed after every p5 render). GENERIC
+// EDGE hosts stay deferred (they need a generic drawn-polyline seam, not yet wired)
+// and still render nothing. Pure UI + wiring — the motif core is only CONSUMED, never edited.
 
 import { useMemo } from 'react';
 import { isMotifLayer, motifHostId, deepMergeBinding } from '../../lib/motif/motifLayer';
@@ -29,9 +32,10 @@ import { getSemanticAnchors } from '../../lib/motif/semanticAnchors';
 import { placeMotifs } from '../../lib/motif/placementEngine';
 
 // Hosts with a semantic anchor extractor whose anchors are proven to sit on the
-// drawing (grid/recursive/spiral). Voronoi is GEOMETRY-IN (needs drawnCells) and
-// stays out of the overlay until a producer is wired — see semanticAnchors.js.
-const MOTIF_HOSTS = new Set(['grid', 'recursive', 'spiral']);
+// drawing. grid/recursive/spiral are FORMULA hosts (anchors from params alone).
+// voronoi is GEOMETRY-IN: its anchors come from the drawn host's stashed
+// `motifHostGeometry`, supplied here via the `patternInstances` prop.
+const MOTIF_HOSTS = new Set(['grid', 'recursive', 'spiral', 'voronoi']);
 
 const ACCENT = '#7c3aed'; // violet — placed / included fill
 const EXCLUDE_STROKE = '#ef4444'; // red — force-excluded outline
@@ -46,6 +50,7 @@ export default function AnchorGhostOverlay({
   canvasW,
   canvasH,
   onUpdateLayer = () => {},
+  patternInstances = {},
 }) {
   // ── HOOKS FIRST ──────────────────────────────────────────────────────────
   // Every hook runs on every render (guards live INSIDE the memos, the single
@@ -63,11 +68,27 @@ export default function AnchorGhostOverlay({
 
   // Semantic anchors — semantic hosts only; may still be null (e.g. warp/distort
   // modulation refuses to emit). Keyed on the host object ref (updateLayer
-  // replaces layer objects immutably) + canvas dims.
+  // replaces layer objects immutably) + canvas dims + patternInstances (voronoi
+  // geometry).
+  //
+  // TIMING — for voronoi, geometry comes from `patternInstances`, which useCanvas
+  // sets AFTER p5 draws (post-render setState). So on a host-param change the
+  // overlay may render one frame against the PREVIOUS geometry, then self-heal
+  // when the fresh instances arrive. This is safe because the extractor is
+  // deterministic (same seed+params ⇒ same drawnEdges/sites ⇒ same anchor ids +
+  // coords), so ghost/glyph agreement is exact once settled. Absent geometry
+  // (first frame before p5 draws, or a hidden host) ⇒ null ⇒ overlay renders
+  // nothing (graceful).
   const anchors = useMemo(() => {
     if (!host || !MOTIF_HOSTS.has(host.patternType)) return null;
+    if (host.patternType === 'voronoi') {
+      const geo = patternInstances[host.id]?.motifHostGeometry;
+      if (!geo) return null;
+      // geo IS the opts object — it carries drawnEdges + sites.
+      return getSemanticAnchors('voronoi', host.params, canvasW, canvasH, geo);
+    }
     return getSemanticAnchors(host.patternType, host.params, canvasW, canvasH);
-  }, [host, canvasW, canvasH]);
+  }, [host, canvasW, canvasH, patternInstances]);
 
   // Placements — run the SAME engine the real render uses, so PLACED state here
   // matches what actually draws (overrides already folded in by placeMotifs).

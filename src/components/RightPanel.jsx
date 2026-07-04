@@ -764,6 +764,7 @@ export default function RightPanel({
           canvasW={canvasW}
           canvasH={canvasH}
           onUpdateLayer={onUpdateLayer}
+          patternInstances={patternInstances}
         />
       </div>
 

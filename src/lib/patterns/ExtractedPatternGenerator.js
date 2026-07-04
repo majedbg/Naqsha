@@ -30,6 +30,11 @@ import { roleColor } from '../fabrication.js';
 
 const CURVE_SEGMENTS = 12;
 
+// Fraction of the grid cell a lattice-stamped motif fills (longest tile side →
+// cellSize * this). < 1 leaves a small gutter so adjacent/rotated stamps stay
+// legible rather than touching. Motif size then tracks grid spacing.
+const LATTICE_FILL = 0.9;
+
 /**
  * Flatten a path `d` string (M/m/L/l/H/h/V/v/C/c/Z/z) into subpaths of
  * absolute points. Cubic Béziers are sampled; unknown commands throw (the
@@ -115,6 +120,12 @@ function fmtNum(n) {
  * toSVGGroup() emits one translate-group per placement (fills AND centerline
  * strokes, roles preserved per copy). No lattice → the pre-S5 single centered
  * tile, byte-identical.
+ *
+ * GRID-GUIDE LATTICE (this session): additionally, a Grid layer can drive the
+ * motif via the 'lattice' modulation channel — `params.modulation.nodes`. That
+ * path takes precedence over the entity's own S5 lattice (it's an explicit user
+ * mapping), rotates each copy with its grid-symmetry frame, and fit-to-cell
+ * scales so the tile tracks grid spacing. The two tiling mechanisms coexist.
  */
 export function makeExtractedPatternClass(entity) {
   const tile = entity.tile;
@@ -133,6 +144,10 @@ export function makeExtractedPatternClass(entity) {
       const c = ctx.color(color || '#000000');
       if (c && typeof c.setAlpha === 'function') c.setAlpha(alpha);
 
+      // Draw the tile's paths in tile-LOCAL coords translated by (ox, oy). Any
+      // rotation/scale is set up by the caller on the ctx transform stack, so
+      // this one routine serves the centred tile, the S5 lattice placements, and
+      // the grid-guide per-node stamps alike.
       const drawPaths = (paths, filled, ox, oy) => {
         for (const { d } of paths) {
           for (const sub of flattenPathD(d)) {
@@ -149,24 +164,61 @@ export function makeExtractedPatternClass(entity) {
           }
         }
       };
+      const drawTile = (ox, oy) => {
+        drawPaths(tile.fills, true, ox, oy);
+        drawPaths(tile.strokes, false, ox, oy);
+      };
 
-      // Lattice → tile the motif across the whole canvas, grid anchored at
-      // (0,0); otherwise the single-motif floor renders centered as before.
+      // GRID-GUIDE LATTICE (modulation channel 'lattice'): a Grid layer acts as a
+      // guide and stamps this motif at each of its intersection nodes, rotated
+      // with the node's symmetry copy and fit-to-cell scaled so the (photo-sized)
+      // tile tracks grid spacing instead of overlapping into a blob. Precedence
+      // over the entity's own S5 lattice — it's an explicit user mapping. Cached
+      // (_latticeNodes/_latticeScale) so toSVGGroup emits identical placements
+      // (canvas == SVG from one shared array).
+      const gridMod =
+        params?.modulation?.channel === 'lattice' ? params.modulation : null;
+      if (gridMod && Array.isArray(gridMod.nodes)) {
+        const cx = canvasW / 2;
+        const cy = canvasH / 2;
+        const longest = Math.max(tile.width, tile.height) || 1;
+        const scale =
+          gridMod.cellSize > 0 ? (gridMod.cellSize * LATTICE_FILL) / longest : 1;
+        const nodes = gridMod.nodes.map((nd) => ({
+          x: cx + nd.x,
+          y: cy + nd.y,
+          angle: nd.angle || 0,
+        }));
+        this._latticeNodes = nodes;
+        this._latticeScale = scale;
+        for (const nd of nodes) {
+          ctx.push();
+          ctx.translate(nd.x, nd.y);
+          if (nd.angle) ctx.rotate(nd.angle);
+          if (scale !== 1) ctx.scale(scale);
+          drawTile(-tile.width / 2, -tile.height / 2);
+          ctx.pop();
+        }
+        return;
+      }
+      this._latticeNodes = null;
+
+      // S5 entity lattice (photo-derived) → tile across the canvas, grid anchored
+      // at (0,0); otherwise the single-motif floor renders centred as before.
       const placements = lattice
         ? tilePlacements(lattice, { width: canvasW, height: canvasH })
         : [{ x: (canvasW - tile.width) / 2, y: (canvasH - tile.height) / 2 }];
       for (const { x, y } of placements) {
-        drawPaths(tile.fills, true, x, y);
-        drawPaths(tile.strokes, false, x, y);
+        drawTile(x, y);
       }
     }
 
     /**
      * Export: verbatim `d` per saved path. No lattice → a single centering
-     * translate (pre-S5, byte-identical). With a lattice → one inner
-     * translate-group per placement so the exported file tiles exactly like
-     * the canvas (same placement source), every copy carrying its
-     * engrave/cut/score roles.
+     * translate (pre-S5, byte-identical). A grid-guide lattice → one rotated +
+     * scaled translate-group per cached node; an S5 entity lattice → one
+     * translate-group per placement. Every copy carries its engrave/cut/score
+     * roles, and on a laser profile (opts.roleColors) is painted by role.
      */
     toSVGGroup(layerId, color, opacity, opts = {}) {
       const opacityFrac = Math.max(0, Math.min(100, opacity ?? 100)) / 100;
@@ -201,6 +253,25 @@ export function makeExtractedPatternClass(entity) {
           ),
         ].join('\n');
 
+      // GRID-GUIDE LATTICE: one translate→rotate→scale→centre group per cached
+      // node, mirroring generate() exactly (canvas == SVG). Reuses pathsAt so the
+      // laser role-colors compose with grid stamps too.
+      if (Array.isArray(this._latticeNodes) && this._latticeNodes.length) {
+        const cxt = -tile.width / 2;
+        const cyt = -tile.height / 2;
+        const s = this._latticeScale ?? 1;
+        const scl = s !== 1 ? ` scale(${s.toFixed(6)})` : '';
+        const groups = this._latticeNodes
+          .map((nd) => {
+            const deg = ((nd.angle || 0) * 180) / Math.PI;
+            const rot = deg ? ` rotate(${deg.toFixed(4)})` : '';
+            return `    <g transform="translate(${nd.x.toFixed(2)} ${nd.y.toFixed(2)})${rot}${scl} translate(${cxt.toFixed(2)} ${cyt.toFixed(2)})">\n${pathsAt('      ')}\n    </g>`;
+          })
+          .join('\n');
+        return `<g id="${escapeAttr(layerId)}" opacity="${opacityFrac}">\n${groups}\n  </g>`;
+      }
+
+      // S5 entity lattice, or the single centred tile (pre-S5, byte-identical).
       if (!lattice) {
         // _lastCx/_lastCy are recorded by Pattern.generateWithContext.
         const ox = (this._lastCx ?? tile.width / 2) - tile.width / 2;

@@ -47,6 +47,7 @@ import FieldOverlay from "../FieldOverlay";
 import ShapeCurve from "../ui/ShapeCurve";
 import ModulationParamBox from "../ui/ModulationParamBox";
 import { channelForTarget } from "../../lib/fields/channelConsumers";
+import { canProduceLattice } from "../../lib/fields/latticeForLayer";
 import { resolveModulationForTarget } from "../../lib/fields/resolveModulationForTarget";
 import { ANCHOR_POS, ANCHOR_MID, ANCHOR_NEG } from "../../lib/fields/colormap";
 
@@ -181,7 +182,13 @@ function ModulatorDevice({
   threeDFocusLayerId,
   onClosePreview,
 }) {
-  if (!canProduceField(layer)) return null;
+  if (!canProduceField(layer) && !canProduceLattice(layer)) return null;
+
+  // A GRID guide produces a discrete placement LATTICE, not a continuous field:
+  // it stamps a motif at each of its intersection nodes. Its device panel drops
+  // the field-only controls (range/field-plot/3D-relief/offset/shape/steps) —
+  // those only reshape a [-1,1] field — leaving just the target maps.
+  const isLatticeGuide = !canProduceField(layer) && canProduceLattice(layer);
 
   // Current device, with defaults filled in (layer.modulator is undefined until
   // the first edit). Computed inline — no useMemo narrowing (React Compiler).
@@ -218,12 +225,16 @@ function ModulatorDevice({
   // chladni/topographic/flowfield→warp). Excludes the guide itself and any
   // already-mapped target.
   const mapped = new Set(maps.map((m) => m.targetLayerId));
-  const candidates = (layers || []).filter(
-    (l) =>
-      l.id !== layer.id &&
-      channelForTarget(l.patternType) !== null &&
-      !mapped.has(l.id)
-  );
+  const candidates = (layers || []).filter((l) => {
+    if (l.id === layer.id || mapped.has(l.id)) return false;
+    const ch = channelForTarget(l.patternType);
+    if (ch === null) return false;
+    // Match the target's channel to what THIS guide can supply: a grid guide
+    // only offers a lattice; a field guide only offers field channels. Prevents
+    // offering a motif (lattice) target under a field guide, which would map a
+    // channel that guide can't produce (→ no-op).
+    return isLatticeGuide ? ch === "lattice" : ch !== "lattice";
+  });
 
   const nameFor = (id) => {
     const l = (layers || []).find((x) => x.id === id);
@@ -261,6 +272,13 @@ function ModulatorDevice({
         Modulator
       </h3>
 
+      {isLatticeGuide ? (
+        <p className="text-[11px] text-ink-soft/80">
+          Stamps the motif at every grid node — the grid's spacing, jitter, and
+          symmetry place and duplicate the copies. Adjust those on the grid layer.
+        </p>
+      ) : (
+        <>
       {/* Range slider (left) + field plot (right). The two-thumb vertical slider
           sets modulator.range = {min,max}; the field plot recolors live as the
           thumbs move (its values are remapped through the same range). */}
@@ -412,6 +430,8 @@ function ModulatorDevice({
           </span>
         </label>
       </div>
+        </>
+      )}
 
       {/* Targets list — one row per map. */}
       <div className="space-y-1.5">
@@ -444,25 +464,32 @@ function ModulatorDevice({
               </button>
             </div>
 
-            <label className="flex items-center gap-2 text-[11px] text-ink-soft">
-              <span className="w-12 whitespace-nowrap">Amount</span>
-              <input
-                type="range"
-                data-testid="modulator-amount"
-                aria-label="Amount"
-                min={0}
-                max={3}
-                step={0.1}
-                value={m.amount ?? 1}
-                onChange={(e) =>
-                  patchMap(m.targetLayerId, { amount: Number(e.target.value) })
-                }
-                className="flex-1 accent-violet"
-              />
-              <span className="w-9 text-right tabular-nums text-ink num">
-                {(m.amount ?? 1).toFixed(1)}
-              </span>
-            </label>
+            {m.channel === "lattice" ? (
+              // Lattice is all-or-nothing placement — no continuous amount.
+              <p className="text-[11px] text-ink-soft/70">
+                Stamped at each grid node.
+              </p>
+            ) : (
+              <label className="flex items-center gap-2 text-[11px] text-ink-soft">
+                <span className="w-12 whitespace-nowrap">Amount</span>
+                <input
+                  type="range"
+                  data-testid="modulator-amount"
+                  aria-label="Amount"
+                  min={0}
+                  max={3}
+                  step={0.1}
+                  value={m.amount ?? 1}
+                  onChange={(e) =>
+                    patchMap(m.targetLayerId, { amount: Number(e.target.value) })
+                  }
+                  className="flex-1 accent-violet"
+                />
+                <span className="w-9 text-right tabular-nums text-ink num">
+                  {(m.amount ?? 1).toFixed(1)}
+                </span>
+              </label>
+            )}
 
             {/* Modulation-scoped param (§5) — the target Grid's `warpNodes`,
                 surfaced here "for convenience" but OWNED by the grid layer (hence

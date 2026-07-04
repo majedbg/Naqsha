@@ -61,8 +61,10 @@ ${groups}  </g>`;
 /**
  * Normalize symmetry value to an integer count.
  * Handles both new numeric values and legacy string values for backwards compat.
+ * Exported so lattice reconstruction (latticeForLayer) derives the SAME copy
+ * count the draw/SVG paths use.
  */
-function toSymmetryCount(symmetry) {
+export function toSymmetryCount(symmetry) {
   if (typeof symmetry === 'number') return Math.max(1, Math.round(symmetry));
 
   // Legacy string support (in case old layer state is loaded)

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { getSemanticAnchors } from './semanticAnchors.js';
 import { placeMotifs, selectAnchors } from './placementEngine.js';
 import Grid from '../patterns/Grid.js';
+import RecursiveGeometry from '../patterns/RecursiveGeometry.js';
 import { RecordingContext } from '../patterns/drawingContext.js';
 
 const HALF_PI = Math.PI / 2;
@@ -63,12 +64,11 @@ function uniqSorted(nums, tol = 1e-6) {
   return out;
 }
 
-describe('getSemanticAnchors — non-grid patterns defer to null', () => {
-  it('returns null for voronoi / spiral / recursive / unknown', () => {
+describe('getSemanticAnchors — non-extractor patterns defer to null', () => {
+  it('returns null for voronoi / spiral / unknown', () => {
     const p = linearParams();
     expect(getSemanticAnchors('voronoi', p, W, H)).toBeNull();
     expect(getSemanticAnchors('spiral', p, W, H)).toBeNull();
-    expect(getSemanticAnchors('recursive', p, W, H)).toBeNull();
     expect(getSemanticAnchors('unknown-pattern', p, W, H)).toBeNull();
   });
 });
@@ -260,6 +260,234 @@ describe('getSemanticAnchors — feeds the placement engine', () => {
       anchors,
       {
         selection: { roles: ['crossing', 'cell'] },
+        placement: { sizing: { mode: 'fixed', size: 4, min: 0 } },
+      },
+      { canvasW: W, canvasH: H, boundary: { type: 'rect', width: W, height: H } }
+    );
+    expect(placements.length).toBeGreaterThan(0);
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// RECURSIVE extractor (patternType:'recursive', class RecursiveGeometry)
+// ════════════════════════════════════════════════════════════════════════════
+
+// Recursive is SEEDLESS — geometry is fully determined by params — so the
+// extractor replicates the recursion with no RNG. Default frame: single copy,
+// no offset/rotation ⇒ world = centered + (CX, CY).
+function recursiveParams(overrides = {}) {
+  return {
+    shape: 'hexagon',
+    depth: 3,
+    rotationPerLevel: 15,
+    scaleFactor: 0.7,
+    scaleNonLinearity: 0,
+    startScale: 70,
+    strokeWeight: 1,
+    strokeDepthDecay: 0,
+    symmetry: 1,
+    startAngle: 0,
+    offsetX: 0,
+    offsetY: 0,
+    ...overrides,
+  };
+}
+
+// Reconstruct the REAL drawn polygons from the pattern's own recorded ops. Each
+// polygon is one beginShape → vertex* → endShape group. Vertex coords are in the
+// pattern's CENTERED space; we lift them to WORLD by adding (CX, CY). From the
+// recorded vertices alone we derive each polygon's center (vertex mean) and
+// radius (center→vertex distance) — no re-derivation of the recursion math.
+function recordRecursivePolys(params, seed = 7) {
+  const rg = new RecursiveGeometry();
+  const ctx = new RecordingContext({ seed });
+  rg.generateWithContext(ctx, seed, params, W, H, '#000000', 100);
+  const groups = [];
+  let cur = null;
+  for (const { op, args } of ctx.calls) {
+    if (op === 'beginShape') cur = [];
+    else if (op === 'vertex' && cur) cur.push({ x: args[0] + CX, y: args[1] + CY });
+    else if (op === 'endShape' && cur) {
+      groups.push(cur);
+      cur = null;
+    }
+  }
+  return groups.map((verts) => {
+    const n = verts.length;
+    const center = {
+      x: verts.reduce((s, v) => s + v.x, 0) / n,
+      y: verts.reduce((s, v) => s + v.y, 0) / n,
+    };
+    const radius = Math.hypot(verts[0].x - center.x, verts[0].y - center.y);
+    return { verts, center, radius };
+  });
+}
+
+const TOL = 1e-6;
+const near = (a, b) => Math.abs(a - b) <= TOL;
+const ptNear = (p, q) => near(p.x, q.x) && near(p.y, q.y);
+const onPts = (p, set) => set.some((q) => ptNear(p, q));
+
+// Recording-only NON-leaf predicate: a polygon is non-leaf iff another recorded
+// polygon is its concentric child (same center, smaller radius) OR a branch
+// child (centered on one of its vertices). Independent of the extractor's math.
+function isNonLeaf(P, all) {
+  return all.some(
+    (Q) =>
+      Q !== P &&
+      ((ptNear(Q.center, P.center) && Q.radius < P.radius - TOL) ||
+        P.verts.some((v) => ptNear(Q.center, v)))
+  );
+}
+
+describe('getSemanticAnchors — recursive role taxonomy', () => {
+  it('emits all four roles with the anchors.js shape', () => {
+    const anchors = getSemanticAnchors('recursive', recursiveParams(), W, H);
+    expect(Array.isArray(anchors)).toBe(true);
+    const roles = new Set(anchors.map((a) => a.role));
+    expect(roles).toEqual(new Set(['crossing', 'edge', 'tip', 'cell']));
+    for (const a of anchors) {
+      expect(a).toEqual(
+        expect.objectContaining({
+          id: expect.any(String),
+          role: expect.any(String),
+          x: expect.any(Number),
+          y: expect.any(Number),
+          tangent: expect.any(Number),
+          normal: expect.any(Number),
+          s: expect.any(Number),
+          meta: expect.any(Object),
+        })
+      );
+    }
+  });
+
+  it('is deterministic — byte-identical for identical params (toEqual)', () => {
+    const a = getSemanticAnchors('recursive', recursiveParams(), W, H);
+    const b = getSemanticAnchors('recursive', recursiveParams(), W, H);
+    expect(a).toEqual(b);
+  });
+
+  it('returns null when a warp modulation field is active (unverifiable)', () => {
+    const p = recursiveParams({
+      modulation: { channel: 'warp', field: { type: 'noise' }, amount: 30 },
+    });
+    expect(getSemanticAnchors('recursive', p, W, H)).toBeNull();
+  });
+});
+
+// ── DIVERGENCE GUARD (the honesty gate) ─────────────────────────────────────
+// Prove every anchor sits where RecursiveGeometry actually draws, by pulling
+// truth from the pattern's own recorded polygons — NOT from a re-derivation of
+// the recursion. Both leaf-ness (tips) and junction-ness (crossings) are decided
+// by recording-only predicates, so a wrong structural claim fails. Runs for a
+// SHALLOW branching case AND a DEEP nonlinear case (exercises getEffectiveScale's
+// nonlinear branch), with nonzero rotationPerLevel so branch centers never
+// coincide ambiguously.
+describe('divergence guard — recursive anchors coincide with the pattern real drawing', () => {
+  const cases = [
+    { name: 'shallow hexagon (depth 2)', params: recursiveParams({ shape: 'hexagon', depth: 2 }) },
+    {
+      name: 'deep square nonlinear (depth 4)',
+      params: recursiveParams({ shape: 'square', depth: 4, scaleNonLinearity: 0.6 }),
+    },
+  ];
+
+  for (const { name, params } of cases) {
+    it(`crossings land on real vertices; junctions match recorded branch children (${name})`, () => {
+      const polys = recordRecursivePolys(params);
+      const realVerts = polys.flatMap((p) => p.verts);
+      const realCenters = polys.map((p) => p.center);
+
+      const anchors = getSemanticAnchors('recursive', params, W, H);
+      const crossings = anchors.filter((a) => a.role === 'crossing');
+
+      // Count + position: one crossing per real vertex, each on a real vertex.
+      expect(crossings.length).toBe(realVerts.length);
+      for (const c of crossings) expect(onPts(c, realVerts)).toBe(true);
+
+      // Junction truth from recording: a vertex is a junction iff some recorded
+      // polygon is centered there (a branch child was actually drawn).
+      for (const c of crossings) {
+        const expected = onPts(c, realCenters);
+        expect(c.meta.junction).toBe(expected);
+      }
+      // Guard the guard: branching must actually occur (some junctions exist).
+      expect(crossings.some((c) => c.meta.junction === true)).toBe(true);
+    });
+
+    it(`edges land on real polygon side midpoints, tangent = side direction (${name})`, () => {
+      const polys = recordRecursivePolys(params);
+      const realSides = []; // { x, y, dir } — midpoint + recorded side direction
+      for (const p of polys) {
+        const n = p.verts.length;
+        for (let k = 0; k < n; k++) {
+          const a = p.verts[k];
+          const b = p.verts[(k + 1) % n];
+          realSides.push({
+            x: (a.x + b.x) / 2,
+            y: (a.y + b.y) / 2,
+            dir: Math.atan2(b.y - a.y, b.x - a.x),
+          });
+        }
+      }
+      const anchors = getSemanticAnchors('recursive', params, W, H);
+      const edges = anchors.filter((a) => a.role === 'edge');
+      expect(edges.length).toBe(realSides.length);
+      for (const e of edges) {
+        // Position on a real side midpoint AND tangent aligned with that side's
+        // direction (guards against a winding/vertex-order transcription slip
+        // that would move the midpoint by 0 but the tangent by π).
+        const side = realSides.find((s) => ptNear(s, e));
+        expect(side).toBeDefined();
+        expect(e.tangent).toBeCloseTo(side.dir, 9);
+      }
+    });
+
+    it(`cells land on real polygon centers, one per polygon (${name})`, () => {
+      const polys = recordRecursivePolys(params);
+      const realCenters = polys.map((p) => p.center);
+      const anchors = getSemanticAnchors('recursive', params, W, H);
+      const cells = anchors.filter((a) => a.role === 'cell');
+      // One cell per drawn polygon (per-polygon count, NOT deduped — concentric
+      // polygons share the origin center).
+      expect(cells.length).toBe(polys.length);
+      for (const c of cells) expect(onPts(c, realCenters)).toBe(true);
+    });
+
+    it(`tips equal the recorded leaf-polygon centers (${name})`, () => {
+      const polys = recordRecursivePolys(params);
+      const leafCenters = polys.filter((p) => !isNonLeaf(p, polys)).map((p) => p.center);
+      const anchors = getSemanticAnchors('recursive', params, W, H);
+      const tips = anchors.filter((a) => a.role === 'tip');
+      const cells = anchors.filter((a) => a.role === 'cell');
+
+      // Count matches the recording-derived leaf set, every tip is on a leaf
+      // center, and every leaf center has a tip.
+      expect(tips.length).toBe(leafCenters.length);
+      for (const t of tips) expect(onPts(t, leafCenters)).toBe(true);
+      for (const lc of leafCenters) expect(tips.some((t) => ptNear(t, lc))).toBe(true);
+      // Tips are a PROPER subset of cells (non-leaf polygons exist) — proves the
+      // leaf filter did something, so tips ≠ "all centers".
+      expect(tips.length).toBeLessThan(cells.length);
+    });
+  }
+});
+
+describe('getSemanticAnchors — recursive feeds the placement engine', () => {
+  it('roles are filterable via selectAnchors', () => {
+    const anchors = getSemanticAnchors('recursive', recursiveParams(), W, H);
+    const { survivors } = selectAnchors(anchors, { roles: ['tip'] });
+    expect(survivors.length).toBeGreaterThan(0);
+    expect(survivors.every((a) => a.role === 'tip')).toBe(true);
+  });
+
+  it('produces placements through placeMotifs', () => {
+    const anchors = getSemanticAnchors('recursive', recursiveParams(), W, H);
+    const { placements } = placeMotifs(
+      anchors,
+      {
+        selection: { roles: ['crossing', 'tip'] },
         placement: { sizing: { mode: 'fixed', size: 4, min: 0 } },
       },
       { canvasW: W, canvasH: H, boundary: { type: 'rect', width: W, height: H } }

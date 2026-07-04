@@ -271,6 +271,234 @@ function gridAnchors(params, canvasW, canvasH) {
   return anchors;
 }
 
+// ── RECURSIVE extractor ──────────────────────────────────────────────────────
+// Faithful to src/lib/patterns/RecursiveGeometry.js `generate()`:
+//   • The drawing is a TREE of closed regular n-gons. recurse(cx,cy,r,rot,level)
+//     (RecursiveGeometry.js:75-104) pushes ONE polygon, then — if level>0 —
+//     spawns a CONCENTRIC child (same center, radius*getEffectiveScale(level),
+//     level-1) and — if level>=2 — a BRANCH child at EVERY vertex (level-2). A
+//     child is pruned (no polygon) when level<0 or radius<1.
+//   • Vertices: getVertices(r,rot) = regular numSides-gon, vertex i at angle
+//     rot + 2πi/numSides (RecursiveGeometry.js:48-58). numSides from `shape`
+//     (triangle3/square4/pentagon5/hexagon6/circle72, default 4).
+//   • startRadius = min(W,H)*(startScale/200); clampedDepth = clamp(depth,1,8);
+//     nextRotation adds rotationPerLevel°. getEffectiveScale replicated exactly
+//     (RecursiveGeometry.js:60-65). Geometry is fully param-determined (SEEDLESS)
+//     — ctx.random is never used for positions — so this extractor is reproducible.
+//
+// Coordinate frame: recurse starts at the ORIGIN (0,0) and drawBase is wrapped by
+// applySymmetryDraw, which for symmetry=1 translate()s by (cx+offsetX,cy+offsetY).
+// So WORLD = centered + (canvasW/2+offsetX, canvasH/2+offsetY), matching Grid.
+//
+// ROLE MAPPING (all four roles map onto real drawn geometry):
+//   • crossing = every polygon VERTEX (a star-vertex). meta.junction=true iff a
+//     branch child was ACTUALLY drawn from that vertex (radius-pruning aware —
+//     NOT a bare level>=2 test), so junction truth equals "a polygon is centered
+//     there" in the recording.
+//   • edge = midpoint of every polygon SIDE. tangent = side direction; s = the
+//     perimeter arc length from vertex 0.
+//   • cell = center of EVERY polygon (each is a closed filled region). Fixed
+//     convention (tangent=+x, normal=+y), matching the Grid cell role.
+//   • tip = center of every LEAF polygon (a branch terminus that spawned no drawn
+//     child). Normal points outward from the global center (0 at the origin, the
+//     concentric-chain terminus, where outward is undefined). Tips are a subset of
+//     cell positions but a distinct role.
+//
+// DELIBERATE LIMITATIONS (documented, honesty-gated), mirroring the Grid
+// extractor:
+//   • symmetry>1 copies and startAngle rotation are NOT replicated — anchors
+//     describe the single base copy at the default orientation.
+//   • warp modulation (params.modulation.channel==='warp') displaces every vertex
+//     by an arbitrary field, so anchors cannot be tied to the drawing. We return
+//     null (never ship anchors we can't verify).
+
+/** Sides per shape — mirrors RecursiveGeometry.sidesForShape (RecursiveGeometry.js:35-44). */
+function sidesForShape(s) {
+  switch (s) {
+    case 'triangle': return 3;
+    case 'square': return 4;
+    case 'pentagon': return 5;
+    case 'hexagon': return 6;
+    case 'circle': return 72;
+    default: return 4;
+  }
+}
+
+/**
+ * Recursive semantic extractor. See the block header for the role/limitation
+ * contract. Emission order is fixed (crossings, edges, tips, cells) and iterates
+ * polygons in the pattern's exact DFS pre-order for determinism.
+ * @returns {Array<object>|null}
+ */
+function recursiveAnchors(params, canvasW, canvasH) {
+  const {
+    shape = 'hexagon',
+    depth = 5,
+    rotationPerLevel = 15,
+    scaleFactor = 0.7,
+    scaleNonLinearity = 0,
+    startScale = 70,
+    offsetX = 0,
+    offsetY = 0,
+  } = params || {};
+
+  // Warp displaces every vertex by an arbitrary field — unverifiable, so refuse
+  // to emit (see block header).
+  const mod = params && params.modulation;
+  if (mod && mod.channel === 'warp' && mod.field) return null;
+
+  const clampedDepth = Math.max(1, Math.min(8, depth));
+  const numSides = sidesForShape(shape);
+  const startRadius = Math.min(canvasW, canvasH) * (startScale / 200);
+
+  // Replicate RecursiveGeometry.getEffectiveScale EXACTLY (RecursiveGeometry.js:60-65).
+  const getEffectiveScale = (level) => {
+    if (scaleNonLinearity === 0 || clampedDepth <= 1) return scaleFactor;
+    const progress = 1 - level / clampedDepth;
+    const eased = Math.pow(scaleFactor, 1 + scaleNonLinearity * progress * 2);
+    return Math.max(0.1, Math.min(0.98, eased));
+  };
+
+  // Regular polygon vertices, computed with the SAME float ops as the pattern
+  // (centerX + radius*cos(angle)) so positions are bit-for-bit on the drawing.
+  const getVertices = (centerX, centerY, radius, rotationRad) => {
+    const verts = [];
+    for (let i = 0; i < numSides; i++) {
+      const angle = rotationRad + (Math.PI * 2 * i) / numSides;
+      verts.push({
+        x: centerX + radius * Math.cos(angle),
+        y: centerY + radius * Math.sin(angle),
+      });
+    }
+    return verts;
+  };
+
+  // Enumerate polygons in the pattern's exact DFS pre-order (self, concentric,
+  // then branch children per vertex). Track, per vertex, whether a branch child
+  // was actually drawn (radius>=1) → junction truth; and whether the polygon
+  // produced ANY child → leaf truth.
+  const polys = [];
+  const recurse = (centerX, centerY, radius, rotationRad, level) => {
+    if (level < 0 || radius < 1) return false; // pruned — no polygon drawn
+    const verts = getVertices(centerX, centerY, radius, rotationRad);
+    const poly = {
+      center: { x: centerX, y: centerY },
+      radius,
+      rotationRad,
+      level,
+      verts,
+      isLeaf: true,
+      vertexHasBranch: new Array(numSides).fill(false),
+    };
+    polys.push(poly);
+    if (level > 0) {
+      const effScale = getEffectiveScale(level);
+      const nextRadius = radius * effScale;
+      const nextRotation = rotationRad + (rotationPerLevel * Math.PI) / 180;
+      let hasChild = false;
+      if (recurse(centerX, centerY, nextRadius, nextRotation, level - 1)) hasChild = true;
+      if (level >= 2) {
+        const vertScale = getEffectiveScale(level - 1);
+        for (let k = 0; k < verts.length; k++) {
+          const v = verts[k];
+          if (recurse(v.x, v.y, nextRadius * vertScale, nextRotation, level - 2)) {
+            hasChild = true;
+            poly.vertexHasBranch[k] = true;
+          }
+        }
+      }
+      if (hasChild) poly.isLeaf = false;
+    }
+    return true;
+  };
+  recurse(0, 0, startRadius, 0, clampedDepth);
+
+  const ox = canvasW / 2 + offsetX;
+  const oy = canvasH / 2 + offsetY;
+  const anchors = [];
+
+  // ── CROSSINGS: every polygon vertex. normal = outward radial (vertex angle);
+  //    tangent = perpendicular. junction = a branch child was actually drawn here.
+  for (let p = 0; p < polys.length; p++) {
+    const poly = polys[p];
+    for (let k = 0; k < poly.verts.length; k++) {
+      const v = poly.verts[k];
+      const vertexAngle = poly.rotationRad + (Math.PI * 2 * k) / numSides;
+      anchors.push({
+        id: anchorId('crossing', p, k),
+        role: 'crossing',
+        x: v.x + ox,
+        y: v.y + oy,
+        tangent: vertexAngle + HALF_PI,
+        normal: vertexAngle,
+        s: 0,
+        meta: { poly: p, vertex: k, level: poly.level, junction: poly.vertexHasBranch[k] },
+      });
+    }
+  }
+
+  // ── EDGES: midpoint of every polygon side. tangent = side direction; normal =
+  //    tangent+PI/2; s = perimeter arc length from vertex 0 (equal-length sides).
+  for (let p = 0; p < polys.length; p++) {
+    const poly = polys[p];
+    const n = poly.verts.length;
+    const sideLen = 2 * poly.radius * Math.sin(Math.PI / n);
+    for (let k = 0; k < n; k++) {
+      const a = poly.verts[k];
+      const b = poly.verts[(k + 1) % n];
+      const tangent = Math.atan2(b.y - a.y, b.x - a.x);
+      anchors.push({
+        id: anchorId('edge', p, k),
+        role: 'edge',
+        x: (a.x + b.x) / 2 + ox,
+        y: (a.y + b.y) / 2 + oy,
+        tangent,
+        normal: tangent + HALF_PI,
+        s: (k + 0.5) * sideLen,
+        meta: { poly: p, side: k, level: poly.level },
+      });
+    }
+  }
+
+  // ── TIPS: center of every LEAF polygon (branch terminus). normal points
+  //    outward from the global center; 0 at the origin (outward undefined there).
+  for (let p = 0; p < polys.length; p++) {
+    const poly = polys[p];
+    if (!poly.isLeaf) continue;
+    const outward =
+      poly.center.x === 0 && poly.center.y === 0
+        ? 0
+        : Math.atan2(poly.center.y, poly.center.x);
+    anchors.push({
+      id: anchorId('tip', p),
+      role: 'tip',
+      x: poly.center.x + ox,
+      y: poly.center.y + oy,
+      tangent: outward + HALF_PI,
+      normal: outward,
+      s: 0,
+      meta: { poly: p, level: poly.level },
+    });
+  }
+
+  // ── CELLS: center of every polygon (a closed filled region). Fixed convention.
+  for (let p = 0; p < polys.length; p++) {
+    const poly = polys[p];
+    anchors.push({
+      id: anchorId('cell', p),
+      role: 'cell',
+      x: poly.center.x + ox,
+      y: poly.center.y + oy,
+      tangent: 0,
+      normal: HALF_PI,
+      s: 0,
+      meta: { poly: p, level: poly.level },
+    });
+  }
+
+  return anchors;
+}
+
 /**
  * Return semantic anchors for a pattern, or null when no extractor exists (the
  * caller falls back to generic edge anchors from anchors.js).
@@ -284,10 +512,11 @@ export function getSemanticAnchors(patternType, params, canvasW, canvasH) {
   switch (patternType) {
     case 'grid':
       return gridAnchors(params, canvasW, canvasH);
+    case 'recursive':
+      return recursiveAnchors(params, canvasW, canvasH);
     // Extractors for these hosts are deferred to later slices.
     case 'voronoi':
     case 'spiral':
-    case 'recursive':
     default:
       return null;
   }

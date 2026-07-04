@@ -6,7 +6,8 @@
 
 ## ⚠️ INCIDENT — concurrent-session collision (2026-07-04 ~01:20), then ISOLATED
 A **second, concurrent Claude session** (long-running process since Wed 23:00; reflog `HEAD@{7..13}` shows it serially merging `feat/extraction-*` branches into main) ran `git merge origin/feat/extraction-invert-polarity` at **01:20 while `feat/motif-adorn` was checked out in the shared main working tree** — so issue **#69 (extraction invert/polarity) rode onto MY branch** as commits `355ef7c` + merge `56d0588`. #69 is legit work and the full suite passes with it, but it is **NOT my work** and is NOT yet on `main` (`git merge-base --is-ancestor 355ef7c main` = false). A shared working tree + index with a second writer is a corruption risk for an unattended run.
-**Resolution:** isolated all further motif work into a **dedicated git worktree** (own working dir + index; git serializes ref writes safely). See updated Run identity below. The main `~/Documents/Sonoform_all/Naqsha` checkout is LEFT ALONE for the other session. **For the human in the morning:** decide whether to keep #69 in the motif branch or rebase it out; the other session's activity in the main checkout is not mine.
+**Resolution:** isolated all further motif work into a **dedicated git worktree** (own working dir + index; git serializes ref writes safely). See updated Run identity below. The main `~/Documents/Sonoform_all/Naqsha` checkout is LEFT ALONE for the other session. **For the human in the morning:** #69 is woven into the first-parent chain via merge `56d0588` — do NOT rebase it out of a live branch. If you want a clean #69-free motif branch, **cherry-pick the four motif commits `9ee5b7a ee7882b 36869cc d50d0dc` onto a fresh branch off `main`** (each is an independent diff, so this reconstructs a clean motif-only branch). Your choice; I did not do it.
+**Note (node_modules race):** the worktree's `node_modules` symlinks into the live `../Naqsha` the other session uses. If a test fails *bizarrely*, re-run it ONCE before believing it — could be a transient npm race, not a real regression.
 
 ## Run identity
 - **BUILD HERE (isolated worktree):** `~/Documents/Sonoform_all/Naqsha-motif` on branch **`feat/motif-adorn-iso`**. `node_modules` is a symlink → `../Naqsha/node_modules`; `docs/motif-adorn-research.md` copied in (untracked). **All slices, tests, commits happen HERE now.**
@@ -59,11 +60,14 @@ A **second, concurrent Claude session** (long-running process since Wed 23:00; r
 - [ ] 2.2 pure `adornGraph` derivation (mirror `buildModulationGraph`); orphan on host/source delete.
 - [ ] 2.3 auto-naming ("Rosette on Voronoi 1").
 
-### Phase 3 — Pattern contract + render
-- [ ] 3.1 Pattern-contract impl (ImportedPath precedent); transform-group instancing.
-- [ ] 3.2 canvas/SVG dual-emit parity via RecordingContext (build-time geometry).
-- [ ] 3.3 layer-as-source (generate once/frame, instance by transform; "used as motif" badge semantics).
-- [ ] 3.4 3–4 AUTHORED placeholder glyphs (rosette, leaf, dot, diamond). Real CC0-traced starter set = human task, OUT of scope.
+### Phase 3 — Pattern contract + render  (NEXT — completes the vertical slice; contains the dual-emit trap)
+**Locked approach (advisor):** prevent the build-time-geometry/dual-emit divergence STRUCTURALLY — in `generate()` compute ONE final affine **matrix** per instance (`translate·rotate·scale·flip`), then feed BOTH emitters from that single list: canvas applies it to glyph points; SVG serializes the SAME matrix as `transform="matrix(a b c d e f)"`. Flip = the divergence hotspot → matrix (NOT canvas manual-negate vs SVG `scale(-1,1)`, whose order-vs-rotate differs). Parity test must be ADVERSARIAL: independently parse the emitted SVG matrix + apply to the glyph's verbatim `d` points, compare to captured canvas vertices (do NOT reuse the impl's transform helper for "expected"). Cases: flipped ASYMMETRIC glyph, rotated placement, two-instance. Then opus review.
+**Integration seam (deferred to render wiring, keep in doc):** the host layer must resolve its geometry BEFORE the motif reads it (generate-ordering dependency in `useCanvas`). Pure slices pass synthetic `hostPaths` in params.
+**MotifPattern params = the motif-layer schema (design now so Phase 2 formalizes, not rewrites):** `{ glyphRef, hostLayerId | hostPaths(seam), binding:{selection, placement}, anchorMode:'edge'|'semantic', edgeOpts:{spacing|count} }`.
+- [x] 3A glyph format + instancing matrix + leaf glyph — DONE (commit `ddee5ca`, 16 tests). `glyphs.js` (getGlyph/MOTIF_GLYPHS, leaf asymmetric), `instancing.js` (placementMatrix/applyMatrix/matrixToSVG, single affine).
+- [x] 3B `MotifPattern` dual-emit — DONE (commit `ebea63a`, 7 tests). Single matrix feeds canvas + SVG; mutation-verified adversarial parity test (flip proven a real mirror, build-time resolution proven). **PURE VERTICAL SLICE COMPLETE: hostPaths+glyph+binding → anchors → placements → parity-verified canvas + SVG export.** Full suite 3330 green.
+- [ ] 3C author remaining 3 glyphs (rosette, dot, diamond) once 3B parity is proven. Real CC0-traced starter set = human task, OUT of scope.
+- [ ] 3.3 layer-as-source (generate once/frame, instance by transform; "used as motif" badge semantics) — after 3B.
 
 ### Phase 4 — Motif device UI (stretch)
 - [ ] 4.x shared editor, source mini-picker, role selector, preset chips, rule/jitter/sequence/sizing controls, anchor-ghost overlay + click-to-override.

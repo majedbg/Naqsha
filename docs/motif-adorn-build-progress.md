@@ -1,8 +1,59 @@
 # Motif / Adorn — Overnight Build Progress (crash-safe handoff)
 
 > **This doc is the single source of truth for a cold resume.** If you are a revived
-> session: `cd ~/Documents/Sonoform_all/Naqsha`, read this whole file, find the last
-> checked slice, and continue from the next unchecked one under the same rules.
+> session: `cd ~/Documents/Sonoform_all/Naqsha-motif` (the ISOLATED WORKTREE on branch
+> `feat/motif-adorn-iso` — NOT the shared main Naqsha dir), read this whole file, find
+> the last checked slice, and continue from the next unchecked one under the same rules.
+
+---
+## ✅ FINAL HANDOFF REPORT (2026-07-04 ~02:45)
+
+**What was built:** the complete **pure core** of the Motif/Adorn feature — 12 pure modules, **191 tests across 11 files, all green; full app suite 3330+ green; `vite build` green.** Everything is headless/deterministic (no p5/DOM/React in any motif module), TDD'd, and each risky piece got a dedicated adversarial review. Location: `~/Documents/Sonoform_all/Naqsha-motif` on `feat/motif-adorn-iso` (7 commits `a57992b..1deea70`; NOT pushed, NOT merged).
+
+**The pure pipeline works end-to-end** (proven by `pipeline.e2e.test.js`): a real Grid host → `getSemanticAnchors` (25 crossings) → `placeMotifs` (role filter/rate/density/field/overrides → sequence/flip/orientation/jitter/sizing → test-before-place accept) → per-instance affine matrix → `MotifPattern` dual-emits identical geometry to canvas + SVG. The Wong no-overlap guarantee survives the whole pipeline; instances land exactly on crossings; fully deterministic.
+
+### Module map (`src/lib/motif/`)
+| Module | Public API | Purpose | Tests |
+|---|---|---|---|
+| `emptyCircle.js` | `largestEmptyCircleRadius`, `fitsAt`, `pointToSegmentDistance` | test-before-place sizing primitive | 16 |
+| `anchors.js` | `sampleEdgeAnchors`, `resampleByArcLength`, `polylineLength`, `anchorId` | generic arc-length Edge anchors (winding-robust, density-independent) for ANY layer | 18 |
+| `placementEngine.js` | `selectAnchors`, `resolvePlacements`, `placeMotifs` | the deterministic placement pipeline | 49 |
+| `glyphs.js` | `MOTIF_GLYPHS`, `getGlyph` | 4 authored starter glyphs (leaf/dot/diamond/rosette) | 20 |
+| `instancing.js` | `placementMatrix`, `applyMatrix`, `matrixToSVG` | single affine matrix per instance (feeds both emitters) | — |
+| `MotifPattern.js` | `default class MotifPattern extends Pattern` | glyph→canvas+SVG dual-emit; `anchorMode:'edge'|'semantic'` | 17 + 7 e2e |
+| `motifLayer.js` | `MOTIF_TYPE`, `isMotifLayer`, `createMotifParams`, `motifHostId`, `motifAutoName` | motif-layer schema (binding lives on the motif layer) | (36 w/ graph) |
+| `adornGraph.js` | `buildAdornGraph` → `{edges,byHost,byMotif,orphans}` | host↔motif relationship derivation (mirrors buildModulationGraph) | ↑ |
+| `semanticAnchors.js` | `getSemanticAnchors(patternType, params, W, H)` | Grid Crossings/Edges/Tips/Cells (divergence-guarded); null for others | 16 |
+| `straddleCheck.js` | `straddleCheck(placements, boundarySegments)` | warn-only: motifs crossing a cut/score line | 10 |
+
+### Key contracts (stable — downstream can depend on them)
+- **Anchor**: `{id, role, x, y, tangent, normal, s, meta}`. `normal` is the winding-robust orientation (use it, not `tangent`, for 'path' orientation).
+- **binding** (stored on motif layer via `createMotifParams`): `{selection, placement}` — consumed verbatim by `placeMotifs`. `selection` = role/rate/skip/density/field/overrides; `placement` = sequence/flip/orientation/jitter/sizing/junction.
+- **Placement**: `{anchorId, role, index, x, y, rotation, scale, radius, seqId, flip}`.
+- **Determinism** is a tested contract everywhere (same seed+inputs ⇒ identical output).
+- **Proportional sizing** = `min(size*scaleFactor, margin*R)`, `margin∈(0,1]` ⇒ no overlap by construction, no Infinity (refined after adversarial review).
+
+### What REMAINS (deferred — with reasons, NOT blockers hit)
+**App/UI integration (the biggest remaining chunk — deliberately deferred to a HUMAN-present session):** touches shared app files and needs BROWSER verification, unsafe to do blind overnight beside the concurrent session on the main checkout.
+- Register `MotifPattern` so a `type:'motif'` layer renders. Precedent: `ImportedPath` is `new`'d directly in `src/lib/useCanvas.js:112` from `layer.type==='import'` — do the same for `'motif'`.
+- **Host-geometry ordering seam:** a motif reads its host's resolved geometry. In `useCanvas` render loop, the host layer's `generateWithContext` must run BEFORE the motif's, and the host's drawn paths (or, for semantic mode, its `patternType`+`params`) must be threaded into the motif's `params` as `hostPaths` / `hostPatternType`+`hostParams`. This ordering dependency is the one real integration risk — resolve hosts first, topologically (adornGraph gives you `byMotif`/`byHost`).
+- `useLayers` motif layer creation (`addMotifLayer`) using `createMotifParams` + `motifAutoName`; orphaning already handled by `buildAdornGraph` (tolerate-dangling, no cascade code needed).
+- Phase 4 device UI (shared editor, source picker, role selector, preset chips Straight/Half-drop/Brick/Mirror/Tossed, jitter/sequence/sizing controls, anchor-ghost overlay + click-to-override).
+- Phase 5 rail: reuse `ModulationRail.jsx` (swap `buildModulationGraph`→`buildAdornGraph`, distinct hue); straddle badge + export-summary line off `straddleCheck`.
+- `svgExport`/undo/persistence wiring (Phase 6).
+
+**Pure work still open (safe to continue overnight if resumed):**
+- Semantic anchors for **Voronoi, Spiral, Recursive** (Grid done as the template). MUST follow the same divergence-guard discipline: read the pattern's real `generate()`, tie anchors to its actual recorded drawing, emit `null` if unverifiable. Do NOT ship anchors you can't prove sit on the pattern.
+
+**Human-only (out of scope, unchanged):** real CC0-plate glyph tracing; extraction-stepper fork (user wants a grill-me first — see Deferred); DB migrations; tier gating; motifs-on-motifs.
+
+### Risks / things for the human to know
+1. **#69 rode onto the parent branch** via a concurrent-session merge collision (see INCIDENT). To get a clean motif-only branch: cherry-pick `9ee5b7a ee7882b 36869cc d50d0dc ddee5ca ebea63a ca2d952 176dd26 ad77991 1deea70` onto a fresh branch off `main` (skip `a57992b`/`71f9dec` doc-only if desired).
+2. **Isolated worktree** at `~/Documents/Sonoform_all/Naqsha-motif`; `node_modules` symlinks into `../Naqsha` (live). Not pushed/merged. `git worktree remove` when done (branch persists).
+3. No final whole-diff Phase-7 review was run IF this report is the last entry — per-slice adversarial reviews covered the two load-bearing traps (engine determinism/no-overlap, dual-emit parity). A final review is still advisable before merge.
+4. Watchdog v2 (PID 15633) may fire a revival ~05:17 if a usage limit hit; it resumes THIS session pointed at the worktree. Harmless if the build is already done (revival reads this report and finds nothing unchecked → no-op).
+---
+
 
 ## ⚠️ INCIDENT — concurrent-session collision (2026-07-04 ~01:20), then ISOLATED
 A **second, concurrent Claude session** (long-running process since Wed 23:00; reflog `HEAD@{7..13}` shows it serially merging `feat/extraction-*` branches into main) ran `git merge origin/feat/extraction-invert-polarity` at **01:20 while `feat/motif-adorn` was checked out in the shared main working tree** — so issue **#69 (extraction invert/polarity) rode onto MY branch** as commits `355ef7c` + merge `56d0588`. #69 is legit work and the full suite passes with it, but it is **NOT my work** and is NOT yet on `main` (`git merge-base --is-ancestor 355ef7c main` = false). A shared working tree + index with a second writer is a corruption risk for an unattended run.
@@ -55,10 +106,10 @@ A **second, concurrent Claude session** (long-running process since Wed 23:00; r
  — role filter → rate/skip → seeded density (mulberry32) → field mask (ScalarField `sampleNorm` + threshold + invert) → overrides (ID match → spatial re-bind within tol → orphan). Pure → {survivors, orphans}. Determinism tested.
 - [ ] 1.3 (moved after engine) semantic `anchorPoints()` for Grid, Spiral, Recursive, Voronoi (Crossings/Edges/Tips/Cells) from pre-flatten internal structure; stable IDs. May ship partial (Grid+Voronoi first) if time-constrained.
 
-### Phase 2 — data model
-- [ ] 2.1 Motif layer schema (binding on the motif layer: hostLayerId, source descriptor, rules, overrides).
-- [ ] 2.2 pure `adornGraph` derivation (mirror `buildModulationGraph`); orphan on host/source delete.
-- [ ] 2.3 auto-naming ("Rosette on Voronoi 1").
+### Phase 2 — data model — DONE (commit `ca2d952`, 36 tests)
+- [x] 2.1/2.2/2.3 motifLayer.js (schema/isMotifLayer/createMotifParams/motifHostId/motifAutoName) + adornGraph.js (buildAdornGraph {edges,byHost,byMotif,orphans}, mirrors buildModulationGraph, tolerate-dangling, stacking order, motifs-on-motifs→orphan).
+
+> **REMAINING-TIME PLAN (2026-07-04 ~02:17, limit est ~04:11):** pure-core is functional+wireable. Do: (1) 1.3 Grid semantic anchors (full 4-role taxonomy on one flagship host, divergence-guarded) — Voronoi/Spiral/Recursive DEFERRED with spec (rushing 4 extractors blind = green-but-wrong risk); (2) 3C remaining glyphs; (3) Phase 5 straddleCheck (pure); (4) end-to-end demonstration test proving the whole pure pipeline; (5) thorough handoff + integration runbook for the human. **App/UI integration (Phase 3.3/4/rail) DEFERRED to human — it touches shared app files + needs browser verification, unsafe to do blind overnight beside the concurrent session.**
 
 ### Phase 3 — Pattern contract + render  (NEXT — completes the vertical slice; contains the dual-emit trap)
 **Locked approach (advisor):** prevent the build-time-geometry/dual-emit divergence STRUCTURALLY — in `generate()` compute ONE final affine **matrix** per instance (`translate·rotate·scale·flip`), then feed BOTH emitters from that single list: canvas applies it to glyph points; SVG serializes the SAME matrix as `transform="matrix(a b c d e f)"`. Flip = the divergence hotspot → matrix (NOT canvas manual-negate vs SVG `scale(-1,1)`, whose order-vs-rotate differs). Parity test must be ADVERSARIAL: independently parse the emitted SVG matrix + apply to the glyph's verbatim `d` points, compare to captured canvas vertices (do NOT reuse the impl's transform helper for "expected"). Cases: flipped ASYMMETRIC glyph, rotated placement, two-instance. Then opus review.
@@ -94,3 +145,11 @@ A **second, concurrent Claude session** (long-running process since Wed 23:00; r
 - 2026-07-04 01:20 — ⚠️ CONCURRENT-SESSION COLLISION: #69 merged onto my branch by another session (see INCIDENT at top). `355ef7c`+`56d0588`.
 - 2026-07-04 01:43 — Slice 1.4b (transform+accept, 49 engine tests) DONE + Opus adversarial review + 3 real-bug fixes folded in. Commit `d50d0dc`. **Full suite 3307 passed, build green.** Phase 1 core (1.1/1.2/1.4a/1.4b) COMPLETE; semantic anchors (1.3) remain.
 - 2026-07-04 ~01:45 — ISOLATING into dedicated worktree to end the collision risk (see Run identity).
+
+## Slice log (continued)
+- 2026-07-04 02:08 — 3A glyphs+instancing (`ddee5ca`, 16t) + 3B MotifPattern dual-emit (`ebea63a`, 7t). Vertical slice complete.
+- 2026-07-04 02:16 — Phase 2 data model (`ca2d952`, 36t).
+- 2026-07-04 02:27 — 1.3 Grid semantic anchors, divergence-guarded (`176dd26`, 16t).
+- 2026-07-04 02:37 — semantic wired into MotifPattern + e2e demo (`ad77991`, 17+7t). Full pure pipeline proven.
+- 2026-07-04 02:41 — 3 more glyphs + straddleCheck (`1deea70`, 30t).
+- 2026-07-04 02:45 — FINAL HANDOFF REPORT written (see top). 191 motif tests, full suite 3330+ green, build green. Pure core COMPLETE. App/UI integration deferred to human.

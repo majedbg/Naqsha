@@ -53,22 +53,29 @@ export const DEFAULT_CONTOUR_ROLE = 'engrave';
 export const DEFAULT_STROKE_ROLE = 'score';
 
 /**
- * Binarize an RGBA image to pure black/white (opaque). Luminance < threshold
- * counts as ink; transparent pixels count as paper. Pure + exported so tests
- * and the pipeline can reuse it.
+ * Binarize an RGBA image to pure black/white (opaque). By default luminance <
+ * threshold counts as ink (DARK = ink); with `invert` the test flips so
+ * luminance > threshold is ink — for a LIGHT ornament on a DARK ground (a
+ * pierced jali screen, light stone on dark openings) the members trace instead
+ * of the negative space (issue #69). Either way transparent pixels count as
+ * paper — the `alpha >= 128` guard holds under invert too, so an oblique cell's
+ * transparent out-of-parallelogram mask (stages.js maskParallelogram) never
+ * reads as ink. Pure + exported so tests and the pipeline can reuse it.
  *
  * @param {{data: Uint8ClampedArray, width: number, height: number}} image
  * @param {number} [threshold=128] 0..255 luminance cut
+ * @param {object} [opts]
+ * @param {boolean} [opts.invert=false] true → light regions are ink (light-on-dark)
  * @returns {{data: Uint8ClampedArray, width: number, height: number}}
  */
-export function thresholdImage(image, threshold = 128) {
+export function thresholdImage(image, threshold = 128, { invert = false } = {}) {
   const { data, width, height } = image;
   const out = new Uint8ClampedArray(data.length);
   for (let i = 0; i < data.length; i += 4) {
     const alpha = data[i + 3];
     // Rec. 601 luma; transparent → paper.
     const luma = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-    const ink = alpha >= 128 && luma < threshold;
+    const ink = alpha >= 128 && (invert ? luma > threshold : luma < threshold);
     const v = ink ? 0 : 255;
     out[i] = v;
     out[i + 1] = v;
@@ -218,6 +225,7 @@ async function traceComponents(bw, { turdsize = 2 } = {}) {
  * @param {object} [opts]
  * @param {number} [opts.threshold=128] binarization threshold
  * @param {number} [opts.turdsize=2]   potrace speckle suppression (px area)
+ * @param {boolean} [opts.invert=false] trace light regions (light-on-dark; #69)
  * @param {string} [opts.role]         fabrication role tag for every contour
  * @returns {Promise<{fills: {d: string, role: string}[], strokes: []}>}
  */
@@ -225,9 +233,10 @@ export async function traceContours(image, opts = {}) {
   const {
     threshold = 128,
     turdsize = 2,
+    invert = false,
     role = DEFAULT_CONTOUR_ROLE,
   } = opts;
-  const bw = thresholdImage(image, threshold);
+  const bw = thresholdImage(image, threshold, { invert });
   const components = await traceComponents(bw, { turdsize });
   return { fills: components.map(({ d }) => ({ d, role })), strokes: [] };
 }
@@ -246,6 +255,7 @@ export async function traceContours(image, opts = {}) {
  * @param {{data: Uint8ClampedArray, width: number, height: number}} image
  * @param {object} [opts]
  * @param {number} [opts.threshold=128]      binarization threshold
+ * @param {boolean} [opts.invert=false]      trace light regions (light-on-dark; #69)
  * @param {number} [opts.turdsize=2]         potrace speckle suppression
  * @param {number} [opts.simplifyTolerance=1]  RDP tolerance (px)
  * @param {number} [opts.minCenterlineLength=3] discard shorter skeleton bits
@@ -257,6 +267,7 @@ export async function traceContours(image, opts = {}) {
 export async function vectorize(image, opts = {}) {
   const {
     threshold = 128,
+    invert = false,
     turdsize = 2,
     simplifyTolerance = 1,
     minCenterlineLength = 3,
@@ -265,7 +276,7 @@ export async function vectorize(image, opts = {}) {
     strokeRole = DEFAULT_STROKE_ROLE,
   } = opts;
 
-  const bw = thresholdImage(image, threshold);
+  const bw = thresholdImage(image, threshold, { invert });
   const contourComponents = await traceComponents(bw, { turdsize });
   const { polylines } = extractCenterlines(bw, {
     tolerance: simplifyTolerance,

@@ -35,6 +35,29 @@ function makeImage(width, height, isInk) {
   return { data, width, height };
 }
 
+// #69 light-on-dark fixture — an OPAQUE dark ground (luma ~30) with an OPAQUE
+// light square (luma ~230) at [x0,x1)×[y0,y1). The ground MUST be opaque: a
+// transparent ground reads as paper under either polarity, so the alpha guard
+// would make invert a no-op and a flip test would pass for the wrong reason.
+function lightOnDark(
+  width = 64,
+  height = 64,
+  { x0 = 24, x1 = 40, y0 = 24, y1 = 40 } = {}
+) {
+  const data = new Uint8ClampedArray(width * height * 4);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const v = x >= x0 && x < x1 && y >= y0 && y < y1 ? 230 : 30;
+      const i = (y * width + x) * 4;
+      data[i] = v;
+      data[i + 1] = v;
+      data[i + 2] = v;
+      data[i + 3] = 255;
+    }
+  }
+  return { data, width, height };
+}
+
 const square = () =>
   makeImage(60, 60, (x, y) => x >= 20 && x < 40 && y >= 20 && y < 40);
 const disc = () =>
@@ -279,5 +302,63 @@ describe('thresholdImage', () => {
     const bw = thresholdImage(img);
     expect(bw.data[0]).toBe(0); // opaque black stays ink
     expect(bw.data[4]).toBe(255); // transparent black becomes paper
+  });
+
+  // #69: invert/polarity — light regions become ink instead of dark ones.
+  it('flips ink polarity when invert is set (light-on-dark → light is ink)', () => {
+    // px0 dark (luma 30), px1 light (luma 230).
+    const img = makeImage(2, 1, () => false);
+    img.data.set([30, 30, 30, 255], 0);
+    img.data.set([230, 230, 230, 255], 4);
+    const normal = thresholdImage(img, 128, { invert: false });
+    expect(normal.data[0]).toBe(0); // dark → ink
+    expect(normal.data[4]).toBe(255); // light → paper
+    const inverted = thresholdImage(img, 128, { invert: true });
+    expect(inverted.data[0]).toBe(255); // dark → paper
+    expect(inverted.data[4]).toBe(0); // light → ink (the members)
+  });
+
+  // #69 guard: transparent stays paper even under invert — luma 255 > 128 would
+  // otherwise read as ink, but the alpha guard holds. This is what keeps an
+  // oblique cell's transparent out-of-parallelogram mask from tracing as ink.
+  it('keeps transparent pixels as paper under invert (no neighbour-bleed ink)', () => {
+    const img = makeImage(1, 1, () => false);
+    img.data.set([255, 255, 255, 0], 0); // transparent white (mask fill)
+    const inverted = thresholdImage(img, 128, { invert: true });
+    expect(inverted.data[0]).toBe(255); // paper, not ink
+  });
+});
+
+// #69: the invert option must flip WHICH region traces — the members of a
+// light-on-dark ornament, not its negative space. Default polarity traces the
+// dark ground (a frame touching the image edges + a hole); invert traces the
+// compact light square and never the frame.
+describe('vectorize — invert flips which region traces (#69)', () => {
+  const contourPoints = (res) =>
+    res.components.flatMap((c) => absolutePointsIn(c.contour.d));
+
+  it('traces the DARK ground by default (contour hugs the image edges)', async () => {
+    const res = await vectorize(lightOnDark());
+    const xs = contourPoints(res).map((p) => p[0]);
+    const ys = contourPoints(res).map((p) => p[1]);
+    // The ground is ink everywhere but the light square, so its contour reaches
+    // the 0 and 64 borders — the negative-space trace the ticket is about.
+    expect(Math.min(...xs)).toBeLessThanOrEqual(2);
+    expect(Math.max(...xs)).toBeGreaterThanOrEqual(62);
+    expect(Math.min(...ys)).toBeLessThanOrEqual(2);
+    expect(Math.max(...ys)).toBeGreaterThanOrEqual(62);
+  });
+
+  it('traces the LIGHT square members when inverted (compact, off the edges)', async () => {
+    const res = await vectorize(lightOnDark(), { invert: true });
+    const pts = contourPoints(res);
+    const xs = pts.map((p) => p[0]);
+    const ys = pts.map((p) => p[1]);
+    // Now ink = only the 24..40 square: the contour clusters there and never
+    // reaches the image frame.
+    expect(Math.min(...xs)).toBeGreaterThanOrEqual(22);
+    expect(Math.max(...xs)).toBeLessThanOrEqual(42);
+    expect(Math.min(...ys)).toBeGreaterThanOrEqual(22);
+    expect(Math.max(...ys)).toBeLessThanOrEqual(42);
   });
 });

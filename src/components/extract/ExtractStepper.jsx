@@ -239,6 +239,12 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad, tier = '
   const origRef = useRef(null); // { img, url, natural }
   const [drag, setDrag] = useState(null); // in-flight drag {x0,y0,x1,y1}
   const [tracing, setTracing] = useState(false);
+  // #69: invert/polarity for the binarizer. Default OFF preserves DARK = ink;
+  // ON traces LIGHT shapes on a dark ground (a pierced jali screen — light
+  // stone, dark openings), so the members trace instead of the negative space.
+  // Threaded to the trace stage via options.trace.invert; toggling in Review
+  // re-runs the trace in place on the same selection + lattice choice.
+  const [invert, setInvert] = useState(false);
   const [stageEvents, setStageEvents] = useState({}); // stage id → latest progress event
   const [result, setResult] = useState(null);
   // Per-shape Review edits ({kind, role} parallel to shapesFromResult(result));
@@ -299,6 +305,10 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad, tier = '
   const imgElRef = useRef(null); // decoded HTMLImageElement (natural size)
   const cropBoxRef = useRef(null);
   const bridgeRef = useRef(null);
+  // #69: the lattice option the last trace ran with, so an invert re-trace in
+  // Review reuses the same repeat-cell choice (undefined auto / false opt-out /
+  // {cell} corrected) rather than re-detecting from scratch.
+  const lastLatticeOptRef = useRef(undefined);
 
   useEffect(() => () => bridgeRef.current?.dispose(), []);
 
@@ -346,6 +356,7 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad, tier = '
       setImageURL(url);
       setCrop(null);
       setResult(null);
+      setInvert(false); // #69: polarity resets to the default per photo
       // Flatten corners: an explicit initialQuad prop (external pre-fill) wins;
       // otherwise S4 auto-detects the ornament plane and PRE-FILLS the quad.
       // Detection is a pure, fast main-thread pass on a small downscale of the
@@ -516,11 +527,12 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad, tier = '
   // same staged progress — differing only in options.lattice (undefined =
   // auto-detect, false = opt-out, {cell} = user-corrected). Returns whether a
   // usable result landed.
-  const runExtract = useCallback(async (rect, latticeOpt) => {
+  const runExtract = useCallback(async (rect, latticeOpt, invertOpt = invert) => {
     if (!imgElRef.current) return false;
     setError('');
     setTracing(true);
     setStageEvents({});
+    lastLatticeOptRef.current = latticeOpt;
     try {
       const imageData = cropToImageData(imgElRef.current, rect);
       // Snapshot the selection raster BEFORE extract(): the worker path
@@ -533,7 +545,11 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad, tier = '
       // palette is simply no facet.
       const cropPalette = extractPalette(imageData, { maxColors: 6 });
       if (!bridgeRef.current) bridgeRef.current = createExtractionBridge();
-      const options = latticeOpt === undefined ? {} : { lattice: latticeOpt };
+      // Only carry the option when it changes behavior: invert OFF keeps the
+      // options byte-identical to the pre-#69 flow (DARK = ink defaults).
+      const options = {};
+      if (latticeOpt !== undefined) options.lattice = latticeOpt;
+      if (invertOpt) options.trace = { invert: true };
       const res = await bridgeRef.current.extract(imageData, options, (p) =>
         setStageEvents((m) => ({ ...m, [p.stage]: p }))
       );
@@ -559,7 +575,7 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad, tier = '
       setTracing(false);
       setStageEvents({});
     }
-  }, []);
+  }, [invert]);
 
   const handleTrace = useCallback(async () => {
     if (!imgElRef.current || !natural) return;
@@ -588,6 +604,16 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad, tier = '
     () => sel && runExtract(sel.rect, false),
     [sel, runExtract]
   );
+
+  // #69: flip the binarizer polarity. In Review (a result exists) this re-runs
+  // the trace in place on the SAME selection + lattice choice so the user sees
+  // the members vs negative-space flip immediately; before any trace it just
+  // sets the polarity the next "Trace region" will use.
+  const handleToggleInvert = useCallback(() => {
+    const next = !invert;
+    setInvert(next);
+    if (sel) runExtract(sel.rect, lastLatticeOptRef.current, next);
+  }, [invert, sel, runExtract]);
 
   // No repeat detected → the user can still mark one by hand: seed a centered
   // half-size cell and let the editor take over (commit re-extracts).
@@ -963,6 +989,17 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad, tier = '
                 )}
               </div>
               {tracing && <StageProgress events={stageEvents} />}
+              {/* #69: polarity. Off = DARK is ink (default); on traces LIGHT
+                  shapes on a dark ground (a pierced jali screen). */}
+              <label className="flex items-center gap-2 text-xs text-ink-soft cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={invert}
+                  onChange={() => setInvert((v) => !v)}
+                  className="accent-saffron"
+                />
+                Invert — trace light shapes on a dark ground
+              </label>
               <div className="flex gap-2">
                 <button type="button" className={GHOST_BTN} onClick={() => setStep(1)}>
                   Back
@@ -1036,6 +1073,19 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad, tier = '
                   </div>
                 ))}
               {tracing && <StageProgress events={stageEvents} />}
+              {/* #69: flipping polarity here re-traces the same selection in
+                  place, so a light-on-dark ornament traces its members instead
+                  of the negative space. */}
+              <label className="flex items-center gap-2 text-xs text-ink-soft cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={invert}
+                  onChange={handleToggleInvert}
+                  disabled={tracing}
+                  className="accent-saffron"
+                />
+                Invert — trace light shapes on a dark ground
+              </label>
               <p className="text-xs text-ink-soft">
                 {shapeCount} shape{shapeCount === 1 ? '' : 's'} traced — line-work as single
                 centerline strokes, solid shapes as contours. Flip a shape's role or switch its

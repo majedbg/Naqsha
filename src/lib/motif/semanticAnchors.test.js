@@ -6,6 +6,9 @@ import RecursiveGeometry from '../patterns/RecursiveGeometry.js';
 import Spiral from '../patterns/Spiral.js';
 import VoronoiCells from '../patterns/VoronoiCells.js';
 import { RecordingContext } from '../patterns/drawingContext.js';
+import { gridAnchorsCentered } from '../patterns/gridAnchors.js';
+import { makeP5Random } from '../patterns/rng.js';
+import { toSymmetryCount } from '../patterns/symmetryUtils.js';
 
 const HALF_PI = Math.PI / 2;
 
@@ -112,6 +115,7 @@ describe('getSemanticAnchors — grid role taxonomy', () => {
 
   it('places crossings at world lattice positions with tangent=+x, normal=+y', () => {
     const anchors = getSemanticAnchors('grid', linearParams(), W, H);
+    // Core ids carry a trailing copy-k segment (":0" for the base copy).
     const c00 = anchors.find((a) => a.id === 'crossing:0:0');
     // xPositions[0] = -totalW/2 = -80, world = 120; yPositions[0] = -60, world = 140
     expect(c00.x).toBeCloseTo(CX - 80, 6);
@@ -177,6 +181,94 @@ describe('getSemanticAnchors — warp is not verifiable, returns null', () => {
       modulation: { channel: 'warp', field: { type: 'noise' }, amount: 30 },
     });
     expect(getSemanticAnchors('grid', p, W, H)).toBeNull();
+  });
+});
+
+// ── WI-2: grid now routes through the shared geometry core, gaining jitter +
+//    symmetry parity. The adapter injects makeP5Random(opts.hostSeed) exactly as
+//    latticeForLayer does; the core+makeP5Random is the production-faithful
+//    reference (a RecordingContext Grid run uses mulberry32, NOT the p5 stream,
+//    so it would diverge by design — we do NOT compare against it here).
+describe('grid — jitter + symmetry parity via the core (WI-2)', () => {
+  // World-translate a centred core anchor by the canvas centre ONLY (offsets are
+  // already folded into the core coords — the adapter must not add them again).
+  const toWorld = (a) => ({ ...a, x: a.x + W / 2, y: a.y + H / 2 });
+  const crossingsOf = (arr) => arr.filter((a) => a.role === 'crossing');
+
+  it('jitter=0/sym=1 with hostSeed passed reproduces the byte-identical baseline', () => {
+    // The adapter must ignore the seed when jitter=0 (the core never consumes
+    // the RNG for positions there) — so passing hostSeed changes nothing.
+    const p = linearParams(); // jitter:0, symmetry:1
+    const seeded = getSemanticAnchors('grid', p, W, H, { hostSeed: 7 });
+    const noOpts = getSemanticAnchors('grid', p, W, H);
+    expect(seeded).toEqual(noOpts);
+
+    // Role counts for the 4×3 fixture (nx=5 vertical, ny=4 horizontal lines).
+    const nx = p.cols + 1;
+    const ny = p.rows + 1;
+    expect(seeded.filter((a) => a.role === 'crossing')).toHaveLength(nx * ny); // 20
+    expect(seeded.filter((a) => a.role === 'cell')).toHaveLength((nx - 1) * (ny - 1)); // 12
+    expect(seeded.filter((a) => a.role === 'tip')).toHaveLength(2 * nx + 2 * ny); // 18
+    expect(seeded.filter((a) => a.role === 'edge')).toHaveLength(nx * (ny - 1) + ny * (nx - 1)); // 31
+
+    // Spot exact positions: crossing:0:0 world = (CX-80, CY-60), tangent/normal.
+    const c00 = seeded.find((a) => a.id === 'crossing:0:0');
+    expect(c00.x).toBeCloseTo(CX - 80, 9);
+    expect(c00.y).toBeCloseTo(CY - 60, 9);
+    expect(c00.tangent).toBeCloseTo(0, 12);
+    expect(c00.normal).toBeCloseTo(HALF_PI, 12);
+    // cell:0:0 world = (CX-60, CY-40).
+    const cell00 = seeded.find((a) => a.id === 'cell:0:0');
+    expect(cell00.x).toBeCloseTo(CX - 60, 9);
+    expect(cell00.y).toBeCloseTo(CY - 40, 9);
+  });
+
+  it('jitter>0: adapter crossings equal the core+makeP5Random reference, world-translated', () => {
+    const seed = 4242;
+    const p = linearParams({ jitter: 7 });
+    const adapter = crossingsOf(getSemanticAnchors('grid', p, W, H, { hostSeed: seed }));
+    // The production-faithful reference: the SAME core, fed a fresh
+    // makeP5Random(seed), mapped +W/2/+H/2. (NOT a RecordingContext Grid run.)
+    const ref = crossingsOf(gridAnchorsCentered(p, makeP5Random(seed))).map(toWorld);
+
+    expect(adapter).toHaveLength(ref.length);
+    adapter.forEach((a, i) => {
+      expect(a.x).toBe(ref[i].x); // exact float equality — same core, same rng.
+      expect(a.y).toBe(ref[i].y);
+    });
+    // Guard the guard: jitter actually moved crossings off the ideal lattice, so
+    // the seed is genuinely consumed (an ideal crossing would sit on a 40px grid).
+    const ideal = crossingsOf(getSemanticAnchors('grid', linearParams({ jitter: 0 }), W, H));
+    const moved = adapter.some((a, i) => Math.abs(a.x - ideal[i].x) > 1e-9 || Math.abs(a.y - ideal[i].y) > 1e-9);
+    expect(moved).toBe(true);
+  });
+
+  it('symmetry>1: 4× the sym=1 anchor count, and copy-k anchors carry rotated tangent/normal + meta.theta', () => {
+    const seed = 11;
+    const one = getSemanticAnchors('grid', linearParams({ jitter: 3, symmetry: 1 }), W, H, { hostSeed: seed });
+    const four = getSemanticAnchors('grid', linearParams({ jitter: 3, symmetry: 4 }), W, H, { hostSeed: seed });
+    expect(toSymmetryCount(4)).toBe(4);
+    expect(four).toHaveLength(4 * one.length);
+
+    // Every crossing (base tangent=0, normal=π/2) has tangent=θ, normal=π/2+θ,
+    // where θ = 2π·copy/4 (startAngle=0), and carries meta.copy + meta.theta.
+    for (const c of crossingsOf(four)) {
+      const theta = (2 * Math.PI * c.meta.copy) / 4;
+      expect(c.meta.theta).toBeCloseTo(theta, 12);
+      expect(c.tangent).toBeCloseTo(0 + theta, 12);
+      expect(c.normal).toBeCloseTo(HALF_PI + theta, 12);
+    }
+    // All four copies are present.
+    expect(new Set(four.map((a) => a.meta.copy))).toEqual(new Set([0, 1, 2, 3]));
+  });
+
+  it('a different hostSeed changes the jittered crossing positions (seed is consumed)', () => {
+    const p = linearParams({ jitter: 6 });
+    const a = crossingsOf(getSemanticAnchors('grid', p, W, H, { hostSeed: 1 }));
+    const b = crossingsOf(getSemanticAnchors('grid', p, W, H, { hostSeed: 2 }));
+    expect(a).toHaveLength(b.length);
+    const differs = a.some((c, i) => c.x !== b[i].x || c.y !== b[i].y);
+    expect(differs).toBe(true);
   });
 });
 

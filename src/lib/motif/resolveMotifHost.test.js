@@ -33,6 +33,15 @@ describe('resolveMotifHostParams', () => {
     expect(out.hostParams).toBe(gridHost.params);
   });
 
+  it('forwards the grid host seed as hostSeed (threads the live-p5 jitter/symmetry lattice)', () => {
+    const seededGridHost = { ...gridHost, seed: 12345 };
+    const layers = [seededGridHost, motifLayer('host-1')];
+    const out = resolveMotifHostParams(layers[1], layers);
+    expect(out.hostSeed).toBe(12345);
+    expect(out.hostPatternType).toBe('grid');
+    expect(out.hostParams).toBe(seededGridHost.params);
+  });
+
   it('returns null for a non-motif layer', () => {
     const layers = [gridHost, motifLayer('host-1')];
     expect(resolveMotifHostParams(gridHost, layers)).toBeNull();

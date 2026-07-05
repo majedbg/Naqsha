@@ -19,22 +19,27 @@ import { isMotifLayer, motifHostId } from './motifLayer.js';
 /**
  * Extra render params a motif layer needs, or null when the layer is not a
  * motif or its host is missing (dangling id tolerated → motif renders nothing).
- * Pure: reads host.patternType + host.params from the layers array; for a
- * voronoi host, also forwards captured host geometry (drawnEdges + sites, and/or
+ * Pure: reads host.patternType + host.params from the layers array; also
+ * forwards host.seed as `hostSeed` so the grid semantic extractor can replay the
+ * host's LIVE-p5 jitter/symmetry lattice (makeP5Random(hostSeed)). For a voronoi
+ * host, additionally forwards captured host geometry (drawnEdges + sites, and/or
  * legacy drawnCells) from hostGeometry when present.
  * @param {object} layer
  * @param {object[]} layers
  * @param {Object<string, {drawnEdges?: object[], sites?: object[], drawnCells?: object[]}>} [hostGeometry]
  *   per-frame map of host layer id → geometry captured during that host's
  *   generate() run.
- * @returns {{hostPatternType: string, hostParams: object, drawnEdges?: object[], sites?: object[], drawnCells?: object[]}|null}
+ * @returns {{hostPatternType: string, hostParams: object, hostSeed: (number|undefined), drawnEdges?: object[], sites?: object[], drawnCells?: object[]}|null}
  */
 export function resolveMotifHostParams(layer, layers, hostGeometry = {}) {
   if (!isMotifLayer(layer)) return null;
   const hostId = motifHostId(layer);
   const host = hostId ? layers.find((l) => l.id === hostId) : null;
   if (!host) return null; // dangling host → tolerate (motif renders nothing)
-  const out = { hostPatternType: host.patternType, hostParams: host.params };
+  // hostSeed threads the grid host's layer seed to the semantic extractor, which
+  // feeds makeP5Random(hostSeed) into the geometry core to reproduce the LIVE-p5
+  // jittered / symmetry-replicated lattice (see semanticAnchors GRID header).
+  const out = { hostPatternType: host.patternType, hostParams: host.params, hostSeed: host.seed };
   if (host.patternType === 'voronoi') {
     // Forward the WHOLE captured host geometry: drawnEdges + sites (the
     // boundary-hardened seam the extractor prefers) and/or legacy drawnCells.

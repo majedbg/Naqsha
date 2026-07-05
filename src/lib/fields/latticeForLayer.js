@@ -21,9 +21,14 @@
  * its layer seed. `makeP5Random(seed)` reproduces that stream byte-for-byte
  * (see rng.js), so nodes sit on the grid's REAL, jittered crossings — not an
  * independent random field.
+ *
+ * Single geometry source: the nodes are NOT computed here anymore — they ARE the
+ * shared `gridAnchorsCentered` core's `role:'crossing'` anchors (the same core
+ * that feeds the motif seam). The jitter+symmetry expansion this module used to
+ * re-implement inline now lives ONLY in that core, so the lattice and motif
+ * paths can never drift (pinned by gridAnchors' bridge-invariant test).
  */
-import { gridLinePositions } from '../patterns/gridGeometry';
-import { toSymmetryCount } from '../patterns/symmetryUtils';
+import { gridAnchorsCentered } from '../patterns/gridAnchors';
 import { makeP5Random } from '../patterns/rng';
 
 /**
@@ -51,42 +56,29 @@ export function latticeForLayer(guide) {
   if (!canProduceLattice(guide)) return null;
 
   const params = guide.params || {};
-  const {
-    spacing = 40,
-    symmetry = 1,
-    startAngle = 0, // degrees, matching Grid's param convention
-    offsetX = 0,
-    offsetY = 0,
-  } = params;
+  const { spacing = 40 } = params;
 
-  // Reconstruct the grid's exact jittered line positions (origin-centred),
-  // consuming the SAME p5-seeded random stream the pattern drew with.
-  const rng = makeP5Random(guide.seed);
-  const { xJittered, yJittered } = gridLinePositions(params, rng);
+  // The lattice wants ALL intersection positions regardless of which line
+  // families are STROKED (draw flags gate DRAWING, not the coordinate lattice).
+  // The core gates crossings on drawVertical/drawHorizontal, so coerce both to 1
+  // here. Crossing POSITIONS are independent of the draw flags (gridLinePositions
+  // ignores them — they gate drawing, not layout), so this stays byte-identical
+  // to the old inline expansion for EVERY param — including drawVertical=0 /
+  // drawHorizontal=0 — while dropping the duplicated jitter+symmetry math.
+  //
+  // Jitter parity: the core consumes the injected makeP5Random(guide.seed)
+  // stream ONCE (see gridAnchors.js), reproducing the grid's live-p5 jitter.
+  const anchors = gridAnchorsCentered(
+    { ...params, drawHorizontal: 1, drawVertical: 1 },
+    makeP5Random(guide.seed),
+  );
 
-  const n = toSymmetryCount(symmetry);
-  const startRad = (startAngle * Math.PI) / 180;
-
-  // Fully pre-expand: every intersection × every symmetry copy. Each copy k is
-  // rotated by θ = 2π·k/n + startAngle about the (offset) centre — matching
-  // applySymmetryDraw's translate(cx+offsetX, cy+offsetY); rotate(θ). offsetX/Y
-  // are added to the centre (NOT rotated), identical for every copy, so we fold
-  // them into the centre-relative coordinate here.
-  const nodes = [];
-  for (let k = 0; k < n; k++) {
-    const theta = (2 * Math.PI * k) / n + startRad;
-    const cos = Math.cos(theta);
-    const sin = Math.sin(theta);
-    for (const lx of xJittered) {
-      for (const ly of yJittered) {
-        nodes.push({
-          x: offsetX + lx * cos - ly * sin,
-          y: offsetY + lx * sin + ly * cos,
-          angle: theta,
-        });
-      }
-    }
-  }
+  // Nodes ARE the core's crossings, in the core's emission order (copy-k outer,
+  // then i (x), then j (y)) — identical to this module's former k/lx/ly loop.
+  // `angle` = the copy's symmetry rotation θ, stored by the core as meta.theta.
+  const nodes = (anchors || [])
+    .filter((a) => a.role === 'crossing')
+    .map((a) => ({ x: a.x, y: a.y, angle: a.meta.theta }));
 
   return { nodes, cellSize: spacing };
 }

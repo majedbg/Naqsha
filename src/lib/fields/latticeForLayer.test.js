@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { latticeForLayer, canProduceLattice } from './latticeForLayer';
 import { gridLinePositions } from '../patterns/gridGeometry';
+import { toSymmetryCount } from '../patterns/symmetryUtils';
 import { makeP5Random } from '../patterns/rng';
 import Grid from '../patterns/Grid.js';
 import { RecordingContext } from '../patterns/drawingContext.js';
@@ -187,5 +188,140 @@ describe('latticeForLayer — parity with the real Grid drawing (jittered crossi
     // Set equality: every lattice node sits on a grid crossing and vice-versa.
     expect(latticeKeys).toEqual(gridCrossings);
     expect(latticeKeys.size).toBe(gridCrossings.size);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CHARACTERIZATION: latticeForLayer now CONSUMES gridAnchorsCentered (WI-3),
+// eliminating its inline jitter+symmetry expansion. This block pins the output
+// as BYTE-IDENTICAL to the OLD inline formula for a param matrix. The oracle
+// below re-implements the pre-refactor math VERBATIM (gridLinePositions +
+// makeP5Random(seed) + toSymmetryCount, k-outer/lx/ly, rotation
+// x=offsetX+lx·cos−ly·sin, y=offsetY+lx·sin+ly·cos, angle=θ) and asserts strict
+// === equality on every node's x, y, angle, plus identical count and order.
+// The matrix's drawVertical=0/drawHorizontal=0 case proves the draw-flag
+// coercion is byte-identical (positions are independent of the draw flags).
+// ---------------------------------------------------------------------------
+describe('latticeForLayer — byte-identical after core refactor (WI-3)', () => {
+  /**
+   * The OLD inline formula, as an independent oracle. Byte-for-byte the loop
+   * latticeForLayer.js used before consuming gridAnchorsCentered.
+   * @param {{ seed:number, params:object }} guide
+   * @returns {{ x:number, y:number, angle:number }[]}
+   */
+  function oldFormulaNodes(guide) {
+    const params = guide.params || {};
+    const {
+      symmetry = 1,
+      startAngle = 0, // degrees
+      offsetX = 0,
+      offsetY = 0,
+    } = params;
+    const rng = makeP5Random(guide.seed);
+    const { xJittered, yJittered } = gridLinePositions(params, rng);
+    const n = toSymmetryCount(symmetry);
+    const startRad = (startAngle * Math.PI) / 180;
+    const nodes = [];
+    for (let k = 0; k < n; k++) {
+      const theta = (2 * Math.PI * k) / n + startRad;
+      const cos = Math.cos(theta);
+      const sin = Math.sin(theta);
+      for (const lx of xJittered) {
+        for (const ly of yJittered) {
+          nodes.push({
+            x: offsetX + lx * cos - ly * sin,
+            y: offsetY + lx * sin + ly * cos,
+            angle: theta,
+          });
+        }
+      }
+    }
+    return nodes;
+  }
+
+  const matrix = [
+    {
+      name: 'default params',
+      guide: { patternType: 'grid', seed: 42, params: { cols: 3, rows: 3, spacing: 40 } },
+    },
+    {
+      name: 'nonLinear≠0 + nonLinearGain≠0',
+      guide: {
+        patternType: 'grid',
+        seed: 99,
+        params: { cols: 4, rows: 3, spacing: 32, nonLinear: 1, nonLinearGain: 0.6 },
+      },
+    },
+    {
+      name: 'jitter>0 (fixed seed)',
+      guide: {
+        patternType: 'grid',
+        seed: 12345,
+        params: { cols: 3, rows: 4, spacing: 35, jitter: 6, margin: 10 },
+      },
+    },
+    {
+      name: 'symmetry=4',
+      guide: { patternType: 'grid', seed: 7, params: { cols: 2, rows: 2, spacing: 40, symmetry: 4 } },
+    },
+    {
+      name: 'startAngle≠0',
+      guide: { patternType: 'grid', seed: 5, params: { cols: 2, rows: 3, spacing: 40, startAngle: 33 } },
+    },
+    {
+      name: 'offsetX/offsetY≠0',
+      guide: {
+        patternType: 'grid',
+        seed: 8,
+        params: { cols: 2, rows: 2, spacing: 40, offsetX: 15, offsetY: -8 },
+      },
+    },
+  ];
+
+  for (const { name, guide } of matrix) {
+    it(`byte-identical to the old inline formula — ${name}`, () => {
+      const res = latticeForLayer(guide);
+      const expected = oldFormulaNodes(guide);
+      expect(res.nodes).toHaveLength(expected.length);
+      // Strict float equality (===), same count, same order.
+      expect(res.nodes).toEqual(expected);
+      res.nodes.forEach((nd, i) => {
+        expect(nd.x).toBe(expected[i].x);
+        expect(nd.y).toBe(expected[i].y);
+        expect(nd.angle).toBe(expected[i].angle);
+      });
+      expect(res.cellSize).toBe(guide.params.spacing);
+    });
+  }
+
+  // CRITICAL: the draw-flag coercion guarantee. With drawVertical=0 AND
+  // drawHorizontal=0 the node COUNT and POSITIONS are UNCHANGED vs the old
+  // formula — the coordinate lattice is independent of which families are
+  // stroked. (The core would emit zero crossings for these flags; the coercion
+  // to {drawHorizontal:1, drawVertical:1} restores the full lattice.)
+  it('drawVertical=0 & drawHorizontal=0 → node count & positions UNCHANGED', () => {
+    const guide = {
+      patternType: 'grid',
+      seed: 12345,
+      params: {
+        cols: 3,
+        rows: 4,
+        spacing: 35,
+        jitter: 6,
+        margin: 10,
+        drawVertical: 0,
+        drawHorizontal: 0,
+      },
+    };
+    const res = latticeForLayer(guide);
+    const expected = oldFormulaNodes(guide);
+    expect(res.nodes).toHaveLength((3 + 1) * (4 + 1)); // full lattice, unchanged
+    expect(res.nodes).toHaveLength(expected.length);
+    expect(res.nodes).toEqual(expected);
+    res.nodes.forEach((nd, i) => {
+      expect(nd.x).toBe(expected[i].x);
+      expect(nd.y).toBe(expected[i].y);
+      expect(nd.angle).toBe(expected[i].angle);
+    });
   });
 });

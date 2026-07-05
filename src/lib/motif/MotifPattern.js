@@ -52,13 +52,16 @@ export default class MotifPattern extends Pattern {
       // (crossing/edge/tip/cell). null ⇒ this host has no verifiable extractor
       // (deferred/unverifiable): degrade gracefully to generic edge anchors on
       // any provided hostPaths, else no-op.
-      // Thread host-captured drawn geometry (GEOMETRY-IN extractors, currently
-      // voronoi) via the 5th opts arg. Voronoi PREFERS drawnEdges + sites (the
-      // boundary-hardened seam) and falls back to legacy drawnCells. For formula
-      // hosts all of these are undefined → those extractors ignore opts. For a
-      // voronoi host WITHOUT any captured geometry, voronoiAnchors returns null
-      // and we fall through to the edge fallback / no-op below.
+      // Thread per-host inputs via the 5th opts arg. hostSeed is the grid host's
+      // layer seed — it threads the LIVE-p5 jitter/symmetry lattice into the
+      // grid extractor (makeP5Random(hostSeed)) so motifs sit on the grid's real
+      // jittered / N-fold crossings. Voronoi PREFERS drawnEdges + sites (the
+      // boundary-hardened seam) and falls back to legacy drawnCells. For hosts
+      // that don't use a given field it's undefined → that extractor ignores it.
+      // For a voronoi host WITHOUT any captured geometry, voronoiAnchors returns
+      // null and we fall through to the edge fallback / no-op below.
       anchors = getSemanticAnchors(p.hostPatternType, p.hostParams, canvasW, canvasH, {
+        hostSeed: p.hostSeed,
         drawnEdges: p.drawnEdges,
         sites: p.sites,
         drawnCells: p.drawnCells,

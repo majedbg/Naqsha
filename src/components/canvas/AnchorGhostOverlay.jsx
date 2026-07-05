@@ -87,7 +87,12 @@ export default function AnchorGhostOverlay({
       // geo IS the opts object — it carries drawnEdges + sites.
       return getSemanticAnchors('voronoi', host.params, canvasW, canvasH, geo);
     }
-    return getSemanticAnchors(host.patternType, host.params, canvasW, canvasH);
+    // Thread the host layer seed so grid anchors sit on the LIVE-p5
+    // jittered/symmetry lattice — matching MotifPattern's real render, so
+    // ghost previews land exactly where the motifs actually place.
+    return getSemanticAnchors(host.patternType, host.params, canvasW, canvasH, {
+      hostSeed: host.seed,
+    });
   }, [host, canvasW, canvasH, patternInstances]);
 
   // Placements — run the SAME engine the real render uses, so PLACED state here

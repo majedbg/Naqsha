@@ -1,0 +1,390 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Architecture review — Naqsha (generative-art-studio)</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "loose", flowchart: { curve: "basis" } });
+</script>
+<style>
+  .seam { stroke-dasharray: 5 4; }
+  .deep { background: linear-gradient(135deg, #0f172a, #1e293b); }
+  .modlabel { font-size: 0.65rem; letter-spacing: 0.08em; text-transform: uppercase; }
+  .arrow { position: relative; }
+  pre.mermaid { display: flex; justify-content: center; }
+</style>
+</head>
+<body class="bg-stone-50 text-slate-900 font-sans antialiased">
+<main class="max-w-5xl mx-auto px-6 py-12 space-y-14">
+
+  <!-- ================= HEADER ================= -->
+  <header class="space-y-3 border-b border-stone-300 pb-6">
+    <h1 class="font-serif text-3xl tracking-tight">Architecture review — <span class="text-indigo-800">Naqsha</span></h1>
+    <p class="text-sm text-slate-600">generative-art-studio · 2026-07-05 · reviewed as <span class="font-mono">future-main</span> = <span class="font-mono">feat/grid-lattice-motif</span> (current tree) ⊕ <span class="font-mono">feat/motif-adorn-iso</span> (unmerged, ~7k LOC). All extraction slices + spiral-grid targets are already merged.</p>
+    <div class="flex flex-wrap gap-x-6 gap-y-1 text-xs text-slate-500 pt-1">
+      <span><span class="inline-block w-3 h-3 border border-slate-600 bg-white align-middle mr-1"></span>module</span>
+      <span><span class="inline-block w-6 border-t-2 border-dashed border-slate-500 align-middle mr-1"></span>seam</span>
+      <span><span class="inline-block w-6 border-t-2 border-red-600 align-middle mr-1"></span>leak / duplication</span>
+      <span><span class="inline-block w-3 h-3 deep align-middle mr-1"></span>deep module</span>
+      <span class="text-emerald-700 font-medium">Strong</span>
+      <span class="text-amber-700 font-medium">Worth exploring</span>
+      <span class="text-slate-500 font-medium">Speculative</span>
+    </div>
+  </header>
+
+  <section id="candidates" class="space-y-14">
+
+  <!-- ================= CANDIDATE 1 ================= -->
+  <article id="c1" class="rounded-xl border border-stone-200 bg-white shadow-sm p-8 space-y-5">
+    <div class="flex items-start justify-between gap-4">
+      <h2 class="font-serif text-2xl">1 · One grid-geometry core — reconcile lattice and anchors <span class="text-slate-400 text-base">(merge-critical)</span></h2>
+      <div class="flex gap-2 shrink-0">
+        <span class="rounded-full bg-emerald-100 text-emerald-800 text-xs font-semibold px-3 py-1">Strong</span>
+        <span class="rounded-full bg-stone-100 text-stone-600 text-xs px-3 py-1">in-process</span>
+      </div>
+    </div>
+    <p class="font-mono text-sm text-slate-600 leading-relaxed">
+      src/lib/patterns/gridGeometry.js · src/lib/fields/latticeForLayer.js · src/lib/patterns/ExtractedPatternGenerator.js:179-203<br/>
+      <span class="text-violet-700">branch:</span> src/lib/motif/semanticAnchors.js:61-77 · src/lib/motif/placementEngine.js · src/lib/motif/adornGraph.js
+    </p>
+
+    <!-- before/after: hand-built -->
+    <div class="grid md:grid-cols-2 gap-6">
+      <div class="rounded-lg border border-stone-200 p-4">
+        <div class="modlabel text-red-700 mb-3">Before merge lands — two pipelines, three encodings</div>
+        <div class="space-y-2 text-xs">
+          <div class="flex gap-2">
+            <div class="flex-1 space-y-1.5">
+              <div class="modlabel text-slate-400">main (lattice)</div>
+              <div class="border border-slate-700 bg-slate-900 text-slate-100 rounded px-2 py-1.5">gridGeometry.js<br/><span class="text-slate-400">jitter + RNG parity</span></div>
+              <div class="text-center text-slate-400">↓</div>
+              <div class="border border-slate-400 rounded px-2 py-1.5">latticeForLayer<br/><span class="text-slate-500">{x,y,angle} × symmetry</span></div>
+              <div class="text-center text-slate-400">↓ <span class="modlabel">channel:'lattice'</span></div>
+              <div class="border border-slate-400 rounded px-2 py-1.5">ExtractedPattern stamps tile</div>
+            </div>
+            <div class="flex-1 space-y-1.5">
+              <div class="modlabel text-slate-400">motif branch (anchors)</div>
+              <div class="border-2 border-red-500 rounded px-2 py-1.5 bg-red-50">semanticAnchors<br/><span class="text-red-600">distribute() re-copied ·<br/>no jitter · no symmetry</span></div>
+              <div class="text-center text-slate-400">↓</div>
+              <div class="border border-slate-700 bg-slate-900 text-slate-100 rounded px-2 py-1.5">placementEngine<br/><span class="text-slate-400">roles · density · empty-circle</span></div>
+              <div class="text-center text-slate-400">↓ <span class="modlabel">hostLayerId</span></div>
+              <div class="border border-slate-400 rounded px-2 py-1.5">MotifPattern stamps glyph</div>
+            </div>
+          </div>
+          <p class="text-red-700 pt-1">Same question — “where are the grid’s crossings?” — answered by two resolvers with different fidelity. Grid layout math now lives in <b>3 places</b>.</p>
+        </div>
+      </div>
+      <div class="rounded-lg border border-stone-200 p-4">
+        <div class="modlabel text-emerald-700 mb-3">After — one geometry core, one anchor interface</div>
+        <div class="space-y-1.5 text-xs">
+          <div class="border border-slate-700 bg-slate-900 text-slate-100 rounded px-2 py-2">gridGeometry.js — <span class="text-slate-400">the only encoding of grid layout (jitter, symmetry, RNG parity)</span></div>
+          <div class="text-center text-slate-400">↓</div>
+          <div class="border-2 border-dashed border-slate-500 rounded px-2 py-2">anchor interface — <span class="text-slate-500">[{x, y, angle, role: crossing|edge|tip|cell}]</span> <span class="modlabel text-slate-400">(lattice nodes ≡ role:'crossing')</span></div>
+          <div class="text-center text-slate-400">↓</div>
+          <div class="border border-slate-700 bg-slate-900 text-slate-100 rounded px-2 py-2">placementEngine — <span class="text-slate-400">selection · orientation · sizing · accept</span></div>
+          <div class="text-center text-slate-400">↓</div>
+          <div class="flex gap-2">
+            <div class="flex-1 border border-slate-400 rounded px-2 py-1.5 text-center">extracted tile</div>
+            <div class="flex-1 border border-slate-400 rounded px-2 py-1.5 text-center">authored glyph</div>
+          </div>
+          <p class="text-emerald-700 pt-1">Pattern owns its geometry; both stamping consumers cross one seam.</p>
+        </div>
+      </div>
+    </div>
+
+    <p><b>Problem.</b> The unmerged motif branch re-implements Grid’s layout math inside <span class="font-mono text-sm">semanticAnchors.js</span> (verbatim <span class="font-mono text-sm">distribute()</span> copy, honest-but-degraded: no jitter, no symmetry, warp → null) while main already extracted that exact math into <span class="font-mono text-sm">gridGeometry.js</span> with byte-exact p5 RNG parity — so on merge, two independent grid→motif placement pipelines coexist and disagree.</p>
+    <p><b>Solution.</b> Rebuild the anchor extractors on the pattern-owned geometry core: <span class="font-mono text-sm">latticeForLayer</span>’s nodes become <span class="font-mono text-sm">role:'crossing'</span> anchors, <span class="font-mono text-sm">semanticAnchors</span> shrinks to a thin dispatcher, and both stamping consumers (extracted tile, motif glyph) feed through <span class="font-mono text-sm">placementEngine</span> — the deepest, best-tested module the branch brings.</p>
+    <ul class="grid grid-cols-2 gap-x-6 gap-y-1 text-sm list-disc list-inside text-slate-700">
+      <li>one implementation, three consumers (leverage)</li>
+      <li>anchors gain jitter + symmetry parity free</li>
+      <li>delete the replayed <span class="font-mono">distribute()</span> copy</li>
+      <li>locality: grid changes land in one module</li>
+      <li>placementEngine kept intact — already deep</li>
+      <li>timing: cheapest at merge, calcifies after</li>
+    </ul>
+  </article>
+
+  <!-- ================= CANDIDATE 2 ================= -->
+  <article id="c2" class="rounded-xl border border-stone-200 bg-white shadow-sm p-8 space-y-5">
+    <div class="flex items-start justify-between gap-4">
+      <h2 class="font-serif text-2xl">2 · One layer-relationship model — modulate, lattice, adorn</h2>
+      <div class="flex gap-2 shrink-0">
+        <span class="rounded-full bg-emerald-100 text-emerald-800 text-xs font-semibold px-3 py-1">Strong</span>
+        <span class="rounded-full bg-stone-100 text-stone-600 text-xs px-3 py-1">in-process</span>
+      </div>
+    </div>
+    <p class="font-mono text-sm text-slate-600 leading-relaxed">
+      src/lib/fields/resolveModulationForTarget.js · modulationGraph.js:40 · channelConsumers.js · latticeForLayer.js · src/lib/three3d/drape.js:60-77<br/>
+      <span class="text-violet-700">branch:</span> src/lib/motif/adornGraph.js · resolveMotifHost.js
+    </p>
+
+    <div class="grid md:grid-cols-2 gap-6">
+      <div class="rounded-lg border border-stone-200 bg-white p-4">
+        <div class="modlabel text-red-700 mb-2">Before — three shapes, three vocabularies, four resolvers</div>
+        <pre class="mermaid">
+flowchart TB
+  subgraph M["modulation&nbsp;edge"]
+    G1[field guide] -->|"maps[].channel"| T1[target]
+  end
+  subgraph L["lattice&nbsp;pair&nbsp;(no&nbsp;graph)"]
+    G2[grid guide] -.->|"channel:'lattice'"| T2[extracted]
+  end
+  subgraph A["adorn&nbsp;edge&nbsp;(branch)"]
+    T3[motif] -->|hostLayerId| G3[host]
+  end
+  R1["resolveModulationForTarget<br/>(first-match only)"] --- M
+  R2["inline lattice branch"] --- L
+  R3["resolveMotifHostParams"] --- A
+  R4["drape.resolveActiveTargets<br/>(3D re-derives; drops distort+lattice)"] -.-> M
+  classDef leak stroke:#dc2626,stroke-width:2px;
+  class R4,R2 leak
+        </pre>
+      </div>
+      <div class="rounded-lg border border-stone-200 bg-white p-4">
+        <div class="modlabel text-emerald-700 mb-2">After — one edge model, channels as adapters</div>
+        <pre class="mermaid">
+flowchart TB
+  D["relationship module<br/>edges: {sourceId, targetId, channel, config}<br/>one resolver · one graph"]
+  C1["field adapter<br/>(warp/density/distort)"] --> D
+  C2["lattice adapter<br/>(discrete nodes)"] --> D
+  C3["adorn adapter<br/>(anchors+placement)"] --> D
+  D --> U1[rails / badges / Inspector]
+  D --> U2[canvas + SVG resolve]
+  D --> U3[3D drape]
+  style D fill:#0f172a,color:#f1f5f9,stroke:#0f172a
+        </pre>
+      </div>
+    </div>
+
+    <p><b>Problem.</b> The same concept — “this layer guides that layer” — is implemented three times with three vocabularies (modulator/map/channel · guide/lattice/node · host/adorn/anchor), and resolution runs at four sites: the canvas resolver (first-match only), an inline lattice branch, the motif host resolver, and an independent 3D re-derivation that silently drops two channels; lattice edges never appear in the graph the rails and badges trust (<span class="font-mono text-sm">modulationGraph.js:40</span> gates on <span class="font-mono text-sm">canProduceField</span>).</p>
+    <p><b>Solution.</b> Deepen into one relationship module — a single edge model and a single resolver seam with channel adapters behind it — so rails, badges, Inspector gating, canvas/SVG, and 3D all read the same graph, and the resolver’s polymorphic return (field-shape vs nodes-shape, switched on by every consumer) is contained behind the seam.</p>
+    <ul class="grid grid-cols-2 gap-x-6 gap-y-1 text-sm list-disc list-inside text-slate-700">
+      <li>leverage: one graph, five consumers</li>
+      <li>multi-source blending lands once, not twice</li>
+      <li>3D can’t silently drop channels</li>
+      <li>lattice edges become visible to the UI</li>
+      <li>polymorphic-return leak contained</li>
+      <li>duplicated polarity migration deleted</li>
+    </ul>
+    <div class="rounded-md bg-amber-50 border border-amber-200 text-amber-900 text-sm px-4 py-2">
+      Unlocks tracked gap <b>A1</b> (TODO_June29): “N sources · 1 active” dead-end UI — blending needs a composite return contract; today it would have to be built twice (canvas resolver + 3D resolver).
+    </div>
+  </article>
+
+  <!-- ================= CANDIDATE 3 ================= -->
+  <article id="c3" class="rounded-xl border border-stone-200 bg-white shadow-sm p-8 space-y-5">
+    <div class="flex items-start justify-between gap-4">
+      <h2 class="font-serif text-2xl">3 · Geometry as the artifact — retire string re-parsing</h2>
+      <div class="flex gap-2 shrink-0">
+        <span class="rounded-full bg-amber-100 text-amber-800 text-xs font-semibold px-3 py-1">Worth exploring</span>
+        <span class="rounded-full bg-stone-100 text-stone-600 text-xs px-3 py-1">ports &amp; adapters</span>
+      </div>
+    </div>
+    <p class="font-mono text-sm text-slate-600 leading-relaxed">
+      src/lib/patterns/drawingContext.js:263-290 · symmetryUtils.js:10,35 · svgExport.js · plotter/pipeline.js:76,156 · canvas3d/ribbonGeometry.js:79 · useCanvas.js:273<br/>
+      <span class="text-violet-700">branch:</span> src/lib/motif/instancing.js · MotifPattern.js:36-100 (the proof of concept)
+    </p>
+
+    <!-- cross-section, hand-built -->
+    <div class="grid md:grid-cols-2 gap-6 text-xs">
+      <div class="rounded-lg border border-stone-200 p-4 space-y-1.5">
+        <div class="modlabel text-red-700 mb-2">Before — build strings, then re-parse them 3 ways</div>
+        <div class="border border-slate-400 rounded px-2 py-1.5">generate() <span class="text-red-600">— every pattern hand-emits twice</span></div>
+        <div class="flex gap-2">
+          <div class="flex-1 border border-slate-400 rounded px-2 py-1.5 text-center">ctx draw calls<br/><span class="text-slate-500">canvas</span></div>
+          <div class="flex-1 border border-slate-400 rounded px-2 py-1.5 text-center">svgElements strings<br/><span class="text-slate-500">"&lt;path d=…/&gt;"</span></div>
+        </div>
+        <div class="text-center text-slate-400">↓ strings flow downstream ↓</div>
+        <div class="grid grid-cols-3 gap-1.5">
+          <div class="border-2 border-red-500 bg-red-50 rounded px-1.5 py-1.5 text-center">regex<br/>splitGroup<br/><span class="text-slate-500">optimizer</span></div>
+          <div class="border-2 border-red-500 bg-red-50 rounded px-1.5 py-1.5 text-center">DOMParser<br/>extractRendered<br/><span class="text-slate-500">plotter</span></div>
+          <div class="border-2 border-red-500 bg-red-50 rounded px-1.5 py-1.5 text-center">SVGLoader<br/>ribbons<br/><span class="text-slate-500">3D</span></div>
+        </div>
+        <p class="text-red-700 pt-1">Three parsers reconstruct the polylines the pattern had in hand at generate-time. Symmetry implemented twice (<span class="font-mono">applySymmetryDraw</span> / <span class="font-mono">wrapSVGSymmetry</span>). “canvas == SVG” is discipline, not construction — and untested.</p>
+      </div>
+      <div class="rounded-lg border border-stone-200 p-4 space-y-1.5">
+        <div class="modlabel text-emerald-700 mb-2">After — one geometry artifact, serializers at the edges</div>
+        <div class="border border-slate-400 rounded px-2 py-1.5">generate()</div>
+        <div class="text-center text-slate-400">↓</div>
+        <div class="border border-slate-700 bg-slate-900 text-slate-100 rounded px-2 py-2 text-center">geometry artifact — paths / polylines + per-instance matrices<br/><span class="text-slate-400">(MotifPattern’s single-matrix dual-emit, generalized)</span></div>
+        <div class="text-center text-slate-400">↓ adapters ↓</div>
+        <div class="grid grid-cols-4 gap-1.5">
+          <div class="border border-slate-400 rounded px-1.5 py-1.5 text-center">canvas<br/>draw</div>
+          <div class="border border-slate-400 rounded px-1.5 py-1.5 text-center">SVG<br/>serialize</div>
+          <div class="border border-slate-400 rounded px-1.5 py-1.5 text-center">plotter<br/>direct</div>
+          <div class="border border-slate-400 rounded px-1.5 py-1.5 text-center">3D<br/>direct</div>
+        </div>
+        <p class="text-emerald-700 pt-1">Canvas and SVG derive from the same data — parity by construction. The plotter’s polyline model becomes the shared representation instead of a DOM-parse reconstruction.</p>
+      </div>
+    </div>
+
+    <p><b>Problem.</b> The DrawingContext seam covers canvas-vs-headless-test but not canvas-vs-export: every pattern emits its geometry twice by hand (ctx calls + SVG strings), the real seam between live render and all export paths is the cached <span class="font-mono text-sm">patternInstances</span>’ string arrays, and three separate parsers re-derive structure from the app’s own strings.</p>
+    <p><b>Solution.</b> Make structured geometry the primary artifact a pattern produces and push SVG serialization to the edge — staged: start with the stamping family (motif · extracted · imported already share the shape; MotifPattern’s per-instance-matrix dual-emit is the working model), then migrate string-based patterns behind the existing golden-master snapshots.</p>
+    <ul class="grid grid-cols-2 gap-x-6 gap-y-1 text-sm list-disc list-inside text-slate-700">
+      <li>canvas == SVG by construction</li>
+      <li>delete three re-parser implementations</li>
+      <li>symmetry: one implementation, not two</li>
+      <li>variable weight becomes canvas-visible</li>
+      <li>plotter loses its DOMParser dependency</li>
+      <li>18 SVG snapshots guard the migration</li>
+    </ul>
+    <div class="rounded-md bg-amber-50 border border-amber-200 text-amber-900 text-sm px-4 py-2">
+      Biggest blast radius in this review (~22 pattern files + 5 consumers). The badge is amber for cost, not for doubt — the divergences are real and documented in-repo (<span class="font-mono">fabricationDivergence.test.js</span> pins the old three-way disagreement).
+    </div>
+  </article>
+
+  <!-- ================= CANDIDATE 4 ================= -->
+  <article id="c4" class="rounded-xl border border-stone-200 bg-white shadow-sm p-8 space-y-5">
+    <div class="flex items-start justify-between gap-4">
+      <h2 class="font-serif text-2xl">4 · Inspector as a device registry</h2>
+      <div class="flex gap-2 shrink-0">
+        <span class="rounded-full bg-emerald-100 text-emerald-800 text-xs font-semibold px-3 py-1">Strong</span>
+        <span class="rounded-full bg-stone-100 text-stone-600 text-xs px-3 py-1">in-process</span>
+      </div>
+    </div>
+    <p class="font-mono text-sm text-slate-600 leading-relaxed">
+      src/components/shell/Inspector.jsx (722 lines; ModulatorDevice alone = 370) · <span class="text-violet-700">branch adds +272 (MotifDevice, AdornRail wiring)</span>
+    </p>
+
+    <!-- mass diagram -->
+    <div class="grid md:grid-cols-2 gap-6 text-xs">
+      <div class="rounded-lg border border-stone-200 p-4">
+        <div class="modlabel text-red-700 mb-2">Before — interface grows with every capability</div>
+        <div class="flex items-end gap-6 justify-center pt-2">
+          <div class="text-center">
+            <div class="w-28 border border-slate-500 bg-stone-100">
+              <div class="border-b border-slate-300 px-1 py-1">isTextLayer?</div>
+              <div class="border-b border-slate-300 px-1 py-1">hasVariableWeight?</div>
+              <div class="border-b border-slate-300 px-1 py-1">canProduceField?</div>
+              <div class="border-b border-slate-300 px-1 py-1">isLatticeGuide?</div>
+              <div class="border-b border-slate-300 px-1 py-1">resolve…!==null?</div>
+              <div class="px-1 py-1 text-violet-700">MOTIF_HOSTS.has? <span class="modlabel">(+272)</span></div>
+            </div>
+            <div class="modlabel mt-1 text-slate-500">interface: 6+ gates<br/>callers must know all</div>
+          </div>
+          <div class="text-center">
+            <div class="w-28 bg-stone-200 border border-slate-400" style="height:180px"></div>
+            <div class="modlabel mt-1 text-slate-500">implementation<br/>722 → ~1000 lines</div>
+          </div>
+        </div>
+        <p class="text-red-700 pt-2">Shallow: the gate list is nearly as complex as the devices it guards. Every feature wave edits this one file (lattice +79, motif +272). One gate even runs the full modulation resolver for a boolean (<span class="font-mono">Inspector.jsx:594</span>).</p>
+      </div>
+      <div class="rounded-lg border border-stone-200 p-4">
+        <div class="modlabel text-emerald-700 mb-2">After — thin dispatcher, devices at a seam</div>
+        <div class="flex items-end gap-6 justify-center pt-2">
+          <div class="text-center">
+            <div class="w-28 border border-slate-700 deep text-slate-100 px-1 py-2">devicesFor(layer)</div>
+            <div class="modlabel mt-1 text-slate-500">interface: one call</div>
+          </div>
+          <div class="text-center">
+            <div class="w-36 space-y-1">
+              <div class="border-t-2 border-dashed border-slate-500 modlabel text-slate-400 pt-1">device seam — {applies, Component}</div>
+              <div class="border border-slate-400 bg-white px-1 py-0.5">TextDevice</div>
+              <div class="border border-slate-400 bg-white px-1 py-0.5">VariableWeightDevice</div>
+              <div class="border border-slate-400 bg-white px-1 py-0.5">ModulatorDevice</div>
+              <div class="border border-slate-400 bg-white px-1 py-0.5 text-violet-700">MotifDevice</div>
+              <div class="border border-slate-300 border-dashed text-slate-400 px-1 py-0.5">next capability…</div>
+            </div>
+          </div>
+        </div>
+        <p class="text-emerald-700 pt-2">Mirrors the pattern-registry precedent the codebase already trusts: capabilities register, the shell dispatches.</p>
+      </div>
+    </div>
+
+    <p><b>Problem.</b> Inspector is the fastest-accreting module in the app — a hand-maintained switchboard where each capability appends a gated device block, so its interface (the gate conditions a reader must understand) grows as fast as its implementation.</p>
+    <p><b>Solution.</b> Introduce a device seam: each capability ships a module declaring <span class="font-mono text-sm">{applies(layer, ctx), Component}</span>; Inspector deepens into a dispatcher that renders matching devices — the motif branch’s MotifDevice lands as the second adapter that proves the seam.</p>
+    <ul class="grid grid-cols-2 gap-x-6 gap-y-1 text-sm list-disc list-inside text-slate-700">
+      <li>locality: capability = one module</li>
+      <li>Inspector stops growing per feature</li>
+      <li>devices testable through own interface</li>
+      <li>two adapters at birth (real seam)</li>
+      <li>resolver-for-a-boolean gate removed</li>
+      <li>mental model: layers wear devices</li>
+    </ul>
+  </article>
+
+  <!-- ================= CANDIDATE 5 ================= -->
+  <article id="c5" class="rounded-xl border border-stone-200 bg-white shadow-sm p-8 space-y-5">
+    <div class="flex items-start justify-between gap-4">
+      <h2 class="font-serif text-2xl">5 · One document module — schema, factory, migrate</h2>
+      <div class="flex gap-2 shrink-0">
+        <span class="rounded-full bg-amber-100 text-amber-800 text-xs font-semibold px-3 py-1">Worth exploring</span>
+        <span class="rounded-full bg-stone-100 text-stone-600 text-xs px-3 py-1">local-substitutable</span>
+      </div>
+    </div>
+    <p class="font-mono text-sm text-slate-600 leading-relaxed">
+      src/lib/useLayers.js:65-98,260-283,305-326,492-513 (4 layer constructors) · migration.js (migrateConfig: zero live callers) · history/documentSnapshot.js (the good seam) · useCloudPersistence.js:100,192 · shareLink.js · localDraft.js
+    </p>
+
+    <div class="grid md:grid-cols-2 gap-6">
+      <div class="rounded-lg border border-stone-200 bg-white p-4">
+        <div class="modlabel text-red-700 mb-2">Before — six surfaces, each picks its own subset</div>
+        <pre class="mermaid">
+flowchart TB
+  S["design document<br/>(schema = a comment in snapshot.js)"]
+  A[localStorage<br/>3 keys] -->|layers+bg+panels| S
+  B[cloud config] -->|"4 fields read back<br/>operations WRITE-ONLY"| S
+  C[shareLink] -->|own PROTOCOL_VERSION| S
+  D[history tail] -->|own HISTORY_SCHEMA_VERSION| S
+  E[examples] --> S
+  F[localDraft] --> S
+  classDef leak stroke:#dc2626,stroke-width:2px;
+  class B,S leak
+        </pre>
+      </div>
+      <div class="rounded-lg border border-stone-200 bg-white p-4">
+        <div class="modlabel text-emerald-700 mb-2">After — one document module, surfaces become adapters</div>
+        <pre class="mermaid">
+flowchart TB
+  D2["document module<br/>schema · layer factory · migrate<br/>capture / restore (from documentSnapshot)"]
+  A2[localStorage] --- D2
+  B2[cloud] --- D2
+  C2[shareLink] --- D2
+  E2[history] --- D2
+  F2[examples / draft] --- D2
+  style D2 fill:#0f172a,color:#f1f5f9,stroke:#0f172a
+        </pre>
+      </div>
+    </div>
+
+    <p><b>Problem.</b> There is no canonical document schema — layers are hand-built at four sites with divergent fields, six persistence surfaces serialize their own subsets under three unrelated version fields, document-level migration is dead code, and persisted <span class="font-mono text-sm">operations</span>/<span class="font-mono text-sm">machineProfile</span> are written but never read back.</p>
+    <p><b>Solution.</b> Promote the discipline that already exists in <span class="font-mono text-sm">documentSnapshot.js</span> (single enumeration point, <span class="font-mono text-sm">restore(capture()) === noop</span> invariant) into a document module owning the schema, the layer factory, and migration — every persistence surface becomes an adapter over its capture/restore interface.</p>
+    <ul class="grid grid-cols-2 gap-x-6 gap-y-1 text-sm list-disc list-inside text-slate-700">
+      <li>the schema becomes code, not a comment</li>
+      <li>one migration seam, one version</li>
+      <li>layer fields guaranteed, not back-filled</li>
+      <li>write-only fields become honest (read or drop)</li>
+      <li>adapters already exist — real seam today</li>
+      <li>undo checksum LIMITATION resolves</li>
+    </ul>
+  </article>
+  </section>
+
+  <!-- ================= MINOR FRICTIONS ================= -->
+  <section class="rounded-xl border border-stone-200 bg-stone-100/60 p-8 space-y-3">
+    <h2 class="font-serif text-xl">Smaller frictions <span class="text-sm text-slate-500 font-sans">(noted, not carded — several fold into the candidates above)</span></h2>
+    <ul class="text-sm space-y-1.5 text-slate-700 list-disc list-inside">
+      <li><span class="font-mono">Studio.jsx</span> re-accreted to 2006 lines (45 useCallbacks, 8 portals, an 85-line LayerTree prop block of inline mutation policy) — partially absorbed by candidates 4 &amp; 5.</li>
+      <li>The warp-consume guard (<span class="font-mono">mod &amp;&amp; mod.channel==='warp' &amp;&amp; mod.field</span> + unit-domain mapping) is copy-pasted in 6 pattern files — folds into candidate 2’s channel adapters.</li>
+      <li>“Mode” is not a concept: the Design/Prepare/Export <span class="font-mono">activeTab</span> is vestigial; the real mode axis is shell-slot nullability plus scattered <span class="font-mono">laser</span>/flag booleans.</li>
+      <li>Selection chrome (~57 lines) squats inside <span class="font-mono">useCanvas.js:213-271</span>; extraction is free.</li>
+      <li>Canvas↔SVG parity — the invariant every pattern comment asserts — has no direct test; only per-pattern SVG snapshots exist.</li>
+      <li>On the motif branch: <span class="font-mono">straddleCheck</span> is built+tested but unwired; <span class="font-mono">voronoiAnchors</span> always returns null in production (no <span class="font-mono">drawnCells</span> producer) — wire or trim at merge.</li>
+      <li><span class="font-mono">useLayers</span> also owns <span class="font-mono">bgColor</span> and panel persistence — grab-bag breadth, but it scales fine per new layer type; not the pressure point.</li>
+    </ul>
+  </section>
+
+  <!-- ================= TOP RECOMMENDATION ================= -->
+  <section id="top-recommendation" class="rounded-xl deep text-slate-100 p-8 space-y-3">
+    <div class="modlabel text-slate-400">Top recommendation</div>
+    <h2 class="font-serif text-2xl"><a href="#c1" class="underline decoration-slate-500 underline-offset-4">1 · One grid-geometry core — reconcile lattice and anchors</a></h2>
+    <p class="text-slate-300 text-sm leading-relaxed">It is the only candidate with a clock on it: the moment <span class="font-mono">feat/motif-adorn-iso</span> merges, two grid→motif placement pipelines ship side by side — same concept, different fidelity, different data models — and every week after merge makes them harder to converge. Doing it at merge time is mostly deletion (the <span class="font-mono">distribute()</span> replay dies, anchors inherit jitter/symmetry parity from <span class="font-mono">gridGeometry</span>), and it establishes the precedent — <em>the pattern owns its geometry; consumers adapt at a seam</em> — that candidates 2 and 3 then extend to relationships and rendering.</p>
+  </section>
+
+  <footer class="text-xs text-slate-400 pb-8">Naqsha architecture review · generated 2026-07-05 · candidates use the module/interface/seam/adapter vocabulary; badges: Strong / Worth exploring / Speculative.</footer>
+</main>
+</body>
+</html>

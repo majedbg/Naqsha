@@ -43,6 +43,7 @@ import {
   inkDistanceTransform,
   pathFromPolyline,
 } from './centerline';
+import { binarize } from './preprocess';
 
 export const FABRICATION_ROLES = ['engrave', 'cut', 'score'];
 
@@ -227,16 +228,21 @@ async function traceComponents(bw, { turdsize = 2 } = {}) {
  * @param {number} [opts.turdsize=2]   potrace speckle suppression (px area)
  * @param {boolean} [opts.invert=false] trace light regions (light-on-dark; #69)
  * @param {string} [opts.role]         fabrication role tag for every contour
+ * @param {number} [opts.brightness=0] preprocess: luma brightness -100..100 (#70)
+ * @param {number} [opts.contrast=0]   preprocess: luma contrast -100..100 (#70)
+ * @param {number} [opts.blur=0]       preprocess: Gaussian sigma px, 0=off (#70)
+ * @param {boolean} [opts.adaptive=false] Sauvola local threshold vs global (#70)
+ * @param {number} [opts.window=31]    adaptive window px (#70)
+ * @param {number} [opts.k=0.2]        adaptive Sauvola sensitivity (#70)
+ * @param {number} [opts.minArea=0]    drop ink components below this area (#70)
  * @returns {Promise<{fills: {d: string, role: string}[], strokes: []}>}
  */
 export async function traceContours(image, opts = {}) {
   const {
-    threshold = 128,
     turdsize = 2,
-    invert = false,
     role = DEFAULT_CONTOUR_ROLE,
   } = opts;
-  const bw = thresholdImage(image, threshold, { invert });
+  const bw = binarize(image, opts);
   const components = await traceComponents(bw, { turdsize });
   return { fills: components.map(({ d }) => ({ d, role })), strokes: [] };
 }
@@ -262,12 +268,17 @@ export async function traceContours(image, opts = {}) {
  * @param {number} [opts.minStrokeAspect=6]  length/width ratio ≥ this → stroke
  * @param {string} [opts.fillRole]           default role for contours
  * @param {string} [opts.strokeRole]         default role for centerlines
+ * @param {number} [opts.brightness=0]       preprocess: luma brightness -100..100 (#70)
+ * @param {number} [opts.contrast=0]         preprocess: luma contrast -100..100 (#70)
+ * @param {number} [opts.blur=0]             preprocess: Gaussian sigma px, 0=off (#70)
+ * @param {boolean} [opts.adaptive=false]    Sauvola local threshold vs global (#70)
+ * @param {number} [opts.window=31]          adaptive window px (#70)
+ * @param {number} [opts.k=0.2]              adaptive Sauvola sensitivity (#70)
+ * @param {number} [opts.minArea=0]          drop ink components below this area (#70)
  * @returns {Promise<{fills: {d,role}[], strokes: {d,role}[], components: object[]}>}
  */
 export async function vectorize(image, opts = {}) {
   const {
-    threshold = 128,
-    invert = false,
     turdsize = 2,
     simplifyTolerance = 1,
     minCenterlineLength = 3,
@@ -276,7 +287,9 @@ export async function vectorize(image, opts = {}) {
     strokeRole = DEFAULT_STROKE_ROLE,
   } = opts;
 
-  const bw = thresholdImage(image, threshold, { invert });
+  // Optional #70 preprocessing chain (brightness/contrast, blur, adaptive
+  // threshold, min-area) — collapses to the legacy global threshold at defaults.
+  const bw = binarize(image, opts);
   const contourComponents = await traceComponents(bw, { turdsize });
   const { polylines } = extractCenterlines(bw, {
     tolerance: simplifyTolerance,

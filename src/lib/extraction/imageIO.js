@@ -48,6 +48,22 @@ export function cropToImageData(img, rect, maxDim = 1024) {
 }
 
 /**
+ * Crop a region for the #70b Refine live-preview. Byte-for-byte the SAME crop
+ * (identical maxDim) the trace path uses via cropToImageData, so the binary
+ * preview is a true 1-to-1 view of what potrace will trace — a DISTINCT export
+ * only so the Refine preview's crop never intermixes with the trace crop in
+ * tests (each mock's call log stays clean).
+ *
+ * @param {HTMLImageElement} img
+ * @param {{x:number,y:number,w:number,h:number}} rect natural-pixel crop
+ * @param {number} [maxDim=1024]
+ * @returns {{data: Uint8ClampedArray, width: number, height: number}}
+ */
+export function previewCropToImageData(img, rect, maxDim = 1024) {
+  return cropToImageData(img, rect, maxDim);
+}
+
+/**
  * Whole image → ImageData (S3, issue #52: the Flatten step warps the FULL
  * photo, so the source keeps more resolution than the trace-bound crops —
  * the rectified output is capped separately by the Rectifier's maxDim).

@@ -118,8 +118,16 @@ export function buildLayerSVG(layer, patternInstance, canvasW, canvasH, opts = {
     return `${svgOpen(canvasW, canvasH, meta)}\n  <rect width="100%" height="100%" fill="white"/>\n  ${placed}\n</svg>`;
   }
   const bgRect = layerBgRect(layer, canvasW, canvasH);
-  const rawGroup = patternInstance.toSVGGroup(layer.id, layer.color, layer.opacity);
-  const group = maybeOptimize(rawGroup, optimizations);
+  // Role-based laser export (issue #68): an extracted pattern on the laser
+  // profile paints each path by its own fabrication role (data-role) so laser
+  // software maps engrave/cut/score to distinct operations, instead of the
+  // single layer operation color. Duck-typed on `supportsRoleExport`; any other
+  // layer keeps the byte-stable single-color group. Role-colored output skips
+  // maybeOptimize (like variableWeight below) so simplify/merge/reorder can't
+  // collapse paths of different roles into one color.
+  const roleColors = opts.profileId === 'laser' && !!patternInstance?.supportsRoleExport;
+  const rawGroup = patternInstance.toSVGGroup(layer.id, layer.color, layer.opacity, { roleColors });
+  const group = roleColors ? rawGroup : maybeOptimize(rawGroup, optimizations);
   // Move/resize/rotate must move bg fill + geometry together (matches the canvas
   // render, which wraps both in the node transform).
   const content = `${bgRect ? `${bgRect}\n  ` : ''}${group}`;
@@ -162,8 +170,12 @@ export function buildAllLayersSVG(layers, patternInstances, canvasW, canvasH, in
       // Variable-weight layers export per-element band colors (additive); every
       // other layer keeps the byte-stable single-color group path.
       const vwGroup = variableWeightGroup(l, instance, profileId);
-      const rawGroup = vwGroup ?? instance.toSVGGroup(l.id, l.color, l.opacity);
-      const group = vwGroup ? rawGroup : maybeOptimize(rawGroup, optimizations);
+      // Extracted patterns role-separate their paths on the laser profile (#68);
+      // duck-typed on supportsRoleExport. Like variableWeight, role-colored
+      // output skips maybeOptimize so multi-color paths aren't merged.
+      const roleColors = profileId === 'laser' && !!instance?.supportsRoleExport;
+      const rawGroup = vwGroup ?? instance.toSVGGroup(l.id, l.color, l.opacity, { roleColors });
+      const group = vwGroup || roleColors ? rawGroup : maybeOptimize(rawGroup, optimizations);
       const content = (bgRect ? bgRect + '\n  ' : '') + group;
       return wrapLayerTransform(content, l, canvasW, canvasH);
     })

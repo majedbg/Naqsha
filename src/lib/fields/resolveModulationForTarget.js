@@ -18,6 +18,7 @@
  * resolved here at render time.
  */
 import { fieldForLayer } from "./fieldRegistry";
+import { latticeForLayer } from "./latticeForLayer";
 
 export function resolveModulationForTarget(targetLayer, layers) {
   if (!targetLayer || !Array.isArray(layers)) return null;
@@ -28,6 +29,24 @@ export function resolveModulationForTarget(targetLayer, layers) {
     if (!Array.isArray(maps)) continue;
     const m = maps.find((mp) => mp && mp.targetLayerId === targetLayer.id);
     if (!m) continue;
+
+    // 'lattice' is a DISCRETE placement channel, not a continuous field: a Grid
+    // guide supplies its intersection nodes (post-jitter, per symmetry copy) for
+    // the target to stamp a motif at. It carries none of the field-transfer
+    // knobs (range/offset/shape/steps) — those only mean something reshaping a
+    // [-1,1] field. Branch BEFORE fieldForLayer, which returns null for a grid
+    // (grid is not a field producer) and would otherwise skip this map.
+    if (m.channel === "lattice") {
+      const lattice = latticeForLayer(guide);
+      if (!lattice) continue; // guide can't produce a lattice (not a grid)
+      return {
+        channel: "lattice",
+        nodes: lattice.nodes,
+        cellSize: lattice.cellSize,
+        amount: m.amount ?? 1,
+      };
+    }
+
     const field = fieldForLayer(guide);
     if (!field) continue; // guide can't produce a field
     // Device-level range, with legacy per-map polarity migrated as a fallback.

@@ -1,0 +1,32 @@
+S13 (#62) — source photograph for the laser-cut prototype
+==========================================================
+
+File in this folder: jali-source.jpg
+
+Title:   Pierced Screen (jali), India, Mughal period, c. 1580 AD, sandstone —
+         Arthur M. Sackler Museum, Harvard University — DSC01106
+Subject: Mughal pierced sandstone screen (jali): a frontal, repeating,
+         geometric star/lattice ornament with periodic quatrefoil motifs.
+Photographer / author: Daderot
+Source page:
+  https://commons.wikimedia.org/wiki/File:Pierced_Screen_(jali),_India,_Mughal_period,_c._1580_AD,_sandstone_-_Arthur_M._Sackler_Museum,_Harvard_University_-_DSC01106.jpg
+Direct file URL:
+  https://upload.wikimedia.org/wikipedia/commons/e/e4/Pierced_Screen_%28jali%29%2C_India%2C_Mughal_period%2C_c._1580_AD%2C_sandstone_-_Arthur_M._Sackler_Museum%2C_Harvard_University_-_DSC01106.jpg
+License: CC0 1.0 Universal (Public Domain Dedication). No attribution required;
+         Daderot credited here as a courtesy.
+Dimensions: 3615 x 5026 px, JPEG.
+Downloaded: 2026-07-04.
+
+Why it was a good candidate:
+  - Real-world, openly-licensed (CC0), high-resolution photograph.
+  - Shot roughly frontally, high contrast, unambiguously PERIODIC and GEOMETRIC
+    (square lattice of stars/X-motifs with a coarser quatrefoil sub-lattice) —
+    exactly the "Islamic geometric star-tile panel" profile the milestone asks
+    for, and a clean input for lattice + symmetry detection.
+
+Important limitation this photo exposed (see README.md, "Fidelity findings"):
+  - It is LIGHT stone with DARK openings. Naqsha binarizes dark = ink and has no
+    invert/polarity control, so the pipeline traced the DARK OPENINGS (and the
+    connecting gap-web), i.e. the negative space, rather than the light stone
+    members. The extraction is faithful to the dark ink, but a viewer expecting
+    the stone members sees the "dual" pattern. This drove follow-up issue #2.

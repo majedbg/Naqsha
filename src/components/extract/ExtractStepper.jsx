@@ -31,9 +31,11 @@ import {
   fileToDataURL,
   loadImage,
   cropToImageData,
+  previewCropToImageData,
   imageToImageData,
   imageDataToDataURL,
 } from '../../lib/extraction/imageIO';
+import { preprocess } from '../../lib/extraction/preprocess';
 import { createExtractionBridge } from '../../lib/extraction/workerBridge';
 import { detectQuad } from '../../lib/extraction/detectQuad';
 import { listStages } from '../../lib/extraction/pipeline';
@@ -62,7 +64,94 @@ import { resolveParameterizeGate, adoptFittedFamily } from '../../lib/extraction
 import FlattenStep, { DEFAULT_QUAD } from './FlattenStep';
 import LatticeCellEditor from './LatticeCellEditor';
 
-const STEPS = ['Upload', 'Flatten', 'Select', 'Review', 'Save'];
+const STEPS = ['Upload', 'Flatten', 'Select', 'Refine', 'Review', 'Save'];
+
+// #70b: the Refine step's preprocessing knobs. Defaults are the LEGACY global-128
+// path — at these values buildTraceOptions() emits NO options.trace, so the trace
+// is byte-identical to the pre-#70 flow (this is what keeps the existing extract
+// call-shape assertions — toEqual({}) — green). Key names + defaults are verbatim
+// from preprocess.js's runChain so the live binary preview is the SAME math the
+// vectorizer binarizes (a true 1-to-1 view of what potrace traces).
+const REFINE_DEFAULTS = {
+  brightness: 0, // -100..100
+  contrast: 0, // -100..100
+  blur: 0, // Gaussian sigma px; 0 = OFF (never enters gaussianKernel — the #70a
+  //          div-by-zero guard lives in runChain: `blur > 0 ? blurField : field`)
+  adaptive: false, // global cut (false) vs Sauvola local cut (true)
+  threshold: 128, // global-mode cut
+  window: 31, // adaptive window px
+  k: 0.2, // adaptive Sauvola sensitivity
+  minArea: 0, // drop ink components below this area (0 = off)
+};
+
+// One-click "Auto-clean" preset — the #70a-proven jali starting point (adaptive
+// window/k + a light blur to bridge shadow-broken members + min-area to drop the
+// speckle blobs), sourced from the #70a adaptive/denoise tests (window 25, k 0.2,
+// blur sigma 1, minArea 5). A starting point the user then fine-tunes and watches.
+const AUTO_CLEAN_PRESET = {
+  ...REFINE_DEFAULTS,
+  adaptive: true,
+  window: 25,
+  k: 0.2,
+  blur: 1,
+  minArea: 5,
+};
+
+// The Refine filmstrip stages, in transformation order — each painted from the
+// matching preprocess() buffer so the cleanup is visible step-by-step.
+const REFINE_STAGES = [
+  { key: 'gray', label: 'Grayscale' },
+  { key: 'adjusted', label: 'Brightness / Contrast' },
+  { key: 'denoised', label: 'Denoised' },
+  { key: 'binary', label: 'Binary (what is traced)' },
+];
+
+// Serialize the Refine knobs (+ #69 invert) into options.trace, emitting a key
+// ONLY when it differs from the preprocess.js default. Returns undefined when
+// everything is at its default AND invert is off — so the trace options stay
+// byte-identical to the legacy flow (default in → nothing out). This is the
+// crux: whatever this returns is exactly what the REAL trace binarizes, so the
+// live preview (which calls preprocess with this same object) can never drift
+// from the pattern the save produces.
+function buildTraceOptions(opts = REFINE_DEFAULTS, invert = false) {
+  const o = opts || REFINE_DEFAULTS;
+  const t = {};
+  if (invert) t.invert = true;
+  if (o.brightness) t.brightness = o.brightness;
+  if (o.contrast) t.contrast = o.contrast;
+  if (o.blur > 0) t.blur = o.blur;
+  if (o.adaptive) {
+    t.adaptive = true;
+    if (o.window !== REFINE_DEFAULTS.window) t.window = o.window;
+    if (o.k !== REFINE_DEFAULTS.k) t.k = o.k;
+  } else if (o.threshold !== REFINE_DEFAULTS.threshold) {
+    t.threshold = o.threshold;
+  }
+  if (o.minArea > 0) t.minArea = o.minArea;
+  return Object.keys(t).length ? t : undefined;
+}
+
+// Paint an ImageData-like RGBA buffer onto a canvas. jsdom has no 2D context
+// (getContext → null / throws), so this no-ops under test — the canvas ELEMENTS
+// still render, keeping the step jsdom-testable; real painting happens only in
+// the browser.
+function paintBuffer(canvas, buf) {
+  if (!canvas || !buf) return;
+  canvas.width = buf.width;
+  canvas.height = buf.height;
+  let ctx;
+  try {
+    ctx = canvas.getContext('2d');
+  } catch {
+    return;
+  }
+  if (!ctx) return;
+  try {
+    ctx.putImageData(new ImageData(new Uint8ClampedArray(buf.data), buf.width, buf.height), 0, 0);
+  } catch {
+    /* preview paint is best-effort */
+  }
+}
 
 // S4 (issue #53): the auto-detect downscale — small enough that the classical
 // detector is a few-ms main-thread pass on the decoded upload (no Worker /
@@ -206,6 +295,30 @@ function StageProgress({ events }) {
   );
 }
 
+// #70b: a labeled range control for the Refine knobs — a value readout doubles
+// as jsdom-observable proof a control moved (no canvas needed).
+function RefineSlider({ label, min, max, step, value, onChange, suffix = '' }) {
+  return (
+    <label className="flex items-center gap-3 text-xs text-ink-soft">
+      <span className="w-24 shrink-0">{label}</span>
+      <input
+        type="range"
+        aria-label={label}
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="flex-1 accent-saffron"
+      />
+      <span className="w-12 text-right tabular-nums" data-testid={`refine-value-${label}`}>
+        {value}
+        {suffix}
+      </span>
+    </label>
+  );
+}
+
 const PRIMARY_BTN =
   'px-4 py-1.5 text-sm font-medium rounded-xs bg-saffron text-ink hover:bg-saffron-hover disabled:opacity-40 disabled:cursor-default transition-colors duration-fast ease-out-quart';
 const GHOST_BTN =
@@ -245,6 +358,22 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad, tier = '
   // Threaded to the trace stage via options.trace.invert; toggling in Review
   // re-runs the trace in place on the same selection + lattice choice.
   const [invert, setInvert] = useState(false);
+  // #70b (Refine step): the glass-box preprocessing knobs the user tunes while
+  // watching the binary snap into focus. Serialized into options.trace (via
+  // buildTraceOptions) so the REAL trace binarizes exactly what the preview
+  // shows. `refineImage` is the cropped selection raster the previews paint
+  // from (an RGBA buffer, cropped via the previewCrop seam on Select→Refine so
+  // it never intermixes with the trace crop). `previewBuffers` holds the last
+  // debounced preprocess() output { gray, adjusted, denoised, binary }.
+  const [refineOpts, setRefineOpts] = useState(REFINE_DEFAULTS);
+  const [refineImage, setRefineImage] = useState(null);
+  const [previewBuffers, setPreviewBuffers] = useState(null);
+  // #70b: whether the on-demand "Preview trace" has run potrace for the current
+  // knobs — surfaces the ACTUAL traced pattern inline in Refine (not just the
+  // binary proxy) before committing to Review. Goes stale (hidden) when a knob
+  // moves, so the inline preview never lies about the current settings.
+  const [refinePreviewShown, setRefinePreviewShown] = useState(false);
+  const refineCanvasRefs = useRef({}); // stage key → <canvas>
   const [stageEvents, setStageEvents] = useState({}); // stage id → latest progress event
   const [result, setResult] = useState(null);
   // Per-shape Review edits ({kind, role} parallel to shapesFromResult(result));
@@ -357,6 +486,10 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad, tier = '
       setCrop(null);
       setResult(null);
       setInvert(false); // #69: polarity resets to the default per photo
+      setRefineOpts(REFINE_DEFAULTS); // #70b: knobs + preview reset per photo
+      setRefineImage(null);
+      setPreviewBuffers(null);
+      setRefinePreviewShown(false);
       // Flatten corners: an explicit initialQuad prop (external pre-fill) wins;
       // otherwise S4 auto-detects the ornament plane and PRE-FILLS the quad.
       // Detection is a pure, fast main-thread pass on a small downscale of the
@@ -527,7 +660,7 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad, tier = '
   // same staged progress — differing only in options.lattice (undefined =
   // auto-detect, false = opt-out, {cell} = user-corrected). Returns whether a
   // usable result landed.
-  const runExtract = useCallback(async (rect, latticeOpt, invertOpt = invert) => {
+  const runExtract = useCallback(async (rect, latticeOpt, invertOpt = invert, refineOptsArg = refineOpts) => {
     if (!imgElRef.current) return false;
     setError('');
     setTracing(true);
@@ -549,7 +682,11 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad, tier = '
       // options byte-identical to the pre-#69 flow (DARK = ink defaults).
       const options = {};
       if (latticeOpt !== undefined) options.lattice = latticeOpt;
-      if (invertOpt) options.trace = { invert: true };
+      // #70b: the Refine knobs (+ #69 invert) drive the REAL trace. Only carry
+      // options.trace when something differs from the legacy defaults, so the
+      // untouched flow stays byte-identical (default in → nothing out).
+      const traceOpts = buildTraceOptions(refineOptsArg, invertOpt);
+      if (traceOpts) options.trace = traceOpts;
       const res = await bridgeRef.current.extract(imageData, options, (p) =>
         setStageEvents((m) => ({ ...m, [p.stage]: p }))
       );
@@ -575,19 +712,107 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad, tier = '
       setTracing(false);
       setStageEvents({});
     }
-  }, [invert]);
+  }, [invert, refineOpts]);
 
-  const handleTrace = useCallback(async () => {
-    if (!imgElRef.current || !natural) return;
+  // The selection crop in natural pixels (crop null → whole working image).
+  const selectionRect = useCallback(() => {
+    if (!natural) return null;
     const f = crop || { x: 0, y: 0, w: 1, h: 1 };
-    const rect = {
+    return {
       x: Math.round(f.x * natural.w),
       y: Math.round(f.y * natural.h),
       w: Math.max(1, Math.round(f.w * natural.w)),
       h: Math.max(1, Math.round(f.h * natural.h)),
     };
-    if (await runExtract(rect, undefined)) setStep(3);
-  }, [crop, natural, runExtract]);
+  }, [crop, natural]);
+
+  // Select → Refine (#70b): DON'T trace yet (potrace is the expensive step).
+  // Crop the selection into an RGBA buffer the live previews paint from — the
+  // SAME crop the trace will binarize (previewCrop delegates to the trace crop),
+  // so the binary preview is a true 1-to-1 view. Advancing OUT of Refine is what
+  // runs potrace.
+  const handleSelectContinue = useCallback(() => {
+    if (!imgElRef.current || !natural) return;
+    const rect = selectionRect();
+    try {
+      setRefineImage(previewCropToImageData(imgElRef.current, rect));
+    } catch {
+      setRefineImage(null); // preview is best-effort; Refine still traces on advance
+    }
+    setPreviewBuffers(null);
+    setRefinePreviewShown(false);
+    setStep(3);
+  }, [natural, selectionRect]);
+
+  // Refine → Review: NOW run the real trace, with the chosen refine knobs. An
+  // explicit optsOverride lets "Skip / use defaults" trace at the legacy defaults
+  // (unchanged trace) without waiting on a setState.
+  const handleRefineTrace = useCallback(
+    async (optsOverride) => {
+      if (!imgElRef.current || !natural) return;
+      const rect = selectionRect();
+      if (await runExtract(rect, undefined, invert, optsOverride ?? refineOpts)) setStep(4);
+    },
+    [natural, selectionRect, runExtract, invert, refineOpts]
+  );
+
+  // "Skip / use defaults": reset the knobs and trace at the legacy defaults, so
+  // nothing is forced — the trace is exactly today's (skippable invariant).
+  const handleSkipRefine = useCallback(() => {
+    setRefineOpts(REFINE_DEFAULTS);
+    handleRefineTrace(REFINE_DEFAULTS);
+  }, [handleRefineTrace]);
+
+  // On-demand "Preview trace" (#70b, task item 5 / the user's 'trace on demand'):
+  // run the REAL potrace on the current knobs and show the traced pattern INLINE
+  // in Refine — WITHOUT advancing to Review — so the user sees the actual pattern,
+  // not just the binary proxy, before committing. It runs only on this explicit
+  // click (never per slider tick), and disables while in flight.
+  const handleRefinePreviewTrace = useCallback(async () => {
+    if (!imgElRef.current || !natural) return;
+    if (await runExtract(selectionRect(), undefined)) setRefinePreviewShown(true);
+  }, [natural, selectionRect, runExtract]);
+
+  const setRefineOpt = useCallback((key, value) => {
+    setRefineOpts((o) => ({ ...o, [key]: value }));
+  }, []);
+
+  const applyAutoClean = useCallback(() => setRefineOpts(AUTO_CLEAN_PRESET), []);
+
+  // #70b: recompute the filmstrip buffers when a knob (or invert) moves, DEBOUNCED
+  // ~100ms so dragging a slider doesn't re-run the per-pixel chain every tick.
+  // preprocess is pure JS (no DOM) — safe in jsdom — and cheap on the ~≤760px
+  // selection. potrace is NOT run here (only on advance): this is the live view.
+  // Uses the SAME buildTraceOptions the trace uses, so the preview cannot drift.
+  const refineOptsKey = JSON.stringify(buildTraceOptions(refineOpts, invert) ?? {});
+  useEffect(() => {
+    if (step !== 3 || !refineImage) return undefined;
+    const id = setTimeout(() => {
+      try {
+        setPreviewBuffers(preprocess(refineImage, buildTraceOptions(refineOpts, invert) ?? {}));
+      } catch {
+        setPreviewBuffers(null); // preview is best-effort, never blocks the trace
+      }
+    }, 100);
+    return () => clearTimeout(id);
+    // refineOptsKey captures the serialized knobs; refineOpts/invert are its inputs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, refineImage, refineOptsKey]);
+
+  // A moved knob (opts key change) invalidates the inline traced preview — it
+  // must never show a pattern that doesn't match the current settings.
+  useEffect(() => {
+    setRefinePreviewShown(false);
+  }, [refineOptsKey]);
+
+  // Paint the computed buffers onto their canvases (no-op in jsdom).
+  useEffect(() => {
+    if (!previewBuffers) return;
+    for (const { key } of REFINE_STAGES) {
+      paintBuffer(refineCanvasRefs.current[key], previewBuffers[key]);
+    }
+    paintBuffer(refineCanvasRefs.current.hero, previewBuffers.binary);
+  }, [previewBuffers]);
 
   // --- Lattice Review corrections (S5, issue #54) ------------------------------
 
@@ -988,18 +1213,6 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad, tier = '
                   />
                 )}
               </div>
-              {tracing && <StageProgress events={stageEvents} />}
-              {/* #69: polarity. Off = DARK is ink (default); on traces LIGHT
-                  shapes on a dark ground (a pierced jali screen). */}
-              <label className="flex items-center gap-2 text-xs text-ink-soft cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={invert}
-                  onChange={() => setInvert((v) => !v)}
-                  className="accent-saffron"
-                />
-                Invert — trace light shapes on a dark ground
-              </label>
               <div className="flex gap-2">
                 <button type="button" className={GHOST_BTN} onClick={() => setStep(1)}>
                   Back
@@ -1009,14 +1222,236 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad, tier = '
                     Clear selection
                   </button>
                 )}
-                <button type="button" className={PRIMARY_BTN} onClick={handleTrace} disabled={tracing}>
+                {/* #70b: no trace here — advance to Refine, where the binary is
+                    tuned live before the expensive potrace runs. */}
+                <button type="button" className={PRIMARY_BTN} onClick={handleSelectContinue}>
+                  Continue →
+                </button>
+              </div>
+            </>
+          )}
+
+          {/* Refine (#70b, issues #70/#62/#48): the glass-box preprocessing step.
+              The hero canvas renders preprocess().binary — a true 1-to-1 view of
+              what potrace will trace — and updates LIVE (debounced) as the knobs
+              move; the filmstrip shows each intermediate stage. SKIPPABLE: "Skip /
+              use defaults" traces at the legacy defaults (unchanged trace). */}
+          {step === 3 && (
+            <>
+              <p className="text-xs text-ink-soft self-stretch max-w-xl">
+                Tune the image until the pattern snaps into focus. The big preview is exactly what
+                pattern detection traces — clean it up here, then trace.
+              </p>
+
+              {/* Hero: the live BINARY the trace sees. */}
+              <div className="flex flex-col items-center gap-1">
+                <canvas
+                  ref={(el) => (refineCanvasRefs.current.hero = el)}
+                  data-testid="refine-binary"
+                  aria-label="Live binary preview — what pattern detection traces"
+                  className="max-h-64 w-auto border border-hairline bg-white"
+                  style={{ imageRendering: 'pixelated' }}
+                />
+                <span className="text-[10px] text-ink-faint">Binary — what the trace sees</span>
+              </div>
+
+              {/* Filmstrip: the intermediate stages, painted step-by-step. */}
+              <div
+                className="flex items-end gap-3 self-stretch overflow-x-auto pb-1"
+                data-testid="refine-filmstrip"
+                aria-label="Preprocessing stages"
+              >
+                {REFINE_STAGES.map(({ key, label }, i) => (
+                  <div key={key} className="flex items-center gap-3 shrink-0">
+                    {i > 0 && <span className="text-ink-faint text-xs" aria-hidden>→</span>}
+                    <figure className="flex flex-col items-center gap-1">
+                      <canvas
+                        ref={(el) => (refineCanvasRefs.current[key] = el)}
+                        data-testid={`refine-stage-${key}`}
+                        className="h-16 w-auto max-w-[6rem] border border-hairline bg-white"
+                        style={{ imageRendering: 'pixelated' }}
+                      />
+                      <figcaption className="text-[10px] text-ink-faint text-center leading-tight">
+                        {label}
+                      </figcaption>
+                    </figure>
+                  </div>
+                ))}
+              </div>
+
+              {/* Controls — each drives the previews live. */}
+              <div className="w-full max-w-xl flex flex-col gap-3 border border-hairline rounded-xs p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-medium text-ink">Adjustments</span>
+                  <button
+                    type="button"
+                    data-testid="auto-clean"
+                    onClick={applyAutoClean}
+                    className="px-2.5 py-1 text-[11px] font-medium rounded-xs bg-saffron/15 border border-saffron text-ink hover:bg-saffron/25 transition-colors duration-fast ease-out-quart"
+                  >
+                    ✦ Auto-clean
+                  </button>
+                </div>
+
+                <RefineSlider
+                  label="Brightness"
+                  min={-100}
+                  max={100}
+                  step={1}
+                  value={refineOpts.brightness}
+                  onChange={(v) => setRefineOpt('brightness', v)}
+                />
+                <RefineSlider
+                  label="Contrast"
+                  min={-100}
+                  max={100}
+                  step={1}
+                  value={refineOpts.contrast}
+                  onChange={(v) => setRefineOpt('contrast', v)}
+                />
+                <RefineSlider
+                  label="Blur"
+                  min={0}
+                  max={5}
+                  step={0.5}
+                  value={refineOpts.blur}
+                  suffix="σ"
+                  onChange={(v) => setRefineOpt('blur', v)}
+                />
+
+                {/* Threshold mode: global cut ↔ Sauvola adaptive cut. */}
+                <div className="flex items-center gap-3 text-xs text-ink-soft">
+                  <span className="w-24 shrink-0">Threshold</span>
+                  <label className="flex items-center gap-1 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="thresholdMode"
+                      aria-label="Global threshold"
+                      checked={!refineOpts.adaptive}
+                      onChange={() => setRefineOpt('adaptive', false)}
+                      className="accent-saffron"
+                    />
+                    Global
+                  </label>
+                  <label className="flex items-center gap-1 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="thresholdMode"
+                      aria-label="Adaptive threshold"
+                      checked={refineOpts.adaptive}
+                      onChange={() => setRefineOpt('adaptive', true)}
+                      className="accent-saffron"
+                    />
+                    Adaptive
+                  </label>
+                </div>
+
+                {refineOpts.adaptive ? (
+                  <>
+                    <RefineSlider
+                      label="Window"
+                      min={3}
+                      max={101}
+                      step={2}
+                      value={refineOpts.window}
+                      suffix="px"
+                      onChange={(v) => setRefineOpt('window', v)}
+                    />
+                    <RefineSlider
+                      label="Sensitivity (k)"
+                      min={0}
+                      max={0.6}
+                      step={0.05}
+                      value={refineOpts.k}
+                      onChange={(v) => setRefineOpt('k', v)}
+                    />
+                  </>
+                ) : (
+                  <RefineSlider
+                    label="Threshold"
+                    min={0}
+                    max={255}
+                    step={1}
+                    value={refineOpts.threshold}
+                    onChange={(v) => setRefineOpt('threshold', v)}
+                  />
+                )}
+
+                <RefineSlider
+                  label="Min area"
+                  min={0}
+                  max={100}
+                  step={1}
+                  value={refineOpts.minArea}
+                  suffix="px²"
+                  onChange={(v) => setRefineOpt('minArea', v)}
+                />
+
+                {/* #69 invert lives here now — the polarity that decides whether
+                    ink is DARK (default) or LIGHT (a pierced jali screen). */}
+                <label className="flex items-center gap-2 text-xs text-ink-soft cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={invert}
+                    onChange={() => setInvert((v) => !v)}
+                    className="accent-saffron"
+                  />
+                  Invert — trace light shapes on a dark ground
+                </label>
+              </div>
+
+              {tracing && <StageProgress events={stageEvents} />}
+
+              {/* On-demand real-trace peek: run potrace on the current knobs and
+                  show the ACTUAL traced pattern inline (not just the binary
+                  proxy) before committing to Review. Goes stale when a knob moves. */}
+              {refinePreviewShown && result && preview && (
+                <div
+                  className="flex flex-col items-center gap-1"
+                  data-testid="refine-trace-preview"
+                >
+                  {preview}
+                  <span className="text-[10px] text-ink-faint">
+                    Trace preview — {shapeCount} shape{shapeCount === 1 ? '' : 's'} at these settings
+                  </span>
+                </div>
+              )}
+
+              <div className="flex gap-2 flex-wrap justify-center">
+                <button type="button" className={GHOST_BTN} onClick={() => setStep(2)} disabled={tracing}>
+                  Back
+                </button>
+                <button
+                  type="button"
+                  className={GHOST_BTN}
+                  data-testid="skip-refine"
+                  onClick={handleSkipRefine}
+                  disabled={tracing}
+                >
+                  Skip / use defaults
+                </button>
+                <button
+                  type="button"
+                  className={GHOST_BTN}
+                  data-testid="preview-trace"
+                  onClick={handleRefinePreviewTrace}
+                  disabled={tracing}
+                >
+                  {tracing ? 'Tracing…' : 'Preview trace'}
+                </button>
+                <button
+                  type="button"
+                  className={PRIMARY_BTN}
+                  onClick={() => handleRefineTrace()}
+                  disabled={tracing}
+                >
                   {tracing ? 'Tracing…' : 'Trace region →'}
                 </button>
               </div>
             </>
           )}
 
-          {step === 3 && result && (
+          {step === 4 && result && (
             <>
               {preview}
               {/* Repeat cell (S5, issue #54): detected → editable proposal +
@@ -1311,17 +1746,17 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad, tier = '
                 })}
               </ul>
               <div className="flex gap-2">
-                <button type="button" className={GHOST_BTN} onClick={() => setStep(2)}>
+                <button type="button" className={GHOST_BTN} onClick={() => setStep(3)}>
                   Back
                 </button>
-                <button type="button" className={PRIMARY_BTN} onClick={() => setStep(4)}>
+                <button type="button" className={PRIMARY_BTN} onClick={() => setStep(5)}>
                   Continue →
                 </button>
               </div>
             </>
           )}
 
-          {step === 4 && result && sessionOnlyReason && (
+          {step === 5 && result && sessionOnlyReason && (
             <>
               {preview}
               {/* Session-only save notice (review finding 2). Same inline
@@ -1343,7 +1778,7 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad, tier = '
             </>
           )}
 
-          {step === 4 && result && !sessionOnlyReason && (
+          {step === 5 && result && !sessionOnlyReason && (
             <>
               {preview}
               <div className="w-full max-w-sm flex flex-col gap-3">
@@ -1648,7 +2083,7 @@ export default function ExtractStepper({ onClose, onSaved, initialQuad, tier = '
               </div>
 
               <div className="flex gap-2">
-                <button type="button" className={GHOST_BTN} onClick={() => setStep(3)}>
+                <button type="button" className={GHOST_BTN} onClick={() => setStep(4)}>
                   Back
                 </button>
                 <button type="button" className={PRIMARY_BTN} onClick={handleSave} disabled={saving}>

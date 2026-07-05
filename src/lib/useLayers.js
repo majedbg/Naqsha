@@ -8,6 +8,8 @@ import { autoLayerName } from './autoLayerName';
 import { operationIdForRole } from './operations';
 import { parseSVGImport } from './svgImport';
 import { defaultTextParams } from './text/textLayer';
+import { MOTIF_TYPE, createMotifParams, motifAutoName } from './motif/motifLayer';
+import { getGlyph } from './motif/glyphs';
 import { normalizePanels, loadPanels, savePanels } from './panels';
 
 // Distinct group id for a Moiré pair (links role A + role B).
@@ -319,6 +321,55 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
         randomizeKeys: [],
         paramsCache: {},
         role: 'engrave',              // text defaults to ENGRAVE
+        operationId: operationIdForRole('engrave'),
+        penSlot: (index % 4) + 1,
+        panelId: null, // Panel membership (WI-1); normalizer assigns on load.
+        ...(opts.transform ? { transform: opts.transform } : {}),
+      };
+      return [...prev, layer];
+    });
+    return { ok: true, id };
+  }, [cap, layers, recordStructuralFn]);
+
+  // Create a MOTIF layer that adorns an existing host layer (headless plumbing;
+  // no UI this slice). Mirrors addTextLayer EXACTLY: id generated outside the
+  // updater (survives StrictMode double-invoke, returned for selection), cap
+  // decided synchronously off live `layers`, same structural-record fn, returns
+  // { ok, id } or { ok:false, error }. Motifs default to the ENGRAVE role (like
+  // text) and a stable, non-colliding `patternType: 'motif'`. The auto name is
+  // read off live `layers` for the host (null-safe). `opts` selects the glyph,
+  // anchor mode (default 'semantic'), and placement binding.
+  const addMotifLayer = useCallback((hostLayerId, opts = {}) => {
+    if (layers.length >= cap) return { ok: false, error: 'Layer limit reached.' };
+
+    recordStructuralFn(); // history: past the cap guard, this will mutate
+    const id = genId();
+    const host = layers.find((l) => l.id === hostLayerId) || null;
+    setLayers((prev) => {
+      if (prev.length >= cap) return prev; // re-check against live state
+      const index = prev.length;
+      const layer = {
+        id,
+        name: motifAutoName(host, getGlyph(opts.glyphRef)),
+        nameIsCustom: false,
+        locked: false,
+        type: MOTIF_TYPE,
+        color: '#000000',
+        opacity: 100,
+        visible: true,
+        bgColor: '#ffffff',
+        bgOpacity: 0,
+        patternType: MOTIF_TYPE,        // stable, non-colliding (mirrors text/import)
+        params: createMotifParams({
+          hostLayerId,
+          glyphRef: opts.glyphRef,
+          anchorMode: opts.anchorMode ?? 'semantic',
+          binding: opts.binding,
+        }),
+        seed: 0,
+        randomizeKeys: [],
+        paramsCache: {},
+        role: 'engrave',              // motif defaults to ENGRAVE (like text)
         operationId: operationIdForRole('engrave'),
         penSlot: (index % 4) + 1,
         panelId: null, // Panel membership (WI-1); normalizer assigns on load.
@@ -714,7 +765,7 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
   }, []);
 
   return {
-    layers, addLayer, addImportedLayer, addTextLayer, duplicateLayer, removeLayer, updateLayer, reorderLayers,
+    layers, addLayer, addImportedLayer, addTextLayer, addMotifLayer, duplicateLayer, removeLayer, updateLayer, reorderLayers,
     changeLayerPattern,
     randomizeLayer, randomizeAll, randomizeLayerParams, randomizeAllParams,
     loadLayerSet, bgColor, setBgColor,

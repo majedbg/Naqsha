@@ -6,6 +6,8 @@ import { PATTERN_CLASSES } from './patterns';
 import ImportedPath from './patterns/ImportedPath';
 import { resolveMoireSource } from './moirePair';
 import { resolveModulationForTarget } from './fields/resolveModulationForTarget';
+import { resolveMotifHostParams } from './motif/resolveMotifHost';
+import { collectMotifHostGeometry } from './motif/collectHostGeometry';
 import { handlesFor } from './transform/handles';
 import { drawTextNode } from './text/drawTextNode';
 import { isTextLayer, textNodeFromLayer } from './text/textLayer';
@@ -92,6 +94,43 @@ export default function useCanvas(
     const drawCtx = new P5Adapter(p, { draw: true });
     const noDrawCtx = new P5Adapter(p, { draw: false });
 
+    // Motif host-geometry PRE-PASS (order-independent). A host (currently only
+    // Voronoi) stashes its resolved cells on the instance as `motifHostGeometry`
+    // during generate(); motifs read them via resolveMotifHostParams below. We
+    // harvest that geometry HERE, before the main paint loop, so placement never
+    // depends on z-order — matching how grid/recursive/spiral motifs already read
+    // host PARAMS directly. (Previously the harvest lived INSIDE the reverse-order
+    // render loop; because addMotifLayer APPENDS a motif → last in `layers` →
+    // FIRST in renderOrder, a freshly-added motif resolved its host params before
+    // the host had generated → empty geometry → zero placements. This pre-pass
+    // fixes that.) Each host is generated into a THROWAWAY instance ONLY to read
+    // its geometry — the real drawn instance (which owns _lastParams/_lastCx for
+    // SVG export) is still built in the main loop below. Hosts are probed
+    // regardless of visibility, so a hidden host still feeds a visible motif.
+    // NOTE: uses BASE host.params. Voronoi is not modulated/moiré, so harvested
+    // cells == drawn cells; a modulated host would diverge → out of scope.
+    // NO-DIVERGENCE: drawCtx/noDrawCtx wrap the SAME p5 instance, and
+    // VoronoiCells.generate calls ctx.randomSeed(seed) first, so generating the
+    // host twice (probe here, real draw below) reproduces byte-identical cells.
+    const hostGeometry = collectMotifHostGeometry(layers, (host) => {
+      const HostClass =
+        PATTERN_CLASSES[host.patternType] || getDynamicPatternClass(host.patternType);
+      if (!HostClass) return null;
+      const probe = new HostClass();
+      p.push(); // defensive matrix isolation — probe never draws, but be safe
+      probe.generateWithContext(
+        noDrawCtx,
+        host.seed,
+        host.params,
+        canvasW,
+        canvasH,
+        resolveCanvasColor(host, { operations, outputMode, colorView }),
+        host.opacity
+      );
+      p.pop();
+      return probe.motifHostGeometry || null;
+    });
+
     // WI-4: panel lookup for effective visibility. Built once per render. A
     // layer on a hidden panel takes the no-draw path; with no panels (or no
     // matching panel) effectiveVisible degrades to layer.visible → byte-identical
@@ -172,6 +211,17 @@ export default function useCanvas(
       const mod = resolveModulationForTarget(layer, layers);
       if (mod) {
         renderParams = { ...renderParams, modulation: mod };
+      }
+
+      // Motif host-params injection (semantic anchors). A motif layer reads its
+      // host's patternType + params PURELY off the layers array (like the
+      // modulation/moiré resolves above) — no render-ordering dependency. A
+      // Voronoi host's drawn cells come from the order-independent PRE-PASS above
+      // (`hostGeometry`), so a motif places regardless of z-order. Non-motif
+      // layers resolve null → byte-identical baseline.
+      const motifHost = resolveMotifHostParams(layer, layers, hostGeometry);
+      if (motifHost) {
+        renderParams = { ...renderParams, ...motifHost };
       }
 
       const instance = new PatternClass();

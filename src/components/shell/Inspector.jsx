@@ -22,6 +22,7 @@
 // selected layer; when it resolves to a layer we show its controls, otherwise we
 // show a neutral document/empty state. Multi-select is out of scope (#6).
 
+import { useState } from "react";
 import PatternSelect from "../PatternSelect";
 import PatternParams from "../PatternParams";
 import DockToggle from "./DockToggle";
@@ -50,6 +51,8 @@ import { channelForTarget } from "../../lib/fields/channelConsumers";
 import { canProduceLattice } from "../../lib/fields/latticeForLayer";
 import { resolveModulationForTarget } from "../../lib/fields/resolveModulationForTarget";
 import { ANCHOR_POS, ANCHOR_MID, ANCHOR_NEG } from "../../lib/fields/colormap";
+import { isMotifLayer, motifHostId, deepMergeBinding } from "../../lib/motif/motifLayer";
+import { MOTIF_GLYPHS, getGlyph } from "../../lib/motif/glyphs";
 
 // Modulation-scoped param control: the Grid's `warpNodes` slider (2–24). Reuses
 // the file's `accent-violet` range styling. Rendered INSIDE a <ModulationParamBox>
@@ -542,10 +545,260 @@ function ModulatorDevice({
   );
 }
 
+// Hosts that expose semantic anchors today. Grid/recursive/spiral derive anchors
+// from params (formula); voronoi derives them from its DRAWN cells, captured at
+// render time and threaded through useCanvas → resolveMotifHostParams → the
+// MotifPattern semantic path (see src/lib/motif/semanticAnchors.js). Edge-on-
+// arbitrary hosts still need a generic drawn-geometry seam and remain excluded.
+// The anchor-ghost overlay does NOT yet support voronoi (it can't reach the
+// per-frame hostGeometry) — deferred follow-on.
+const MOTIF_HOSTS = new Set(["grid", "recursive", "spiral", "voronoi"]);
+
+const MOTIF_ROLES = [
+  { key: "crossing", label: "Crossings" },
+  { key: "edge", label: "Edges" },
+  { key: "tip", label: "Tips" },
+  { key: "cell", label: "Cells" },
+];
+
+// Motif device panel — add/edit/remove motifs that ADORN this host layer.
+// Shown ONLY for an eligible HOST (a grid/recursive/spiral pattern layer, never
+// a motif layer itself). Each motif is a sibling layer whose params.hostLayerId
+// points back here (motifHostId); we list those, editing their selection +
+// placement binding. Every write re-spreads the whole params.binding via
+// deepMergeBinding so a partial patch never clobbers another branch — same
+// re-spread invariant as ModulatorDevice, extended to a nested schema.
+function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer }) {
+  // Collapsed by default (mobile discoverability: the device sits at the TOP of
+  // the Inspector for a host layer but stays folded until the user opens it).
+  // Declared BEFORE the self-hide early return — the component renders
+  // unconditionally and hides itself, so the hook must run every render
+  // (Rules of Hooks).
+  const [open, setOpen] = useState(false);
+
+  // Self-hide: a motif layer isn't a host, and only anchor-capable pattern
+  // types host motifs today.
+  if (isMotifLayer(layer) || !MOTIF_HOSTS.has(layer.patternType)) return null;
+
+  const motifs = (layers || []).filter(
+    (l) => isMotifLayer(l) && motifHostId(l) === layer.id
+  );
+
+  // Rebuild params.binding whole on every write (deep-merge the patch), then
+  // re-spread params (onUpdateLayer shallow-merges the top level).
+  const patchMotif = (m, bindingPatch) =>
+    onUpdateLayer(m.id, {
+      params: {
+        ...m.params,
+        binding: deepMergeBinding(m.params?.binding, bindingPatch),
+      },
+    });
+
+  const addMotif = () =>
+    onAddMotif?.(layer.id, {
+      glyphRef: "leaf",
+      anchorMode: "semantic",
+      binding: {
+        selection: { roles: ["crossing"], rate: { n: 1 } },
+        placement: {
+          sizing: { mode: "proportional", size: 18, min: 3, margin: 0.85 },
+          orientation: { policy: "path", useNormal: true },
+          flip: false,
+        },
+      },
+    });
+
+  return (
+    <div
+      className="space-y-3 border-t border-hairline pt-3"
+      data-testid="motif-device"
+    >
+      <button
+        type="button"
+        data-testid="motif-toggle"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-1.5 text-left text-xs font-semibold text-ink-soft uppercase tracking-wider outline-none hover:text-ink focus:text-ink"
+      >
+        <span aria-hidden="true" className="text-[10px] leading-none">
+          {open ? "▾" : "▸"}
+        </span>
+        <span>Motif</span>
+        {!open && motifs.length > 0 && (
+          <span className="font-normal normal-case tracking-normal text-ink-soft/70">
+            · {motifs.length}
+          </span>
+        )}
+      </button>
+
+      {open && (
+        <>
+          {motifs.length === 0 && (
+            <p className="text-[11px] text-ink-soft/70">
+              No motifs on this host.
+            </p>
+          )}
+
+          {motifs.map((m) => {
+        const glyphRef = m.params?.glyphRef;
+        const glyph = getGlyph(glyphRef);
+        const roles = Array.isArray(m.params?.binding?.selection?.roles)
+          ? m.params.binding.selection.roles
+          : [];
+        const n = m.params?.binding?.selection?.rate?.n ?? 1;
+        const size = m.params?.binding?.placement?.sizing?.size ?? 18;
+        const flip = m.params?.binding?.placement?.flip === true;
+
+        const toggleRole = (roleKey) => {
+          const next = roles.includes(roleKey)
+            ? roles.filter((r) => r !== roleKey)
+            : [...roles, roleKey];
+          patchMotif(m, { selection: { roles: next } });
+        };
+
+        return (
+          <div
+            key={m.id}
+            data-testid="motif-row"
+            className="space-y-2 rounded-cell border border-hairline bg-paper-warm p-2"
+          >
+            {/* Glyph select + swatch + remove */}
+            <div className="flex items-center gap-2">
+              <span className="shrink-0 text-ink-soft" aria-hidden="true">
+                <svg width="18" height="18" viewBox="-12 -12 24 24">
+                  {glyph?.paths?.[0]?.d && (
+                    <path
+                      d={glyph.paths[0].d}
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                    />
+                  )}
+                </svg>
+              </span>
+              <select
+                data-testid="motif-glyph"
+                aria-label="Glyph"
+                value={glyphRef ?? ""}
+                onChange={(e) =>
+                  onUpdateLayer(m.id, {
+                    params: { ...m.params, glyphRef: e.target.value },
+                  })
+                }
+                className="flex-1 rounded-xs border border-hairline bg-paper px-1 py-0.5 text-[11px] text-ink outline-none focus:border-violet"
+              >
+                {Object.values(MOTIF_GLYPHS).map((g) => (
+                  <option key={g.id} value={g.id}>
+                    {g.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                data-testid="motif-remove"
+                aria-label="Remove motif"
+                onClick={() => onRemoveLayer?.(m.id)}
+                className="shrink-0 rounded-xs px-1 text-xs text-ink-soft hover:text-ink"
+              >
+                ×
+              </button>
+            </div>
+
+            {/* Roles — which anchor kinds this motif adorns */}
+            <div className="flex flex-wrap gap-x-3 gap-y-1">
+              {MOTIF_ROLES.map((r) => (
+                <label
+                  key={r.key}
+                  className="flex items-center gap-1 text-[11px] text-ink-soft"
+                >
+                  <input
+                    type="checkbox"
+                    data-testid={`motif-role-${r.key}`}
+                    aria-label={r.label}
+                    checked={roles.includes(r.key)}
+                    onChange={() => toggleRole(r.key)}
+                  />
+                  <span>{r.label}</span>
+                </label>
+              ))}
+            </div>
+
+            {/* Every-Nth + Size */}
+            <div className="flex items-center gap-3">
+              <label className="flex items-center gap-1.5 text-[11px] text-ink-soft">
+                <span className="whitespace-nowrap">Every</span>
+                <input
+                  type="number"
+                  data-testid="motif-rate-n"
+                  aria-label="Every Nth"
+                  min={1}
+                  step={1}
+                  value={n}
+                  onChange={(e) => {
+                    const raw = Number(e.target.value);
+                    const next =
+                      Number.isFinite(raw) && raw >= 1 ? Math.round(raw) : 1;
+                    patchMotif(m, { selection: { rate: { n: next } } });
+                  }}
+                  className="w-12 rounded-xs border border-hairline bg-paper px-1 py-0.5 text-[11px] text-ink outline-none focus:border-violet num"
+                />
+              </label>
+              <label className="flex items-center gap-1.5 text-[11px] text-ink-soft">
+                <span className="whitespace-nowrap">Size</span>
+                <input
+                  type="number"
+                  data-testid="motif-size"
+                  aria-label="Size"
+                  min={1}
+                  step={1}
+                  value={size}
+                  onChange={(e) => {
+                    const raw = Number(e.target.value);
+                    const next = Number.isFinite(raw) && raw >= 1 ? raw : 1;
+                    patchMotif(m, {
+                      placement: { sizing: { size: next } },
+                    });
+                  }}
+                  className="w-14 rounded-xs border border-hairline bg-paper px-1 py-0.5 text-[11px] text-ink outline-none focus:border-violet num"
+                />
+              </label>
+            </div>
+
+            {/* Flip */}
+            <label className="flex items-center gap-1.5 text-[11px] text-ink-soft">
+              <input
+                type="checkbox"
+                data-testid="motif-flip"
+                aria-label="Flip"
+                checked={flip}
+                onChange={(e) =>
+                  patchMotif(m, { placement: { flip: e.target.checked } })
+                }
+              />
+              <span>Flip</span>
+            </label>
+          </div>
+        );
+      })}
+
+      <button
+        type="button"
+        data-testid="motif-add"
+        onClick={addMotif}
+        className="w-full rounded-xs border border-hairline bg-paper-warm px-2 py-1 text-[11px] font-medium text-ink-soft outline-none transition-colors hover:border-violet hover:text-ink"
+      >
+        + Add Motif
+      </button>
+        </>
+      )}
+    </div>
+  );
+}
+
 // The param-editing body for one selected layer. Split into its own component so
 // usePatternCache (a hook) is only called when a layer is actually selected —
 // hooks can't be called conditionally inside Inspector itself.
-function SelectedLayerInspector({ layer, layers, unit, profileId, onUpdateLayer, onChangeLayerPattern, onVariableWeightChange, onPreviewField, onClosePreview, threeDSubMode, threeDFocusLayerId }) {
+function SelectedLayerInspector({ layer, layers, unit, profileId, onUpdateLayer, onChangeLayerPattern, onVariableWeightChange, onPreviewField, onClosePreview, threeDSubMode, threeDFocusLayerId, onAddMotif, onRemoveLayer }) {
   // Pattern swap: route through the same cache machine LayerCard uses, applied via
   // the pair-aware onChangeLayerPattern when present (falls back to a plain param
   // update so the component works standalone / in tests without a router).
@@ -577,6 +830,19 @@ function SelectedLayerInspector({ layer, layers, unit, profileId, onUpdateLayer,
         </h3>
         <PatternSelect active={layer.patternType} onChange={handlePatternChange} />
       </div>
+
+      {/* Motif device — add/edit/remove motifs adorning this host. Collapsed by
+          default and pinned ABOVE the pattern params so it's the first thing a
+          user sees for a host layer (mobile discoverability). Self-hides unless
+          the selected layer is an eligible host (grid/recursive/spiral) → renders
+          nothing, leaving no empty gap for non-host layers. */}
+      <MotifDevice
+        layer={layer}
+        layers={layers}
+        onUpdateLayer={onUpdateLayer}
+        onAddMotif={onAddMotif}
+        onRemoveLayer={onRemoveLayer}
+      />
 
       {/* Collapsible, grouped param controls (Structure / Scale / Variation /
           Stroke / Transform — the existing PARAM_GROUPS). */}
@@ -653,6 +919,11 @@ export default function Inspector({
   // "Close preview" when THIS guide is being previewed. Optional (legacy/tests).
   threeDSubMode,
   threeDFocusLayerId,
+  // Add a motif layer adorning a host (useLayers.addMotifLayer) and remove a
+  // layer by id (reuses the same delete handler the object tree uses). Optional
+  // so the Inspector still renders standalone / in legacy callers.
+  onAddMotif,
+  onRemoveLayer,
 }) {
   // Resolved font for the text-properties readouts (cap-height / engrave
   // warnings). May be null on first paint before useFont resolves — the panel's
@@ -717,6 +988,8 @@ export default function Inspector({
       onClosePreview={onClosePreview}
       threeDSubMode={threeDSubMode}
       threeDFocusLayerId={threeDFocusLayerId}
+      onAddMotif={onAddMotif}
+      onRemoveLayer={onRemoveLayer}
     />
   );
 }

@@ -27,6 +27,7 @@ import ConfirmDialog from "../ui/ConfirmDialog";
 import PanelHeader from "./PanelHeader";
 import NewPanelRow from "./NewPanelRow";
 import ModulationRail from "./ModulationRail";
+import AdornRail from "./AdornRail";
 import {
   canAddPanel,
   layersForPanel,
@@ -653,6 +654,14 @@ export default function LayerTree({
             guide in one panel and a target in another connect through the one
             continuous gutter (PRD D6). Renders nothing when there are no edges. */}
         <ModulationRail
+          layers={layers}
+          selectedLayerId={selectedLayerId}
+          rowRefs={rowRefs}
+        />
+        {/* The adorns rail layers OVER the modulation rail in the same gutter:
+            motif→host adornment edges in a distinct gold, bowing the opposite
+            way so the two relationship kinds stay visually separable. */}
+        <AdornRail
           layers={layers}
           selectedLayerId={selectedLayerId}
           rowRefs={rowRefs}

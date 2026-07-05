@@ -79,6 +79,65 @@ export default class VoronoiCells extends Pattern {
     const voronoiEdges = computeVoronoiEdges(triangles, halfW, halfH);
     const delaunayEdges = computeDelaunayEdges(points, triangles);
 
+    // --- Motif host-geometry capture (DRAWN-EDGE seam) ------------------------
+    // Stash the FINAL Voronoi geometry so a Motif layer adorning this host can
+    // place glyphs on its real vertices/edges/cells. Captured here, inside the
+    // actual draw-run, because the sites come from ctx.random — an outside
+    // recompute under a different RNG would diverge (see semanticAnchors.js
+    // voronoi block header). This capture is independent of the render loop's
+    // node transform (applied by the wrapper OUTSIDE generate), matching how the
+    // grid/recursive/spiral formula anchors ignore the host node transform.
+    //
+    // BOUNDARY HARDENING (why EDGES, not cells): the on-canvas outline DRAWS
+    // `voronoiEdges` (circumcenter segments CLIPPED along-line by clipLine, with
+    // the OPEN hull — boundary hull edges dropped). The old capture instead used
+    // `computeVoronoiCells` (per-vertex CLAMP to bounds + a CLOSED hull via a
+    // synthetic wraparound edge). They are byte-identical in the INTERIOR but
+    // diverge at the boundary ring, so crossing/edge-role glyphs could land on
+    // phantom geometry (a clamped vertex or a synthetic closing edge that is NOT
+    // a drawn line). We now capture the DRAWN EDGES themselves, so every
+    // crossing/edge anchor derived downstream sits on a visible segment.
+    // `voronoiEdges` is the Voronoi tessellation (the drawn outline in
+    // 'outlines'/'both' modes); we capture it regardless of drawMode because
+    // motif anchors follow the Voronoi structure. v1 CAVEAT: for drawMode
+    // 'delaunay'/'spokes' the drawn lines are NOT this tessellation, so anchors
+    // (which follow the Voronoi edges) will not coincide with those drawn lines.
+    //
+    // FRAME: circumcenters/sites are CENTERED at (0,0); the on-canvas base copy
+    // is drawn at translate(cx+offsetX, cy+offsetY) (symmetryUtils), so world
+    // (canvas-pixel, top-left origin) = centered + (cx+offsetX, cy+offsetY). This
+    // matches the Grid anchor origin ox = canvasW/2 + offsetX. Note the existing
+    // `cx`/`cy` above are canvasW/2 WITHOUT the offset (applySymmetryDraw adds
+    // offset itself), so we add it explicitly here.
+    //
+    // SYMMETRY v1 LIMITATION: we stash only the BASE geometry (pre-symmetry,
+    // pre-startAngle). For symmetry !== 'none' the render draws additional rotated
+    // copies and motifs land only on this base copy; for a nonzero startAngle even
+    // the base copy is rotated, so the unrotated stash matches NO visible copy.
+    //
+    // `sites` (for the cell-role anchors) includes ONLY sites whose cell resolved
+    // to ≥3 circumcenters — a valid tessellation cell — matching the old capture's
+    // cell set exactly. computeVoronoiCells is side-effect-free w.r.t.
+    // points/triangles, so the existing render output stays byte-identical.
+    const shiftX = cx + offsetX;
+    const shiftY = cy + offsetY;
+    const finalCells = computeVoronoiCells(points, triangles, halfW, halfH);
+    this.motifHostGeometry = {
+      drawnEdges: voronoiEdges.map((e) => ({
+        x1: e.x1 + shiftX,
+        y1: e.y1 + shiftY,
+        x2: e.x2 + shiftX,
+        y2: e.y2 + shiftY,
+      })),
+      sites: points
+        .map((p, i) =>
+          finalCells[i] && finalCells[i].length >= 3
+            ? { x: p.x + shiftX, y: p.y + shiftY }
+            : null
+        )
+        .filter(Boolean),
+    };
+
     // Collect line segments to draw based on mode
     const lines = [];
 

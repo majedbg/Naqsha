@@ -48,6 +48,7 @@ export default function MobileStudio() {
   const {
     layers,
     addLayer,
+    addMotifLayer,
     removeLayer,
     updateLayer,
     changeLayerPattern,
@@ -229,6 +230,8 @@ export default function MobileStudio() {
               profileId={machineProfile}
               onUpdateLayer={updateLayer}
               onChangeLayerPattern={changeLayerPattern}
+              onAddMotif={addMotifLayer}
+              onRemoveLayer={removeLayer}
             />
           </div>
         </div>

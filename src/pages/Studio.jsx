@@ -265,6 +265,7 @@ export default function Studio({ submitOrg = null } = {}) {
     addLayer,
     addImportedLayer,
     addTextLayer,
+    addMotifLayer,
     updateLayer,
     reorderLayers,
     changeLayerPattern,
@@ -1438,6 +1439,9 @@ export default function Studio({ submitOrg = null } = {}) {
           activeTool={activeTool}
           transforms={canvasTransforms}
           selectedNodeId={selectedLayerId}
+          // Motif anchor-ghost overlay writes force-include/exclude overrides
+          // back onto the motif layer's binding via the shared updateLayer.
+          onUpdateLayer={updateLayer}
           onSelect={setSelectedLayerId}
           onMove={handleCanvasMove}
           onCommit={handleCanvasCommit}
@@ -1742,6 +1746,11 @@ export default function Studio({ submitOrg = null } = {}) {
             onClosePreview={lensEntry.exit3D}
             threeDSubMode={threeD.subMode}
             threeDFocusLayerId={threeD.focusFieldLayerId}
+            // Motif device (host Inspector) — add a motif adorning the selected
+            // host, and remove a motif via the same delete handler the object
+            // tree uses (removeLayer / onDeleteLayer).
+            onAddMotif={addMotifLayer}
+            onRemoveLayer={removeLayer}
           />,
           inspectorSlot
         )}

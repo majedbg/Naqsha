@@ -49,6 +49,14 @@ const DEFAULT_TOLERANCE = 8;
  *
  * Resolution order:
  *   1. exact `id` match (ignores role) — the ref's `id` string, or `ref.id`.
+ *   1b. legacy base-copy fallback: `${id}:0`. Before the grid-geometry-core
+ *      refactor a symmetry>1 grid host emitted only the BASE COPY, keyed by an
+ *      un-suffixed id (e.g. `crossing:1:1`); the core now suffixes the copy
+ *      index, so that copy is `crossing:1:1:0`. Binding a legacy ref to copy 0
+ *      keeps overrides saved before the refactor working. Only fires on an exact
+ *      miss, so sym=1 (un-suffixed) ids still match at step 1; and only grid
+ *      sym>1 anchors ever carry a `:k` suffix, so `${id}:0` matches nothing in
+ *      recursive/spiral/voronoi sets (no false rebind).
  *   2. else spatial re-bind to the NEAREST anchor (euclidean) within
  *      `tolerance`. If the ref specifies a `role`, only anchors of that role
  *      are candidates. Ties broken by input order (strict `<`, first wins).
@@ -65,6 +73,10 @@ function resolveRef(ref, anchors, byId, tolerance) {
   if (id != null) {
     const hit = byId.get(id);
     if (hit) return hit;
+    // Legacy base-copy fallback (see step 1b above): bind a pre-refactor
+    // un-suffixed grid override to the symmetry copy 0 anchor.
+    const base = byId.get(`${id}:0`);
+    if (base) return base;
   }
 
   // Spatial re-bind requires coordinates.

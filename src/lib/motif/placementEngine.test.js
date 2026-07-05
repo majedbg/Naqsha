@@ -249,6 +249,53 @@ describe('selectAnchors — overrides', () => {
     expect(ids(survivors)).toEqual(['a0', 'a1', 'a2']);
     expect(orphans).toEqual([]);
   });
+
+  // Legacy base-copy fallback: before the grid-geometry-core refactor, a
+  // symmetry>1 grid host emitted anchors for the BASE COPY ONLY, keyed by an
+  // un-suffixed id (e.g. 'crossing:1:1'). The core now suffixes the symmetry
+  // copy index, so that base copy is 'crossing:1:1:0'. An override string saved
+  // against the old id must still resolve — to copy 0.
+  it('legacy base-copy id rebinds to the :0 copy of a symmetry>1 grid host', () => {
+    const anchors = [
+      mkAnchor('crossing', 0, 0, 'crossing:1:1:0'), // copy 0 — the intended bind
+      mkAnchor('crossing', 100, 100, 'crossing:1:1:1'), // copy 1 — must NOT be chosen
+      mkAnchor('crossing', 5, 5, 'crossing:2:2:0'),
+    ];
+    // Drop everything via a role that matches nothing, then force-include the
+    // legacy (un-suffixed) ref: only its :0 copy comes back.
+    const { survivors, orphans } = selectAnchors(anchors, {
+      roles: ['edge'],
+      overrides: { include: ['crossing:1:1'] },
+    });
+    expect(ids(survivors)).toEqual(['crossing:1:1:0']);
+    expect(orphans).toEqual([]);
+  });
+
+  it('legacy exclude id removes the :0 copy of a symmetry>1 grid host', () => {
+    const anchors = [
+      mkAnchor('crossing', 0, 0, 'crossing:1:1:0'),
+      mkAnchor('crossing', 5, 5, 'crossing:2:2:0'),
+    ];
+    const { survivors } = selectAnchors(anchors, {
+      overrides: { exclude: ['crossing:1:1'] },
+    });
+    expect(ids(survivors)).toEqual(['crossing:2:2:0']); // legacy exclude hit copy 0
+  });
+
+  it('does NOT consult the :0 fallback when an exact id match exists (sym=1)', () => {
+    // sym=1 ids are un-suffixed, so the exact match wins and the fallback never
+    // fires — a bare 'crossing:1:1' must bind to the un-suffixed anchor, not a
+    // stray ':0' sibling.
+    const anchors = [
+      mkAnchor('crossing', 0, 0, 'crossing:1:1'), // exact (sym=1)
+      mkAnchor('crossing', 9, 9, 'crossing:1:1:0'), // a would-be fallback target
+    ];
+    const { survivors } = selectAnchors(anchors, {
+      roles: ['edge'],
+      overrides: { include: ['crossing:1:1'] },
+    });
+    expect(ids(survivors)).toEqual(['crossing:1:1']);
+  });
 });
 
 describe('selectAnchors — master determinism', () => {

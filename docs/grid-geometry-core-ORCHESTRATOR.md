@@ -192,18 +192,19 @@ concurrently with worktree isolation. WI-4 after WI-2. WI-5 last, alone.
    (`{anchorId,index,x,y,radius}`) and is format-agnostic to the id change. Its
    wiring into the render/preview pipeline was NOT audited here (out of scope);
    verify whether it is consumed or a not-yet-wired module.
-3. **Sym>1 grid-host override orphan (existing-project consequence).** WI-2b
-   protected the `n===1` id (byte-identical → sym=1 saved overrides keep binding).
-   The `n>1` analog is NOT protected by design: old motif anchors were base-copy
-   only with ids `crossing:i:j`; new sym>1 ids are `crossing:i:j:k`. So a saved
-   project with **string-id overrides on a symmetry>1 grid host** will orphan
-   those refs (they re-bind spatially only if they carry coords; the overlay
-   writes id strings). This is inherent to giving motif symmetry parity (the base
-   copy is now one of n copies). Also: saved **jitter>0 / sym>1** grid-host motifs
-   now render differently (motifs follow the jittered lattice / replicate across
-   copies) — the intended fix, but a visible change to existing work. Surface to
-   user before shipping; a migration (re-key n=1→n>1 overrides, or spatial
-   fallback) is possible if needed.
+3. **Sym>1 grid-host override orphan — RESOLVED (2026-07-05, post-refactor).**
+   Old motif anchors were base-copy only, ids `crossing:i:j`; new sym>1 ids are
+   `crossing:i:j:k`. FIX: `placementEngine.resolveRef` now has a legacy base-copy
+   fallback — on an exact-id miss it tries `${id}:0`, binding a pre-refactor
+   override to symmetry copy 0. Safe: only fires on a miss (sym=1 un-suffixed ids
+   match at step 1), and only grid sym>1 carries a `:k` suffix so `${id}:0`
+   matches nothing in recursive/spiral/voronoi (no false rebind). 3 TDD tests in
+   placementEngine.test.js; full suite 3625 green. No data migration needed —
+   saved overrides rebind automatically at resolve time. (Migration.js is
+   per-layer without host access, so a load-time re-key was impractical; the
+   resolve-time fallback is cleaner.) NOTE: saved **jitter>0 / sym>1** grid-host
+   motifs still render differently (motifs follow the jittered/replicated lattice)
+   — the intended parity fix, a visible-but-correct change to existing work.
 4. **latticeForLayer warp-guide edge** (see WI-3 log): benign/unreachable —
    core warp→null needs a resolved `mod.field`, absent on the raw guide passed by
    `resolveModulationForTarget`. Would only activate with a resolved warp field

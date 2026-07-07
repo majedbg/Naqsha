@@ -3,8 +3,9 @@
 // WI-9 — per-row connection badges + the "stacked" affordance (PRD D6).
 // Each LayerRow shows small `→N` (outgoing / drives N) and `←N` (incoming /
 // driven by N) badges from the modulation graph counts; a badge is omitted when
-// its count is 0. A target with >1 incoming guide also shows a forward-compat
-// "N sources · 1 active" affordance (Phase-2b stacking).
+// its count is 0. A target with >1 incoming guide also shows a
+// "N sources · N active" affordance — the 2D compute now stacks ALL sources
+// (multi-source modulation), so all N are active on the 2D canvas.
 //
 // jsdom-safe: these assertions read DOM text + element presence only — no
 // geometry.
@@ -105,7 +106,7 @@ describe("LayerTree — connection badges (WI-9, PRD D6)", () => {
     expect(within(lonely).queryByTestId("badge-in")).toBeNull();
   });
 
-  it("shows a 'N sources · 1 active' affordance on a target mapped by 2 guides", () => {
+  it("shows a 'N sources · N active' affordance on a target mapped by 2 guides", () => {
     const g1 = makeGuide("g1", [{ targetLayerId: "t", amount: 1 }], { name: "G1" });
     const g2 = makeGuide("g2", [{ targetLayerId: "t", amount: 1 }], { name: "G2" });
     render(
@@ -120,7 +121,13 @@ describe("LayerTree — connection badges (WI-9, PRD D6)", () => {
     expect(within(sharedRow).getByTestId("badge-in")).toHaveTextContent("←2");
     const stacked = within(sharedRow).getByTestId("stacked-sources");
     expect(stacked).toHaveTextContent("2 sources");
-    expect(stacked).toHaveTextContent("1 active");
+    // The 2D compute now STACKS all incoming sources (multi-source modulation),
+    // so all N are active on the 2D canvas — not "1 active".
+    expect(stacked).toHaveTextContent("2 active");
+    // Honesty caveat preserved: the title scopes "active" to the 2D canvas and
+    // notes the 3D drape preview still uses only the first source.
+    expect(stacked.getAttribute("title")).toMatch(/2D canvas/i);
+    expect(stacked.getAttribute("title")).toMatch(/3D/i);
 
     // A single-source target gets NO stacked affordance.
     const g3 = makeGuide("g3", [{ targetLayerId: "solo", amount: 1 }], { name: "G3" });

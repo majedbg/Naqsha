@@ -82,6 +82,53 @@ describe("GrainField density modulation", () => {
     expect(otherChannel).toEqual(baseline);
   });
 
+  // Phase 2b (PRD §5): a composite `params.modulation` carries a `sources` array;
+  // the consumer MULTIPLIES every density source's weight. Two rising sources
+  // pack grain harder toward the high-field half than one; a neutral source
+  // (field 0 → weight 1) is a ×1 no-op.
+  it("stacks multiple density sources multiplicatively", () => {
+    const field = ScalarField.fromFunction((u) => 2 * (u - 0.5), {
+      nx: 65,
+      ny: 65,
+    });
+    const s1 = { channel: "density", field, amount: 1 };
+    const s2 = { channel: "density", field, amount: 1 };
+    const meanX = (xs) => xs.reduce((a, c) => a + c, 0) / xs.length;
+    const single = run({
+      ...BASE_PARAMS,
+      modulation: { ...s1, sources: [s1] },
+    });
+    const stacked = run({
+      ...BASE_PARAMS,
+      modulation: { ...s1, sources: [s1, s2] },
+    });
+    expect(meanX(dashMidXs(stacked.inst.svgElements))).toBeGreaterThan(
+      meanX(dashMidXs(single.inst.svgElements)) + 1
+    );
+  });
+
+  it("a neutral density source (weight 1) is a no-op in the product", () => {
+    const field = ScalarField.fromFunction((u) => 2 * (u - 0.5), {
+      nx: 65,
+      ny: 65,
+    });
+    const s1 = { channel: "density", field, amount: 1 };
+    const neutral = {
+      channel: "density",
+      field: ScalarField.fromFunction(() => 0, { nx: 33, ny: 33 }),
+      amount: 1,
+    };
+    const single = run({
+      ...BASE_PARAMS,
+      modulation: { ...s1, sources: [s1] },
+    }).inst.svgElements;
+    const withNeutral = run({
+      ...BASE_PARAMS,
+      modulation: { ...s1, sources: [s1, neutral] },
+    }).inst.svgElements;
+    expect(withNeutral).toEqual(single);
+  });
+
   it("keeps canvas draws and SVG byte-identical under modulation", () => {
     const field = ScalarField.fromFunction((u) => 2 * (u - 0.5), {
       nx: 65,

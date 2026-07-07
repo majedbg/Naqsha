@@ -1,6 +1,6 @@
 import { applySymmetryDraw } from './symmetryUtils';
 import { Pattern } from './drawingContext';
-import { warpDisplacement } from '../fields/warp';
+import { stackWarpDisplacement } from '../fields/warp';
 import { catmullRomToBezier } from './catmullRomBezier';
 import { gridLinePositions } from './gridGeometry';
 
@@ -78,7 +78,8 @@ export default class Grid extends Pattern {
           if (k > 0 && k < K - 1) {
             const u = (node.x + canvasW / 2) / canvasW;
             const v = (node.y + canvasH / 2) / canvasH;
-            const { dx, dy } = warpDisplacement(warpMod.field, u, v, warpMod);
+            // Phase 2b: vector-SUM every warp source (N=1 → single, byte-identical).
+            const { dx, dy } = stackWarpDisplacement(warpMod.sources ?? [warpMod], u, v);
             node.x += dx;
             node.y += dy;
           }

@@ -176,12 +176,41 @@ export function extractRenderedPaths(svgGroup) {
       if (tAttr) nextM = multiply(M, parseTransformAttr(tAttr));
       const strokeAttr = child.getAttribute && child.getAttribute('stroke');
       const stroke = strokeAttr || inheritedStroke;
-      if (child.tagName && child.tagName.toLowerCase() === 'path') {
+      const tag = child.tagName && child.tagName.toLowerCase();
+      if (tag === 'path') {
         const d = child.getAttribute('d') || '';
         const parsed = parsePathD(d);
         const pts = parsed.points.map((p) => applyMatrix(nextM, p));
         out.push({ points: pts, closed: parsed.closed, color: stroke || '#888' });
+      } else if (tag === 'line') {
+        // <line x1 y1 x2 y2> → a 2-point polyline. The Grid pattern emits these
+        // for every UNWARPED grid line (a warped grid emits <path> instead), so
+        // dropping them here silently omitted the whole grid from the plot.
+        const x1 = parseFloat(child.getAttribute('x1'));
+        const y1 = parseFloat(child.getAttribute('y1'));
+        const x2 = parseFloat(child.getAttribute('x2'));
+        const y2 = parseFloat(child.getAttribute('y2'));
+        if ([x1, y1, x2, y2].every(Number.isFinite)) {
+          const pts = [[x1, y1], [x2, y2]].map((p) => applyMatrix(nextM, p));
+          out.push({ points: pts, closed: false, color: stroke || '#888' });
+        }
+      } else if (tag === 'polyline') {
+        // <polyline points="x,y x,y …"> → the point list as a polyline.
+        // TopographicContours emits these. Points may be comma-in-pair /
+        // space-between (as our patterns emit) or plain whitespace-separated;
+        // split on both, drop non-numeric tokens, then pair up (an odd trailing
+        // value is ignored, matching SVG's tolerance).
+        const raw = (child.getAttribute('points') || '')
+          .trim().split(/[\s,]+/).map(parseFloat).filter((n) => Number.isFinite(n));
+        const pts = [];
+        for (let k = 0; k + 1 < raw.length; k += 2) {
+          pts.push(applyMatrix(nextM, [raw[k], raw[k + 1]]));
+        }
+        if (pts.length >= 2) out.push({ points: pts, closed: false, color: stroke || '#888' });
       } else {
+        // <rect> and <ellipse> still fall through here un-emitted — a documented
+        // follow-up (WI-P scope is <line>/<polyline> only). They walk in case a
+        // <g> nests further drawable children.
         walk(child, nextM, stroke);
       }
     }

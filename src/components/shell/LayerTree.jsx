@@ -36,6 +36,40 @@ import {
 } from "../../lib/panels";
 import { buildModulationGraph } from "../../lib/fields/modulationGraph";
 
+// Responsive dice-hide decision (§3.2): "Below 240px panel width, hide the 🎲
+// dice." Pure so it's unit-testable without real layout (jsdom rects are 0). The
+// band is [200, 240): 200 is the panel min (§2 clamps width to [200,480]) and 240
+// is EXCLUSIVE — at exactly 240 the dice still fits and shows. Below 200 (the
+// theoretical fully-collapsed-rail regime, not built) is out of band. In practice
+// the §2 clamp keeps width ≥ 200, so this reduces to `width < 240`.
+// Co-located pure helper (deep-module seam) so it's unit-testable without real
+// layout; the export trips react-refresh's component-only rule, accepted here —
+// same idiom as InspectorShelf's exported `columnCount`.
+// eslint-disable-next-line react-refresh/only-export-components
+export function shouldCompact(width) {
+  return width >= 200 && width < 240;
+}
+
+// RowMenu upward-flip decision (§4): the menu opens BELOW its ⋯ trigger by
+// default, so a row near the panel's bottom edge would push the menu past the
+// scroll container's bottom, where `overflow-auto` clips it (the reported bug).
+// Flip upward when the menu (est. `menuHeight` tall, opening at the row's bottom)
+// would overflow `panelBottom`. Pure so it's testable without real layout. The
+// `panelBottom > 0` guard is load-bearing: in jsdom every getBoundingClientRect
+// is 0, and without it `0 + menuHeight > 0` would spuriously flip EVERY menu.
+// eslint-disable-next-line react-refresh/only-export-components
+export function shouldFlipMenu(rowBottom, panelBottom, menuHeight) {
+  if (!(panelBottom > 0)) return false; // no real layout → never flip
+  return rowBottom + menuHeight > panelBottom;
+}
+
+// Estimated RowMenu height (px) for the flip decision — the menu isn't in the DOM
+// until it opens, so we can't measure it at open-decision time. Deliberately an
+// OVER-estimate (5 items + divider + padding ≈ 140px, rounded up): over-estimating
+// only flips a hair eagerly (harmless — a near-bottom row has room above), while
+// under-estimating clips (the actual bug we're fixing).
+const ROW_MENU_EST_HEIGHT = 160;
+
 // Human label for a pattern type (falls back to the raw id for AI / extras /
 // import layers not in the static table).
 function patternLabel(patternType) {
@@ -178,7 +212,7 @@ function LayerRow({
   layer, index, total, selected, operations, compact,
   onSelect, onUpdateLayer, onReorderLayers, onAssignOperation,
   onDeleteLayer, onDuplicateLayer, onRandomizeLayerParams, onExportLayer,
-  menuOpen, onRequestMenu, onCloseMenu,
+  menuOpen, anchorNearBottom, onRequestMenu, onCloseMenu,
   // Drag-assign wiring (grouped tier only). Optional → undefined in flat mode so
   // React omits the attributes and the row stays byte-identical there.
   draggable, onDragStartRow,
@@ -315,8 +349,10 @@ function LayerRow({
       {/* Modulation connection badges (WI-9, PRD D6): →N drives N targets;
           ←N driven by N guides. Each is omitted when its count is 0 so a row
           with no relationship stays clean. A target driven by >1 guide also
-          surfaces the "N sources · 1 active" stacked affordance (forward-compat
-          with Phase-2b multi-source compute — today only the first is active). */}
+          surfaces the "N sources · N active" stacked affordance: the 2D compute
+          now STACKS all incoming sources (multi-source modulation), so all N are
+          active on the 2D canvas. The title keeps the honest caveat that the 3D
+          Surface-B drape preview still consumes only the first source (deferred). */}
       {outCount > 0 && (
         <span
           data-testid="badge-out"
@@ -338,10 +374,10 @@ function LayerRow({
       {inCount > 1 && (
         <span
           data-testid="stacked-sources"
-          title={`${inCount} guides modulate this layer; only the first is active today`}
+          title={`All ${inCount} guides modulate this layer on the 2D canvas; the 3D drape preview still uses only the first source`}
           className="shrink-0 rounded-xs bg-muted px-1 py-0.5 text-[9px] text-ink-soft"
         >
-          {inCount} sources · 1 active
+          {inCount} sources · {inCount} active
         </span>
       )}
 
@@ -408,6 +444,7 @@ function LayerRow({
         </button>
         <RowMenu
           open={menuOpen}
+          anchorNearBottom={anchorNearBottom}
           onClose={onCloseMenu}
           onRename={beginEdit}
           onDuplicate={onDuplicateLayer ? () => onDuplicateLayer(layer.id) : undefined}
@@ -486,14 +523,42 @@ export default function LayerTree({
   // would overflow the layer cap. Defaults to Infinity so callers/tests that omit
   // it get the panel-cap-only behavior (P7 passes the real cap).
   cap = Infinity,
-  // Responsive (spec §3.2): below a ~240px panel width the host passes
-  // `compact` to hide the 🎲 dice. No container-query plugin is installed on this
-  // Tailwind v3 build, so the panel width is threaded via this boolean (kept
-  // testable in jsdom, which can't evaluate `@container`).
+  // Responsive (spec §3.2): below a 240px panel width the 🎲 dice is hidden. No
+  // container-query plugin is installed on this Tailwind v3 build, so the tree
+  // self-measures its width with a ResizeObserver (see `measuredCompact` below)
+  // and derives the flag via `shouldCompact`. This `compact` prop is an explicit
+  // override that ORs with the measurement — a caller/test can force compact
+  // without real layout (jsdom can't evaluate `@container` or measure widths).
   compact = false,
 }) {
   // One row menu open at a time: the tree owns the open-menu layer id (spec §4).
   const [openMenuId, setOpenMenuId] = useState(null);
+
+  // Responsive dice-hide (§3.2). No container-query plugin on this Tailwind v3
+  // build, so measure the panel's own width with a ResizeObserver and derive the
+  // compact flag from `shouldCompact`. Mirrors the InspectorShelf measurement
+  // seam: guarded so jsdom (no ResizeObserver) never crashes; the `compact` PROP
+  // still wins when a caller/test passes it explicitly (OR below).
+  const rootRef = useRef(null);
+  const [measuredCompact, setMeasuredCompact] = useState(false);
+  useEffect(() => {
+    if (typeof ResizeObserver === "undefined") return undefined;
+    const el = rootRef.current;
+    if (!el) return undefined;
+    const ro = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect?.width;
+      if (Number.isFinite(w) && w > 0) setMeasuredCompact(shouldCompact(w));
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const effectiveCompact = compact || measuredCompact;
+
+  // Scroll-container ref (the `overflow-auto` rows viewport) + one-menu flip flag.
+  // On opening a row's ⋯ menu we measure the row vs this container's bottom and
+  // set whether the menu must flip upward (§4) to avoid the overflow clip.
+  const scrollRef = useRef(null);
+  const [menuFlip, setMenuFlip] = useState(false);
 
   // Modulation relationship graph (WI-7) → drives the git-graph rail (WI-8) and
   // the per-row connection badges (WI-9). Recomputed each render from `layers`;
@@ -532,6 +597,21 @@ export default function LayerTree({
     e.dataTransfer?.setData("text/plain", layerId);
   };
 
+  // Toggle a row's ⋯ menu (one-at-a-time). On OPEN, measure the row vs the scroll
+  // container's bottom edge and decide whether the menu must flip upward (§4) so
+  // it isn't clipped by the container's `overflow-auto`. The rects are 0 in jsdom
+  // → shouldFlipMenu's guard keeps the default (downward) there.
+  const requestMenu = (id) => {
+    if (openMenuId === id) {
+      setOpenMenuId(null);
+      return;
+    }
+    const rowBottom = rowRefs.get(id)?.getBoundingClientRect?.().bottom ?? 0;
+    const panelBottom = scrollRef.current?.getBoundingClientRect?.().bottom ?? 0;
+    setMenuFlip(shouldFlipMenu(rowBottom, panelBottom, ROW_MENU_EST_HEIGHT));
+    setOpenMenuId(id);
+  };
+
   // Shared per-row props so grouped + flat rows render identically apart from the
   // grouped-only drag wiring. `index`/`total` are GLOBAL (full layers array) so
   // onReorderLayers(from,to) keeps working in grouped mode (a layer never leaves
@@ -551,9 +631,10 @@ export default function LayerTree({
     onDuplicateLayer,
     onRandomizeLayerParams,
     onExportLayer,
-    compact,
+    compact: effectiveCompact,
     menuOpen: openMenuId === layer.id,
-    onRequestMenu: (id) => setOpenMenuId((cur) => (cur === id ? null : id)),
+    anchorNearBottom: menuFlip,
+    onRequestMenu: requestMenu,
     onCloseMenu: () => setOpenMenuId(null),
     // Modulation rail + badges (WI-8/WI-9).
     rowRef: registerRow(layer.id),
@@ -562,7 +643,7 @@ export default function LayerTree({
   });
 
   return (
-    <div className="flex h-full flex-col" data-testid="layer-tree">
+    <div ref={rootRef} className="flex h-full flex-col" data-testid="layer-tree">
       {/* Machine-profile selector — pinned at the TOP of the column. */}
       <div className="shrink-0 border-b border-hairline p-2">
         <label className="block text-[10px] font-semibold uppercase tracking-wider text-ink-soft mb-1">
@@ -646,6 +727,8 @@ export default function LayerTree({
           18px left padding reserves the rail's lane — but ONLY when there are
           edges, so a document with no modulation looks byte-identical. */}
       <div
+        ref={scrollRef}
+        data-testid="layer-tree-scroll"
         className={`relative flex-1 overflow-auto p-1.5 space-y-0.5${
           hasEdges ? " pl-[18px]" : ""
         }`}

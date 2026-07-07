@@ -1,6 +1,6 @@
 import { Pattern } from './drawingContext';
 import { applySymmetryDraw } from './symmetryUtils';
-import { warpDisplacement } from '../fields/warp';
+import { stackWarpDisplacement } from '../fields/warp';
 import { makeSimplex } from '../fields/simplexNoise';
 import { fbm } from '../fields/fbm';
 
@@ -212,7 +212,8 @@ export default class TopographicContours extends Pattern {
         for (const pt of poly) {
           const u = (pt.x + canvasW / 2) / canvasW;
           const v = (pt.y + canvasH / 2) / canvasH;
-          const { dx, dy } = warpDisplacement(warpMod.field, u, v, warpMod);
+          // Phase 2b: vector-SUM every warp source (N=1 → single, byte-identical).
+          const { dx, dy } = stackWarpDisplacement(warpMod.sources ?? [warpMod], u, v);
           pt.x += dx;
           pt.y += dy;
         }

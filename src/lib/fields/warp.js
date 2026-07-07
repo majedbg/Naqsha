@@ -52,3 +52,32 @@ export function warpDisplacement(field, u, v, cfg = {}, opts = {}) {
   }
   return { dx: vx, dy: vy };
 }
+
+/**
+ * Phase 2b (PRD §5) — WARP channel stacking. VECTOR-SUM the per-source
+ * displacements: each warp source is clamped independently (per warpDisplacement)
+ * then the displacements add. The accumulator initializes from the FIRST source
+ * (not 0), so N=1 is bit-for-bit identical to a lone warpDisplacement (no sign-
+ * of-zero drift). Sources without a warp field are ignored; an empty stack (or a
+ * stack of only flat fields) yields {dx:0, dy:0}.
+ *
+ * @param {object[]} sources - resolved modulation objects; each may carry
+ *   {channel, field, amount, ...}. Only channel==='warp' with a `field` count.
+ * @param {number} u
+ * @param {number} v
+ * @param {object} [opts] - { gain, maxPx } forwarded to warpDisplacement
+ * @returns {{dx:number, dy:number}} summed pixel displacement
+ */
+export function stackWarpDisplacement(sources, u, v, opts = {}) {
+  const warp = Array.isArray(sources)
+    ? sources.filter((s) => s && s.channel === "warp" && s.field)
+    : [];
+  if (warp.length === 0) return { dx: 0, dy: 0 };
+  let { dx, dy } = warpDisplacement(warp[0].field, u, v, warp[0], opts);
+  for (let i = 1; i < warp.length; i++) {
+    const d = warpDisplacement(warp[i].field, u, v, warp[i], opts);
+    dx += d.dx;
+    dy += d.dy;
+  }
+  return { dx, dy };
+}

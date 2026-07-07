@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { modulationTransfer, densityWeight, applyRange } from "./modulation";
+import {
+  modulationTransfer,
+  densityWeight,
+  stackDensityWeight,
+  applyRange,
+} from "./modulation";
+import { ScalarField } from "./ScalarField";
 
 // modulationTransfer is the shared transfer chain (Ableton-LFO inspired):
 //   s → applyRange(range) → +offset → shape(ease) → steps(quantize) → ×amount
@@ -111,5 +117,60 @@ describe("densityWeight (consumer wrapper)", () => {
         Math.max(0, 1 + modulationTransfer(s, cfg))
       );
     }
+  });
+});
+
+// Phase 2b (PRD §5) — the DENSITY channel stacks MULTIPLICATIVELY:
+//   Πᵢ densityWeight(fieldᵢ.sampleSigned(u,v), cfgᵢ) = Πᵢ max(0, 1+transferᵢ).
+// Multiplicative so a NEUTRAL source (weight 1) is a no-op (×1). The accumulator
+// starts from the first source's weight, so N=1 is bit-identical to a lone
+// densityWeight. (Additive-sum is the documented A/B alternative — we ship the
+// PRD's multiplicative default.)
+describe("stackDensityWeight (density multiply)", () => {
+  const rising = () =>
+    ScalarField.fromFunction((u) => 2 * (u - 0.5), { nx: 65, ny: 65 });
+  const flat0 = () => ScalarField.fromFunction(() => 0, { nx: 33, ny: 33 });
+
+  it("N=1 is bit-identical to a single densityWeight", () => {
+    const field = rising();
+    const cfg = { channel: "density", field, amount: 1.5 };
+    const single = densityWeight(field.sampleSigned(0.75, 0.5), cfg);
+    const stacked = stackDensityWeight([cfg], 0.75, 0.5);
+    expect(stacked).toBe(single);
+  });
+
+  it("multiplies two sources' weights", () => {
+    const f1 = rising();
+    const f2 = rising();
+    const c1 = { channel: "density", field: f1, amount: 1 };
+    const c2 = { channel: "density", field: f2, amount: 2 };
+    const w1 = densityWeight(f1.sampleSigned(0.8, 0.5), c1);
+    const w2 = densityWeight(f2.sampleSigned(0.8, 0.5), c2);
+    expect(stackDensityWeight([c1, c2], 0.8, 0.5)).toBeCloseTo(w1 * w2, 10);
+  });
+
+  it("a neutral source (field 0 → weight 1) is a no-op", () => {
+    const c1 = { channel: "density", field: rising(), amount: 1 };
+    const neutral = { channel: "density", field: flat0(), amount: 1 };
+    const alone = stackDensityWeight([c1], 0.8, 0.5);
+    const withNeutral = stackDensityWeight([c1, neutral], 0.8, 0.5);
+    expect(withNeutral).toBeCloseTo(alone, 10);
+  });
+
+  it("stays clamped ≥ 0 (a repelling source cannot go negative)", () => {
+    // left half: field < 0, amount 2 → densityWeight clamps to 0 → product 0.
+    const c1 = { channel: "density", field: rising(), amount: 2 };
+    const c2 = { channel: "density", field: rising(), amount: 1 };
+    expect(stackDensityWeight([c1, c2], 0.1, 0.5)).toBe(0);
+    expect(stackDensityWeight([c1, c2], 0.1, 0.5)).toBeGreaterThanOrEqual(0);
+  });
+
+  it("ignores non-density / fieldless sources; empty stack is neutral 1", () => {
+    const c1 = { channel: "density", field: rising(), amount: 1 };
+    const warp = { channel: "warp", field: rising(), amount: 1 };
+    const fieldless = { channel: "density", amount: 1 };
+    const alone = stackDensityWeight([c1], 0.8, 0.5);
+    expect(stackDensityWeight([c1, warp, fieldless], 0.8, 0.5)).toBe(alone);
+    expect(stackDensityWeight([], 0.8, 0.5)).toBe(1);
   });
 });

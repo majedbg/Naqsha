@@ -5,10 +5,19 @@
  * Given the layer list, derive every modulation edge guide→target: one edge per
  * modulator map whose `targetLayerId` resolves to an existing layer, emitted
  * only for guides that `canProduceField`. Self-maps and dangling targets are
- * skipped. `active` mirrors `resolveModulationForTarget`'s first-match: among
- * all edges INTO a target, the first in `layers` array order is `active:true`,
- * the rest `active:false` (forward-compat with Phase-2b stacking, where the rail
- * shows all but only the first computes today).
+ * skipped. `active` marks, among all edges INTO a target, the first in `layers`
+ * array order as `active:true`, the rest `active:false`.
+ *
+ * NOTE (Phase 2b, PRD §5): the 2D COMPUTE path no longer respects this flag —
+ * `resolveModulationsForTarget` now returns EVERY source and consumers stack
+ * them (warp: vector-sum; density: multiply), so all incoming edges compute.
+ * `active` is retained purely as a RELATIONSHIP/DISPLAY marker for one remaining
+ * COMPUTE consumer plus rail emphasis: Surface-B 3D drape (`three3d/drape.js`,
+ * which still drapes only the active target) and the git-graph rail emphasis
+ * (ModulationRail / LayerTree). The 2D badge now reads "N sources · N active"
+ * (all stack on the canvas); the 3D-drape-still-first-source gap is the one open
+ * follow-up. Leaving `active` unchanged keeps drape behaviorally frozen while 2D
+ * stacking ships.
  *
  * Pure + deterministic: fresh Maps/arrays, never mutates the inputs.
  */

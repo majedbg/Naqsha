@@ -59,3 +59,29 @@ export function modulationTransfer(s, cfg = {}) {
 export function densityWeight(s, cfg = {}) {
   return Math.max(0, 1 + modulationTransfer(s, cfg));
 }
+
+/**
+ * Phase 2b (PRD §5) — DENSITY channel stacking. MULTIPLY the per-source weights:
+ *   Πᵢ densityWeight(fieldᵢ.sampleSigned(u,v), cfgᵢ) = Πᵢ max(0, 1+transferᵢ).
+ * Multiplicative so a NEUTRAL source (weight 1) is a no-op, and the product stays
+ * clamped ≥ 0 (each factor is already ≥ 0). The accumulator starts from the first
+ * source's weight, so N=1 is bit-identical to a lone densityWeight. Sources
+ * without a density field are ignored; an empty stack is the neutral weight 1.
+ *
+ * @param {object[]} sources - resolved modulation objects; each may carry
+ *   {channel, field, amount, ...}. Only channel==='density' with a `field` count.
+ * @param {number} u - unit-domain x
+ * @param {number} v - unit-domain y
+ * @returns {number} non-negative composite weight (1 when no density source)
+ */
+export function stackDensityWeight(sources, u, v) {
+  const dens = Array.isArray(sources)
+    ? sources.filter((s) => s && s.channel === "density" && s.field)
+    : [];
+  if (dens.length === 0) return 1;
+  let w = densityWeight(dens[0].field.sampleSigned(u, v), dens[0]);
+  for (let i = 1; i < dens.length; i++) {
+    w *= densityWeight(dens[i].field.sampleSigned(u, v), dens[i]);
+  }
+  return w;
+}

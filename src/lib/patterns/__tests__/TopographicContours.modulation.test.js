@@ -79,6 +79,44 @@ describe("TopographicContours warp modulation", () => {
     expect(densityChannel).toEqual(baseline);
   });
 
+  // Phase 2b (PRD §5): a composite `params.modulation` carries a `sources` array;
+  // the consumer VECTOR-SUMS every warp source. Two rising sources push vertices
+  // further right than one; a flat (neutral) source is a no-op in the sum.
+  it("stacks multiple warp sources by vector-sum", () => {
+    const s1 = { channel: "warp", field: risingField(), amount: 3 };
+    const s2 = { channel: "warp", field: risingField(), amount: 3 };
+    const single = run({
+      ...BASE_PARAMS,
+      modulation: { ...s1, sources: [s1] },
+    });
+    const stacked = run({
+      ...BASE_PARAMS,
+      modulation: { ...s1, sources: [s1, s2] },
+    });
+    // Two summed rightward displacements shift the mean vertex X further right.
+    expect(meanVertexX(stacked.inst.svgElements)).toBeGreaterThan(
+      meanVertexX(single.inst.svgElements) + 3
+    );
+  });
+
+  it("a flat (zero-gradient) source is a no-op in the warp stack", () => {
+    const warp = { channel: "warp", field: risingField(), amount: 3 };
+    const flat = {
+      channel: "warp",
+      field: ScalarField.fromFunction(() => 0.5, { nx: 33, ny: 33 }),
+      amount: 3,
+    };
+    const single = run({
+      ...BASE_PARAMS,
+      modulation: { ...warp, sources: [warp] },
+    }).inst.svgElements;
+    const withFlat = run({
+      ...BASE_PARAMS,
+      modulation: { ...warp, sources: [warp, flat] },
+    }).inst.svgElements;
+    expect(withFlat).toEqual(single);
+  });
+
   it("keeps canvas draws and SVG byte-identical under warp", () => {
     const field = risingField();
     const { inst, ctx } = run({

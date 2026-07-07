@@ -5,7 +5,7 @@ import { P5Adapter } from './patterns/drawingContext';
 import { PATTERN_CLASSES } from './patterns';
 import ImportedPath from './patterns/ImportedPath';
 import { resolveMoireSource } from './moirePair';
-import { resolveModulationForTarget } from './fields/resolveModulationForTarget';
+import { resolveModulationsForTarget, composeModulationParam } from './fields/resolveModulationForTarget';
 import { resolveMotifHostParams } from './motif/resolveMotifHost';
 import { collectMotifHostGeometry } from './motif/collectHostGeometry';
 import { handlesFor } from './transform/handles';
@@ -208,9 +208,20 @@ export default function useCanvas(
       // unmodulated layer stays byte-identical to baseline (and matches its SVG
       // export). One injection covers BOTH the visible (drawCtx) and hidden
       // (noDrawCtx) calls below, which share this `renderParams`.
-      const mod = resolveModulationForTarget(layer, layers);
-      if (mod) {
-        renderParams = { ...renderParams, modulation: mod };
+      // Phase 2b (PRD §5): a target may accumulate SEVERAL incoming modulations
+      // (guide A's field PLUS guide B's), stacked like LFOs. resolveModulations…
+      // returns ALL of them; we inject a COMPOSITE `params.modulation` that is
+      // the first source's object (so every existing reader — warp/density/
+      // distort/lattice consumers AND the motif-anchor refusal in semanticAnchors
+      // / gridAnchors — sees the identical shape it always did) enriched with a
+      // `sources` array carrying the full stack. Warp/density consumers stack via
+      // stackWarpDisplacement / stackDensityWeight; distort/lattice consume the
+      // first source (no PRD compose rule). N=1 → sources:[only] → byte-identical.
+      const modulation = composeModulationParam(
+        resolveModulationsForTarget(layer, layers)
+      );
+      if (modulation) {
+        renderParams = { ...renderParams, modulation };
       }
 
       // Motif host-params injection (semantic anchors). A motif layer reads its

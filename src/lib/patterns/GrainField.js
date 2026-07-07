@@ -1,6 +1,6 @@
 import { applySymmetryDraw } from './symmetryUtils';
 import { Pattern } from './drawingContext';
-import { densityWeight } from '../fields/modulation';
+import { stackDensityWeight } from '../fields/modulation';
 
 export default class GrainField extends Pattern {
   generate(ctx, seed, params, canvasW, canvasH, color, opacity) {
@@ -73,7 +73,8 @@ export default class GrainField extends Pattern {
           if (densityMod) {
             const u = (cx + halfW) / canvasW;
             const v = (cy + halfH) / canvasH;
-            w = densityWeight(densityMod.field.sampleSigned(u, v), densityMod);
+            // Phase 2b: MULTIPLY every density source (N=1 → single, byte-identical).
+            w = stackDensityWeight(densityMod.sources ?? [densityMod], u, v);
           }
 
           sumX[bestIdx] += cx * w;

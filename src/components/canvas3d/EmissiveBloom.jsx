@@ -51,8 +51,14 @@ function EmissiveBloom({
   // jagged sheet perimeter + ribbon strokes). 8 samples noticeably de-jaggies those
   // edges; cost is trivial under frameloop="demand". (Texture-interior mark blockiness
   // is a separate axis — fixed by mipmaps+anisotropy in Marks.jsx, not here.)
+  // NOTE: autoClear is left at its default (true). We previously passed
+  // autoClear={false} — residue from the old two-composer selective-bloom
+  // technique — which set renderer.autoClear=false for the whole composer pass;
+  // combined with continuous/sparse frames that left the default framebuffer
+  // uncleared between frames and read as flicker. A single SelectiveBloom needs no
+  // such suppression, so we let the RenderPass clear normally.
   return (
-    <EffectComposer autoClear={false} multisampling={8}>
+    <EffectComposer multisampling={8}>
       <SelectiveBloom
         selection={selection}
         lights={lights}

@@ -6,8 +6,8 @@
 // Do NOT import this file (or its canvas3d/* siblings) statically from any 2D
 // render-path module. Pure, three-free logic (e.g. cameraFit) lives under
 // src/lib/three3d and stays on the 2D side of the boundary so it can be unit-tested.
-import { useMemo, useRef, useState, useEffect } from 'react';
-import { Canvas } from '@react-three/fiber';
+import { useMemo, useRef, useState, useEffect, useCallback } from 'react';
+import { Canvas, useThree, useFrame } from '@react-three/fiber';
 import { useBloomSelectionStore, BloomSelectionContext } from './bloomSelection.js';
 import CameraRig from './CameraRig.jsx';
 import SceneEnvironment from './SceneEnvironment.jsx';
@@ -32,7 +32,7 @@ import {
   EXAG_MIN,
 } from '../../lib/three3d/heightSurface.js';
 import { resolveAppearance } from '../../lib/three3d/resolveAppearance.js';
-import { saveCanvasPng } from '../../lib/three3d/snapshotExport.js';
+import { buildSnapshotFilename, downloadDataUrl } from '../../lib/three3d/snapshotExport.js';
 import {
   loadPreview3DSettings,
   savePreview3DSettings,
@@ -51,6 +51,27 @@ import {
 // doesn't re-run every render. Used for height-surface (B, later) + the empty
 // panel-stack state; the real panel-stack box is derived from the sheet specs.
 const PLACEHOLDER_BOX = { min: [-1, -1, -1], max: [1, 1, 1] };
+
+/**
+ * One-shot canvas→PNG capture that runs INSIDE the render loop, at a priority
+ * ABOVE the EffectComposer's priority-1 pass, so it reads the fully composited
+ * frame (bloom + transmission) straight from the live drawing buffer within the
+ * same rAF tick — before the browser clears it. This replaces the global
+ * `gl={{ preserveDrawingBuffer: true }}` we used to keep every frame permanently
+ * readable: that flag forces a copy-based buffer swap (a per-frame cost, and a
+ * flicker contributor) purely to serve the occasional "Save image". Reading one
+ * requested frame in-loop needs no such flag. `requestRef.current` is raised by
+ * the Save button; we lower it and fire `onCapture` with the data URL.
+ */
+function SnapshotCapture({ requestRef, onCapture }) {
+  const gl = useThree((s) => s.gl);
+  useFrame(() => {
+    if (!requestRef.current) return;
+    requestRef.current = false;
+    onCapture(gl.domElement.toDataURL('image/png'));
+  }, 2);
+  return null;
+}
 
 // Default Surface A inter-panel spacing (PRD D11, mm). S6 wires the slider here as
 // local state; persistence to localStorage is S11's job (D13).
@@ -82,8 +103,8 @@ const DEFAULT_BOUNDS_MM = { width: 200, height: 200 };
  *
  * S6 adds the Surface-A stack-spacing slider (0–60mm, default 12mm; D11) and the
  * "Save image" PNG snapshot (D8): the slider drives the sheet z-layout via local
- * state; the export reads the live renderer canvas (preserveDrawingBuffer keeps
- * the last composited bloom/transmission frame readable) through a pure filename
+ * state; the export reads the composited bloom/transmission frame in-loop via
+ * <SnapshotCapture> (no global preserveDrawingBuffer) through a pure filename
  * builder. The 2D SVG/ZIP fabrication export is untouched.
  *
  * @param {{ mode?: string, focusFieldLayerId?: string|null, snapshot?: object|null,
@@ -137,9 +158,14 @@ export default function Scene3D({
     clampSpacing(persisted.spacing ?? spacing),
   );
   const keyLightRef = useRef(null);
-  // Live WebGL renderer captured at Canvas creation (onCreated) so the "Save
-  // image" overlay — which lives OUTSIDE the R3F tree — can read its canvas.
-  const glRef = useRef(null);
+  // "Save image" request flag. The button (outside the R3F tree) raises it; the
+  // in-tree <SnapshotCapture> reads the composited canvas on the next frame and
+  // downloads it. A ref (not state) so raising it never triggers a React render.
+  const captureRequest = useRef(false);
+  const handleCapture = useCallback(
+    (dataUrl) => downloadDataUrl(dataUrl, buildSnapshotFilename({ designName })),
+    [designName],
+  );
   // Stable array so the bloom pass doesn't re-register lights every render.
   const bloomLights = useMemo(() => [keyLightRef], []);
   // Bloom selection store (replaces the looping postprocessing <Selection>/<Select>
@@ -264,18 +290,17 @@ export default function Scene3D({
         data-focus-field={focusFieldLayerId ?? ''}
         dpr={[1, 2]}
         camera={{ position: [3, 3, 4], fov: 50, near: 0.01, far: 1000 }}
-        // Render on demand, not continuously: the scene is static except during
-        // user interaction. OrbitControls (enableDamping) calls invalidate() while
-        // it moves and through the damping tail, and MeshTransmissionMaterial
-        // invalidates while its buffer needs refreshing — so acrylic + damping still
-        // update, but an idle scene stops re-rendering (no constant GPU load/heat).
-        frameloop="demand"
+        // Render continuously while the preview overlay is mounted. `frameloop="demand"`
+        // is incompatible with the @react-three/postprocessing EffectComposer here:
+        // the composer ping-pongs between two internal render targets each pass, and
+        // under demand its sparse, isolated frames (damping tail, pointer-move/hover
+        // invalidations) can present a stale buffer — read as flicker that runs while
+        // frames are pumped and settles when they stop. The Canvas only MOUNTS while
+        // the 3D overlay is open (Canvas3DHost lazy boundary), so "always" costs GPU
+        // only during active preview, not for the whole 2D app.
+        frameloop="always"
         style={{ width: '100%', height: '100%' }}
-        // preserveDrawingBuffer keeps the last COMPOSITED frame (post-bloom /
-        // transmission) readable so the "Save image" PNG (D8) isn't black.
-        gl={{ preserveDrawingBuffer: true }}
         onCreated={({ gl }) => {
-          glRef.current = gl;
           // Surface-A ribbon marks crop to the sheet rectangle via per-material
           // clipping planes (Marks.jsx useSheetClipPlanes); local clipping must be
           // enabled on the renderer for those planes to take effect.
@@ -287,6 +312,7 @@ export default function Scene3D({
             <Selection>/<Select> — see bloomSelection.jsx). The collected
             `bloomSelection` is handed to EmissiveBloom's `selection` prop below. */}
         <BloomSelectionContext.Provider value={registerBloom}>
+          <SnapshotCapture requestRef={captureRequest} onCapture={handleCapture} />
           <CameraRig
             fitBox={fitBox}
             resetSignal={resetSignal}
@@ -362,7 +388,11 @@ export default function Scene3D({
         <button
           type="button"
           data-testid="canvas3d-save-image"
-          onClick={() => saveCanvasPng(glRef.current?.domElement, { designName })}
+          onClick={() => {
+            // Raise the flag; <SnapshotCapture> reads the composited canvas on the
+            // next frame (frameloop="always" guarantees one lands promptly).
+            captureRequest.current = true;
+          }}
           className="rounded-md border border-white/10 bg-black/40 px-2.5 py-1.5 text-xs font-medium text-white/80 backdrop-blur transition hover:bg-black/60 hover:text-white"
         >
           Save image

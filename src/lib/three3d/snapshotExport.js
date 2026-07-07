@@ -67,19 +67,8 @@ export function downloadDataUrl(dataUrl, filename) {
   a.click();
 }
 
-/**
- * Capture a canvas to PNG and download it under the D8 filename. The canvas is
- * the live WebGL renderer.domElement (requires `preserveDrawingBuffer: true` so
- * the last composited frame — bloom + transmission — is still readable). Guards
- * for a missing canvas / non-DOM environment.
- * @param {HTMLCanvasElement|null|undefined} canvas
- * @param {{ designName?: string, now?: Date }} [opts]
- * @returns {string|null} the filename used, or null if nothing was captured
- */
-export function saveCanvasPng(canvas, opts = {}) {
-  if (!canvas || typeof canvas.toDataURL !== 'function') return null;
-  const filename = buildSnapshotFilename(opts);
-  const dataUrl = canvas.toDataURL('image/png');
-  downloadDataUrl(dataUrl, filename);
-  return filename;
-}
+// NOTE: the previous `saveCanvasPng(canvas)` helper (a click-time
+// canvas.toDataURL read) was removed with the global `preserveDrawingBuffer: true`
+// it depended on. Capture now happens in-frame via Scene3D's <SnapshotCapture>
+// (reads the composited buffer within the render loop, then calls
+// buildSnapshotFilename + downloadDataUrl here).

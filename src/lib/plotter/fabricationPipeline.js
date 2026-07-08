@@ -29,6 +29,7 @@ import {
   pathStats, estimateTimeSec,
 } from './pathOps.js';
 import { roleColor } from '../fabrication.js';
+import { clipToSheet } from './clipToSheet.js';
 
 const EMPTY_STATS = Object.freeze({ paths: 0, points: 0, drawMm: 0, travelMm: 0, seconds: 0 });
 
@@ -57,13 +58,43 @@ export function applyOptimizationsToPaths(paths, optimizations) {
 
 // Build the canonical plottable model for a design.
 //
-//   buildPlottableLayers(layers, instances, { optimizations, includeHidden })
-//     → [{ layerId, color, role, paths, stats:{paths,points,drawMm,travelMm,seconds} }]
+//   buildPlottableLayers(layers, instances, { optimizations, includeHidden, clip })
+//     → [{ layerId, color, role, roleColor, paths, stats:{…}, crop? }]
 //
 // One entry per layer that has a renderable instance, in the SAME bottom-up
 // order the SVG export uses ([...layers].reverse()), so a flat concat of the
 // per-layer `paths` is the true plot order. `paths` are post-transform →
-// post-symmetry → post-optimize polylines: { points, closed, color }.
+// post-symmetry → (post-clip) → post-optimize polylines: { points, closed, color }.
+//
+// THE OPT-IN CLIP STAGE (ADR-0002 boundary rule — the plan edits how the machine
+// executes, never what the design is). The Run Plan clips each Operation's
+// geometry to the Sheet BEFORE the Optimizations run, in the ordered pipeline
+// extract → CLIP → optimize, because a stroke that spills past the physical
+// material cannot be fabricated and the maker must see the trimmed result the
+// machine will run. Clipping is DELIBERATELY OPT-IN and fully gated behind
+// `if (clip)`: when the caller omits it, this function executes the EXACT same
+// statements it always has and returns byte-identical entries (same keys, no
+// `crop`). This matters because the existing callers — PlotOverlay and the
+// prepare hooks — must keep seeing the canonical, un-clipped geometry (the
+// fabricationDivergence suite guards that they all still agree); only the Run
+// Plan asks for the Sheet-clipped view.
+//
+//   options.clip = { sheetRect: { x, y, width, height } }  // px, same space as points
+//
+// When clip is present, each entry additionally carries:
+//   crop = {
+//     croppedPathCount,  // originals TRIMMED at an edge (the Receipt's number)
+//     dropped,           // originals culled whole (fully outside / degenerate)
+//     ghost,             // ORIGINAL (pre-clip) geometry of everything not
+//                        //   fabricated as-drawn (dropped + cropped originals),
+//                        //   for the canvas to ghost at the Sheet edge.
+//   }
+// `ghost` is the whole pre-clip original of each affected path, NOT the precise
+// trimmed-away sub-segment — clipToSheet returns only the surviving interior
+// fragments, so the exact off-Sheet sliver is not recoverable without
+// re-implementing the clip. Ghosting the full original outline is the honest,
+// legible thing for the canvas and is the documented deviation from a literal
+// "trimmed segments" surface.
 //
 // Throws if DOMParser is unavailable: extractRenderedPaths silently falls back
 // to a PRE-transform extraction without it, which is exactly the divergence this
@@ -76,7 +107,7 @@ export function buildPlottableLayers(layers, instances, options = {}) {
       'Run in a DOM environment; tests must use `// @vitest-environment jsdom`.'
     );
   }
-  const { optimizations = null, includeHidden = false } = options;
+  const { optimizations = null, includeHidden = false, clip = null } = options;
   if (!layers || !instances) return [];
 
   // Bottom-up, matching exportAllLayersSVG order.
@@ -92,18 +123,39 @@ export function buildPlottableLayers(layers, instances, options = {}) {
     } catch {
       continue;
     }
-    // 1+2: canonical extraction, then optimizations on the real polylines.
+    // 1: canonical extraction.
     const extracted = extractRenderedPaths(rawGroup);
-    const optimized = applyOptimizationsToPaths(extracted, optimizations);
+
+    // 1b: OPT-IN clip to the Sheet, BEFORE optimize. Everything in this block is
+    // gated so the un-clipped path below is statement-for-statement unchanged.
+    let toOptimize = extracted;
+    let crop = null;
+    if (clip && clip.sheetRect) {
+      const { kept, dropped, croppedPathCount } = clipToSheet(extracted, clip.sheetRect);
+      // A fully-inside original passes through `kept` BY REFERENCE (clipToSheet
+      // contract); a cropped original is replaced by NEW fragment objects; a
+      // dropped original is absent from `kept`. So the extracted paths NOT present
+      // by reference in `kept` are exactly the ones not fabricated as-drawn — the
+      // dropped originals plus the cropped originals — which is the ghost set.
+      const keptRefs = new Set(kept);
+      const ghost = extracted.filter((p) => !keptRefs.has(p));
+      toOptimize = kept;
+      crop = { croppedPathCount, dropped, ghost };
+    }
+
+    // 2: optimizations on the real (clipped, if opted-in) polylines.
+    const optimized = applyOptimizationsToPaths(toOptimize, optimizations);
     // 3: per-layer stats.
-    result.push({
+    const entry = {
       layerId: layer.id,
       color: layer.color,
       role: layer.role ?? null,
       roleColor: roleColor(layer.role),
       paths: optimized,
       stats: optimized.length ? statsFor(optimized) : { ...EMPTY_STATS },
-    });
+    };
+    if (crop) entry.crop = crop;
+    result.push(entry);
   }
   return result;
 }

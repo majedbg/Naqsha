@@ -73,9 +73,18 @@ describe('materialArchetypes — registry shape', () => {
 });
 
 describe('materialArchetypes — per-archetype look invariants (§3.2)', () => {
-  it('fluorescent-acrylic glows hard: high edgeGain, low roughness, some transmission', () => {
+  it('fluorescent-acrylic glows hard: hardest edgeGain of all archetypes, low roughness, some transmission', () => {
     const d = ARCHETYPE_DEFAULTS['fluorescent-acrylic'];
-    expect(d.edgeGain).toBeGreaterThanOrEqual(4);
+    // Relative invariant, not an absolute floor: fluorescent is THE hardest-glowing
+    // archetype (was edgeGain 6.0; dialed to 3.0 so it stops blowing out the whole
+    // panel under the dark Studio env). Assert it still out-glows every other
+    // archetype rather than pinning a magic threshold that tuning must chase.
+    const maxOther = Math.max(
+      ...Object.values(ARCHETYPE_DEFAULTS)
+        .filter((a) => a.archetype !== 'fluorescent-acrylic')
+        .map((a) => a.edgeGain ?? 0),
+    );
+    expect(d.edgeGain).toBeGreaterThan(maxOther);
     expect(d.roughness).toBeLessThanOrEqual(0.2);
     expect(d.transmission).toBeGreaterThan(0);
     expect(d.transmission).toBeLessThan(1);

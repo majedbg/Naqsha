@@ -4,8 +4,10 @@ import {
   treatmentForProcess,
   buildPanelMarkSVGs,
   countSvgPaths,
+  countSvgPoints,
   routePanelRenderModes,
   PATH_CAP,
+  POINT_CAP,
   TEXTURE_DPR_FLOOR,
 } from './markTexture.js';
 // Substrate-aware reaction core (read-only here) — lets the substrate tests assert
@@ -63,8 +65,44 @@ describe('shouldUseTextureMode — D6 routing contract', () => {
     expect(shouldUseTextureMode({ pathCount: PATH_CAP + 1, dpr: 2 })).toBe(true);
   });
 
+  it('forces texture strictly ABOVE the vertex-density cap (single dense path)', () => {
+    // A spirograph: ONE path (under PATH_CAP) but thousands of vertices — the
+    // misclassification the density cap fixes.
+    expect(shouldUseTextureMode({ pathCount: 1, pointCount: POINT_CAP, dpr: 2 })).toBe(false); // at cap → ribbon
+    expect(shouldUseTextureMode({ pathCount: 1, pointCount: POINT_CAP + 1, dpr: 2 })).toBe(true);
+  });
+
   it('defaults safely with no args (treats as ribbon-eligible)', () => {
     expect(shouldUseTextureMode()).toBe(false);
+  });
+});
+
+describe('countSvgPoints — vertex-density proxy', () => {
+  it('scores a dense single path far above a sparse one', () => {
+    const sparse = '<svg><path d="M0 0 L10 10" stroke="#f00"/></svg>';
+    const coords = Array.from({ length: 3000 }, (_, i) => `${i} ${i}`).join(' L');
+    const dense = `<svg><path d="M${coords}" stroke="#f00"/></svg>`;
+    expect(countSvgPaths(dense)).toBe(1); // one path element — count cap misses it
+    expect(countSvgPoints(dense)).toBeGreaterThan(POINT_CAP);
+    expect(countSvgPoints(sparse)).toBeLessThan(POINT_CAP);
+  });
+
+  it('is 0 for non-strings', () => {
+    expect(countSvgPoints(null)).toBe(0);
+    expect(countSvgPoints(undefined)).toBe(0);
+  });
+});
+
+describe('routePanelRenderModes — density routing', () => {
+  it('routes a single dense-path panel to TEXTURE (spirograph moiré fix)', () => {
+    const coords = Array.from({ length: 3000 }, (_, i) => `${i} ${i}`).join(' L');
+    const dense = { p1: [{ svg: `<svg><path d="M${coords}" stroke="#f00"/></svg>` }] };
+    expect(routePanelRenderModes(dense, { isMobile: false, dpr: 2 }).p1).toBe('texture');
+  });
+
+  it('keeps a sparse panel on RIBBON', () => {
+    const sparse = { p1: [{ svg: '<svg><path d="M0 0 L10 10" stroke="#f00"/></svg>' }] };
+    expect(routePanelRenderModes(sparse, { isMobile: false, dpr: 2 }).p1).toBe('ribbon');
   });
 });
 

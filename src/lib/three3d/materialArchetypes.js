@@ -36,6 +36,12 @@ export const DEFAULT_ARCHETYPE = 'opaque-tinted';
 export const ARCHETYPE_DEFAULTS = Object.freeze({
   // High edge glow, mid transmission, saturated tint, low roughness — the only
   // archetype that glows hard. (Source corpus: in-code `green-fluorescent`.)
+  // edgeGain/rimGain were dialed back (6.0→3.0, 1.2→0.7): at the old values the
+  // fluorescent blew out the whole panel to solid yellow under the dark 'Studio'
+  // env (IBL dimmed to 0.3) + SelectiveBloom — the emissive had nothing to compete
+  // with, so the glow saturated the face and buried the marks. 3.0/0.7 keeps the
+  // "only archetype that glows hard" character while staying readable in the dark
+  // preset; brighter HDRIs were never the problem.
   'fluorescent-acrylic': Object.freeze({
     archetype: 'fluorescent-acrylic',
     tintHex: '#e6e954',
@@ -43,8 +49,8 @@ export const ARCHETYPE_DEFAULTS = Object.freeze({
     roughness: 0.12,
     metalness: 0,
     ior: 1.49,
-    edgeGain: 6.0,
-    rimGain: 1.2,
+    edgeGain: 3.0,
+    rimGain: 0.7,
     clearcoat: 0,
     texturePath: null,
   }),

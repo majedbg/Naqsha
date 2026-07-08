@@ -43,15 +43,27 @@ import { useBloomRef } from './bloomSelection.js';
 
 // High-DPI raster cap (px) on the longest texture edge — keeps marks crisp under
 // zoom without an unbounded offscreen canvas (PRD D9 perf budget).
-const MAX_TEXTURE_EDGE = 2048;
+//
+// Bumped 2048 → 4096 to fight the RESIDUAL mark moiré on very dense hatches (e.g. a
+// spirograph): at 2048 the finest hatch lines land <1px apart in the raster, so the
+// 2D canvas rasterizer aliases them into interference BEFORE mipmaps can help — and
+// mipmaps can only band-limit what was cleanly resolved to begin with. At 4096 those
+// lines get ~2× the raster pixels, so the base raster (and every mip derived from it)
+// starts clean. COST: a mark texture is 4096²·RGBA ≈ 67MB (+~33% mips) vs ~22MB at
+// 2048 — 4× GPU memory PER (panel × process) layer. Acceptable here because the 3D
+// preview is transient (mounted only while the overlay is open) and the mark-layer
+// count is small, but if a huge multi-panel design ever strains GPU memory / trips a
+// context loss, this single constant is the dial-back knob (3072 ≈ 2.25× is the
+// middle ground). WebGL max texture size is ≥8192 on all target GPUs, so 4096 is safe.
+const MAX_TEXTURE_EDGE = 4096;
 // Raster FLOOR (px) on the longest texture edge. The mark SVG's intrinsic size is
 // the DESIGN size (a 200mm panel decodes to ~756px), so on a small/dense design DPR
 // alone left the offscreen raster well under the cap — the hatch then under-resolved
 // and merged into blocks (directly AND when re-imaged through the translucent slab,
 // the reported fluorescent aliasing). Pinning the floor to the cap rasterizes every
-// mark texture at one bounded 2048px edge regardless of design/display, so the hatch
-// is resolved before mipmaps + max-anisotropy filter it. Bounded: floor == cap, so a
-// mark texture is never larger than the existing perf budget already allowed.
+// mark texture at one bounded edge regardless of design/display, so the hatch is
+// resolved before mipmaps + max-anisotropy filter it. Bounded: floor == cap, so a
+// mark texture is never larger than the (now 4096px) perf budget allows.
 const MIN_TEXTURE_EDGE = MAX_TEXTURE_EDGE;
 // Global emissive multiplier; the per-process depth score scales it per plane.
 const BASE_EMISSIVE = 2.4;
@@ -272,14 +284,6 @@ function deviceProfile() {
  * @param {{ specs?: import('../../lib/three3d/sheetSpecs.js').SheetSpec[],
  *           marksByPanel?: Record<string, Array<{process:string,tint:string,intensity:number,svg:string}>> }} props
  */
-// TEMP DIAGNOSTIC (revert after test): force every panel to TEXTURE mode. Ribbon
-// stroke geometry has no mip chain, so a dense/minified hatch undersamples into
-// crawling moiré; the texture path is mipmapped + anisotropic and should band-limit
-// it to a soft hatch. If the moiré vanishes with this ON, ribbon undersampling is
-// confirmed and the real fix is to route dense/minified marks to texture. Flip back
-// to `false` (or delete) once verified.
-const FORCE_TEXTURE_MODE = false;
-
 export default function Marks({ specs = [], marksByPanel = {} }) {
   const routes = useMemo(
     () => routePanelRenderModes(marksByPanel, deviceProfile()),
@@ -291,7 +295,7 @@ export default function Marks({ specs = [], marksByPanel = {} }) {
         const marks = marksByPanel[spec.panelId];
         if (!marks || marks.length === 0) return null;
         const front = spec.zOffset + spec.thickness / 2;
-        const useRibbon = !FORCE_TEXTURE_MODE && routes[spec.panelId] === 'ribbon';
+        const useRibbon = routes[spec.panelId] === 'ribbon';
         return marks
           .filter((m) => m.svg)
           .map((m, i) => {

@@ -45,6 +45,14 @@ import { materialCategory, materialSheetHex, reactionEmissive } from '../materia
 export const PATH_CAP = 1500;
 // D6 DPR floor: below this device-pixel-ratio (mobile / low-DPI), force texture.
 export const TEXTURE_DPR_FLOOR = 1.5;
+// Vertex-DENSITY cap: above this many path vertices in a panel, force texture mode.
+// The path-COUNT cap (PATH_CAP) misses the dominant moiré case — a single dense
+// stroke (e.g. one spirograph <path>/<polyline> with thousands of vertices) counts
+// as ONE path yet packs a fine hatch. Ribbon geometry has no mip chain, so that hatch
+// undersamples into crawling moiré when the panel is minified; the mipmapped +
+// anisotropic texture path band-limits it. So a geometrically dense panel routes to
+// texture regardless of how few path ELEMENTS it uses.
+export const POINT_CAP = 2000;
 
 // materialPreview.js depth scores (MIX_SCORE / MIX_ENGRAVE / MIX_CUT) — how much
 // material each process removes, reused here as relative emissive brightness. pen
@@ -67,16 +75,19 @@ const WHITE_BG_RECT = '<rect width="100%" height="100%" fill="white"/>';
 /**
  * D6 routing contract: should this panel render via emissive TEXTURE rather than
  * ribbon geometry? Mobile and low-DPI devices force texture; otherwise a panel
- * over the ribbon path-count cap forces texture. (S5 always textures; S10 routes
- * sub-cap desktop panels to ribbons.)
+ * over EITHER the ribbon path-count cap (PATH_CAP) OR the vertex-density cap
+ * (POINT_CAP) forces texture. The density cap catches the single-dense-path case
+ * the count cap misses (spirograph moiré). (S5 always textures; S10 routes sparse,
+ * low-density desktop panels to ribbons.)
  *
- * @param {{ pathCount?:number, isMobile?:boolean, dpr?:number }} [input]
+ * @param {{ pathCount?:number, pointCount?:number, isMobile?:boolean, dpr?:number }} [input]
  * @returns {boolean}
  */
-export function shouldUseTextureMode({ pathCount = 0, isMobile = false, dpr = 2 } = {}) {
+export function shouldUseTextureMode({ pathCount = 0, pointCount = 0, isMobile = false, dpr = 2 } = {}) {
   if (isMobile) return true;
   if (Number.isFinite(dpr) && dpr < TEXTURE_DPR_FLOOR) return true;
-  return Number.isFinite(pathCount) && pathCount > PATH_CAP;
+  if (Number.isFinite(pathCount) && pathCount > PATH_CAP) return true;
+  return Number.isFinite(pointCount) && pointCount > POINT_CAP;
 }
 
 /**
@@ -130,6 +141,23 @@ export function countSvgPaths(svg) {
 }
 
 /**
+ * Coarse VERTEX-DENSITY estimate for the D6 density routing (POINT_CAP). Counts
+ * numeric tokens across the SVG and halves them (~2 numbers per x,y coordinate) —
+ * a monotonic proxy for how many stroke vertices a panel packs, dominated by path
+ * `d` data and polyline/line points (viewBox / stroke-width numbers are a constant
+ * handful, negligible against a dense hatch's thousands). Pure; a single dense
+ * spirograph <path> (one path, thousands of coords) scores high here where
+ * countSvgPaths scores 1 — the misclassification this fixes.
+ * @param {string} svg
+ * @returns {number}
+ */
+export function countSvgPoints(svg) {
+  if (typeof svg !== 'string') return 0;
+  const m = svg.match(/-?\d+(?:\.\d+)?(?:e[+-]?\d+)?/gi);
+  return m ? Math.floor(m.length / 2) : 0;
+}
+
+/**
  * D6 per-panel render-mode routing for Surface A marks (S10). Given the per-panel
  * mark layers (buildPanelMarkSVGs output) and the device profile, decide for EACH
  * panel whether its marks render as true ribbon GEOMETRY (S10, crisp vector) or as
@@ -156,7 +184,10 @@ export function routePanelRenderModes(marksByPanel, { isMobile = false, dpr = 2 
   for (const panelId of Object.keys(entries)) {
     const layers = Array.isArray(entries[panelId]) ? entries[panelId] : [];
     const pathCount = layers.reduce((n, m) => n + countSvgPaths(m && m.svg), 0);
-    out[panelId] = shouldUseTextureMode({ pathCount, isMobile, dpr }) ? 'texture' : 'ribbon';
+    const pointCount = layers.reduce((n, m) => n + countSvgPoints(m && m.svg), 0);
+    out[panelId] = shouldUseTextureMode({ pathCount, pointCount, isMobile, dpr })
+      ? 'texture'
+      : 'ribbon';
   }
   return out;
 }

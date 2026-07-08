@@ -397,12 +397,18 @@ export default function Studio({ submitOrg = null } = {}) {
   const bgColorRef = useRef(bgColor);
   const operationsRef = useRef(operations);
   const customGlyphsRef = useRef(customGlyphs);
+  // P0-3: capture must read the LIVE active Machine Profile. createDocumentIO is
+  // memoized with an all-stable dep array (it never recomputes after mount), so a
+  // render-closure getter would freeze on the mount-time profile and snapshot a
+  // stale value after any switch — hence the ref, exactly like every getter above.
+  const activeProfileIdRef = useRef(activeProfileId);
   useEffect(() => {
     panelsRef.current = panels;
     bgColorRef.current = bgColor;
     operationsRef.current = operations;
     customGlyphsRef.current = customGlyphs;
-  }, [panels, bgColor, operations, customGlyphs]);
+    activeProfileIdRef.current = activeProfileId;
+  }, [panels, bgColor, operations, customGlyphs, activeProfileId]);
   // Getters wrapped in useCallback so the ref reads live in a stable handler
   // (not an inline render-phase arrow), keeping capture reading the latest slice
   // values without re-creating the engine each render.
@@ -411,6 +417,7 @@ export default function Studio({ submitOrg = null } = {}) {
   const getBgColor = useCallback(() => bgColorRef.current, []);
   const getOperations = useCallback(() => operationsRef.current, []);
   const getCustomGlyphs = useCallback(() => customGlyphsRef.current, []);
+  const getActiveProfileId = useCallback(() => activeProfileIdRef.current, []);
   const { capture: captureDoc, restore: restoreDocBase } = useMemo(
     () =>
       createDocumentIO({
@@ -419,6 +426,9 @@ export default function Studio({ submitOrg = null } = {}) {
         getBgColor,
         getOperations,
         getCustomGlyphs, // WI-3: capture the custom-glyph store in each snapshot
+        // P0-3: capture the active Machine Profile so undo/redo restores the
+        // target machine alongside the operations remap it drove (ADR 0002).
+        getActiveProfileId,
         captureAssignments,
         captureCanvas,
         loadLayerSet,
@@ -426,6 +436,18 @@ export default function Studio({ submitOrg = null } = {}) {
         setBgColor,
         restoreOperations: setOperations, // plain non-recording setter (S5)
         setCustomGlyphs, // WI-3: restore resets the store (defaults {} for old snaps)
+        // P0-3 restore setter. The snapshot carries activeProfileId; `outputMode`
+        // already round-trips via the canvas slice (restoreCanvas), so only the bed
+        // overlay (bedSize) is TRANSIENT — not snapshotted — and must be re-derived
+        // from the restored profile so the bed follows the machine on undo, exactly
+        // as handleProfileChange does on the forward path. NOTE (human eyes): the
+        // bed is re-derived to the profile DEFAULT, so a custom bed set after a
+        // switch is NOT recovered on undo (custom beds aren't snapshotted) — a
+        // deliberate approximation, flagged for review.
+        setActiveProfileId: (id) => {
+          setActiveProfileId(id);
+          setBedSize(defaultBedSize(id));
+        },
         restoreAssignments,
         restoreCanvas,
       }),
@@ -435,6 +457,7 @@ export default function Studio({ submitOrg = null } = {}) {
       getBgColor,
       getOperations,
       getCustomGlyphs,
+      getActiveProfileId,
       captureAssignments,
       captureCanvas,
       loadLayerSet,
@@ -606,10 +629,14 @@ export default function Studio({ submitOrg = null } = {}) {
           ? remapped
           : remapped.filter((o) => !isBandOperation(o))
       );
-      // Profile switch is NOT undoable (I9): a pre-remap snapshot's colors/params
-      // no longer fit the new profile, so clear the whole history (preserves the
-      // old resetHistory-on-profile-switch semantics).
-      historyRef.current?.clear();
+      // P0-3 (Run Plan, PRD #73 / ADR 0002): a Machine Profile switch is now a
+      // recorded, UNDOABLE batch — NOT a history.clear(). activeProfileId rides the
+      // snapshot (createDocumentIO), so undo restores the prior machine together
+      // with the operations remap it drove. This function is therefore a PURE
+      // mutation: it must NOT record and must NOT clear — the caller
+      // (recordedProfileChange / handleDocumentSetupApply) wraps it in ONE
+      // recordBatch window. (The stale colors/params of the pre-remap snapshot are
+      // no longer a problem: undo restores the whole coherent prior document.)
       // Mirror the laser/plotter profile into the persisted `outputMode` so the
       // chosen profile round-trips through the `sonoform-canvas` localStorage
       // blob and `activeProfileId` re-seeds from it on next load. This is now a
@@ -621,6 +648,17 @@ export default function Studio({ submitOrg = null } = {}) {
       }
     },
     [setOutputMode, operations]
+  );
+
+  // P0-3: the recorded profile-switch call site. handleProfileChange is a pure
+  // multi-slice mutation (profile + bed + operations remap); recordBatch folds the
+  // whole switch into ONE undoable entry (beginCoalesce captures the pre-switch
+  // document, endCoalesce commits it). Both entry points — the LayerTree machine
+  // selector and Document Setup — route through this so a switch is exactly one
+  // undo step no matter where it originates.
+  const recordedProfileChange = useCallback(
+    (nextProfileId) => recordBatch(() => handleProfileChange(nextProfileId)),
+    [recordBatch, handleProfileChange]
   );
 
   // View > Bed size (UX reframe): picking a named preset shows the bed overlay
@@ -1196,15 +1234,13 @@ export default function Studio({ submitOrg = null } = {}) {
           applyCanvasSize(nextW, nextH);
         }
       };
-      // A profile switch is non-undoable (I9): handleProfileChange calls
-      // history.clear(), so wrapping it in recordBatch would push a doomed entry
-      // against a doc that's about to be cleared. Run that path raw; only the
-      // pure size/unit/margin path records one entry.
-      if (isProfileChange) {
-        applyBody();
-      } else {
-        recordBatch(applyBody);
-      }
+      // P0-3: a Document Setup apply is ALWAYS one undoable entry, profile switch
+      // included. handleProfileChange no longer clears history (it's a pure
+      // mutation now), so the profile + unit + size mutations all fold into ONE
+      // recordBatch window — no double-wrap, since nothing inside applyBody
+      // records on its own (handleProfileChange doesn't record; applyCanvasSize
+      // stays unrecorded so loaders can call it directly).
+      recordBatch(applyBody);
     },
     [activeProfileId, handleProfileChange, applyCanvasSize, unit, setUnit, recordBatch]
   );
@@ -1983,7 +2019,7 @@ export default function Studio({ submitOrg = null } = {}) {
             onSelectLayer={setSelectedLayerId}
             onUpdateLayer={updateLayer}
             onReorderLayers={reorderLayers}
-            onProfileChange={handleProfileChange}
+            onProfileChange={recordedProfileChange}
             // Gear beside the machine selector opens the Document Setup dialog —
             // a second entry point alongside the File menu's "Document Setup…".
             onDocumentSetup={() => setDocumentSetupOpen(true)}

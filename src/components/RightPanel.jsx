@@ -127,6 +127,20 @@ export default function RightPanel({
   // route-preview basis (post-optimize, like the legacy PlotPreviewSection).
   showPlotOverlay = false,
   appliedOptimizations = null,
+  // Run Plan machine view (issue #73 / Wave-3 Lane G). When Lane I drives the plan
+  // canvas state it supplies the runPlanModel slices below; PlotOverlay switches
+  // from the legacy compute-from-layers preview to the machine view (draw tinted by
+  // Operation, travel dashed, crops ghosted, Sheet + Bed, animated run-through).
+  // ALL default so the panel renders (and the app builds) before Lane I wires them:
+  // absent `plotRoute` → PlotOverlay keeps its legacy behaviour, byte-identical.
+  plotRoute = null, // route:[{type:'travel'|'draw',from,to,color}] in execution order
+  plotCrops = null, // crops:[{points,closed,color,layerId}] px
+  plotOpRows = null, // [{opId,color}] tint→Operation lookup for the two-way highlight
+  sheetRect = null, // { x, y, width, height } px — the Sheet work-piece
+  plotPlaying = false, // run the animated head
+  onPlotLocate = () => {}, // canvas click → { opId? | layerId? } so the plan highlights the row
+  onPlotPlayingChange = null, // Play/Pause toggled on canvas → Lane I observes
+  prefersReducedMotion, // bool; PlotOverlay falls back to the CSS query when undefined
   // Canvas interaction (Select/Move/Resize/Rotate + Hand-pan). The shell owns
   // the active tool + selection + per-layer transforms; this panel turns raw
   // pointer events over the canvas into select/transform/pan callbacks. All
@@ -700,10 +714,14 @@ export default function RightPanel({
             />
           );
         })()}
-        {/* Plot preview + overlap overlay (C7 / #15). Sibling of the p5 surface
-            inside the scaled wrapper, so it shares the artwork's coordinate
-            space and the canvas transform. Gated by the shell's Overlays toggle;
-            null when off → clean canvas. */}
+        {/* Run Plan machine view / plot overlay. Sibling of the p5 surface inside
+            the scaled wrapper, so it shares the artwork's coordinate space and the
+            canvas transform. The legacy View▸Overlays toggle is retiring into the
+            plan (issue #73): Lane I drives this mount from the plan's canvas state
+            and passes the runPlanModel slices, at which point PlotOverlay renders
+            the machine view (draw tinted by Operation, travel dashed, crops
+            ghosted, Sheet + Bed, animated run-through). Until Lane I wires them the
+            slices are absent → PlotOverlay's legacy plot preview, unchanged. */}
         {showPlotOverlay && (
           <PlotOverlay
             layers={layers}
@@ -711,6 +729,15 @@ export default function RightPanel({
             canvasW={canvasW}
             canvasH={canvasH}
             appliedOptimizations={appliedOptimizations}
+            route={plotRoute}
+            crops={plotCrops}
+            opRows={plotOpRows}
+            bedSize={bedSize}
+            sheetRect={sheetRect}
+            playing={plotPlaying}
+            onLocate={onPlotLocate}
+            onPlayingChange={onPlotPlayingChange}
+            prefersReducedMotion={prefersReducedMotion}
           />
         )}
         {/* Select overlay. Sits inside the scaled box so pointer coords map

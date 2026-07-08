@@ -1,7 +1,11 @@
 // @vitest-environment jsdom
-import { describe, it, expect } from 'vitest';
-import { render } from '@testing-library/react';
-import PlotOverlay from './PlotOverlay';
+import { describe, it, expect, vi } from 'vitest';
+import { render, fireEvent } from '@testing-library/react';
+import PlotOverlay, {
+  computeRunPlanTiming,
+  runDotPositionAt,
+  RUN_PLAN_TOTAL_MS,
+} from './PlotOverlay';
 
 // Issue #15 (Lane C / C7): the plot preview + overlap warnings become a canvas
 // overlay. PlotOverlay is fully prop-driven (modeled on BedOverlay) so it renders
@@ -155,5 +159,177 @@ describe('PlotOverlay — reflects the design live', () => {
       <PlotOverlay layers={crossing.layers} patternInstances={crossing.patternInstances} canvasW={10} canvasH={10} />
     );
     expect(container.querySelectorAll('[data-overlay="overlap"]').length).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Run Plan machine view (issue #73 / Wave-3 Lane G).
+//
+// When a `route` prop is supplied, PlotOverlay switches from the legacy
+// compute-from-layers preview to the plan's MACHINE VIEW: draw segments tinted
+// by their Operation color, travel segments dashed + faint, crops ghosted at the
+// Sheet edge, the Sheet + Bed drawn, a two-way highlight (canvas click → onLocate
+// so the plan panel highlights the row), and a Play button that runs a dot along
+// the route in EXECUTION order over ~15s. All prop-fed for AGREEMENT with the
+// plan panel — the model (route/crops) is NOT recomputed here.
+// ---------------------------------------------------------------------------
+
+// A prop-fed Run Plan route in EXECUTION order: one travel hop, then two draw
+// segments each carrying its Operation color.
+function machineRoute() {
+  return [
+    { type: 'travel', from: [0, 0], to: [0, 0], color: '#111111' },
+    { type: 'draw', from: [0, 0], to: [10, 0], color: '#cc0000' }, // Operation "cut" tint
+    { type: 'draw', from: [10, 0], to: [10, 10], color: '#00aa55' }, // Operation "score" tint
+  ];
+}
+
+// opRows give the tint→Operation lookup for the two-way highlight.
+const OP_ROWS = [
+  { opId: 'op-cut', color: '#cc0000' },
+  { opId: 'op-score', color: '#00aa55' },
+];
+
+// A crop that fell outside the Sheet; carries its own layer color + layerId.
+const CROPS = [
+  { points: [[100, 100], [120, 100], [120, 120]], closed: true, color: '#3366cc', layerId: 'L9' },
+];
+
+describe('PlotOverlay — Run Plan machine view (prop-fed route)', () => {
+  it('tints each draw segment with its Operation color and dashes/faints travel segments', () => {
+    const { container } = render(
+      <PlotOverlay route={machineRoute()} canvasW={200} canvasH={200} />
+    );
+    const draws = container.querySelectorAll('[data-overlay="route"]');
+    expect(draws.length).toBe(2);
+    // Draw strokes carry the Operation color (the MODEL, not a pixel).
+    expect(draws[0].getAttribute('stroke')).toBe('#cc0000');
+    expect(draws[1].getAttribute('stroke')).toBe('#00aa55');
+
+    const travels = container.querySelectorAll('[data-overlay="travel"]');
+    expect(travels.length).toBe(1);
+    // Travel segments are dashed + carry the faint class.
+    expect(travels[0].getAttribute('stroke-dasharray')).toBeTruthy();
+    expect(travels[0].classList.contains('machine-travel')).toBe(true);
+  });
+
+  it('renders crops as ghosted + visually distinct, honoring the crop color', () => {
+    const { container } = render(
+      <PlotOverlay route={machineRoute()} crops={CROPS} canvasW={200} canvasH={200} />
+    );
+    const cropEls = container.querySelectorAll('[data-overlay="crop"]');
+    expect(cropEls.length).toBe(1);
+    const c = cropEls[0];
+    expect(c.getAttribute('data-ghost')).toBe('true'); // ghosted
+    expect(c.classList.contains('machine-crop')).toBe(true); // visually distinct
+    expect(c.getAttribute('stroke')).toBe('#3366cc'); // honors the crop's own color
+  });
+
+  it('fires onLocate with the Operation id when a draw segment is clicked (two-way highlight)', () => {
+    const onLocate = vi.fn();
+    const { container } = render(
+      <PlotOverlay route={machineRoute()} opRows={OP_ROWS} canvasW={200} canvasH={200} onLocate={onLocate} />
+    );
+    const red = [...container.querySelectorAll('[data-overlay="route"]')].find(
+      (l) => l.getAttribute('stroke') === '#cc0000'
+    );
+    fireEvent.click(red);
+    expect(onLocate).toHaveBeenCalledWith({ opId: 'op-cut' });
+  });
+
+  it('fires onLocate with the layerId when a ghosted crop is clicked', () => {
+    const onLocate = vi.fn();
+    const { container } = render(
+      <PlotOverlay route={machineRoute()} crops={CROPS} canvasW={200} canvasH={200} onLocate={onLocate} />
+    );
+    fireEvent.click(container.querySelector('[data-overlay="crop"]'));
+    expect(onLocate).toHaveBeenCalledWith({ layerId: 'L9' });
+  });
+
+  it('does not fire onLocate when the segment color resolves to no Operation', () => {
+    const onLocate = vi.fn();
+    const { container } = render(
+      <PlotOverlay route={machineRoute()} canvasW={200} canvasH={200} onLocate={onLocate} />
+    );
+    fireEvent.click(container.querySelector('[data-overlay="route"]'));
+    expect(onLocate).not.toHaveBeenCalled();
+  });
+
+  it('draws the Sheet rect from sheetRect and the Bed rect from bedSize', () => {
+    const { container } = render(
+      <PlotOverlay
+        route={machineRoute()}
+        canvasW={200}
+        canvasH={200}
+        sheetRect={{ x: 5, y: 5, width: 100, height: 80 }}
+        bedSize={{ width: 210, height: 297, unit: 'mm' }}
+      />
+    );
+    const sheet = container.querySelector('[data-overlay="sheet"]');
+    expect(sheet).not.toBeNull();
+    expect(sheet.getAttribute('width')).toBe('100');
+    expect(container.querySelector('[data-overlay="bed"]')).not.toBeNull();
+  });
+});
+
+describe('PlotOverlay — run animation (~15s, execution order)', () => {
+  it('computeRunPlanTiming scales the whole route to ~15s by total length', () => {
+    const route = [
+      { type: 'draw', from: [0, 0], to: [10, 0], color: '#a' },
+      { type: 'draw', from: [10, 0], to: [20, 0], color: '#b' },
+    ];
+    const t = computeRunPlanTiming(route);
+    expect(t.totalMs).toBe(RUN_PLAN_TOTAL_MS);
+    expect(t.totalLength).toBeCloseTo(20, 6);
+    // Two equal-length draws → each takes half the ~15s budget, in order.
+    expect(t.segments[0].startMs).toBeCloseTo(0, 6);
+    expect(t.segments[0].endMs).toBeCloseTo(7500, 6);
+    expect(t.segments[1].startMs).toBeCloseTo(7500, 6);
+    expect(t.segments[1].endMs).toBeCloseTo(15000, 6);
+  });
+
+  it('runDotPositionAt walks the route in execution order', () => {
+    const t = computeRunPlanTiming([{ type: 'draw', from: [0, 0], to: [10, 0], color: '#a' }]);
+    expect(runDotPositionAt(t, 0)).toEqual([0, 0]);
+    const mid = runDotPositionAt(t, RUN_PLAN_TOTAL_MS / 2);
+    expect(mid[0]).toBeCloseTo(5, 6);
+    expect(mid[1]).toBeCloseTo(0, 6);
+  });
+
+  it('shows an animated run-dot when playing and motion is allowed', () => {
+    const { container } = render(
+      <PlotOverlay route={machineRoute()} canvasW={200} canvasH={200} playing prefersReducedMotion={false} />
+    );
+    expect(container.querySelector('[data-testid="run-dot"]')).not.toBeNull();
+  });
+
+  it('prefers-reduced-motion renders the static full trace with NO animated dot', () => {
+    const { container } = render(
+      <PlotOverlay route={machineRoute()} canvasW={200} canvasH={200} playing prefersReducedMotion />
+    );
+    // Full static trace is present…
+    expect(container.querySelectorAll('[data-overlay="route"]').length).toBe(2);
+    // …but there is no animated dot.
+    expect(container.querySelector('[data-testid="run-dot"]')).toBeNull();
+  });
+});
+
+describe('PlotOverlay — Play control', () => {
+  it('the Play button toggles the run-through on and reports it out', () => {
+    const onPlayingChange = vi.fn();
+    const { container, getByTestId } = render(
+      <PlotOverlay
+        route={machineRoute()}
+        canvasW={200}
+        canvasH={200}
+        playing={false}
+        prefersReducedMotion={false}
+        onPlayingChange={onPlayingChange}
+      />
+    );
+    expect(container.querySelector('[data-testid="run-dot"]')).toBeNull();
+    fireEvent.click(getByTestId('run-play'));
+    expect(onPlayingChange).toHaveBeenCalledWith(true);
+    expect(container.querySelector('[data-testid="run-dot"]')).not.toBeNull();
   });
 });

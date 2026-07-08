@@ -39,6 +39,12 @@ import StudioSubmitModal from "../components/org/StudioSubmitModal";
 import MotifEditorModal from "../components/motif-editor/MotifEditorModal";
 import { parseDToAnchors, anchorsToD } from "../lib/motif/pathModel";
 import { getGlyph } from "../lib/motif/glyphs";
+
+// Synthetic glyph id for a CREATE session (New motif / Duplicate-to-edit): the
+// working copy is edited off a transient draft and only written to the store on
+// Save, so it needs a stable key for the Preview override without ever being a
+// real store entry. Never persisted.
+const MOTIF_DRAFT_ID = "__motif_draft__";
 import useLayers from "../lib/useLayers";
 import useLayerGroups from "../lib/useLayerGroups";
 import {
@@ -763,6 +769,39 @@ export default function Studio({ submitOrg = null } = {}) {
     [layers, panels, operations, activeProfileId],
   );
   const lensEntry = use3DLensEntry({ colorView, threeD, captureDesign });
+
+  // Motif-editor mini Preview (WI-P2-5, D5): the live full-canvas render inputs
+  // the editor's throttled preview re-stamps through. MIRRORS RightPanel's
+  // canonical useCanvas call exactly — `machineProfile: activeProfileId`,
+  // `colorView: colorView.colorView` (the lens value off the hook object), and
+  // the SAME laser-gated panels expression — so the mini preview matches the real
+  // canvas byte-for-byte. Threaded down only; cheap to recompute.
+  const motifPreviewContext = useMemo(
+    () => ({
+      layers,
+      canvasW,
+      canvasH,
+      bgColor,
+      operations,
+      machineProfile: activeProfileId,
+      colorView: colorView.colorView,
+      panels: activeProfileId === "laser" ? panels : [],
+      customGlyphs,
+      textFont,
+    }),
+    [
+      layers,
+      canvasW,
+      canvasH,
+      bgColor,
+      operations,
+      activeProfileId,
+      colorView.colorView,
+      panels,
+      customGlyphs,
+      textFont,
+    ],
+  );
 
   // Interactive per-layer transform (Select tool: move / resize / rotate).
   // Committed transforms live on `layer.transform` (so they persist + export
@@ -1656,30 +1695,45 @@ export default function Studio({ submitOrg = null } = {}) {
           copy → fork a new glyph + rebind only this layer. Cancel → discard. */}
       {motifEditor &&
         (() => {
-          const editGlyph = getGlyph(motifEditor.glyphId, customGlyphs);
+          // A CREATE session (New motif / Duplicate-to-edit) carries a transient
+          // `draftGlyph` that is NOT in the store — so its Save CREATES + binds a
+          // new glyph, and Cancel discards it with zero document mutation (D6). An
+          // EDIT session resolves the glyph from the store and Saves in place.
+          const isDraft = !!motifEditor.draftGlyph;
+          const editGlyph =
+            motifEditor.draftGlyph ?? getGlyph(motifEditor.glyphId, customGlyphs);
           if (!editGlyph) return null;
           const close = () => setMotifEditor(null);
+          const bindLayerTo = (newId) => {
+            if (!newId) return;
+            const layer = layers.find((l) => l.id === motifEditor.layerId);
+            if (layer) {
+              updateLayer(layer.id, {
+                params: { ...layer.params, glyphRef: newId },
+              });
+            }
+          };
           return (
             <MotifEditorModal
               glyphId={motifEditor.glyphId}
               glyph={editGlyph}
               layers={layers}
+              targetLayerId={motifEditor.layerId}
+              initialTool={motifEditor.initialTool ?? "direct-select"}
               parseD={parseDToAnchors}
               anchorsToD={anchorsToD}
+              previewContext={motifPreviewContext}
               onSave={(glyph) => {
-                updateCustomGlyph?.(motifEditor.glyphId, glyph);
+                if (isDraft) {
+                  // First real write for a drawn-from-scratch / duplicated glyph.
+                  bindLayerTo(addCustomGlyph?.(glyph));
+                } else {
+                  updateCustomGlyph?.(motifEditor.glyphId, glyph);
+                }
                 close();
               }}
               onSaveAsCopy={(glyph) => {
-                const newId = addCustomGlyph?.(glyph);
-                if (newId) {
-                  const layer = layers.find((l) => l.id === motifEditor.layerId);
-                  if (layer) {
-                    updateLayer(layer.id, {
-                      params: { ...layer.params, glyphRef: newId },
-                    });
-                  }
-                }
+                bindLayerTo(addCustomGlyph?.(glyph));
                 close();
               }}
               onCancel={close}
@@ -1847,8 +1901,32 @@ export default function Studio({ submitOrg = null } = {}) {
             // Open the pen editor for a motif row's glyph (WI-P2-2). Built-in
             // rows duplicate-to-edit inside MotifDevice first, so this always
             // receives a CUSTOM glyph id + the originating layer id.
-            onEditGlyph={(glyphId, layerId) =>
-              setMotifEditor({ glyphId, layerId })
+            // A custom glyph opens in place (glyphId set, no draft). A built-in
+            // Duplicate-to-edit passes a DRAFT (3rd arg) + a null id → a CREATE
+            // session keyed by MOTIF_DRAFT_ID; nothing hits the store until Save.
+            onEditGlyph={(glyphId, layerId, draftGlyph = null) =>
+              setMotifEditor({
+                glyphId: draftGlyph ? MOTIF_DRAFT_ID : glyphId,
+                layerId,
+                draftGlyph,
+              })
+            }
+            // "New motif…" (WI-P2-4, draw-from-scratch): open the pen editor on a
+            // blank DRAFT glyph (NOT written to the store — D6: Cancel discards it,
+            // Save creates+binds). Pen tool active so the user draws immediately.
+            onNewMotif={(layerId) =>
+              setMotifEditor({
+                glyphId: MOTIF_DRAFT_ID,
+                layerId,
+                initialTool: "pen",
+                draftGlyph: {
+                  name: "New motif",
+                  tradition: "custom",
+                  paths: [],
+                  viewRadius: 0,
+                  root: { x: 0, y: 0, angle: 0 },
+                },
+              })
             }
           />,
           inspectorSlot

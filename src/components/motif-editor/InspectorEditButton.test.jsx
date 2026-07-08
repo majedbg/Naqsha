@@ -77,7 +77,7 @@ describe('MotifDevice — Edit button', () => {
     expect(addCustomGlyph).not.toHaveBeenCalled();
   });
 
-  it('BUILT-IN row: Edit duplicates the geometry, rebinds the row, then opens the copy', () => {
+  it('BUILT-IN row: Edit forks the geometry into a DRAFT and opens it WITHOUT touching the store (D6)', () => {
     const onEditGlyph = vi.fn();
     const onUpdateLayer = vi.fn();
     const addCustomGlyph = vi.fn(() => 'cg-new');
@@ -98,19 +98,39 @@ describe('MotifDevice — Edit button', () => {
     expect(edit).toHaveAttribute('aria-label', 'Duplicate to edit');
     fireEvent.click(edit);
 
-    // Forked a custom copy of the built-in's geometry (never edits it in place).
-    expect(addCustomGlyph).toHaveBeenCalledTimes(1);
-    const dup = addCustomGlyph.mock.calls[0][0];
-    expect(dup.tradition).toBe('custom');
-    expect(dup.paths).toEqual(MOTIF_GLYPHS.leaf.paths);
-    expect(dup.root).toEqual({ x: 0, y: 0, angle: 0 });
-    // Rebound THIS row to the copy, then opened the editor on it.
-    expect(
-      onUpdateLayer.mock.calls.some(
-        ([id, patch]) => id === 'm1' && patch.params?.glyphRef === 'cg-new'
-      )
-    ).toBe(true);
-    expect(onEditGlyph).toHaveBeenCalledWith('cg-new', 'm1');
+    // The fork is a DRAFT passed to the editor (3rd arg), null id ⇒ create session.
+    // Crucially: NO store write and NO layer rebind happen at open time — that's
+    // deferred to Save, so Cancel discards the fork cleanly (D6).
+    expect(addCustomGlyph).not.toHaveBeenCalled();
+    expect(onUpdateLayer).not.toHaveBeenCalled();
+    expect(onEditGlyph).toHaveBeenCalledTimes(1);
+    const [id, layerId, draft] = onEditGlyph.mock.calls[0];
+    expect(id).toBeNull();
+    expect(layerId).toBe('m1');
+    expect(draft.tradition).toBe('custom');
+    expect(draft.paths).toEqual(MOTIF_GLYPHS.leaf.paths);
+    expect(draft.root).toEqual({ x: 0, y: 0, angle: 0 });
+  });
+
+  it('New motif… fires onNewMotif(layerId) for the row (draw-from-scratch)', () => {
+    const onNewMotif = vi.fn();
+    const motif = motifLayer('m1', 'host1', 'cg-7');
+    render(
+      <Inspector
+        layers={[hostLayer('host1', 'grid'), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+        customGlyphs={{ 'cg-7': customGlyph('cg-7', 'My Vine') }}
+        addCustomGlyph={vi.fn()}
+        onNewMotif={onNewMotif}
+      />
+    );
+    fireEvent.click(screen.getByTestId('motif-toggle'));
+    const newBtn = screen.getByTestId('motif-new');
+    expect(newBtn).toHaveAttribute('aria-label', 'New motif');
+    fireEvent.click(newBtn);
+    expect(onNewMotif).toHaveBeenCalledWith('m1');
   });
 
   it('renders without crashing when onEditGlyph/addCustomGlyph are absent (legacy callers)', () => {

@@ -12,11 +12,21 @@
 // focus-trap / Escape-to-cancel / overlay-close idioms shared with the studio's
 // other modals. Interactivity (anchors, handles, root drag) arrives in later WIs.
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import useMotifEditor, {
   usedByCount,
   boundsFromWorkingCopy,
 } from './useMotifEditor';
+import PenCanvas from './PenCanvas';
+// MiniPreview is LAZY-loaded: it statically imports the real render pipeline
+// (useCanvas → p5 → the gifenc CJS/ESM hazard). A static import here would pull
+// that whole chain into every module that imports this modal — notably Studio —
+// so unrelated Studio/StudioRoute tests (which shield themselves by mocking
+// RightPanel, the OTHER useCanvas path) would break at import time. Lazy() keeps
+// useCanvas OUT of the static graph; it loads only when Preview is actually
+// toggled on. See docs/svg-motif-editor-P2-ORCHESTRATOR.md run log (WI-P2-5).
+const MiniPreview = lazy(() => import('./MiniPreview'));
+import { deleteAnchors } from './penMachine';
 
 /** viewBox string with proportional padding; guards against a degenerate box. */
 function viewBoxFor(working) {
@@ -30,6 +40,14 @@ function viewBoxFor(working) {
   };
 }
 
+// The editor's tools (Illustrator-faithful). Keys P/A/V + Shift+C switch them.
+const TOOLS = [
+  { id: 'pen', label: 'Pen', hint: 'P', testid: 'motif-tool-pen' },
+  { id: 'direct-select', label: 'Select', hint: 'A', testid: 'motif-tool-select' },
+  { id: 'move', label: 'Move', hint: 'V', testid: 'motif-tool-move' },
+  { id: 'convert', label: 'Convert', hint: '⇧C', testid: 'motif-tool-convert' },
+];
+
 export default function MotifEditorModal({
   glyphId,
   glyph,
@@ -37,18 +55,54 @@ export default function MotifEditorModal({
   onSave,
   onSaveAsCopy,
   onCancel,
+  // The tool the editor opens with. "New motif…" (draw-from-scratch) opens with
+  // 'pen'; editing an existing glyph opens with 'direct-select'.
+  initialTool = 'direct-select',
   // Injected pathModel ops (parseD / anchorsToD). Optional in this slice — the
   // read-only render consumes neither; later WIs wire pathModel.js through here.
   parseD,
   anchorsToD,
+  // The live full-canvas render inputs (layers/operations/machineProfile/…),
+  // assembled by Studio, threaded into the mini Preview so it re-stamps the whole
+  // pattern through the SAME pipeline as the real canvas. Null → Preview still
+  // renders but with an empty canvas (harmless; Studio always supplies it).
+  previewContext = null,
+  // The layer being edited — forwarded to MiniPreview so a create-session preview
+  // (New motif / Duplicate-to-edit, not yet bound in the document) still stamps on
+  // its host. Edit sessions are already bound → no effect.
+  targetLayerId = null,
 }) {
-  const { working, setName, serialize } = useMotifEditor(glyph, {
+  const {
+    working,
+    setName,
+    serialize,
+    previewPaths,
+    applyEdit,
+    previewRoot,
+    applyRoot,
+    undo,
+    redo,
+    selection,
+    setSelection,
+  } = useMotifEditor(glyph, {
     parseD,
     anchorsToD,
   });
   // Preview is INERT this slice — state settles the layout; WI-P2-5 wires it to
   // the throttled mini full-canvas preview.
   const [preview, setPreview] = useState(false);
+
+  // Active tool + the pen's "active subpath" being drawn (null = not mid-draw).
+  // penDraft is the single source of truth for mid-draw state (drives Esc/Enter
+  // finish + PenCanvas's close/extend branching).
+  const [tool, setTool] = useState(initialTool);
+  const [penDraft, setPenDraft] = useState(null);
+
+  // Switching tools finishes any in-progress pen path (deselect the draft).
+  const changeTool = useCallback((next) => {
+    setTool(next);
+    setPenDraft(null);
+  }, []);
 
   const dialogRef = useRef(null);
   // Establish the trap now: focus the frame on open so keyboard lands inside it
@@ -57,27 +111,77 @@ export default function MotifEditorModal({
     dialogRef.current?.focus();
   }, []);
 
-  // Keyboard is SCOPED to the editor: stop it leaking to global app shortcuts,
-  // and map Escape → cancel (discard). The scoping matters far more once the pen
-  // hotkeys (P/A/V/…) land; we set the seam here.
+  // Delete the currently-selected anchors and clear the selection. A commit
+  // (applyEdit → one undo step); if nothing is selected it's a no-op.
+  const deleteSelected = useCallback(() => {
+    if (!selection || selection.length === 0) return;
+    applyEdit(deleteAnchors(working.paths, selection));
+    setSelection([]);
+  }, [selection, working.paths, applyEdit, setSelection]);
+
+  // Keyboard is SCOPED to the editor: EVERY handled key stops propagation +
+  // prevents default so the editor's Undo/Delete never leak to the app's GLOBAL
+  // shortcuts (global Delete removes LAYERS; global ⌘Z is document undo). Escape
+  // → cancel; ⌘/Ctrl+Z → modal undo; ⇧⌘Z / Ctrl+Y → modal redo; Delete/Backspace
+  // → delete selected anchor(s).
   const handleKeyDown = useCallback(
     (e) => {
-      e.stopPropagation();
+      e.stopPropagation(); // never leak to global app shortcuts, from anywhere
+      // Esc/Enter FINISH a mid-draw pen path first (Illustrator); with no draft,
+      // Esc cancels the modal and Enter is inert.
       if (e.key === 'Escape') {
         e.preventDefault();
-        onCancel?.();
+        if (penDraft) setPenDraft(null);
+        else onCancel?.();
+        return;
+      }
+      if (e.key === 'Enter' && penDraft) {
+        e.preventDefault();
+        setPenDraft(null);
+        return;
+      }
+      // Never hijack keys a text field owns (Backspace deletes chars, ⌘Z is
+      // native text-undo, letters type) — the name input is a descendant here.
+      const el = e.target;
+      if (
+        el &&
+        (el.tagName === 'INPUT' ||
+          el.tagName === 'TEXTAREA' ||
+          el.isContentEditable)
+      ) {
+        return;
+      }
+      const mod = e.metaKey || e.ctrlKey;
+      if (mod && (e.key === 'z' || e.key === 'Z')) {
+        e.preventDefault();
+        if (e.shiftKey) redo();
+        else undo();
+      } else if (mod && (e.key === 'y' || e.key === 'Y')) {
+        e.preventDefault();
+        redo();
+      } else if (e.key === 'Delete' || e.key === 'Backspace') {
+        e.preventDefault();
+        deleteSelected();
+      } else if (!mod && (e.key === 'c' || e.key === 'C') && e.shiftKey) {
+        // Shift+C → Convert Anchor tool.
+        e.preventDefault();
+        changeTool('convert');
+      } else if (!mod && !e.shiftKey && (e.key === 'p' || e.key === 'P')) {
+        e.preventDefault();
+        changeTool('pen');
+      } else if (!mod && !e.shiftKey && (e.key === 'a' || e.key === 'A')) {
+        e.preventDefault();
+        changeTool('direct-select');
+      } else if (!mod && !e.shiftKey && (e.key === 'v' || e.key === 'V')) {
+        e.preventDefault();
+        changeTool('move');
       }
     },
-    [onCancel]
+    [onCancel, undo, redo, deleteSelected, penDraft, changeTool]
   );
 
   const n = usedByCount(layers, glyphId);
   const { box, span } = viewBoxFor(working);
-  // Root crosshair + non-scaling path stroke sized off the view span so they read
-  // consistently whatever the glyph's coordinate scale.
-  const rootR = span * 0.045;
-  const rx = working.root?.x ?? 0;
-  const ry = working.root?.y ?? 0;
   const gridStep = span / 12;
 
   return (
@@ -134,90 +238,70 @@ export default function MotifEditorModal({
           </button>
         </div>
 
-        {/* Editing sheet — naqsheh paper + faint graticule; path read-only. */}
-        <div className="min-h-0 flex-1 overflow-hidden bg-paper p-4">
-          <svg
-            data-testid="motif-editor-canvas"
-            viewBox={box}
-            preserveAspectRatio="xMidYMid meet"
-            className="h-full w-full"
-            style={{ minHeight: '360px' }}
-          >
-            <defs>
-              <pattern
-                id="motif-editor-grid"
-                width={gridStep}
-                height={gridStep}
-                patternUnits="userSpaceOnUse"
+        {/* Tool strip — Pen / Select / Move / Convert. Compact, Naqsha chrome;
+            the active tool is filled. Keys P/A/V + Shift+C mirror these. */}
+        <div
+          data-testid="motif-toolbar"
+          className="flex shrink-0 items-center gap-1 border-b border-hairline px-4 py-1.5"
+        >
+          {TOOLS.map((t) => {
+            const active = tool === t.id;
+            return (
+              <button
+                key={t.id}
+                type="button"
+                data-testid={t.testid}
+                aria-pressed={active}
+                aria-label={`${t.label} tool (${t.hint})`}
+                title={`${t.label} (${t.hint})`}
+                onClick={() => changeTool(t.id)}
+                className={`rounded-xs px-2 py-0.5 text-[11px] font-medium outline-none transition-colors ${
+                  active
+                    ? 'bg-violet text-paper'
+                    : 'text-ink-soft hover:bg-paper-warm hover:text-ink'
+                }`}
               >
-                <path
-                  d={`M ${gridStep} 0 L 0 0 0 ${gridStep}`}
-                  fill="none"
-                  stroke="var(--hairline)"
-                  strokeWidth="0.5"
-                  vectorEffect="non-scaling-stroke"
-                />
-              </pattern>
-            </defs>
-            <rect
-              x="-100000"
-              y="-100000"
-              width="200000"
-              height="200000"
-              fill="url(#motif-editor-grid)"
-            />
+                {t.label}
+                <span className="ml-1 text-[10px] opacity-60">{t.hint}</span>
+              </button>
+            );
+          })}
+        </div>
 
-            {/* The motif path(s): thin violet ornamental outline, fill:none. */}
-            <g style={{ color: 'var(--violet)' }}>
-              {working.paths.map((p, i) => (
-                <path
-                  key={i}
-                  data-testid="motif-editor-path"
-                  d={p.d}
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  strokeLinejoin="round"
-                  strokeLinecap="round"
-                  vectorEffect="non-scaling-stroke"
+        {/* Editing sheet — naqsheh paper + faint graticule. PenCanvas owns the
+            <svg> (keeps the motif-editor-canvas testid) + the tool furniture; the
+            modal wires its edit/undo/selection/pen-draft/root seams. When Preview
+            is on, the throttled mini full-canvas floats in a corner (unobtrusive,
+            Naqsha tokens) so edits are read against the whole pattern. */}
+        <div className="relative min-h-0 flex-1 overflow-hidden bg-paper p-4">
+          <PenCanvas
+            working={working}
+            box={box}
+            span={span}
+            gridStep={gridStep}
+            selection={selection}
+            tool={tool}
+            penDraft={penDraft}
+            anchorsToD={anchorsToD}
+            onPreview={previewPaths}
+            onCommit={applyEdit}
+            onSelectionChange={setSelection}
+            onPenDraftChange={setPenDraft}
+            onRootPreview={previewRoot}
+            onRootCommit={applyRoot}
+          />
+          {preview && (
+            <div className="absolute bottom-4 right-4 z-10">
+              <Suspense fallback={null}>
+                <MiniPreview
+                  previewContext={previewContext}
+                  glyphId={glyphId}
+                  workingGlyph={serialize()}
+                  targetLayerId={targetLayerId}
                 />
-              ))}
-            </g>
-
-            {/* Root marker — distinct jewel-madder ⊕ crosshair (read-only). */}
-            <g
-              data-testid="motif-editor-root"
-              style={{ color: 'var(--jewel-madder)' }}
-            >
-              <circle
-                cx={rx}
-                cy={ry}
-                r={rootR}
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                vectorEffect="non-scaling-stroke"
-              />
-              <line
-                x1={rx - rootR * 1.6}
-                y1={ry}
-                x2={rx + rootR * 1.6}
-                y2={ry}
-                stroke="currentColor"
-                strokeWidth="1.5"
-                vectorEffect="non-scaling-stroke"
-              />
-              <line
-                x1={rx}
-                y1={ry - rootR * 1.6}
-                x2={rx}
-                y2={ry + rootR * 1.6}
-                stroke="currentColor"
-                strokeWidth="1.5"
-                vectorEffect="non-scaling-stroke"
-              />
-            </g>
-          </svg>
+              </Suspense>
+            </div>
+          )}
         </div>
 
         {/* Footer — discard / fork / commit. Hierarchy: Save is the load-bearing

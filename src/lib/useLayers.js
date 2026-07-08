@@ -57,6 +57,29 @@ function genGlyphId() {
 
 const CUSTOM_GLYPHS_STORAGE_KEY = 'sonoform-custom-glyphs';
 
+// Run Plan applied Optimizations (PRD #73, ADR 0002). The applied-only snapshot
+// rides the SAME local document the layers do, so applying an Optimization
+// survives an F5/reload (it was previously bare useState — it vanished on reload
+// and silently changed what export produced). A sibling localStorage key kept
+// next to sonoform-layers; hydrated on mount and migrated ("none applied") for an
+// old document with no field. Deliberately OUTSIDE the ⌘Z snapshot (its way back
+// is the plan's own Revert).
+const OPTIMIZATIONS_STORAGE_KEY = 'sonoform-optimizations';
+
+// Load the persisted applied-optimizations blob (guest-gated by the caller).
+// Absent/corrupt → undefined so hydrateOptimizations migrates to "none applied".
+function loadOptimizations() {
+  try {
+    const raw = localStorage.getItem(OPTIMIZATIONS_STORAGE_KEY);
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
+    return parsed;
+  } catch {
+    return undefined;
+  }
+}
+
 // Load the per-document custom-glyph map from localStorage (guest-gated by the
 // caller). Tolerates absent/corrupt storage → {} (old docs simply lack the
 // field — there is no migration hook to run).
@@ -172,7 +195,7 @@ function loadLayers() {
 // a no-op mutation (e.g. add/remove blocked at the tier cap, randomize of a
 // locked layer) still leaves a dead undo step that restores an identical doc —
 // harmless (no corruption), refined later if it proves annoying.
-export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYERS, getDefaultOperationId, recordEdit, recordStructural } = {}) {
+export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYERS, getDefaultOperationId, recordEdit, recordStructural, optimizations } = {}) {
   // Hold the injected recorders in refs (synced in an effect, not during render)
   // so the mutators below stay referentially stable — their existing deps are
   // unchanged and memoized consumers don't churn. The injected fns are already
@@ -230,6 +253,14 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
     persistToLocal ? loadCustomGlyphs() : {}
   );
 
+  // Applied-Optimizations restored from local storage (WI Run Plan / ADR 0002),
+  // read ONCE at mount. Returned so the owner (Studio) can hydrate the optimize
+  // hook on mount (undefined for a guest / an old document → "none applied").
+  // Guests hold none (persistToLocal false).
+  const [initialOptimizations] = useState(() =>
+    persistToLocal ? loadOptimizations() : undefined
+  );
+
   // Debounced save to localStorage. 3000ms (undo-history-plan §10/§12): the
   // unified-history Tier-1 writer rides this same cadence, and a longer window
   // coalesces undo/redo bursts. Trade-off: worst-case crash-loss grows from
@@ -246,10 +277,16 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
         // sonoform-custom-glyphs (WI-3) rides the same debounce so guest work
         // survives a reload exactly like layers/panels.
         localStorage.setItem(CUSTOM_GLYPHS_STORAGE_KEY, JSON.stringify(customGlyphs));
+        // sonoform-optimizations (Run Plan / ADR 0002) rides the same debounce so
+        // an applied Optimization survives an F5 exactly like layers/panels.
+        localStorage.setItem(
+          OPTIMIZATIONS_STORAGE_KEY,
+          JSON.stringify(optimizations ?? null)
+        );
       } catch { /* storage full or unavailable */ }
     }, 3000);
     return () => clearTimeout(saveTimer.current);
-  }, [layers, bgColor, panels, customGlyphs]);
+  }, [layers, bgColor, panels, customGlyphs, optimizations]);
 
   // `patternType` optional (from the pattern picker). The `typeof === 'string'`
   // guard means a bare `onClick={addLayer}` (which would pass an event) still
@@ -858,5 +895,9 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
     customGlyphs, addCustomGlyph, updateCustomGlyph, deleteCustomGlyph, setCustomGlyphs,
     panels, setPanels,
     cap, // effective tier layer cap (downstream P6/P7 panel duplicate-cap gating)
+    // Run Plan applied Optimizations restored from local storage at mount (ADR
+    // 0002). The owner hydrates the optimize hook with it on mount; undefined →
+    // "none applied" migration.
+    initialOptimizations,
   };
 }

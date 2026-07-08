@@ -45,6 +45,17 @@ import { getGlyph } from "../lib/motif/glyphs";
 // Save, so it needs a stable key for the Preview override without ever being a
 // real store entry. Never persisted.
 const MOTIF_DRAFT_ID = "__motif_draft__";
+
+// Run Plan title label per Machine Profile (CONTEXT.md vocabulary: "Run Plan:
+// Laser cutting", "Run Plan: Pen plotting"). Deliberately DISTINCT from
+// getProfile().label (the terse machine name — "Laser" / "Pen Plotter" — the
+// status bar shows): the plan titles the RUN, not the machine, so it reads as
+// the fabrication verb. Falls back to the profile's own label for any unknown id.
+const RUN_PLAN_PROFILE_LABELS = {
+  laser: "Laser cutting",
+  plotter: "Pen plotting",
+  dragCutter: "Drag cutting",
+};
 import useLayers from "../lib/useLayers";
 import useLayerGroups from "../lib/useLayerGroups";
 import {
@@ -64,12 +75,27 @@ import AuthButton from "../components/AuthButton";
 import ThemeToggle from "../components/ui/ThemeToggle";
 import { exportAllLayersSVG, exportLayerSVG, buildManifest } from "../lib/svgExport";
 import AIPatternChat from "../components/AIPatternChat";
-import OptimizeControls from "../components/shell/OptimizeControls";
+// Run Plan (Wave-3 Lane I wiring, PRD #73). The plan is the pre-flight
+// destination: runPlanModel is the single derived truth every Run Plan surface
+// reads (panel, machine-view canvas, Export Receipt); RunPlanPanel is its
+// pre-flight face; useRunPlan is the shell-morph open/closed state AppShell
+// provides around the hosted Studio.
+import RunPlanPanel from "../components/shell/RunPlanPanel";
+import { useRunPlan } from "../components/shell/runPlanContext";
+import { runPlanModel } from "../lib/plotter/runPlanModel";
+import { buildExportReceipt } from "../lib/exportReceipt";
+import ExportReceipt from "../components/ExportReceipt";
+import PreferencesModal from "../components/PreferencesModal";
+import {
+  getExportSettings,
+  getGuestExportSettings,
+  writeExportSettings,
+} from "../lib/exportSettings";
 import { getDynamicDefaults } from "../lib/patternRegistry";
 import ShareLinkButton from "../components/ShareLinkButton";
 import { resolveExportColor } from "../lib/fabrication";
 import { seedOperations, addOperation, resolveOperation } from "../lib/operations";
-import { remapOperationsToProfile, defaultBedSize, bedPresetsFor, profileProcesses, defaultMachineParams } from "../lib/machineProfiles";
+import { remapOperationsToProfile, defaultBedSize, bedPresetsFor, profileProcesses, defaultMachineParams, getProfile } from "../lib/machineProfiles";
 import useHistory from "../lib/history/useHistory";
 import { createDocumentIO } from "../lib/history/documentSnapshot";
 import { readTail, writeTail, validateTail } from "../lib/history/persist";
@@ -95,7 +121,7 @@ const ExtractStepper = lazy(() => import("../components/extract/ExtractStepper")
 const LibraryView = lazy(() => import("../components/library/LibraryView"));
 
 export default function Studio({ submitOrg = null } = {}) {
-  const { loading, user, signIn } = useAuth();
+  const { loading, user, signIn, profile } = useAuth();
   const { tier, limits, check } = useGate();
   // P4 global motif library (DECISIONS D1). Loads the signed-in user's promoted
   // motifs (empty when logged-out/offline) and exposes `promote` for "Save to my
@@ -198,6 +224,12 @@ export default function Studio({ submitOrg = null } = {}) {
     revertOptimization,
     appliedOptimizations,
     appliedOpsList,
+    // Run Plan persistence (Lane E deferred to Lane I, ADR 0002). The applied-only
+    // snapshot rides the document blob (cloud + F5/localStorage) so applied
+    // Optimizations survive reload; hydrateOptimizations re-installs a stored blob
+    // ("none applied" migration default) without entering the ⌘Z snapshot.
+    serializedOptimizations,
+    hydrateOptimizations,
   } = useOptimizations();
 
   // === Document default operation (C2 / #11) ===
@@ -319,7 +351,10 @@ export default function Studio({ submitOrg = null } = {}) {
     // Effective tier layer cap — threaded into LayerTree so its per-panel
     // canDuplicatePanel gate refuses a copy that would overflow the cap (P7).
     cap,
-  } = useLayers({ persistToLocal: limits.localStorage, maxLayers: limits.maxLayers, getDefaultOperationId, recordEdit, recordStructural });
+    // Run Plan applied Optimizations restored from local storage at mount (ADR
+    // 0002) — hydrated into the optimize hook on mount below.
+    initialOptimizations,
+  } = useLayers({ persistToLocal: limits.localStorage, maxLayers: limits.maxLayers, getDefaultOperationId, recordEdit, recordStructural, optimizations: serializedOptimizations });
 
   // Pro-shell Inspector + Object-tree slots (B3 / #6, B2 / #5). Null in the
   // legacy layout (no provider), so the portals below are true no-ops when the
@@ -887,10 +922,19 @@ export default function Studio({ submitOrg = null } = {}) {
   const statusBarSlot = useStatusBarSlot();
   const [cursorPos, setCursorPos] = useState(null);
 
-  // Plot preview + overlap overlay toggle (C7 / #15). OFF by default → clean
-  // canvas. Driven from the View > Overlays menu item and surfaced as the
-  // PlotOverlay on the canvas.
-  const [showOverlays, setShowOverlays] = useState(false);
+  // Plot preview / machine view (C7 / #15 → Run Plan, PRD #73). The standalone
+  // View▸Overlays toggle RETIRED into the Run Plan (Phase 2): the canvas machine
+  // view now activates exactly WITH the plan (showPlotOverlay = planOpen) and
+  // reads the runPlanModel route/crops. `plotPlaying` mirrors the on-canvas
+  // Play/Pause so the animated run-through state round-trips; reset on close.
+  const [plotPlaying, setPlotPlaying] = useState(false);
+  const prefersReducedMotion = useMemo(
+    () =>
+      typeof window !== "undefined" && typeof window.matchMedia === "function"
+        ? window.matchMedia("(prefers-reduced-motion: reduce)").matches
+        : false,
+    []
+  );
 
   // Pro-shell operations panel slot (C1 / #10). Null in the legacy layout (no
   // provider) → the panel portal below is a no-op. The same slot presence gates
@@ -920,6 +964,105 @@ export default function Studio({ submitOrg = null } = {}) {
   const { groups, saveGroup, deleteGroup, renameGroup } = useLayerGroups();
   const patternInstancesRef = useRef({});
   const canvasContainerRef = useRef(null);
+
+  // === Run Plan (Wave-3 Lane I, PRD #73) ===
+  // The plan is a shell-morph: AppShell provides the open/closed state around the
+  // hosted Studio and owns the Esc + "Back to design" exits (both call close);
+  // Studio reacts to isOpen — morphing the Inspector into the RunPlanPanel and the
+  // canvas into the machine view — and drives open() from its own entries (Phase 2).
+  const { isOpen: planOpen, open: openRunPlan, close: closeRunPlan } = useRunPlan();
+
+  // Crop-to-Sheet Export preference (ADR 0001). Seeded from the signed-in user's
+  // persisted profile settings, or the guest localStorage namespace. Drives the
+  // Run Plan / Receipt (a cropped-paths warning appears only when ON) and is
+  // threaded through export; see the file-geometry-crop deviation in the report.
+  const [cropToSheet, setCropToSheet] = useState(() =>
+    user ? getExportSettings(profile).cropToSheet : getGuestExportSettings().cropToSheet
+  );
+  const [preferencesOpen, setPreferencesOpen] = useState(false);
+
+  // The Sheet = the work-piece the canvas maps to, in the SAME px space the
+  // extracted path points live in (so runPlanModel can clip against it).
+  const sheetRect = useMemo(
+    () => ({ x: 0, y: 0, width: canvasW, height: canvasH }),
+    [canvasW, canvasH]
+  );
+
+  // Compose the ONE Run Plan model every surface reads (panel headline + rows,
+  // machine-view route/crops, Export Receipt). Reads the LIVE pattern instances
+  // off the ref at call time; `cropOverride` lets an export force a crop basis
+  // without a re-render. Recomputed fresh whenever any fabrication input changes.
+  const computeRunPlan = useCallback(
+    (cropOverride) =>
+      runPlanModel({
+        layers,
+        instances: patternInstancesRef.current || {},
+        operations,
+        appliedOptimizations,
+        profileId: activeProfileId,
+        sheetRect,
+        bedSize,
+        cropToSheet: cropOverride ?? cropToSheet,
+      }),
+    [layers, operations, appliedOptimizations, activeProfileId, sheetRect, bedSize, cropToSheet]
+  );
+
+  // Recompute FRESH each open (story 44): `planOpen` is in the deps, so flipping
+  // the plan open re-reads the current instances; while open, changing an
+  // Operation (speed) or the Optimize stack updates the estimate live (the
+  // pedagogical path). Null when closed → the canvas machine view stays clean.
+  const runPlan = useMemo(
+    () => (planOpen ? computeRunPlan() : null),
+    [planOpen, computeRunPlan]
+  );
+
+  const profileLabel =
+    RUN_PLAN_PROFILE_LABELS[activeProfileId] ?? getProfile(activeProfileId).label;
+  const sheetLine = `Sheet ${Math.round(workPieceWmm)} × ${Math.round(
+    workPieceHmm
+  )} mm · Bed ${Math.round(bedSize.width)} × ${Math.round(bedSize.height)} mm`;
+
+  // Two-way locate (PRD story 25). A panel row (op / warning) OR a canvas segment
+  // click writes the SAME shared highlight target ({ opId } | { layerId } | a
+  // warning's locate payload). Held here so both directions agree; cleared when
+  // the plan closes. The committed RunPlanPanel / PlotOverlay expose no
+  // highlight-IN prop, so this drives the layer selection the design surface
+  // already renders and is surfaced as a data hook — see the report deviation.
+  const [planLocate, setPlanLocate] = useState(null);
+  const handlePlanLocate = useCallback((locate) => {
+    setPlanLocate(locate || null);
+    // Locate a concrete layer when the target names one (warning.locate.layerIds
+    // or a canvas crop's { layerId }); op-row targets carry only { opId }.
+    const layerId = locate?.layerId ?? locate?.layerIds?.[0] ?? null;
+    if (layerId) setSelectedLayerId(layerId);
+  }, []);
+  useEffect(() => {
+    if (!planOpen) {
+      setPlanLocate(null);
+      setPlotPlaying(false);
+    }
+  }, [planOpen]);
+
+  // The machine view's tint→Operation lookup (opId + color) for the two-way
+  // highlight, projected from the same runPlan the panel reads.
+  const plotOpRows = useMemo(
+    () => (runPlan?.opRows ?? []).map((r) => ({ opId: r.opId, color: r.color })),
+    [runPlan]
+  );
+
+  // F5/RELOAD survival (ADR 0002). Hydrate the optimize hook ONCE on mount from
+  // the applied-Optimizations blob useLayers restored from local storage
+  // (undefined for a guest / an old document → hydrateOptimizations migrates to
+  // "none applied"). Mount-only, outside the ⌘Z snapshot — mirrors the Tier-1
+  // history import guard. A later in-session document load re-hydrates via the
+  // cloud/draft seams (useCloudPersistence).
+  const didHydrateOptimizationsRef = useRef(false);
+  useEffect(() => {
+    if (didHydrateOptimizationsRef.current) return;
+    didHydrateOptimizationsRef.current = true;
+    if (initialOptimizations !== undefined) hydrateOptimizations(initialOptimizations);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // === SVG import (issue #12, C4 — place as artwork) ===
   // One import = one layer, via three entry points: File>Import (file picker),
@@ -1082,6 +1225,9 @@ export default function Studio({ submitOrg = null } = {}) {
     setUnit,
     setMargin,
     persistToLocal: limits.localStorage,
+    // Run Plan applied Optimizations fold into the dirty signal (ADR 0002) so
+    // Apply / Revert schedules autosave just like a layer edit.
+    optimizations: serializedOptimizations,
   });
 
   // === Cloud save/load ===
@@ -1113,6 +1259,12 @@ export default function Studio({ submitOrg = null } = {}) {
     panels,
     setPanels,
     customGlyphs, // WI-3: embedded in the saved/draft config as a sibling of layers
+    // Run Plan applied Optimizations (Lane E, ADR 0002). The applied-only snapshot
+    // rides the document config as a sibling of layers so they persist with the
+    // document instead of vanishing on reload; hydrateOptimizations re-installs the
+    // stored blob after a cloud load / draft recover ("none applied" migration).
+    optimizations: serializedOptimizations,
+    hydrateOptimizations,
     loadLayerSet: loadDocumentLayers, // cloud load + draft recovery are document loads (I5)
     applyCanvasSize,
     markCleanFrom,
@@ -1350,6 +1502,65 @@ export default function Studio({ submitOrg = null } = {}) {
     );
   };
 
+  // === Export Receipt (ADR 0001) — the calm one-line summary every export
+  // carries. STORED in state as a stable ref so ExportReceipt's auto-dismiss timer
+  // tracks THE receipt, not each re-render; cleared on dismiss / re-armed only by
+  // a new export. The receipt reads a FRESH runPlan honoring cropToSheet, so the
+  // headline minutes, cropped count, and warning tally agree with the plan by
+  // construction (they read the same model).
+  const [receipt, setReceipt] = useState(null);
+  const dismissReceipt = useCallback(() => setReceipt(null), []);
+
+  // The two-path export commit (ADR 0001): the quick export (⌘E, MenuBar
+  // "Export SVG…") AND the plan's "Export run" both run the SAME handler — write
+  // the file, then surface the receipt. Both honor cropToSheet (threaded into the
+  // receipt's runPlan; file-geometry cropping is the flagged deferral).
+  const runExport = useCallback(
+    (includeHidden = true) => {
+      handleExportAll(includeHidden);
+      setReceipt(buildExportReceipt(computeRunPlan()));
+    },
+    // handleExportAll is a per-render closure; computeRunPlan's deps cover the same
+    // live fabrication inputs it reads, so runExport re-creates alongside it.
+    [computeRunPlan] // eslint-disable-line react-hooks/exhaustive-deps
+  );
+
+  // Preferences: flip crop-to-Sheet and persist it (signed-in → profile settings
+  // via read-before-write; guest → localStorage). Optimistic local update so the
+  // toggle + the plan/receipt reflect it immediately; the async write is
+  // fire-and-forget (exportSettings is failure-tolerant and never throws).
+  const handleChangeCropToSheet = useCallback(
+    (next) => {
+      setCropToSheet(next);
+      writeExportSettings(user?.id, { cropToSheet: next });
+    },
+    [user?.id]
+  );
+
+  // Global export shortcuts (mirrors the useSaveHotkey pattern): ⌘E / Ctrl+E =
+  // quick export (file + receipt), ⇧⌘E = open the Run Plan. Latest handlers held
+  // in refs so the listener binds once and never rebinds. GUARDED against genuine
+  // text-entry targets (isTextEntryTarget) so typing an "e" in a name/param field
+  // never exports, and preventDefault()'d so the browser never hijacks the combo.
+  const runExportRef = useRef(runExport);
+  const openRunPlanRef = useRef(openRunPlan);
+  useEffect(() => {
+    runExportRef.current = runExport;
+    openRunPlanRef.current = openRunPlan;
+  });
+  useEffect(() => {
+    const onKeyDown = (e) => {
+      if (e.key !== "e" && e.key !== "E") return;
+      if (!(e.metaKey || e.ctrlKey)) return;
+      if (isTextEntryTarget(e.target)) return;
+      e.preventDefault();
+      if (e.shiftKey) openRunPlanRef.current?.();
+      else runExportRef.current?.(true);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
   // Per-panel ZIP export (Naqsha Panels WI-6, spec §3). Laser-only affordance:
   // bundles one SVG per VISIBLE panel + a combined SVG into a timestamped ZIP.
   // Mirrors handleExportAll's option shape; `exportLayer` spreads each layer so
@@ -1473,7 +1684,14 @@ export default function Studio({ submitOrg = null } = {}) {
     // off-screen. `h-full min-h-0` makes it fit its container so that row stays in
     // view. (AppShell:246 / MobileStudio:109 are the real viewport roots and keep
     // h-dvh.)
-    <div className="flex flex-col h-full min-h-0 bg-paper">
+    <div
+      className="flex flex-col h-full min-h-0 bg-paper"
+      // Two-way locate observable (PRD story 25). The shared highlight target set
+      // by BOTH a RunPlanPanel row click AND an on-canvas segment/crop click; the
+      // committed panel/overlay expose no highlight-IN prop, so this surfaces the
+      // located target (op / layer) here. See the report's locate deviation.
+      data-run-plan-locate={planLocate ? JSON.stringify(planLocate) : undefined}
+    >
       {/* Hidden file input backing File > Import (issue #12). Click is triggered
           by the menu item; reads the chosen .svg and adds one artwork layer. */}
       <input
@@ -1568,8 +1786,20 @@ export default function Studio({ submitOrg = null } = {}) {
           bedSize={bedSize}
           showBed={showBed}
           onCursorMove={setCursorPos}
-          showPlotOverlay={showOverlays}
+          // Run Plan machine view (PRD #73). The canvas morphs into the machine
+          // view exactly WITH the plan: the overlay mounts when the plan is open,
+          // fed the SAME runPlanModel the panel reads (route tinted by Operation,
+          // ghosted crops, animated run-through). Closed → null slices → clean canvas.
+          showPlotOverlay={planOpen}
           appliedOptimizations={appliedOptimizations}
+          plotRoute={runPlan?.route ?? null}
+          plotCrops={runPlan?.crops ?? null}
+          plotOpRows={plotOpRows}
+          sheetRect={sheetRect}
+          plotPlaying={plotPlaying}
+          onPlotLocate={handlePlanLocate}
+          onPlotPlayingChange={setPlotPlaying}
+          prefersReducedMotion={prefersReducedMotion}
           activeTool={activeTool}
           transforms={canvasTransforms}
           selectedNodeId={selectedLayerId}
@@ -1812,7 +2042,12 @@ export default function Studio({ submitOrg = null } = {}) {
             onOpen={() => setUI("showLoadModal", true)}
             onExamples={() => setUI("showExamples", !showExamples)}
             onImport={handleImportClick}
-            onExport={() => handleExportAll(true)}
+            // Quick export (⌘E): write the file AND surface an Export Receipt
+            // (ADR 0001) — never a silent export. Run plan… (⇧⌘E) opens the
+            // pre-flight destination. Preferences… opens the crop-to-Sheet toggle.
+            onExport={() => runExport(true)}
+            onRunPlan={openRunPlan}
+            onOpenPreferences={() => setPreferencesOpen(true)}
             onSubmitToOrg={user || submitOrg ? () => setUI("showSubmitModal", true) : undefined}
             onSave={handleSaveLayerGroup}
             onSaveToCloud={onCloudSaveIntent}
@@ -1831,8 +2066,6 @@ export default function Studio({ submitOrg = null } = {}) {
             onHideBed={handleHideBed}
             onUndo={canUndo ? undo : undefined}
             onRedo={canRedo ? redo : undefined}
-            onToggleOverlays={() => setShowOverlays((v) => !v)}
-            overlaysOn={showOverlays}
             onGenerateAI={() =>
               handleOpenAIChat(
                 layers.find((l) => l.id === selectedLayerId) || null
@@ -1917,8 +2150,28 @@ export default function Studio({ submitOrg = null } = {}) {
       {/* Pro-shell param inspector (B3 / #6). Portaled into the shell's right
           Inspector region when the slot is present; renders nothing in the
           legacy layout (slot is null → no-op). */}
+      {/* Pro-shell right column morph (Run Plan, PRD #73). When the plan is open
+          the RunPlanPanel REPLACES the Inspector in the very same slot — the
+          pre-flight face where upstream-live editing gives way to preview →
+          apply → export. Fed the single runPlanModel + the optimize handlers;
+          onLocate drives the two-way highlight; onExportRun runs the shared
+          export (file + Receipt); onClose calls the shell's close(). */}
       {inspectorSlot &&
         createPortal(
+          planOpen ? (
+            <RunPlanPanel
+              runPlan={runPlan}
+              profileLabel={profileLabel}
+              sheetLine={sheetLine}
+              onLocate={handlePlanLocate}
+              optimizations={optimizations}
+              onUpdateOptimization={updateOptimization}
+              onApplyOptimization={applyOptimization}
+              onRevertOptimization={revertOptimization}
+              onExportRun={() => runExport(true)}
+              onClose={closeRunPlan}
+            />
+          ) : (
           <Inspector
             layers={layers}
             // For a Moiré role-B selection this is the partner-A id, so edits
@@ -2000,7 +2253,8 @@ export default function Studio({ submitOrg = null } = {}) {
                 updateLayer(layerId, { params });
               })
             }
-          />,
+          />
+          ),
           inspectorSlot
         )}
 
@@ -2112,6 +2366,9 @@ export default function Studio({ submitOrg = null } = {}) {
             cursor={cursorPos}
             profileId={activeProfileId}
             bedSize={bedSize}
+            // The machine/bed cluster opens the Run Plan (PRD #73) — tap the
+            // machine to see what it will do.
+            onOpenRunPlan={openRunPlan}
           />,
           statusBarSlot
         )}
@@ -2124,26 +2381,21 @@ export default function Studio({ submitOrg = null } = {}) {
           undo/redo history so library + assignment changes are reversible. */}
       {operationsPanelSlot &&
         createPortal(
-          <>
-            <OperationsPanel
-              operations={operations}
-              profileId={activeProfileId}
-              onCommitOperations={commitOperations}
-              onAddOperation={handleAddOperation}
-            />
-            {/* Re-homed optimize controls (#16 AC2). Sibling of OperationsPanel
-                in the SAME shell region so OperationsPanel (and its tests) stay
-                untouched. Wired to the surviving useOptimizations API; the
-                applied state already feeds export + the plot overlay. */}
-            <OptimizeControls
-              optimizations={optimizations}
-              onUpdate={updateOptimization}
-              onApply={applyOptimization}
-              onRevert={revertOptimization}
-            />
-          </>,
+          <OperationsPanel
+            operations={operations}
+            profileId={activeProfileId}
+            onCommitOperations={commitOperations}
+            onAddOperation={handleAddOperation}
+          />,
           operationsPanelSlot
         )}
+      {/* The Optimize stack's bottom-left shelf mount RETIRED (Run Plan, PRD
+          #73): Optimize now lives ONLY inside the Run Plan's pre-flight face
+          (RunPlanPanel renders OptimizeRows), the deliberate commit-to-the-machine
+          step. The same useOptimizations handlers (updateOptimization /
+          applyOptimization / revertOptimization) are wired straight into the panel
+          above, so the applied state that feeds export + the machine view is
+          unchanged — only its home moved. OptimizeControls is no longer imported. */}
 
       {/* Document Setup dialog (C6 / #14; UX reframe). Gated on the pro-shell
           slots so it is live ONLY in the pro shell and a true no-op in the
@@ -2249,6 +2501,30 @@ export default function Studio({ submitOrg = null } = {}) {
           />
         </Suspense>
       )}
+
+      {/* Export Receipt (ADR 0001) — the calm one-line summary that accompanies
+          EVERY export (⌘E or the plan's "Export run"), so an export is never
+          silent. Held in state (stable ref) so its auto-dismiss timer tracks the
+          receipt, not each re-render; the "→ Run plan" link opens the plan. */}
+      {receipt && (
+        <div className="fixed bottom-4 left-1/2 z-50 -translate-x-1/2">
+          <ExportReceipt
+            receipt={receipt}
+            onOpenPlan={openRunPlan}
+            onDismiss={dismissReceipt}
+          />
+        </div>
+      )}
+
+      {/* Preferences modal (ADR 0001) — opened from Edit▸Preferences…. Currently
+          the single crop-to-Sheet Export toggle; the flip persists via
+          exportSettings (profile settings signed-in, localStorage guest). */}
+      <PreferencesModal
+        open={preferencesOpen}
+        onClose={() => setPreferencesOpen(false)}
+        cropToSheet={cropToSheet}
+        onChangeCropToSheet={handleChangeCropToSheet}
+      />
 
       <ConfirmDialog
         open={pendingExample !== null}

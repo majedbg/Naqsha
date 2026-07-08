@@ -81,6 +81,42 @@ basic shapes), built as the SAFE incremental version with fuller options flagged
   deviation. Space-reposition REUSES the existing `spaceRef` (no 2nd space path); hook the `pen-append`
   branch in `onPointerMove`. LOCKED-table scan confirms these two are the ONLY remaining gaps.
 
+## ✅ P5 COMPLETE — all 3 slices on main + pushed (`origin/main` @ `dda8b89`). Full suite 3960 / 54 skip / 0 fail. Lint clean.
+- Commits: `3e6f227` (slices 1+3), `dda8b89` (slice 2). Tree clean; no 3D WIP touched.
+
+## Human `npm run dev` verification gate (green tests CANNOT see live auth/DB, real keyboard/pointer, or end-to-end import fidelity)
+Prereq: the P4 migration `20250101000013_user_motifs.sql` must already be applied (P4 checklist step 1).
+1. **Pen `+`/`−` key tools (Slice 1):** open the editor on a custom motif → press **`+`** (or `=`) → the
+   **Add Anchor** tool activates; click a segment → an anchor is added on it. Press **`−`** (or `_`) →
+   **Delete Anchor** tool; click an anchor → it's removed (neighbors rejoin). The pen-HOVER add/delete
+   (idle Pen over segment/anchor) still works too.
+2. **Space-reposition while placing (Slice 1):** with the **Pen (P)** tool, click-DRAG to start a smooth
+   anchor, then HOLD **Space** mid-drag → the anchor POINT follows the cursor (repositioning) instead of
+   pulling the handle; release Space → handle-pull resumes. (Space with no active placement still pans.)
+3. **Shift-45° constrain (Slice 1, ratified extra):** hold **Shift** while pen-drawing a handle and while
+   V/Move-dragging a path → motion snaps to 45° increments.
+4. **Save-to-library feedback (Slice 2a):** sign in → open the editor → **Save to my library** → button
+   shows **Saving…** then **Saved ✓** (or **Couldn't save** in madder on failure), then returns to rest.
+   Confirm a row lands in `user_motifs`. Logged-out → the button reads "Sign in to save to library".
+5. **Single-undo copy-on-use (Slice 2b):** new/other document → Motif device picker → select a motif from
+   **My library** → it's copied in + placed. Press **⌘Z ONCE** → the whole placement reverts (both the
+   copied glyph AND the row's rebind) in a single undo. ⌘⇧Z redoes it.
+6. **Real-world SVG import (Slice 3 — riskiest, verify carefully):** "Import SVG as motif…" an ACTUAL
+   Illustrator/Figma export containing (a) basic shapes (`<rect>`/`<circle>`/`<polygon>`) and (b) a group
+   or element `transform` (translate/scale/rotate) → confirm the motif imports and PLACES in the right
+   position/scale (transforms flattened, shapes converted). A plain path-only SVG must import exactly as
+   before (verbatim `d`). A nested multi-`<g>`-transform SVG is EXPECTED to only partially flatten (top
+   level honored only when a single `<g>`) — documented follow-up, must not crash.
+
+## Deferred / flagged follow-ups (recorded)
+- **Import nested-group transform chains + a real DOMParser extractor** (Slice 3): the enhanced extractor
+  stays regex/no-DOM → element-own + a SINGLE top-level transform only; multiple/nested `<g>` matrix
+  chains are NOT flattened (degrade gracefully, never crash). A DOMParser-based extractor would close
+  this but is a browser-only architectural choice worth the user's input — NOT built unattended.
+- **Studio→recordBatch wiring has no full Studio-level integration test** (idiomatic — Studio is
+  impractical to render-test directly). The recordBatch mechanism + the Inspector seam-call are unit-
+  proven; the real Studio callback is closed only by human check #5 above.
+
 ## Run log
 - **2026-07-08 (start):** Read DECISIONS + P2-PLAN (LOCKED table) + P2/P4 orchestrators. Recon'd
   penMachine ops, PenCanvas pen-append/space-pan, modal handleKeyDown + save-to-library footer,

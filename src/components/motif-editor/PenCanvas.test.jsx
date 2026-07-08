@@ -471,6 +471,161 @@ describe('PenCanvas — pan / zoom / Shift-constrain', () => {
   });
 });
 
+// ── PenCanvas — Space mid-pen-append repositions the anchor (Illustrator) ────
+// Phase 5 Slice 1 gap-close: "Space while PLACING a pen anchor = reposition
+// that anchor" (docs/svg-motif-editor-P2-PLAN.md hotkey table). Reuses the SAME
+// spaceRef pan flag; only the pen-append branch of onPointerMove changes.
+describe('PenCanvas — pen-append + Space reposition', () => {
+  const blank = {
+    name: 'New',
+    tradition: 'custom',
+    viewRadius: 0,
+    root: { x: 0, y: 0, angle: 0 },
+    paths: [],
+  };
+
+  it('holding Space mid-drag moves the anchor POINT (corner, no handle); releasing resumes the handle-pull from THAT point', () => {
+    const onPreview = vi.fn();
+    const onCommit = vi.fn();
+    const working = makeWorkingCopy(blank, parseDToAnchors);
+    render(
+      <PenCanvas
+        working={working}
+        box="0 0 100 100"
+        span={100}
+        gridStep={8}
+        selection={[]}
+        tool="pen"
+        penDraft={null}
+        anchorsToD={anchorsToD}
+        onPreview={onPreview}
+        onCommit={onCommit}
+        onSelectionChange={vi.fn()}
+        onPenDraftChange={vi.fn()}
+      />
+    );
+    const svg = screen.getByTestId('motif-editor-canvas');
+    const lastPreview = () => {
+      const paths = onPreview.mock.calls[onPreview.mock.calls.length - 1][0];
+      return paths[paths.length - 1].model.subpaths[0].anchors[0];
+    };
+
+    // Place the anchor at (20,20), then drag WITHOUT space: normal behavior —
+    // the out handle follows the cursor, point stays put.
+    fireEvent.pointerDown(svg, { clientX: 20, clientY: 20, pointerId: 1 });
+    fireEvent.pointerMove(svg, { clientX: 30, clientY: 20, pointerId: 1 });
+    let a = lastPreview();
+    expect(a.type).toBe('smooth');
+    expect(a.x).toBeCloseTo(20, 3);
+
+    // Hold Space: further move REPOSITIONS the point instead (corner, no handle).
+    fireEvent.keyDown(window, { key: ' ', code: 'Space' });
+    fireEvent.pointerMove(svg, { clientX: 40, clientY: 25, pointerId: 1 });
+    a = lastPreview();
+    expect(a.type).toBe('corner');
+    expect(a.x).toBeCloseTo(40, 3);
+    expect(a.y).toBeCloseTo(25, 3);
+
+    // Release Space: dragging resumes pulling a SMOOTH handle, from the
+    // REPOSITIONED point (40,25) — not the original down-point (20,20).
+    fireEvent.keyUp(window, { key: ' ', code: 'Space' });
+    fireEvent.pointerMove(svg, { clientX: 55, clientY: 25, pointerId: 1 });
+    fireEvent.pointerUp(svg, { clientX: 55, clientY: 25, pointerId: 1 });
+
+    // One undo step for the whole gesture.
+    expect(onCommit).toHaveBeenCalledTimes(1);
+    const committed = onCommit.mock.calls[0][0];
+    const final = committed[committed.length - 1].model.subpaths[0].anchors[0];
+    expect(final.type).toBe('smooth');
+    expect(final.x).toBeCloseTo(40, 3);
+    expect(final.y).toBeCloseTo(25, 3);
+    expect(final.out.x).toBeCloseTo(55, 3);
+  });
+});
+
+// ── PenCanvas — Shift 45°-constrain also covers pen-DRAW + whole-path MOVE ───
+// Table row "Shift (while dragging/drawing) — Constrain to 45° increments" was
+// only wired for anchor/handle/root drags; the pen tool's click-drag (placing a
+// smooth handle) and the V/Move-path drag never read shiftKey. Closed alongside
+// Gap A/B as a genuine LOCKED-table gap found on re-scan (small, same pattern).
+describe('PenCanvas — Shift constrains pen-draw and whole-path move', () => {
+  const blank = {
+    name: 'New',
+    tradition: 'custom',
+    viewRadius: 0,
+    root: { x: 0, y: 0, angle: 0 },
+    paths: [],
+  };
+
+  it('Shift during a pen click-drag snaps the out-handle to a 45° ray from the anchor', () => {
+    const onPreview = vi.fn();
+    const working = makeWorkingCopy(blank, parseDToAnchors);
+    render(
+      <PenCanvas
+        working={working}
+        box="0 0 100 100"
+        span={100}
+        gridStep={8}
+        selection={[]}
+        tool="pen"
+        penDraft={null}
+        anchorsToD={anchorsToD}
+        onPreview={onPreview}
+        onCommit={vi.fn()}
+        onSelectionChange={vi.fn()}
+        onPenDraftChange={vi.fn()}
+      />
+    );
+    const svg = screen.getByTestId('motif-editor-canvas');
+    // Anchor placed at (20,20); drag with Shift toward (30,31) — a (10,11) raw
+    // delta, ~47.7° — snaps to the nearest 45° ray (equal x/y offset).
+    fireEvent.pointerDown(svg, { clientX: 20, clientY: 20, pointerId: 1 });
+    fireEvent.pointerMove(svg, { clientX: 30, clientY: 31, shiftKey: true, pointerId: 1 });
+    const paths = onPreview.mock.calls[onPreview.mock.calls.length - 1][0];
+    const a = paths[paths.length - 1].model.subpaths[0].anchors[0];
+    expect(a.type).toBe('smooth');
+    expect(a.out.x - 20).toBeCloseTo(a.out.y - 20, 6);
+  });
+
+  it('Shift while dragging the whole path (V) constrains the move to a 45° ray', () => {
+    const glyph = {
+      name: 'Line',
+      tradition: 'custom',
+      viewRadius: 30,
+      root: { x: 0, y: 0, angle: 0 },
+      paths: [{ d: 'M10,10 L30,10', closed: false }],
+    };
+    const onCommit = vi.fn();
+    const working = makeWorkingCopy(glyph, parseDToAnchors);
+    render(
+      <PenCanvas
+        working={working}
+        box="0 0 100 100"
+        span={100}
+        gridStep={8}
+        selection={[]}
+        tool="move"
+        anchorsToD={anchorsToD}
+        onPreview={vi.fn()}
+        onCommit={onCommit}
+        onSelectionChange={vi.fn()}
+      />
+    );
+    const svg = screen.getByTestId('motif-editor-canvas');
+    // Grab the path on its segment (model x=20,y=10 is on M10,10 L30,10); drag
+    // with Shift toward (30,21) — a slightly-off-diagonal (10,11) raw delta —
+    // and it should snap the MOVE to the 45° diagonal (equal x/y offset).
+    fireEvent.pointerDown(svg, { clientX: 20, clientY: 10, pointerId: 1 });
+    fireEvent.pointerMove(svg, { clientX: 30, clientY: 21, shiftKey: true, pointerId: 1 });
+    fireEvent.pointerUp(svg, { clientX: 30, clientY: 21, shiftKey: true, pointerId: 1 });
+    const committed = onCommit.mock.calls[0][0];
+    const a0 = committed[0].model.subpaths[0].anchors[0];
+    // Started at (10,10); a 45° move keeps dx === dy.
+    expect(a0.x - 10).toBeCloseTo(a0.y - 10, 6);
+    expect(a0.x).toBeGreaterThan(10);
+  });
+});
+
 // ── MotifEditorModal — editor hotkey scoping (guard + canvas delete) ─────────
 describe('MotifEditorModal — key scoping', () => {
   // Three collinear corner anchors: deleting the middle one leaves 2 → the

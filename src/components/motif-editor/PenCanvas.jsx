@@ -216,6 +216,31 @@ export default function PenCanvas({
     return true;
   }
 
+  // Add an anchor where `pt` hits a segment. Shared by Pen-hover-over-segment
+  // (idle) AND the dedicated Add-Anchor (`+`/`=`) tool below — same commit +
+  // select-the-new-anchor behavior either way. Returns whether it hit.
+  function addAnchorAt(pt) {
+    const seg = hitTestSegment(paths, pt, tol);
+    if (!seg) return false;
+    const { paths: np, target } = addAnchorOnSegment(paths, seg);
+    onCommit?.(np);
+    if (target) {
+      onSelectionChange?.([
+        { pathIndex: target.pathIndex, subpathIndex: target.subpathIndex, anchorIndex: target.anchorIndex },
+      ]);
+    }
+    return true;
+  }
+
+  // Delete the anchor at a hit-test result. Shared by Pen-hover-over-anchor
+  // (idle) AND the dedicated Delete-Anchor (`-`/`_`) tool below. Returns whether
+  // it deleted.
+  function deleteAnchorAt(hit) {
+    if (hit?.part !== 'anchor') return false;
+    onCommit?.(deleteAnchors(paths, [hit]));
+    return true;
+  }
+
   // ── Pen (P) — draw + structural edits. ────────────────────────────────────
   function penDown(e, pt) {
     const hit = hitTest(paths, pt, tol);
@@ -236,21 +261,8 @@ export default function PenCanvas({
     // (−), pen over a segment adds an anchor on it (+). Gated on no active draft so
     // mid-draw clicks always extend rather than mis-fire.
     if (!penDraft) {
-      if (hit?.part === 'anchor') {
-        onCommit?.(deleteAnchors(paths, [hit]));
-        return;
-      }
-      const seg = hitTestSegment(paths, pt, tol);
-      if (seg) {
-        const { paths: np, target } = addAnchorOnSegment(paths, seg);
-        onCommit?.(np);
-        if (target) {
-          onSelectionChange?.([
-            { pathIndex: target.pathIndex, subpathIndex: target.subpathIndex, anchorIndex: target.anchorIndex },
-          ]);
-        }
-        return;
-      }
+      if (deleteAnchorAt(hit)) return;
+      if (addAnchorAt(pt)) return;
     }
     // APPEND: place a corner now; a DRAG turns it smooth (out follows the cursor,
     // in mirrors). Preview from the pre-append baseline so the whole gesture = one
@@ -297,6 +309,20 @@ export default function PenCanvas({
     capture(e);
   }
 
+  // ── Add-Anchor tool (`+`/`=` key — Phase 5 Slice 1 gap-close) — a DEDICATED
+  //    tool, in addition to (not replacing) pen-hover-over-segment above. Same
+  //    op (`addAnchorAt`), just reachable without the Pen tool being active.
+  function addAnchorToolDown(e, pt) {
+    addAnchorAt(pt);
+  }
+
+  // ── Delete-Anchor tool (`-`/`_` key — Phase 5 Slice 1 gap-close) — a DEDICATED
+  //    tool, in addition to pen-hover-over-anchor above. Same op
+  //    (`deleteAnchorAt`), reachable without the Pen tool being active.
+  function deleteAnchorToolDown(e, pt) {
+    deleteAnchorAt(hitTest(paths, pt, tol));
+  }
+
   // ── Root handle (WI-P2-5) — drag the point to move, the arm end to re-aim.
   //    Checked BEFORE tool dispatch so it works under EVERY tool (it's not an
   //    anchor). previewRoot on move, one commit on up = one modal-local undo. ──
@@ -332,6 +358,8 @@ export default function PenCanvas({
     if (tool === 'pen') return penDown(e, pt);
     if (tool === 'move') return moveDown(e, pt);
     if (tool === 'convert') return convertDown(e, pt);
+    if (tool === 'add-anchor') return addAnchorToolDown(e, pt);
+    if (tool === 'delete-anchor') return deleteAnchorToolDown(e, pt);
   }
 
   // Wheel → zoom ABOUT THE CURSOR: keep the model point under the pointer fixed
@@ -387,12 +415,34 @@ export default function PenCanvas({
       drag.latest = next;
       onPreview?.(next);
     } else if (drag.kind === 'pen-append') {
-      // Dragging turns the just-placed anchor SMOOTH: out follows the cursor.
-      const next = appendAnchor(drag.base, drag.loc, drag.point, { outHandle: pt });
-      drag.latest = next;
-      onPreview?.(next);
+      if (spaceRef.current) {
+        // Spec-choice (locked, docs/svg-motif-editor-P2-PLAN.md table): Space held
+        // WHILE PLACING a pen anchor repositions that anchor (Illustrator), reusing
+        // the SAME spaceRef pan flag — not a second space path. Re-preview a CORNER
+        // at the cursor (no handle) and update drag.point so releasing Space resumes
+        // the handle-pull from THIS repositioned point. Still previews off the
+        // fixed `drag.base` → the whole gesture stays ONE undo step on release.
+        const next = appendAnchor(drag.base, drag.loc, pt);
+        drag.point = pt;
+        drag.latest = next;
+        onPreview?.(next);
+      } else {
+        // Dragging turns the just-placed anchor SMOOTH: out follows the cursor.
+        // Shift constrains the handle DIRECTION to a 45° ray off the anchor's own
+        // point (table row "Shift while dragging/drawing" — the pen-draw case;
+        // mirrors the anchor/handle drags above, pivoted on drag.point instead of
+        // drag.origin since pen-append has no `origin`).
+        const outPt = e.shiftKey ? constrainTo45(drag.point, pt) : pt;
+        const next = appendAnchor(drag.base, drag.loc, drag.point, { outHandle: outPt });
+        drag.latest = next;
+        onPreview?.(next);
+      }
     } else if (drag.kind === 'move-path') {
-      const delta = { x: pt.x - drag.start.x, y: pt.y - drag.start.y };
+      // Shift constrains the whole-path MOVE to a 45° ray from the drag start
+      // (table row "Shift while dragging" — Illustrator constrains object-move
+      // too, not just anchor/handle edits).
+      const mpt = e.shiftKey ? constrainTo45(drag.start, pt) : pt;
+      const delta = { x: mpt.x - drag.start.x, y: mpt.y - drag.start.y };
       const next = moveWholePath(drag.base, drag.pathIndex, delta);
       drag.latest = next;
       onPreview?.(next);

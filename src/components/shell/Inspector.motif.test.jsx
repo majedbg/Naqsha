@@ -321,9 +321,12 @@ describe("MotifDevice", () => {
     );
     fireEvent.click(screen.getByTestId("motif-toggle"));
     fireEvent.click(screen.getByTestId("motif-import"));
+    // A <text> element carries no drawable outline geometry (importMotif now
+    // converts rect/circle/etc. to paths, so a <rect> would import — use text
+    // to exercise the genuine "no importable geometry" error path).
     const svg =
-      '<svg xmlns="http://www.w3.org/2000/svg"><rect width="10" height="10"/></svg>';
-    const file = new File([svg], "norect.svg", { type: "image/svg+xml" });
+      '<svg xmlns="http://www.w3.org/2000/svg"><text>hi</text></svg>';
+    const file = new File([svg], "notext.svg", { type: "image/svg+xml" });
     fireEvent.change(screen.getByTestId("motif-import-input"), {
       target: { files: [file] },
     });

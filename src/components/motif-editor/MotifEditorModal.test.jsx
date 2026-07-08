@@ -385,6 +385,45 @@ describe('MotifEditorModal — tool switching', () => {
     expect(screen.getByTestId('motif-tool-select')).toHaveAttribute('aria-pressed', 'true');
   });
 
+  // ── Phase 5 Slice 1 gap-close: `+`/`−` as dedicated KEY-bound tools ─────────
+  // (Illustrator: `+` = Add-Anchor tool, `−` = Delete-Anchor tool), IN ADDITION
+  // to the existing pen-hover add/delete behavior (unchanged, covered elsewhere).
+  it('+ / = and - / _ keys switch to the Add-Anchor / Delete-Anchor tools (aria-pressed)', () => {
+    renderModal();
+    const dialog = screen.getByTestId('motif-editor-dialog');
+    fireEvent.keyDown(dialog, { key: '+' });
+    expect(screen.getByTestId('motif-tool-add-anchor')).toHaveAttribute('aria-pressed', 'true');
+
+    fireEvent.keyDown(dialog, { key: '-' });
+    expect(screen.getByTestId('motif-tool-delete-anchor')).toHaveAttribute('aria-pressed', 'true');
+
+    // The unshifted `=` and shifted `_` chords are accepted too (spec-choice).
+    fireEvent.keyDown(dialog, { key: '=' });
+    expect(screen.getByTestId('motif-tool-add-anchor')).toHaveAttribute('aria-pressed', 'true');
+
+    fireEvent.keyDown(dialog, { key: '_' });
+    expect(screen.getByTestId('motif-tool-delete-anchor')).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('Add-Anchor tool click on a segment adds an anchor; Delete-Anchor tool click on an anchor removes it', () => {
+    renderModal();
+    const dialog = screen.getByTestId('motif-editor-dialog');
+    const svg = screen.getByTestId('motif-editor-canvas');
+    expect(screen.getAllByTestId('motif-editor-anchor')).toHaveLength(3);
+
+    // Add-Anchor tool: click the midpoint of the (0,0)-(10,0) segment.
+    fireEvent.keyDown(dialog, { key: '+' });
+    fireEvent.pointerDown(svg, { clientX: 5, clientY: 0, pointerId: 1 });
+    fireEvent.pointerUp(svg, { clientX: 5, clientY: 0, pointerId: 1 });
+    expect(screen.getAllByTestId('motif-editor-anchor')).toHaveLength(4);
+
+    // Delete-Anchor tool: click the anchor just added, back at (5,0).
+    fireEvent.keyDown(dialog, { key: '-' });
+    fireEvent.pointerDown(svg, { clientX: 5, clientY: 0, pointerId: 1 });
+    fireEvent.pointerUp(svg, { clientX: 5, clientY: 0, pointerId: 1 });
+    expect(screen.getAllByTestId('motif-editor-anchor')).toHaveLength(3);
+  });
+
   it('opens with the initialTool when supplied (pen for "New motif…")', () => {
     renderModal({ initialTool: 'pen' });
     expect(screen.getByTestId('motif-tool-pen')).toHaveAttribute('aria-pressed', 'true');

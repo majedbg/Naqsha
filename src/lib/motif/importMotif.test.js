@@ -92,10 +92,11 @@ describe('importMotif — failure passthrough (slice 4)', () => {
     expect(importMotif('<html><body>nope</body></html>').ok).toBe(false);
   });
 
-  it('propagates the no-path error', () => {
-    const r = importMotif('<svg><rect x="0" y="0" width="5" height="5"/></svg>');
+  it('propagates the no-drawable-geometry error (P5-3: rect now imports, so use an unsupported element)', () => {
+    const r = importMotif('<svg><text>hello</text></svg>');
     expect(r.ok).toBe(false);
-    expect(r.error).toMatch(/path/i);
+    expect(typeof r.error).toBe('string');
+    expect(r.error.length).toBeGreaterThan(0);
   });
 
   it('tolerates null/undefined input without throwing', () => {
@@ -128,5 +129,48 @@ describe('importMotif — closed flag (slice 6)', () => {
     const { glyph } = importMotif(svg);
     expect(glyph.paths[0].closed).toBe(true);
     expect(glyph.paths[1].closed).toBe(false);
+  });
+});
+
+describe('importMotif — real-world fidelity: shapes + transforms (P5-3, slice 7)', () => {
+  it('keeps an untransformed <path> d VERBATIM end-to-end (proof)', () => {
+    const svg =
+      '<svg xmlns="http://www.w3.org/2000/svg"><path d="M10,10 L90,90 C100,50 50,0 10,10 Z"/></svg>';
+    const { glyph } = importMotif(svg);
+    expect(glyph.paths).toEqual([{ d: 'M10,10 L90,90 C100,50 50,0 10,10 Z', closed: true }]);
+  });
+
+  it('imports a basic <rect> as a closed motif path', () => {
+    const svg = '<svg><rect x="0" y="0" width="20" height="10"/></svg>';
+    const r = importMotif(svg);
+    expect(r.ok).toBe(true);
+    expect(r.glyph.paths).toEqual([{ d: 'M0,0 L20,0 L20,10 L0,10 Z', closed: true }]);
+  });
+
+  it('rewrites a transformed <path> d (no longer verbatim) and still measures a sane bbox/root', () => {
+    const svg = '<svg><path d="M0,0 L10,0 L10,10 Z" transform="translate(100,0)"/></svg>';
+    const { glyph } = importMotif(svg);
+    expect(glyph.paths[0].d).not.toBe('M0,0 L10,0 L10,10 Z');
+    expect(glyph.paths[0].d).toContain('M100.00,0.00');
+    // root = bbox bottom-center, shifted by the translate.
+    expect(glyph.root.x).toBeCloseTo(105, 6);
+    expect(glyph.root.y).toBeCloseTo(10, 6);
+  });
+
+  it('imports a basic shape under a transform (rect + translate)', () => {
+    const svg = '<svg><rect x="0" y="0" width="10" height="10" transform="translate(5,5)"/></svg>';
+    const { glyph } = importMotif(svg);
+    expect(glyph.paths[0].d).toContain('M5.00,5.00');
+    expect(glyph.root.x).toBeCloseTo(10, 6);
+    expect(glyph.root.y).toBeCloseTo(15, 6);
+  });
+
+  it('never throws on a weird/unparseable SVG and degrades gracefully', () => {
+    const svg = '<svg><path d="M0,0 L1,1" transform="frobnicate(9)"/></svg>';
+    expect(() => importMotif(svg)).not.toThrow();
+    const r = importMotif(svg);
+    expect(r.ok).toBe(true);
+    // Unparseable transform => treated as identity => verbatim d.
+    expect(r.glyph.paths).toEqual([{ d: 'M0,0 L1,1', closed: false }]);
   });
 });

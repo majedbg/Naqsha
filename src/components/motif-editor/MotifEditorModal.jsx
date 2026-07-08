@@ -41,11 +41,16 @@ function viewBoxFor(working) {
 }
 
 // The editor's tools (Illustrator-faithful). Keys P/A/V + Shift+C switch them.
+// Add/Delete-Anchor are dedicated tools (Slice 1, Phase 5 gap-close) mirroring
+// Illustrator's `+`/`−` — see the `+`/`=` and `-`/`_` key cases below for the
+// locked spec-choice on which literal keys map to them.
 const TOOLS = [
   { id: 'pen', label: 'Pen', hint: 'P', testid: 'motif-tool-pen' },
   { id: 'direct-select', label: 'Select', hint: 'A', testid: 'motif-tool-select' },
   { id: 'move', label: 'Move', hint: 'V', testid: 'motif-tool-move' },
   { id: 'convert', label: 'Convert', hint: '⇧C', testid: 'motif-tool-convert' },
+  { id: 'add-anchor', label: 'Add Anchor', hint: '+', testid: 'motif-tool-add-anchor' },
+  { id: 'delete-anchor', label: 'Delete Anchor', hint: '−', testid: 'motif-tool-delete-anchor' },
 ];
 
 export default function MotifEditorModal({
@@ -186,6 +191,18 @@ export default function MotifEditorModal({
       } else if (!mod && !e.shiftKey && (e.key === 'v' || e.key === 'V')) {
         e.preventDefault();
         changeTool('move');
+      } else if (!mod && (e.key === '+' || e.key === '=')) {
+        // Spec-choice (locked, docs/svg-motif-editor-P2-PLAN.md table): Illustrator's
+        // `+` is the Add-Anchor tool. `+` is SHIFTED `=` on most layouts (browsers
+        // report e.key as '+' when Shift is held), so accept the unshifted `=` too —
+        // no `!e.shiftKey` guard here (unlike p/a/v) since either chord must work.
+        e.preventDefault();
+        changeTool('add-anchor');
+      } else if (!mod && (e.key === '-' || e.key === '_')) {
+        // Spec-choice (locked): `−` is the Delete-Anchor tool; accept the shifted
+        // `_` too, same reasoning as `+`/`=` above.
+        e.preventDefault();
+        changeTool('delete-anchor');
       }
     },
     [onCancel, undo, redo, deleteSelected, penDraft, changeTool]

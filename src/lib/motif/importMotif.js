@@ -16,13 +16,24 @@
 // exported curves survive round-trip; geometry is only SAMPLED (never rewritten)
 // to measure the bbox and the root-centered bounding radius.
 //
-// KNOWN LIMITATION (documented, not fixed here — same as ImportedPath ships):
-// parseSVGImport is `<path d>`-only. It ignores `transform` attributes and every
-// non-path element (rect / circle / polygon / nested-group transforms). P1
-// supports flattened, path-only SVGs; transform-flattening is a fast-follow. An
-// SVG with zero <path> elements returns parseSVGImport's error verbatim.
+// P5-3 UPDATE: importMotif now consumes `extractMotifDrawables` (svgImport.js),
+// the motif-only enhanced extractor. It converts basic shapes (rect incl.
+// rounded corners, circle, ellipse, line, polygon, polyline) to path `d`, and
+// flattens each element's own `transform` attribute composed with a SINGLE
+// top-level transform (on <svg> or one outer <g>) via pathModel's anchor model.
+// An untransformed <path> still keeps its `d` VERBATIM (curve-export fidelity
+// unaffected); only converted shapes / transform-bearing elements get a
+// freshly-serialized `d`.
+//
+// KNOWN LIMITATION (documented, flagged follow-up, not fixed here): nested or
+// multiple `<g>` transform chains are NOT supported — only one top-level
+// transform is honored (the regex extractor has no nesting model). A real
+// DOMParser-based extractor would close this gap; out of scope for this slice.
+// Anything unparseable degrades gracefully to today's behavior (skip / treat
+// as identity) rather than throwing. An SVG with zero drawable elements
+// returns extractMotifDrawables's error verbatim.
 
-import { parseSVGImport } from '../svgImport.js';
+import { extractMotifDrawables } from '../svgImport.js';
 import { flattenPathD } from '../plotter/pathOps.js';
 
 // Degenerate single-point geometry (e.g. `<path d="M5,5"/>`) has a well-defined
@@ -67,8 +78,10 @@ function deriveName(svg) {
  *   The glyph carries NO id — the caller (WI-5) stamps it on insert.
  */
 export function importMotif(svgText) {
-  // 1. Extract the verbatim `d` of every <path> (or propagate the parse error).
-  const parsed = parseSVGImport(svgText);
+  // 1. Extract the drawable `d` of every supported element (verbatim for
+  //    untransformed <path>s; converted/flattened otherwise), or propagate
+  //    the parse error.
+  const parsed = extractMotifDrawables(svgText);
   if (!parsed.ok) return parsed;
 
   // 2. Keep every `d` VERBATIM; flag closed by whether it ends in Z/z.

@@ -278,7 +278,7 @@ function deviceProfile() {
 // it to a soft hatch. If the moiré vanishes with this ON, ribbon undersampling is
 // confirmed and the real fix is to route dense/minified marks to texture. Flip back
 // to `false` (or delete) once verified.
-const FORCE_TEXTURE_MODE = true;
+const FORCE_TEXTURE_MODE = false;
 
 export default function Marks({ specs = [], marksByPanel = {} }) {
   const routes = useMemo(

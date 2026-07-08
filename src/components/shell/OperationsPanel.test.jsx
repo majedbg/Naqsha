@@ -13,8 +13,9 @@ const baseProps = {
 };
 
 describe("OperationsPanel (C1 — LightBurn-style operations / cut-settings panel)", () => {
-  // (a) RENDER — rows show the active profile's param fields.
-  it("renders one row per operation with the LASER param fields (power/speed/passes)", () => {
+  // (a) RENDER — columns show the active profile's param fields, one shared
+  // row per field so the same field can be skimmed/compared across ops.
+  it("renders one column per operation with the LASER param fields (power/speed/passes)", () => {
     const operations = seedOperations();
     render(
       <OperationsPanel
@@ -23,13 +24,13 @@ describe("OperationsPanel (C1 — LightBurn-style operations / cut-settings pane
         profileId="laser"
       />
     );
-    const rows = screen.getAllByTestId("operation-row");
-    expect(rows).toHaveLength(3);
-    // Laser cut row shows power/speed/passes inputs.
-    const cutRow = rows[0];
-    expect(within(cutRow).getByLabelText(/power/i)).toBeTruthy();
-    expect(within(cutRow).getByLabelText(/speed/i)).toBeTruthy();
-    expect(within(cutRow).getByLabelText(/passes/i)).toBeTruthy();
+    const columns = screen.getAllByTestId("operation-column");
+    expect(columns).toHaveLength(3);
+    // Cut's column shows power/speed/passes inputs, each labeled per-operation
+    // (e.g. "Cut Power (%)") so the row can hold one input per operation.
+    expect(screen.getByLabelText(/cut power/i)).toBeTruthy();
+    expect(screen.getByLabelText(/cut speed/i)).toBeTruthy();
+    expect(screen.getByLabelText(/cut passes/i)).toBeTruthy();
   });
 
   it("renders the DRAG-CUTTER param fields (force/blade/passes) when the profile is dragCutter", () => {
@@ -41,10 +42,9 @@ describe("OperationsPanel (C1 — LightBurn-style operations / cut-settings pane
         profileId="dragCutter"
       />
     );
-    const row = screen.getAllByTestId("operation-row")[0];
-    expect(within(row).getByLabelText(/force/i)).toBeTruthy();
-    expect(within(row).getByLabelText(/blade/i)).toBeTruthy();
-    expect(within(row).getByLabelText(/passes/i)).toBeTruthy();
+    expect(screen.getByLabelText(/cut force/i)).toBeTruthy();
+    expect(screen.getByLabelText(/cut blade/i)).toBeTruthy();
+    expect(screen.getByLabelText(/cut passes/i)).toBeTruthy();
   });
 
   it("renders the PLOTTER param fields (pen #/pressure) when the profile is plotter", () => {
@@ -56,9 +56,8 @@ describe("OperationsPanel (C1 — LightBurn-style operations / cut-settings pane
         profileId="plotter"
       />
     );
-    const row = screen.getAllByTestId("operation-row")[0];
-    expect(within(row).getByLabelText(/pen #/i)).toBeTruthy();
-    expect(within(row).getByLabelText(/pressure/i)).toBeTruthy();
+    expect(screen.getByLabelText(/cut pen #/i)).toBeTruthy();
+    expect(screen.getByLabelText(/cut pressure/i)).toBeTruthy();
   });
 
   // (b) INTERACTION — add / reorder / recolor / param-edit flow through helpers.
@@ -76,7 +75,7 @@ describe("OperationsPanel (C1 — LightBurn-style operations / cut-settings pane
     expect(onAddOperation).toHaveBeenCalledTimes(1);
   });
 
-  it("reorder maps to cut order: moving a row down commits a reordered library", () => {
+  it("reorder maps to cut order: moving a column right commits a reordered library", () => {
     const onCommitOperations = vi.fn();
     const operations = seedOperations();
     render(
@@ -87,10 +86,10 @@ describe("OperationsPanel (C1 — LightBurn-style operations / cut-settings pane
         onCommitOperations={onCommitOperations}
       />
     );
-    // Move the first row (Cut) down one.
-    const rows = screen.getAllByTestId("operation-row");
+    // Move the first column (Cut) right one.
+    const columns = screen.getAllByTestId("operation-column");
     fireEvent.click(
-      within(rows[0]).getByRole("button", { name: /move operation down/i })
+      within(columns[0]).getByRole("button", { name: /move operation right/i })
     );
     expect(onCommitOperations).toHaveBeenCalledTimes(1);
     // The committed mapper, applied to the library, swaps order 0<->1.
@@ -112,8 +111,7 @@ describe("OperationsPanel (C1 — LightBurn-style operations / cut-settings pane
         onCommitOperations={onCommitOperations}
       />
     );
-    const cutRow = screen.getAllByTestId("operation-row")[0];
-    const powerInput = within(cutRow).getByLabelText(/power/i);
+    const powerInput = screen.getByLabelText(/cut power/i);
     fireEvent.change(powerInput, { target: { value: "42" } });
     expect(onCommitOperations).toHaveBeenCalled();
     const mapper = onCommitOperations.mock.calls.at(-1)[0];
@@ -132,8 +130,8 @@ describe("OperationsPanel (C1 — LightBurn-style operations / cut-settings pane
         onCommitOperations={onCommitOperations}
       />
     );
-    const row = screen.getAllByTestId("operation-row")[0];
-    const swatch = within(row).getByLabelText(/color/i);
+    const column = screen.getAllByTestId("operation-column")[0];
+    const swatch = within(column).getByLabelText(/color/i);
     fireEvent.change(swatch, { target: { value: "#0a0b0c" } });
     expect(onCommitOperations).toHaveBeenCalled();
     const mapper = onCommitOperations.mock.calls.at(-1)[0];
@@ -153,9 +151,9 @@ describe("OperationsPanel (C1 — LightBurn-style operations / cut-settings pane
         onCommitOperations={onCommitOperations}
       />
     );
-    const cutRow = screen.getAllByTestId("operation-row")[0];
-    const swatch = within(cutRow).getByLabelText(/color/i);
+    const cutColumn = screen.getAllByTestId("operation-column")[0];
+    const swatch = within(cutColumn).getByLabelText(/color/i);
     expect(swatch.disabled).toBe(true);
-    expect(within(cutRow).getByText(/locked/i)).toBeTruthy();
+    expect(within(cutColumn).getByText(/locked/i)).toBeTruthy();
   });
 });

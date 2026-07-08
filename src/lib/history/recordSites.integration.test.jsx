@@ -122,6 +122,26 @@ function useWired() {
   useEffect(() => {
     layersRef.current = layersApi.layers;
   }, [layersApi.layers]);
+  // customGlyphs slice — Studio's documentSnapshot embeds it, so this mirror does
+  // too (P5-2: copy-on-use touches BOTH customGlyphs and a layer's glyphRef).
+  const customGlyphsRef = useRef(layersApi.customGlyphs);
+  useEffect(() => {
+    customGlyphsRef.current = layersApi.customGlyphs;
+  }, [layersApi.customGlyphs]);
+  // P5-2: use a global-library glyph = COPY it into customGlyphs + rebind the
+  // layer's glyphRef, folded into ONE undo entry via recordBatch (mirrors the
+  // Studio onUseLibraryGlyph callback).
+  const useLibraryGlyph = useCallback(
+    (glyph, layerId, params) => {
+      recordBatch(() => {
+        if (!customGlyphsRef.current?.[glyph.id]) {
+          layersApi.updateCustomGlyph(glyph.id, glyph);
+        }
+        layersApi.updateLayer(layerId, { params });
+      });
+    },
+    [recordBatch, layersApi]
+  );
 
   const capture = useCallback(
     () => ({
@@ -129,6 +149,7 @@ function useWired() {
       operations: structuredClone(operationsRef.current),
       panels: structuredClone(panelsRef.current),
       canvas: canvasRef.current,
+      customGlyphs: structuredClone(customGlyphsRef.current),
     }),
     []
   );
@@ -145,6 +166,7 @@ function useWired() {
         }
         setOperations(s.operations);
         layersApi.setPanels(s.panels);
+        layersApi.setCustomGlyphs(s.customGlyphs ?? {});
         restoreCanvas(s.canvas);
       } finally {
         restoringRef.current = false;
@@ -166,6 +188,7 @@ function useWired() {
     addPanelEntry,
     deletePanelEntry,
     resizeCanvas,
+    useLibraryGlyph,
     canvasW: captureCanvas().w,
   };
 }
@@ -331,6 +354,40 @@ describe("S4 record sites — real async path", () => {
     act(() => result.current.history.redo());
     expect(result.current.canvasW).toBe(newW);
     expect(result.current.history.canRedo).toBe(false);
+  });
+
+  it("P5-2: copy-on-use (library glyph → customGlyph copy + layer rebind) is ONE undo entry", () => {
+    const { result } = renderHook(() => useWired());
+    const layerId = firstLayer(result).id;
+    const libGlyph = {
+      id: "lib-uuid-1",
+      name: "Vine",
+      tradition: "imported",
+      viewRadius: 10,
+      root: { x: 0, y: 0, angle: 0 },
+      paths: [{ d: "M0,0 L1,1", closed: false }],
+    };
+    // Precondition: the glyph is not yet in the document, layer has no glyphRef.
+    expect(result.current.layersApi.customGlyphs["lib-uuid-1"]).toBeUndefined();
+
+    act(() =>
+      result.current.useLibraryGlyph(libGlyph, layerId, { glyphRef: "lib-uuid-1" })
+    );
+    // Both slices mutated: the glyph is copied in AND the layer is rebound.
+    expect(result.current.layersApi.customGlyphs["lib-uuid-1"]?.name).toBe("Vine");
+    expect(firstLayer(result).params.glyphRef).toBe("lib-uuid-1");
+    expect(result.current.history.canUndo).toBe(true);
+
+    // ONE ⌘Z reverts BOTH the copy and the rebind (single entry).
+    act(() => result.current.history.undo());
+    expect(result.current.layersApi.customGlyphs["lib-uuid-1"]).toBeUndefined();
+    expect(firstLayer(result).params?.glyphRef).toBeUndefined();
+    // Exactly one entry existed → nothing more to undo.
+    expect(result.current.history.canUndo).toBe(false);
+
+    act(() => result.current.history.redo());
+    expect(result.current.layersApi.customGlyphs["lib-uuid-1"]?.name).toBe("Vine");
+    expect(firstLayer(result).params.glyphRef).toBe("lib-uuid-1");
   });
 
   it("I9 — clear() (profile-switch semantics) drops all history", () => {

@@ -418,6 +418,38 @@ describe("MotifDevice", () => {
     expect(screen.queryByText("My library")).toBeNull();
   });
 
+  it("P5-2: when onUseLibraryGlyph is wired, a library select routes through the ONE batched callback (single undo), not the two-call path", () => {
+    const onUpdateLayer = vi.fn();
+    const onCopyLibraryGlyph = vi.fn();
+    const onUseLibraryGlyph = vi.fn();
+    const motif = motifLayer("m1", "host1", defaultBinding);
+    render(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={onUpdateLayer}
+        onChangeLayerPattern={() => {}}
+        customGlyphs={{}}
+        libraryMotifs={[libMotif("lib-uuid-1", "Saved Vine")]}
+        onCopyLibraryGlyph={onCopyLibraryGlyph}
+        onUseLibraryGlyph={onUseLibraryGlyph}
+      />
+    );
+    fireEvent.click(screen.getByTestId("motif-toggle"));
+    fireEvent.change(screen.getByTestId("motif-glyph"), {
+      target: { value: "lib-uuid-1" },
+    });
+    // Single batched seam: exactly one call, carrying glyph + layer + params.
+    expect(onUseLibraryGlyph).toHaveBeenCalledTimes(1);
+    const [glyph, layerId, params] = onUseLibraryGlyph.mock.calls[0];
+    expect(glyph.id).toBe("lib-uuid-1");
+    expect(layerId).toBe("m1");
+    expect(params.glyphRef).toBe("lib-uuid-1");
+    // The legacy two-call path is NOT also fired (would be a second undo entry).
+    expect(onCopyLibraryGlyph).not.toHaveBeenCalled();
+    expect(onUpdateLayer).not.toHaveBeenCalled();
+  });
+
   it("does NOT re-copy a library motif already present in the doc (idempotent)", () => {
     const onCopyLibraryGlyph = vi.fn();
     const motif = motifLayer("m1", "host1", defaultBinding);

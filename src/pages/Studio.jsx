@@ -1952,6 +1952,18 @@ export default function Studio({ submitOrg = null } = {}) {
             // keyed upsert; the Inspector rebinds the row after the copy.
             libraryMotifs={libraryMotifs}
             onCopyLibraryGlyph={(glyph) => updateCustomGlyph?.(glyph.id, glyph)}
+            // P5-2: copy-on-use as ONE undo entry. A library select is copy +
+            // rebind (two document mutations); recordBatch folds them into a
+            // single history entry so one ⌘Z reverts the whole placement. The
+            // copy is skipped when the glyph is already in the doc (idempotent).
+            onUseLibraryGlyph={(glyph, layerId, params) =>
+              recordBatch(() => {
+                if (!customGlyphs?.[glyph.id]) {
+                  updateCustomGlyph?.(glyph.id, glyph);
+                }
+                updateLayer(layerId, { params });
+              })
+            }
           />,
           inspectorSlot
         )}

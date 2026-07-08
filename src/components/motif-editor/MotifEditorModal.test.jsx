@@ -627,4 +627,51 @@ describe('MotifEditorModal — Save to my library (P4)', () => {
     );
     expect(screen.queryByTestId('motif-editor-save-library')).toBeNull();
   });
+
+  // ── P5-2 Task A: visible saved/error feedback (mirror useCloudPersistence
+  //    saveState idle|saving|saved|error) ──────────────────────────────────
+  it('promote SUCCESS: button shows a saving→saved transition', async () => {
+    // A promise we resolve on demand so we can observe the "saving" phase.
+    let resolveSave;
+    const onSaveToLibrary = vi.fn(
+      () => new Promise((res) => { resolveSave = res; })
+    );
+    render(
+      <MotifEditorModal
+        glyphId="cg-1"
+        glyph={importedGlyph}
+        layers={[]}
+        canSaveToLibrary
+        isLoggedIn
+        onSaveToLibrary={onSaveToLibrary}
+      />
+    );
+    const btn = screen.getByTestId('motif-editor-save-library');
+    fireEvent.click(btn);
+    // While in flight: saving state, button disabled (no double-submit).
+    expect(await screen.findByText(/saving/i)).toBeTruthy();
+    expect(screen.getByTestId('motif-editor-save-library').disabled).toBe(true);
+    // Resolve with a truthy saved motif → "Saved".
+    await act(async () => {
+      resolveSave({ id: 'lib-1' });
+    });
+    expect(await screen.findByText(/saved/i)).toBeTruthy();
+  });
+
+  it('promote FAILURE (resolves null): button shows a "could not save" error', async () => {
+    // useGlobalMotifLibrary.promote resolves null on failure — never throws.
+    const onSaveToLibrary = vi.fn(() => Promise.resolve(null));
+    render(
+      <MotifEditorModal
+        glyphId="cg-1"
+        glyph={importedGlyph}
+        layers={[]}
+        canSaveToLibrary
+        isLoggedIn
+        onSaveToLibrary={onSaveToLibrary}
+      />
+    );
+    fireEvent.click(screen.getByTestId('motif-editor-save-library'));
+    expect(await screen.findByText(/couldn.t save|could not save|error/i)).toBeTruthy();
+  });
 });

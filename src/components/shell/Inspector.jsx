@@ -569,7 +569,7 @@ const MOTIF_ROLES = [
 // placement binding. Every write re-spreads the whole params.binding via
 // deepMergeBinding so a partial patch never clobbers another branch — same
 // re-spread invariant as ModulatorDevice, extended to a nested schema.
-function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, customGlyphs, addCustomGlyph, onImportError, onEditGlyph, onNewMotif, libraryMotifs, onCopyLibraryGlyph }) {
+function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, customGlyphs, addCustomGlyph, onImportError, onEditGlyph, onNewMotif, libraryMotifs, onCopyLibraryGlyph, onUseLibraryGlyph }) {
   // Collapsed by default (mobile discoverability: the device sits at the TOP of
   // the Inspector for a host layer but stays folded until the user opens it).
   // Declared BEFORE the self-hide early return — the component renders
@@ -785,12 +785,20 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, 
                   // already present — idempotent), THEN rebinds the row. The doc
                   // stays self-contained (share links carry the copy).
                   const lib = library.find((x) => x.id === val);
+                  const params = { ...m.params, glyphRef: val };
+                  // P5-2: a library select is copy + rebind = TWO document
+                  // mutations. Route them through the single `onUseLibraryGlyph`
+                  // seam so Studio folds them into ONE undo entry (recordBatch) —
+                  // a single ⌘Z reverts the whole placement. Fall back to the
+                  // legacy two-call path only when Studio hasn't wired the seam.
+                  if (lib && onUseLibraryGlyph) {
+                    onUseLibraryGlyph(lib.glyph, m.id, params);
+                    return;
+                  }
                   if (lib && !customGlyphs?.[val]) {
                     onCopyLibraryGlyph?.(lib.glyph);
                   }
-                  onUpdateLayer(m.id, {
-                    params: { ...m.params, glyphRef: val },
-                  });
+                  onUpdateLayer(m.id, { params });
                 }}
                 className="flex-1 rounded-xs border border-hairline bg-paper px-1 py-0.5 text-[11px] text-ink outline-none focus:border-violet"
               >
@@ -960,7 +968,7 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, 
 // The param-editing body for one selected layer. Split into its own component so
 // usePatternCache (a hook) is only called when a layer is actually selected —
 // hooks can't be called conditionally inside Inspector itself.
-function SelectedLayerInspector({ layer, layers, unit, profileId, onUpdateLayer, onChangeLayerPattern, onVariableWeightChange, onPreviewField, onClosePreview, threeDSubMode, threeDFocusLayerId, onAddMotif, onRemoveLayer, customGlyphs, addCustomGlyph, onImportError, onEditGlyph, onNewMotif, libraryMotifs, onCopyLibraryGlyph }) {
+function SelectedLayerInspector({ layer, layers, unit, profileId, onUpdateLayer, onChangeLayerPattern, onVariableWeightChange, onPreviewField, onClosePreview, threeDSubMode, threeDFocusLayerId, onAddMotif, onRemoveLayer, customGlyphs, addCustomGlyph, onImportError, onEditGlyph, onNewMotif, libraryMotifs, onCopyLibraryGlyph, onUseLibraryGlyph }) {
   // Pattern swap: route through the same cache machine LayerCard uses, applied via
   // the pair-aware onChangeLayerPattern when present (falls back to a plain param
   // update so the component works standalone / in tests without a router).
@@ -1011,6 +1019,7 @@ function SelectedLayerInspector({ layer, layers, unit, profileId, onUpdateLayer,
         onNewMotif={onNewMotif}
         libraryMotifs={libraryMotifs}
         onCopyLibraryGlyph={onCopyLibraryGlyph}
+        onUseLibraryGlyph={onUseLibraryGlyph}
       />
 
       {/* Collapsible, grouped param controls (Structure / Scale / Variation /
@@ -1111,6 +1120,10 @@ export default function Inspector({
   // chosen library glyph into the document's customGlyphs. Both optional.
   libraryMotifs,
   onCopyLibraryGlyph,
+  // P5-2: the single batched copy-on-use seam. When present, a library select
+  // goes through this (Studio wraps copy+rebind in recordBatch = ONE undo entry)
+  // instead of the legacy two-call onCopyLibraryGlyph + onUpdateLayer. Optional.
+  onUseLibraryGlyph,
 }) {
   // Resolved font for the text-properties readouts (cap-height / engrave
   // warnings). May be null on first paint before useFont resolves — the panel's
@@ -1184,6 +1197,7 @@ export default function Inspector({
       onNewMotif={onNewMotif}
       libraryMotifs={libraryMotifs}
       onCopyLibraryGlyph={onCopyLibraryGlyph}
+      onUseLibraryGlyph={onUseLibraryGlyph}
     />
   );
 }

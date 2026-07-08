@@ -44,7 +44,7 @@ basic shapes), built as the SAFE incremental version with fuller options flagged
 | WI | Description | Files (one writer) | Status |
 |----|-------------|--------------------|--------|
 | P5-1 | Pen-tool spec completion: `+`/`−` add/delete-anchor **tool** key bindings (Illustrator: `+`=Add-Anchor tool, `−`=Delete-Anchor tool) reusing `addAnchorOnSegment`/`deleteAnchors`; **Space while placing a pen anchor repositions that anchor** (pen-append drag + space → move point, not pull handle). Verify vs LOCKED table; close any other gap. | penMachine.js, PenCanvas.jsx, MotifEditorModal.jsx, useMotifEditor.js (+tests) | **done** ✅ |
-| P5-2 | P4 UX polish: (a) modal "Save to my library" gets `idle→saving→saved→error` feedback (mirror `useCloudPersistence.saveState`); (b) copy-on-use collapses to ONE undo entry via `recordBatch` (Studio `onUseLibraryGlyph(glyph,layerId,params)` wrapping updateCustomGlyph+updateLayer; Inspector calls it for library selections). | MotifEditorModal.jsx, Inspector.jsx, Studio.jsx (+tests) | **pending** |
+| P5-2 | P4 UX polish: (a) modal "Save to my library" gets `idle→saving→saved→error` feedback (mirror `useCloudPersistence.saveState`); (b) copy-on-use collapses to ONE undo entry via `recordBatch` (Studio `onUseLibraryGlyph(glyph,layerId,params)` wrapping updateCustomGlyph+updateLayer; Inspector calls it for library selections). | MotifEditorModal.jsx, Inspector.jsx, Studio.jsx (+tests) | **done** ✅ |
 | P5-3 | Import transform-fidelity (SAFE incremental, advisor-gated): flatten a single top-level `transform` + convert basic shapes (rect/circle/ellipse/line/polygon/polyline) → `d`, keep regex/no-DOM approach; graceful fallback to today's behavior on anything unparseable. Record fuller options (nested-group matrices, DOMParser) as a flagged follow-up. | importMotif.js, svgImport.js (+tests) | **done** ✅ |
 
 ## Integration protocol
@@ -108,4 +108,24 @@ basic shapes), built as the SAFE incremental version with fuller options flagged
   honored ONLY when exactly one `<g>` exists (≥2 siblings → degrade, never mis-apply). 30 new tests.
   **Fixture fix (orchestrator):** `Inspector.motif.test.jsx` "no-path SVG" fixture used `<rect>` (now
   importable) → swapped to `<text>hi</text>` (genuinely no drawable geometry). Full suite **3956 passed /
-  54 skipped / 0 fail**. Lint clean on all touched files. Committing P5-1+P5-3, then dispatching P5-2.
+  54 skipped / 0 fail**. Lint clean on all touched files. Committed P5-1+P5-3 as `3e6f227`.
+- **2026-07-08 (P5-2 done — the Slice-2 sub-agent died on an API stall before writing; orchestrator
+  implemented it directly on main via TDD):**
+  **Task A (save feedback):** modal holds `libStatus∈idle|saving|saved|error` + a `handleSaveToLibrary`
+  async handler — `saving` while `await onSaveToLibrary(serialize())`, then `saved` (truthy) / `error`
+  (null-or-throw; promote never throws), auto-clearing to `idle` after 2.4s (timer cleared on unmount /
+  re-click). Button label reflects status ("Saving…"/"Saved ✓"/"Couldn't save"), disabled while saving,
+  `border-jewel-madder` on error, `aria-live=polite`. 2 new modal tests (saving→saved via a controllable
+  promise; failure→"couldn't save"). Existing P4 login/entitlement tests unchanged.
+  **Task B (single-undo copy-on-use):** verified `useHistory` — `beginCoalesce` is idempotent (no
+  re-capture) + `record()` is suppressed inside an open window → the batch = exactly ONE entry with the
+  true pre-gesture snapshot, and `endCoalesce` clears the idle timer (advisor hazard resolved: the nested
+  updateLayer.recordEdit `beginCoalesce({idleMs})` composes, doesn't escape). Studio adds
+  `onUseLibraryGlyph(glyph,layerId,params)` = `recordBatch(()=>{ if(!customGlyphs[glyph.id]) updateCustomGlyph(...);
+  updateLayer(layerId,{params}); })`; threaded through Inspector→SelectedLayerInspector→MotifDevice; the
+  glyph `<select>` onChange routes library selections through it (legacy two-call path kept as fallback
+  when the seam isn't wired). PROOF: extended the Studio-mirror `recordSites.integration.test.jsx` harness
+  to carry `customGlyphs` in capture/restore + a `useLibraryGlyph` callback → new test asserts copy-on-use
+  is ONE undo entry reverting BOTH the glyph copy AND the rebind (`canUndo` false after one ⌘Z). Inspector
+  test asserts the batched seam fires once and the legacy two-call path does NOT. Full suite **3960 passed
+  / 54 skipped / 0 fail**. Lint clean on all 6 touched files. Tree = only P5-2 files (no 3D WIP).

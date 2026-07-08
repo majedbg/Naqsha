@@ -108,6 +108,42 @@ export default function MotifEditorModal({
   // the throttled mini full-canvas preview.
   const [preview, setPreview] = useState(false);
 
+  // ── P5-2 Task A: observable promote feedback (mirror useCloudPersistence's
+  //    saveState idle|saving|saved|error idiom). `onSaveToLibrary` returns a
+  //    Promise<motif|null> — truthy = saved, null = failed (it never throws).
+  //    The status auto-clears back to idle so the button returns to its resting
+  //    label; the timer is cleared on unmount / re-click. ────────────────────
+  const [libStatus, setLibStatus] = useState('idle'); // idle|saving|saved|error
+  const libTimerRef = useRef(null);
+  useEffect(
+    () => () => {
+      if (libTimerRef.current) clearTimeout(libTimerRef.current);
+    },
+    []
+  );
+  const handleSaveToLibrary = useCallback(async () => {
+    if (!isLoggedIn) {
+      onRequireSignIn?.();
+      return;
+    }
+    if (libTimerRef.current) {
+      clearTimeout(libTimerRef.current);
+      libTimerRef.current = null;
+    }
+    setLibStatus('saving');
+    let saved = null;
+    try {
+      saved = await onSaveToLibrary?.(serialize());
+    } catch {
+      saved = null; // promote never throws, but belt-and-braces
+    }
+    setLibStatus(saved ? 'saved' : 'error');
+    libTimerRef.current = setTimeout(() => {
+      setLibStatus('idle');
+      libTimerRef.current = null;
+    }, 2400);
+  }, [isLoggedIn, onRequireSignIn, onSaveToLibrary, serialize]);
+
   // Active tool + the pen's "active subpath" being drawn (null = not mid-draw).
   // penDraft is the single source of truth for mid-draw state (drives Esc/Enter
   // finish + PenCanvas's close/extend branching).
@@ -344,17 +380,31 @@ export default function MotifEditorModal({
               <button
                 type="button"
                 data-testid="motif-editor-save-library"
-                onClick={() =>
-                  isLoggedIn ? onSaveToLibrary?.(serialize()) : onRequireSignIn?.()
-                }
+                onClick={handleSaveToLibrary}
+                disabled={libStatus === 'saving'}
+                aria-live="polite"
                 title={
                   isLoggedIn
                     ? 'Save this motif to your global library'
                     : 'Sign in to save this motif to your library'
                 }
-                className="rounded-xs border border-hairline px-3 py-1.5 text-xs text-ink-soft transition-colors hover:border-violet hover:text-ink"
+                className={`rounded-xs border px-3 py-1.5 text-xs transition-colors disabled:opacity-70 ${
+                  libStatus === 'saved'
+                    ? 'border-violet text-violet'
+                    : libStatus === 'error'
+                      ? 'border-jewel-madder text-jewel-madder'
+                      : 'border-hairline text-ink-soft hover:border-violet hover:text-ink'
+                }`}
               >
-                {isLoggedIn ? 'Save to my library' : 'Sign in to save to library'}
+                {!isLoggedIn
+                  ? 'Sign in to save to library'
+                  : libStatus === 'saving'
+                    ? 'Saving…'
+                    : libStatus === 'saved'
+                      ? 'Saved ✓'
+                      : libStatus === 'error'
+                        ? "Couldn't save"
+                        : 'Save to my library'}
               </button>
             )}
           </div>

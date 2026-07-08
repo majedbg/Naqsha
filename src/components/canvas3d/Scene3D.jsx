@@ -288,7 +288,17 @@ export default function Scene3D({
         data-testid="canvas3d"
         data-mode={mode}
         data-focus-field={focusFieldLayerId ?? ''}
-        dpr={[1, 2]}
+        // Supersample the render (SSAA) up to 3× to stabilize the emissive/bloom
+        // GLOW under camera motion. The marks/edge-glow are HDR (toneMapped=false),
+        // so thin/sub-pixel glow features flicker as the camera moves — a pixel
+        // catches a bright feature one frame, misses it the next (firefly shimmer);
+        // MSAA only smooths polygon EDGES and mipmaps can't touch the edge-glow
+        // GEOMETRY, so neither helps. Rendering above display resolution gives each
+        // bright feature more coverage so it stops popping frame-to-frame. Cost:
+        // fill-rate every frame (now frameloop="always"); 3 is a middle ground (on a
+        // 2× retina display ≈1.5× linear SSAA). Dial back to [1, 2] if a heavy design
+        // + the 4096px mark textures strain the GPU.
+        dpr={[1, 3]}
         camera={{ position: [3, 3, 4], fov: 50, near: 0.01, far: 1000 }}
         // Render continuously while the preview overlay is mounted. `frameloop="demand"`
         // is incompatible with the @react-three/postprocessing EffectComposer here:

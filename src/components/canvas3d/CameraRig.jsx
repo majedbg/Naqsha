@@ -87,12 +87,45 @@ export default function CameraRig({ fitBox = null, resetSignal = 0, onInteractin
     camera.position.set(position[0], position[1], position[2]);
     camera.up.set(0, 1, 0);
     camera.lookAt(target[0], target[1], target[2]);
-    camera.updateProjectionMatrix();
+
+    // Scene scale, derived from the fit box so clip planes + zoom caps track the
+    // actual design size (world units = mm) instead of a fixed guess. `radius` is
+    // half the box diagonal (a safe over-estimate for the flat, thin-in-z slab
+    // stack); `fitDist` is how far the fit put the camera from the target.
+    const [minX, minY, minZ] = fitBox?.min || [-1, -1, -1];
+    const [maxX, maxY, maxZ] = fitBox?.max || [1, 1, 1];
+    const radius = 0.5 * Math.hypot(maxX - minX, maxY - minY, maxZ - minZ) || 1;
+    const fitDist =
+      Math.hypot(position[0] - target[0], position[1] - target[1], position[2] - target[2]) ||
+      radius * 3;
 
     if (controls.current) {
       controls.current.target.set(target[0], target[1], target[2]);
-      controls.current.update();
+      // Zoom-out CAP (the user's "don't keep shrinking past a limit"): OrbitControls
+      // stops dollying past maxDistance. Sized to a generous multiple of the fit
+      // distance so you can pull way back for context, then it holds. minDistance
+      // keeps the camera from diving through the slab. Both scale with the design.
+      controls.current.minDistance = Math.max(radius * 0.3, 0.1);
+      controls.current.maxDistance = fitDist * 10;
     }
+
+    // Clip planes sized to the ALLOWED zoom range (+ margin) so the panel never
+    // clips / vanishes at the far plane when zoomed out — the reported bug (old
+    // static far=1000mm clipped past ~1m). near stays small relative to the scene so
+    // close inspection doesn't clip, but far larger than the old 0.01 so the huge
+    // near/far ratio (which starves depth precision) is tightened, not widened.
+    const maxDist = controls.current ? controls.current.maxDistance : fitDist * 10;
+    // three.js exposes near/far as plain writable fields (no setter method), so direct
+    // assignment is the documented API — same in-place camera mutation as the
+    // position/up/projection updates above; the immutability lint is a false positive
+    // for three interop here.
+    /* eslint-disable react-hooks/immutability */
+    camera.near = Math.max(radius * 0.02, 0.05);
+    camera.far = maxDist + radius * 3;
+    /* eslint-enable react-hooks/immutability */
+    camera.updateProjectionMatrix();
+
+    if (controls.current) controls.current.update();
   }, [fitBox, resetSignal, camera, width, height]);
 
   return (

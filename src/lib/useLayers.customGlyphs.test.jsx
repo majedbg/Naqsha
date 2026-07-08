@@ -4,7 +4,7 @@
 // `layers`/`panels`. These tests prove the OBSERVABLE store contract: an empty
 // default map, additive `addCustomGlyph` with a stable unique id, a bulk
 // `setCustomGlyphs` (the restore/load seam), and localStorage round-trip.
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import useLayers from './useLayers.js';
 
@@ -83,5 +83,85 @@ describe('useLayers — custom-glyph store (WI-3)', () => {
     const { result } = renderHook(() => useLayers({ persistToLocal: false }));
     act(() => { result.current.addCustomGlyph(sampleGlyph()); });
     expect(localStorage.getItem(GLYPHS_KEY)).toBeNull();
+  });
+});
+
+describe('useLayers — custom-glyph mutators (WI-P2-1b)', () => {
+  beforeEach(() => localStorage.clear());
+
+  it('exposes updateCustomGlyph and deleteCustomGlyph', () => {
+    const { result } = renderHook(() => useLayers({ persistToLocal: false }));
+    expect(typeof result.current.updateCustomGlyph).toBe('function');
+    expect(typeof result.current.deleteCustomGlyph).toBe('function');
+  });
+
+  it('updateCustomGlyph replaces the glyph at an existing id (re-stamping id)', () => {
+    const { result } = renderHook(() => useLayers({ persistToLocal: false }));
+    let id;
+    act(() => { id = result.current.addCustomGlyph(sampleGlyph()); });
+    act(() => {
+      result.current.updateCustomGlyph(id, {
+        name: 'Edited Flower',
+        tradition: 'edited',
+        paths: [{ d: 'M0,0 L1,1 Z', closed: false }],
+        viewRadius: 9,
+      });
+    });
+    expect(Object.keys(result.current.customGlyphs)).toEqual([id]);
+    expect(result.current.customGlyphs[id].name).toBe('Edited Flower');
+    expect(result.current.customGlyphs[id].tradition).toBe('edited');
+    expect(result.current.customGlyphs[id].viewRadius).toBe(9);
+    // The store always carries its own id, even after an overwrite.
+    expect(result.current.customGlyphs[id].id).toBe(id);
+  });
+
+  it('updateCustomGlyph on a BUILT-IN id is a no-op (no key added, map unchanged)', () => {
+    const { result } = renderHook(() => useLayers({ persistToLocal: false }));
+    act(() => { result.current.updateCustomGlyph('leaf', sampleGlyph()); });
+    expect(result.current.customGlyphs).toEqual({});
+    expect(result.current.customGlyphs.leaf).toBeUndefined();
+  });
+
+  it('deleteCustomGlyph removes an existing custom id', () => {
+    const { result } = renderHook(() => useLayers({ persistToLocal: false }));
+    let a, b;
+    act(() => { a = result.current.addCustomGlyph(sampleGlyph()); });
+    act(() => { b = result.current.addCustomGlyph(sampleGlyph()); });
+    act(() => { result.current.deleteCustomGlyph(a); });
+    expect(result.current.customGlyphs[a]).toBeUndefined();
+    expect(result.current.customGlyphs[b]).toBeDefined();
+    expect(Object.keys(result.current.customGlyphs)).toEqual([b]);
+  });
+
+  it('deleteCustomGlyph of an absent id is a harmless no-op', () => {
+    const { result } = renderHook(() => useLayers({ persistToLocal: false }));
+    let id;
+    act(() => { id = result.current.addCustomGlyph(sampleGlyph()); });
+    act(() => { result.current.deleteCustomGlyph('cg-does-not-exist'); });
+    expect(Object.keys(result.current.customGlyphs)).toEqual([id]);
+  });
+
+  it('records a structural undo entry once per add/update/delete', () => {
+    const spy = vi.fn();
+    const { result } = renderHook(() =>
+      useLayers({ recordStructural: spy, persistToLocal: false })
+    );
+    let id;
+    act(() => { id = result.current.addCustomGlyph(sampleGlyph()); });
+    expect(spy).toHaveBeenCalledTimes(1);
+    act(() => { result.current.updateCustomGlyph(id, sampleGlyph()); });
+    expect(spy).toHaveBeenCalledTimes(2);
+    act(() => { result.current.deleteCustomGlyph(id); });
+    expect(spy).toHaveBeenCalledTimes(3);
+  });
+
+  it('does NOT record for a built-in-id update or an absent-id delete no-op', () => {
+    const spy = vi.fn();
+    const { result } = renderHook(() =>
+      useLayers({ recordStructural: spy, persistToLocal: false })
+    );
+    act(() => { result.current.updateCustomGlyph('leaf', sampleGlyph()); });
+    act(() => { result.current.deleteCustomGlyph('cg-absent'); });
+    expect(spy).not.toHaveBeenCalled();
   });
 });

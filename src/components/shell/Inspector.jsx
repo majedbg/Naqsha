@@ -569,7 +569,7 @@ const MOTIF_ROLES = [
 // placement binding. Every write re-spreads the whole params.binding via
 // deepMergeBinding so a partial patch never clobbers another branch — same
 // re-spread invariant as ModulatorDevice, extended to a nested schema.
-function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, customGlyphs, addCustomGlyph, onImportError }) {
+function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, customGlyphs, addCustomGlyph, onImportError, onEditGlyph }) {
   // Collapsed by default (mobile discoverability: the device sits at the TOP of
   // the Inspector for a host layer but stays folded until the user opens it).
   // Declared BEFORE the self-hide early return — the component renders
@@ -612,6 +612,32 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, 
   const openImportFor = (motifId) => {
     importTargetIdRef.current = motifId;
     importInputRef.current?.click();
+  };
+
+  // Edit / Duplicate-to-edit (WI-P2-2). A CUSTOM glyph opens the pen editor
+  // directly. A BUILT-IN (or an unresolved ref) is read-only, so we first
+  // duplicate its geometry into a new editable custom glyph, rebind THIS row to
+  // the copy, THEN open the editor on it — never touching the built-in in place.
+  const openEditorFor = (m) => {
+    const ref = m.params?.glyphRef;
+    const isCustom = ref && !MOTIF_GLYPHS[ref] && !!customGlyphs?.[ref];
+    if (isCustom) {
+      onEditGlyph?.(ref, m.id);
+      return;
+    }
+    const builtIn = getGlyph(ref, customGlyphs) || MOTIF_GLYPHS.leaf;
+    const newId = addCustomGlyph?.({
+      name: builtIn.name,
+      tradition: "custom",
+      paths: builtIn.paths,
+      viewRadius: builtIn.viewRadius,
+      root: builtIn.root ?? { x: 0, y: 0, angle: 0 },
+    });
+    if (!newId) return;
+    onUpdateLayer(m.id, {
+      params: { ...m.params, glyphRef: newId },
+    });
+    onEditGlyph?.(newId, m.id);
   };
 
   // File chosen → parse via importMotif. On success, stamp the glyph into the
@@ -704,6 +730,10 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, 
           {motifs.map((m) => {
         const glyphRef = m.params?.glyphRef;
         const glyph = getGlyph(glyphRef, customGlyphs);
+        // Custom glyphs edit in place; built-ins are read-only → "Duplicate to
+        // edit" (the Edit button forks a copy first). WI-P2-2.
+        const isCustomGlyph =
+          !!glyphRef && !MOTIF_GLYPHS[glyphRef] && !!customGlyphs?.[glyphRef];
         const roles = Array.isArray(m.params?.binding?.selection?.roles)
           ? m.params.binding.selection.roles
           : [];
@@ -779,15 +809,28 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, 
 
             {/* Import SVG as motif — replaces THIS row's glyph with an imported
                 one. Built-ins above stay read-only (P1); only the selection
-                changes here, never the built-in geometry. */}
-            <button
-              type="button"
-              data-testid="motif-import"
-              onClick={() => openImportFor(m.id)}
-              className="w-full rounded-xs border border-hairline bg-paper px-2 py-0.5 text-[11px] text-ink-soft outline-none transition-colors hover:border-violet hover:text-ink"
-            >
-              Import SVG as motif…
-            </button>
+                changes here, never the built-in geometry. Edit opens the pen
+                editor (custom → in place; built-in → duplicate-to-edit). */}
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                data-testid="motif-import"
+                onClick={() => openImportFor(m.id)}
+                className="flex-1 rounded-xs border border-hairline bg-paper px-2 py-0.5 text-[11px] text-ink-soft outline-none transition-colors hover:border-violet hover:text-ink"
+              >
+                Import SVG as motif…
+              </button>
+              <button
+                type="button"
+                data-testid="motif-edit"
+                aria-label={isCustomGlyph ? "Edit motif" : "Duplicate to edit"}
+                title={isCustomGlyph ? "Edit motif" : "Duplicate to edit"}
+                onClick={() => openEditorFor(m)}
+                className="shrink-0 rounded-xs border border-hairline bg-paper px-2 py-0.5 text-[11px] text-ink-soft outline-none transition-colors hover:border-violet hover:text-ink"
+              >
+                <span aria-hidden="true">✎</span>
+              </button>
+            </div>
 
             {/* Roles — which anchor kinds this motif adorns */}
             <div className="flex flex-wrap gap-x-3 gap-y-1">
@@ -883,7 +926,7 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, 
 // The param-editing body for one selected layer. Split into its own component so
 // usePatternCache (a hook) is only called when a layer is actually selected —
 // hooks can't be called conditionally inside Inspector itself.
-function SelectedLayerInspector({ layer, layers, unit, profileId, onUpdateLayer, onChangeLayerPattern, onVariableWeightChange, onPreviewField, onClosePreview, threeDSubMode, threeDFocusLayerId, onAddMotif, onRemoveLayer, customGlyphs, addCustomGlyph, onImportError }) {
+function SelectedLayerInspector({ layer, layers, unit, profileId, onUpdateLayer, onChangeLayerPattern, onVariableWeightChange, onPreviewField, onClosePreview, threeDSubMode, threeDFocusLayerId, onAddMotif, onRemoveLayer, customGlyphs, addCustomGlyph, onImportError, onEditGlyph }) {
   // Pattern swap: route through the same cache machine LayerCard uses, applied via
   // the pair-aware onChangeLayerPattern when present (falls back to a plain param
   // update so the component works standalone / in tests without a router).
@@ -930,6 +973,7 @@ function SelectedLayerInspector({ layer, layers, unit, profileId, onUpdateLayer,
         customGlyphs={customGlyphs}
         addCustomGlyph={addCustomGlyph}
         onImportError={onImportError}
+        onEditGlyph={onEditGlyph}
       />
 
       {/* Collapsible, grouped param controls (Structure / Scale / Variation /
@@ -1019,6 +1063,9 @@ export default function Inspector({
   customGlyphs,
   addCustomGlyph,
   onImportError,
+  // Open the pen editor for a motif row's glyph (WI-P2-2). Built-ins duplicate
+  // to a custom copy first; the handler receives (glyphId, layerId). Optional.
+  onEditGlyph,
 }) {
   // Resolved font for the text-properties readouts (cap-height / engrave
   // warnings). May be null on first paint before useFont resolves — the panel's
@@ -1088,6 +1135,7 @@ export default function Inspector({
       customGlyphs={customGlyphs}
       addCustomGlyph={addCustomGlyph}
       onImportError={onImportError}
+      onEditGlyph={onEditGlyph}
     />
   );
 }

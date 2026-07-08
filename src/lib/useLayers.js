@@ -9,7 +9,7 @@ import { operationIdForRole } from './operations';
 import { parseSVGImport } from './svgImport';
 import { defaultTextParams } from './text/textLayer';
 import { MOTIF_TYPE, createMotifParams, motifAutoName } from './motif/motifLayer';
-import { getGlyph } from './motif/glyphs';
+import { getGlyph, MOTIF_GLYPHS } from './motif/glyphs';
 import { normalizePanels, loadPanels, savePanels } from './panels';
 
 // Distinct group id for a Moiré pair (links role A + role B).
@@ -797,11 +797,41 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
   // (genGlyphId), stamps it onto the stored glyph (mirroring built-ins, which
   // carry their own `id`), and returns the id so a caller (WI-4 import) can point
   // a motif layer's `glyphRef` at it. Pure additive — never touches `layers`.
+  // Records a structural undo entry (capture-before-change) so the add is
+  // undoable; the snapshot already carries customGlyphs (documentSnapshot.js).
   const addCustomGlyph = useCallback((glyph) => {
     const id = genGlyphId();
+    recordStructuralFn();
     setCustomGlyphs((prev) => ({ ...prev, [id]: { ...glyph, id } }));
     return id;
-  }, []);
+  }, [recordStructuralFn]);
+
+  // Overwrite the glyph at an existing custom id (WI-P2-1b). Re-stamps `id`
+  // (mirroring add) so the stored glyph always carries its own key. Built-in
+  // guard: `getGlyph` makes built-ins ALWAYS win, so an update targeting a
+  // built-in id would silently never render — and built-ins are read-only (the
+  // UI enforces "Duplicate to edit"). We early-return BEFORE recording so a
+  // blocked update leaves no dead undo step and never corrupts state.
+  const updateCustomGlyph = useCallback((id, glyph) => {
+    if (id in MOTIF_GLYPHS) return;
+    recordStructuralFn();
+    setCustomGlyphs((prev) => ({ ...prev, [id]: { ...glyph, id } }));
+  }, [recordStructuralFn]);
+
+  // Remove a custom glyph from the document store (WI-P2-1b). No-op (no history)
+  // when `id` is absent or a built-in — a built-in id is never a map key, so the
+  // presence check covers both. Reads current `customGlyphs` to decide, so it
+  // must sit in this callback's deps (the one mutator that legitimately can't be
+  // as referentially stable as the others).
+  const deleteCustomGlyph = useCallback((id) => {
+    if (!(id in customGlyphs)) return;
+    recordStructuralFn();
+    setCustomGlyphs((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+  }, [recordStructuralFn, customGlyphs]);
 
   const loadLayerSet = useCallback((newLayers) => {
     // Sync nextId to avoid collisions
@@ -825,7 +855,7 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
     // Custom-glyph store (WI-3): the map + additive accessor + bulk setter (the
     // restore/document-load seam). Studio threads customGlyphs into the render
     // (useCanvas), createDocumentIO (undo/redo), and every doc persistence path.
-    customGlyphs, addCustomGlyph, setCustomGlyphs,
+    customGlyphs, addCustomGlyph, updateCustomGlyph, deleteCustomGlyph, setCustomGlyphs,
     panels, setPanels,
     cap, // effective tier layer cap (downstream P6/P7 panel duplicate-cap gating)
   };

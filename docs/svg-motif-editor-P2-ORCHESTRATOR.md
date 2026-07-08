@@ -64,14 +64,14 @@ canvas + throttled mini full-canvas Preview. TDD per WI. Baseline suite: **3761 
 ### Wave 1 — parallel worktrees (disjoint, pure)
 | WI | Description | TDD | Files (one writer) | Status |
 |----|-------------|-----|--------------------|--------|
-| WI-P2-1 | `pathModel.js` — `parseDToAnchors(d)` / `anchorsToD(model)`, cubic-normalized (Q/T/A→cubic, L→null-handle), corner/smooth inference from handle collinearity, fidelity round-trip (parse→serialize→flatten ≈ original→flatten). ONE `d` in/out, multi-subpath aware. `type` never alters geometry. | RED→GREEN vertical slices | `src/lib/motif/pathModel.js` (+test) | **in-progress** |
-| WI-P2-1b | Store: `updateCustomGlyph(id, glyph)` (recordStructuralFn + setCustomGlyphs merge) + `deleteCustomGlyph(id)`; wire `addCustomGlyph`/`updateCustomGlyph`/`deleteCustomGlyph` into undo history (recordStructuralFn). Built-in id guard on update (no-op / not thrown). | CHAR (addCustomGlyph) then RED→GREEN | `src/lib/useLayers.js` (+`useLayers.customGlyphs.test.jsx`) | **in-progress** |
+| WI-P2-1 | `pathModel.js` — `parseDToAnchors(d)` / `anchorsToD(model)`, cubic-normalized (Q/T/A→cubic, L→null-handle), corner/smooth inference from handle collinearity, fidelity round-trip (parse→serialize→flatten ≈ original→flatten). ONE `d` in/out, multi-subpath aware. `type` never alters geometry. | RED→GREEN vertical slices | `src/lib/motif/pathModel.js` (+test) | **done** ✅ integrated (22 tests) |
+| WI-P2-1b | Store: `updateCustomGlyph(id, glyph)` (recordStructuralFn + setCustomGlyphs merge) + `deleteCustomGlyph(id)`; wire `addCustomGlyph`/`updateCustomGlyph`/`deleteCustomGlyph` into undo history (recordStructuralFn). Built-in id guard on update (no-op / not thrown). | CHAR (addCustomGlyph) then RED→GREEN | `src/lib/useLayers.js` (+`useLayers.customGlyphs.test.jsx`) | **done** ✅ integrated (14 tests) |
 
 ### Wave 2 — sequential on main (coupled editor, progressive)
 | WI | Description | TDD | Files (one writer) | Status |
 |----|-------------|-----|--------------------|--------|
-| WI-P2-2 | `MotifEditorModal.jsx` shell (Naqsha `/impeccable craft` chrome) — working copy, Cancel/Save/Save-as-copy, "used by N layers" badge, Preview checkbox (inert for now), renders path READ-ONLY (from pathModel). Edit(pencil) button in MotifDevice (built-ins → "Duplicate to edit"). Wire Save→updateCustomGlyph, Save-as-copy→addCustomGlyph+rebind. Dirty-flag verbatim-`d` preservation. | RED→GREEN (component + wiring) | `src/components/motif-editor/MotifEditorModal.jsx`, `useMotifEditor.js`, `Inspector.jsx` (Edit button), `Studio.jsx` (modal mount + updateCustomGlyph wire) (+tests) | pending |
-| WI-P2-3 | `penMachine.js` (pure) + `PenCanvas.jsx` DIRECT-SELECTION — render anchors/handles/root; hit-test; drag anchors + handles (smooth symmetric, ⌥-break→cusp); marquee multi-select; Delete. Machine tested headless. | RED→GREEN pure machine, then canvas | `src/components/motif-editor/penMachine.js`, `PenCanvas.jsx` (+tests); `useMotifEditor.js` (wire) | pending |
+| WI-P2-2 | `MotifEditorModal.jsx` shell (Naqsha `/impeccable craft` chrome) — working copy, Cancel/Save/Save-as-copy, "used by N layers" badge, Preview checkbox (inert for now), renders path READ-ONLY (from pathModel). Edit(pencil) button in MotifDevice (built-ins → "Duplicate to edit"). Wire Save→updateCustomGlyph, Save-as-copy→addCustomGlyph+rebind. Dirty-flag verbatim-`d` preservation. | RED→GREEN (component + wiring) | `src/components/motif-editor/MotifEditorModal.jsx`, `useMotifEditor.js`, `Inspector.jsx` (Edit button), `Studio.jsx` (modal mount + updateCustomGlyph wire) (+tests) | **done** ✅ integrated (20 tests) |
+| WI-P2-3 | `penMachine.js` (pure) + `PenCanvas.jsx` DIRECT-SELECTION — render anchors/handles/root; hit-test; drag anchors + handles (smooth symmetric, ⌥-break→cusp); marquee multi-select; Delete. Machine tested headless. | RED→GREEN pure machine, then canvas | `src/components/motif-editor/penMachine.js`, `PenCanvas.jsx` (+tests); `useMotifEditor.js` (edit-commit + modal-undo), `MotifEditorModal.jsx` (embed PenCanvas) | **in-progress** |
 | WI-P2-4 | Pen tool DRAW + structural edits — P (click=corner, drag=smooth, click-first=close, Esc/Enter finish), +/− add/delete-on-segment, Shift+C convert, ⌥ retract, double-click toggle, ⌘ temp-direct-select. Folds in draw-from-scratch ("New motif…"). Full hotkey map. | RED→GREEN pure machine, then canvas/hotkeys | `penMachine.js`, `PenCanvas.jsx`, `useMotifEditor.js`, `Inspector.jsx` ("New motif…") (+tests) | pending |
 | WI-P2-5 | Root handle (point + growth arm — drag point=move, drag arm=angle), pan (space-drag) + zoom (scroll), Shift 45°-constrain, and the rAF-throttled mini full-canvas Preview (2nd useCanvas w/ customGlyphs override). Final integration + `npm run dev` gate. | RED→GREEN | `PenCanvas.jsx`, `penMachine.js`, `useMotifEditor.js`, `MotifEditorModal.jsx` (preview) (+tests) | pending |
 
@@ -94,5 +94,33 @@ canvas + throttled mini full-canvas Preview. TDD per WI. Baseline suite: **3761 
   customGlyphs (49/65), useCanvas customGlyphs dep (367) → auto-restamp, MotifDevice row (572).
   Advisor folded 7 contracts (fidelity=dirty-flag, free-restamp, preview-override, two-undo-stacks,
   viewRadius-recompute, keyboard-scoping, closed-per-subpath). Dispatching Wave 1 (WI-P2-1 ‖ WI-P2-1b).
+- **2026-07-08 (Wave 1 done, integrated):** Both worktrees applied to main (disjoint files).
+  WI-P2-1 `pathModel.js`: `parseDToAnchors(d)→{subpaths:[{anchors:[{x,y,in,out,type}],closed}]}` /
+  `anchorsToD(model)→d`. Absolute handles; L/H/V→null, C/S→direct, Q/T→exact 2/3 elevation, A→arc-to-
+  cubic (≤90° pieces, only lossy case); `type` inferred, NEVER touches serialize output (slice-10 pins
+  it). Round-trip = symmetric Hausdorff (vertex→nearest-segment, both dirs) <0.5px on flattenPathD(tol
+  0.02) + closed-flag equality (goes RED on dropped Z). 22 tests. WI-P2-1b: `updateCustomGlyph` (built-in
+  guard `id in MOTIF_GLYPHS`→no-op), `deleteCustomGlyph` (absent/built-in→no-op), `addCustomGlyph` now
+  calls `recordStructuralFn` (P1 gap fixed). Guards early-return BEFORE recordStructuralFn (no dead undo
+  step — deliberate departure from the unconditional-record pattern). 14 tests. Full suite **3795 passed
+  / 54 skipped** (+34). pathModel lint clean; useLayers lint = pre-existing baseline only (211-213/252).
+  Worktrees removed. NOTE: concurrent user WIP `CameraRig.jsx` (+ auto-committer Marks/three3d drift on
+  main) present in tree — NOT mine, left untouched. Next: Wave 2 WI-P2-2 (modal shell, sequential on main).
+- **2026-07-08 (WI-P2-2 done, integrated):** MotifEditorModal shell built in worktree (branched pre-WI-1,
+  so agent used INJECTION SEAMS — parseD/anchorsToD passed as props; updateCustomGlyph optional-chained).
+  Integrated onto main (Inspector/Studio drift-free vs base) + wired the two seams: Studio imports
+  `{parseDToAnchors, anchorsToD}` from pathModel and passes them to the modal; `updateCustomGlyph` now
+  resolves (real store fn on main) so **Save is LIVE**. Working-copy hook `useMotifEditor(glyph, {parseD,
+  anchorsToD})` → `{ name, tradition, viewRadius, root, paths:[{d/*verbatim*/, closed, model, dirty}] }`;
+  pure helpers `makeWorkingCopy/serializeWorkingCopy/recomputeViewRadius/usedByCount/boundsFromWorkingCopy`
+  exported for later WIs. FIDELITY proven: serialize of an un-dirtied glyph = byte-identical `d` (incl. a
+  cubic-C fixture). Modal: editable name, "Used by N layers" badge, inert Preview checkbox, read-only SVG
+  render (violet stroke + jewel-madder ⊕ root), focus-trap + Esc→cancel + keydown stopPropagation. Chrome
+  via `/impeccable craft` (naqsheh graph-paper surface, tokens.css only). Inspector: per-row ✎ Edit →
+  `onEditGlyph` for custom; built-in → duplicate-to-edit (fork geometry, rebind, open). 20 tests. Full
+  suite **3815 passed / 54 skipped** (+20). Lint clean on all touched files.
+  ⚠ KNOWN LIMITATION (fix in WI-P2-3 when real bounds land): the modal's preview viewBox bounds-scan
+  pairs every number in `d` as (x,y), so H/V/A-command imports may crop/over-pad the framing (display
+  only; built-in M/L/Z exact). Next: WI-P2-3 (penMachine + PenCanvas direct-selection).
 </content>
 </invoke>

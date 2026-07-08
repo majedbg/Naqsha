@@ -36,6 +36,9 @@ import CloudSaveModal from "../components/CloudSaveModal";
 import PatternPickerModal from "../components/PatternPickerModal";
 import { centerTransform } from "../lib/scene/placement";
 import StudioSubmitModal from "../components/org/StudioSubmitModal";
+import MotifEditorModal from "../components/motif-editor/MotifEditorModal";
+import { parseDToAnchors, anchorsToD } from "../lib/motif/pathModel";
+import { getGlyph } from "../lib/motif/glyphs";
 import useLayers from "../lib/useLayers";
 import useLayerGroups from "../lib/useLayerGroups";
 import {
@@ -286,6 +289,11 @@ export default function Studio({ submitOrg = null } = {}) {
     // WI-5 import entry point — MotifDevice stamps an imported glyph through this.
     addCustomGlyph,
     setCustomGlyphs,
+    // Pen-editor Save seam (WI-P2-2). `updateCustomGlyph` (Save → all N layers
+    // restamp via the render seam) lands in WI-P2-1b; optional-chained below so
+    // this slice works before that store WI merges. (`deleteCustomGlyph` also
+    // ships there, but this WI has no Delete affordance, so it's not pulled in.)
+    updateCustomGlyph,
     // Naqsha Panels (WI-6). The panel array + setter are owned by useLayers (it
     // also persists `panels` to `sonoform-panels` and each `layer.panelId` to
     // `sonoform-layers` automatically). Studio threads them into cloud
@@ -512,6 +520,9 @@ export default function Studio({ submitOrg = null } = {}) {
   // selected yet (so the shell inspector is populated) and self-heals when the
   // selected layer is removed.
   const [selectedLayerIdState, setSelectedLayerId] = useState(null);
+  // Pen-editor open-state (WI-P2-2): { glyphId, layerId } while the modal edits a
+  // custom glyph on behalf of a motif row; null when closed.
+  const [motifEditor, setMotifEditor] = useState(null);
   const selectionExists =
     selectedLayerIdState != null &&
     layers.some((l) => l.id === selectedLayerIdState);
@@ -1639,6 +1650,43 @@ export default function Studio({ submitOrg = null } = {}) {
         />
       )}
 
+      {/* Pen-editor modal (WI-P2-2). Edits a WORKING COPY of the custom glyph;
+          the document mutates only on commit. Save → updateCustomGlyph restamps
+          every layer through the render seam (no per-layer iteration). Save as
+          copy → fork a new glyph + rebind only this layer. Cancel → discard. */}
+      {motifEditor &&
+        (() => {
+          const editGlyph = getGlyph(motifEditor.glyphId, customGlyphs);
+          if (!editGlyph) return null;
+          const close = () => setMotifEditor(null);
+          return (
+            <MotifEditorModal
+              glyphId={motifEditor.glyphId}
+              glyph={editGlyph}
+              layers={layers}
+              parseD={parseDToAnchors}
+              anchorsToD={anchorsToD}
+              onSave={(glyph) => {
+                updateCustomGlyph?.(motifEditor.glyphId, glyph);
+                close();
+              }}
+              onSaveAsCopy={(glyph) => {
+                const newId = addCustomGlyph?.(glyph);
+                if (newId) {
+                  const layer = layers.find((l) => l.id === motifEditor.layerId);
+                  if (layer) {
+                    updateLayer(layer.id, {
+                      params: { ...layer.params, glyphRef: newId },
+                    });
+                  }
+                }
+                close();
+              }}
+              onCancel={close}
+            />
+          );
+        })()}
+
 
       {/* Pro-shell top menu bar (B5 / #8). Portaled into the shell's Menu bar
           region when the slot is present; renders nothing in the legacy layout
@@ -1796,6 +1844,12 @@ export default function Studio({ submitOrg = null } = {}) {
             customGlyphs={customGlyphs}
             addCustomGlyph={addCustomGlyph}
             onImportError={showImportError}
+            // Open the pen editor for a motif row's glyph (WI-P2-2). Built-in
+            // rows duplicate-to-edit inside MotifDevice first, so this always
+            // receives a CUSTOM glyph id + the originating layer id.
+            onEditGlyph={(glyphId, layerId) =>
+              setMotifEditor({ glyphId, layerId })
+            }
           />,
           inspectorSlot
         )}

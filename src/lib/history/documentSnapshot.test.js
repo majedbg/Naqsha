@@ -8,19 +8,25 @@ import { HISTORY_SCHEMA_VERSION } from "./snapshot";
 // slice deep-equal (a true no-op). Capture must also deep-clone so a later live
 // edit can't mutate a snapshot already on the stack.
 
-function makeStore() {
+function makeStore(overrides = {}) {
   const doc = {
-    layers: [{ id: "l1", params: { d: 1 }, operationId: "op-cut" }],
+    layers: [{ id: "l1", params: { d: 1, glyphRef: "cg-1" }, operationId: "op-cut" }],
     panels: [{ id: "p1", layerIds: ["l1"] }],
     bgColor: "#0a1628",
     operations: [{ id: "op-cut", color: "#FF0000" }],
     canvas: { w: 800, h: 600, unit: "mm", margin: 0, presetIndex: 1, outputMode: "plotter" },
+    // WI-3: the per-document custom-glyph store rides the snapshot as a sibling of
+    // `layers` (it is referenced BY layers via glyphRef but does not live inside
+    // them, so it must be captured/restored explicitly).
+    customGlyphs: { "cg-1": { id: "cg-1", name: "Imported", paths: [{ d: "M0,0 Z", closed: true }], viewRadius: 1 } },
+    ...overrides,
   };
   const io = createDocumentIO({
     getLayers: () => doc.layers,
     getPanels: () => doc.panels,
     getBgColor: () => doc.bgColor,
     getOperations: () => doc.operations,
+    getCustomGlyphs: () => doc.customGlyphs,
     captureAssignments: () =>
       Object.fromEntries(doc.layers.map((l) => [l.id, l.operationId])),
     captureCanvas: () => doc.canvas,
@@ -35,6 +41,9 @@ function makeStore() {
     },
     restoreOperations: (next) => {
       doc.operations = next;
+    },
+    setCustomGlyphs: (next) => {
+      doc.customGlyphs = next;
     },
     restoreAssignments: (map) => {
       doc.layers = doc.layers.map((l) =>
@@ -59,6 +68,32 @@ describe("history/documentSnapshot — createDocumentIO (capture/restore symmetr
     expect(snap).toHaveProperty("operations");
     expect(snap).toHaveProperty("assignments");
     expect(snap).toHaveProperty("canvas");
+    expect(snap).toHaveProperty("customGlyphs");
+  });
+
+  it("WI-3 — a custom glyph survives capture→restore and stays resolvable by its motif layer's glyphRef", () => {
+    const { doc, io } = makeStore();
+    const snap = io.capture();
+    // Drop the glyph the way a bad edit / cross-doc leak would.
+    doc.customGlyphs = {};
+    io.restore(snap);
+    expect(doc.customGlyphs["cg-1"]).toBeDefined();
+    // The referencing layer's glyphRef still points at a present glyph.
+    expect(doc.customGlyphs[doc.layers[0].params.glyphRef]).toBeDefined();
+  });
+
+  it("WI-3 — capture deep-clones customGlyphs (a later live edit cannot mutate a taken snapshot)", () => {
+    const { doc, io } = makeStore();
+    const snap = io.capture();
+    doc.customGlyphs["cg-1"].name = "MUTATED";
+    expect(snap.customGlyphs["cg-1"].name).toBe("Imported");
+  });
+
+  it("WI-3 — restore of a snapshot with NO customGlyphs field resets the store to {} (old-doc / cross-document reset)", () => {
+    const { doc, io } = makeStore();
+    // Simulate restoring a pre-WI-3 snapshot that never captured the field.
+    io.restore({ v: 1, layers: doc.layers, panels: doc.panels, bgColor: doc.bgColor, operations: doc.operations, assignments: {}, canvas: doc.canvas });
+    expect(doc.customGlyphs).toEqual({});
   });
 
   it("I1 — restore(capture()) is a no-op across all six slices", () => {

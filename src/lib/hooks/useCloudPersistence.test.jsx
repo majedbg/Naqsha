@@ -210,7 +210,9 @@ describe("useCloudPersistence", () => {
 
     act(() => result.current.recoverDraft());
 
-    expect(props.loadLayerSet).toHaveBeenCalledWith(layers);
+    // WI-3: the document-load seam takes (layers, customGlyphs); an old draft
+    // with no glyph field resets the store to {}.
+    expect(props.loadLayerSet).toHaveBeenCalledWith(layers, {});
     expect(props.applyCanvasSize).toHaveBeenCalledWith(640, 480);
     expect(result.current.designName).toBe("Recovered");
     expect(loadDraft(draftKey(null))).toBe(null);
@@ -268,6 +270,60 @@ describe("useCloudPersistence", () => {
     expect(props.applyCanvasSize).toHaveBeenCalledWith(640, 480);
     expect(result.current.currentDesignId).toBe("design-7");
     expect(props.markCleanFrom).toHaveBeenCalled();
+  });
+
+  // WI-3: cloud save/load/recover must carry the per-document custom-glyph store
+  // (a sibling of layers) so a saved design using an imported motif reloads with
+  // the glyph resolvable.
+  it("WI-3 save: embeds the passed customGlyphs in the saved config", async () => {
+    saveDesign.mockResolvedValue({ id: "design-9" });
+    const customGlyphs = { "cg-1": { id: "cg-1", name: "Imported", paths: [], viewRadius: 1 } };
+    const props = baseProps({ customGlyphs });
+    const { result } = renderHook(() => useCloudPersistence(props));
+    await act(async () => { await result.current.handleSaveToCloud(); });
+    expect(saveDesign).toHaveBeenCalledWith(
+      "user-1",
+      "Untitled",
+      expect.objectContaining({ customGlyphs }),
+      null,
+      null
+    );
+  });
+
+  it("WI-3 load: forwards config.customGlyphs to the document-load seam (2nd arg)", async () => {
+    const customGlyphs = { "cg-1": { id: "cg-1", name: "Imported", paths: [], viewRadius: 1 } };
+    loadDesign.mockResolvedValue({
+      id: "design-7",
+      config: { layers: makeLayers(), canvasW: 640, canvasH: 480, customGlyphs },
+    });
+    const props = baseProps();
+    const { result } = renderHook(() => useCloudPersistence(props));
+    await act(async () => { await result.current.handleLoadCloudDesign("design-7"); });
+    expect(props.loadLayerSet).toHaveBeenCalledWith(expect.any(Array), customGlyphs);
+  });
+
+  it("WI-3 load: an OLD design without customGlyphs resets the store to {} through the seam", async () => {
+    loadDesign.mockResolvedValue({
+      id: "design-7",
+      config: { layers: makeLayers(), canvasW: 640, canvasH: 480 },
+    });
+    const props = baseProps();
+    const { result } = renderHook(() => useCloudPersistence(props));
+    await act(async () => { await result.current.handleLoadCloudDesign("design-7"); });
+    expect(props.loadLayerSet).toHaveBeenCalledWith(expect.any(Array), {});
+  });
+
+  it("WI-3 recover: forwards the draft's customGlyphs to the document-load seam", () => {
+    const customGlyphs = { "cg-1": { id: "cg-1", name: "Imported", paths: [], viewRadius: 1 } };
+    saveDraft(draftKey(null), {
+      config: { layers: makeLayers(), canvasW: 640, canvasH: 480, customGlyphs },
+      name: "Recovered",
+      savedAt: 5,
+    });
+    const props = baseProps();
+    const { result } = renderHook(() => useCloudPersistence(props));
+    act(() => result.current.recoverDraft());
+    expect(props.loadLayerSet).toHaveBeenCalledWith(expect.any(Array), customGlyphs);
   });
 
   it("load: adopts the loaded design's name and settles state to 'saved'", async () => {

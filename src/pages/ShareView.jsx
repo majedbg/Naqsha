@@ -27,9 +27,27 @@ export default function ShareView() {
   const layers = config?.layers || [];
   const canvasW = config?.canvasW || 1152;
   const canvasH = config?.canvasH || 1152;
+  // WI-3: a DB-shared design carries its custom-glyph store in config; thread it
+  // to useCanvas (last positional arg) so imported motifs resolve on this page.
+  const customGlyphs = config?.customGlyphs || {};
 
-  // Render patterns via useCanvas (only when design is loaded)
-  useCanvas(containerRef, design ? layers : [], canvasW, canvasH);
+  // Render patterns via useCanvas (only when design is loaded). The intervening
+  // positional args are spelled at their defaults to reach customGlyphs (13th).
+  useCanvas(
+    containerRef,
+    design ? layers : [],
+    canvasW,
+    canvasH,
+    '#ffffff',
+    {},
+    null,
+    null,
+    [],
+    null,
+    null,
+    [],
+    customGlyphs
+  );
 
   // Scale to fit
   useEffect(() => {

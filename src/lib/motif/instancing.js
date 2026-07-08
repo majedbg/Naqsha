@@ -13,20 +13,64 @@
 /**
  * @typedef {[number,number,number,number,number,number]} Matrix
  * @typedef {{x:number,y:number,rotation:number,radius:number,flip?:boolean}} PlacementLike
+ * @typedef {{x:number,y:number,angle:number}} Root
  */
 
 const DEG_TO_RAD = Math.PI / 180;
+
+/** No-op default root: the glyph's local ORIGIN is the anchor, no growth turn. */
+const DEFAULT_ROOT = { x: 0, y: 0, angle: 0 };
+
+/**
+ * SVG-convention affine product m1·m2 (m1 applied AFTER m2). Each matrix is
+ * [a,b,c,d,e,f] mapping (x,y) → (a*x+c*y+e, b*x+d*y+f); this is the standard
+ * 3×3 row-major multiply restricted to the affine rows.
+ * @param {Matrix} m1
+ * @param {Matrix} m2
+ * @returns {Matrix}
+ */
+function composeMatrix(m1, m2) {
+  const [a1, b1, c1, d1, e1, f1] = m1;
+  const [a2, b2, c2, d2, e2, f2] = m2;
+  return [
+    a1 * a2 + c1 * b2,
+    b1 * a2 + d1 * b2,
+    a1 * c2 + c1 * d2,
+    b1 * c2 + d1 * d2,
+    a1 * e2 + c1 * f2 + e1,
+    b1 * e2 + d1 * f2 + f1,
+  ];
+}
 
 /**
  * Build the SVG-convention affine matrix that maps a glyph authored in local
  * coordinates (bounding-circle radius `viewRadius`, centered at the origin)
  * onto a concrete placement.
  *
+ * WI-2 — optional motif ROOT: a point `(root.x, root.y)` and growth-direction
+ * `root.angle` (degrees), both in the glyph's LOCAL frame. The matrix maps the
+ * root POINT onto `(placement.x, placement.y)` and aligns the local growth axis
+ * (the direction at angle `root.angle`) to `placement.rotation`. Passed as a 3rd
+ * arg (not read off `placement`) because a root belongs to the GLYPH's geometry,
+ * not to the anchor — it must not leak into placement semantics, and built-in
+ * glyphs simply omit it.
+ *
+ * Compose order (folds a LOCAL pre-transform into the locked T·R·S core; derived
+ * and pinned by the non-zero-root tests, verified against the header convention):
+ *   M = T(px,py) · R(rotation) · S(sx,sy) · R(−root.angle) · T(−root.x,−root.y)
+ * The trailing `R(−angle)·T(−root)` sends the root point to the origin and
+ * de-rotates the growth axis to +x BEFORE the core scale/rotate/translate; flip
+ * stays folded in the core's sx exactly as before (never in the root turn).
+ *
+ * Default/absent root is short-circuited to the pre-root core so its output is
+ * byte-identical (avoids signed-zero drift from an identity compose).
+ *
  * @param {PlacementLike} placement
  * @param {number} viewRadius
+ * @param {Root} [root]
  * @returns {Matrix}
  */
-export function placementMatrix(placement, viewRadius) {
+export function placementMatrix(placement, viewRadius, root = DEFAULT_ROOT) {
   const s = placement.radius / viewRadius;
   const sx = s * (placement.flip ? -1 : 1);
   const sy = s;
@@ -34,14 +78,28 @@ export function placementMatrix(placement, viewRadius) {
   const cos = Math.cos(theta);
   const sin = Math.sin(theta);
 
-  const a = cos * sx;
-  const b = sin * sx;
-  const c = -sin * sy;
-  const d = cos * sy;
-  const e = placement.x;
-  const f = placement.y;
+  // The locked pre-root T·R·S core.
+  const core = [cos * sx, sin * sx, -sin * sy, cos * sy, placement.x, placement.y];
 
-  return [a, b, c, d, e, f];
+  // No-op root ⇒ return the core verbatim (guarantees byte-identity).
+  if (root.x === 0 && root.y === 0 && root.angle === 0) return core;
+
+  // Local pre-transform P = R(−root.angle) · T(−root.x, −root.y), as one matrix.
+  const phi = root.angle * DEG_TO_RAD;
+  const cphi = Math.cos(phi);
+  const sphi = Math.sin(phi);
+  // R(−phi) = [[cosφ, sinφ], [−sinφ, cosφ]] ⇒ SVG [cosφ, −sinφ, sinφ, cosφ]; its
+  // translation is R(−phi) applied to (−root.x, −root.y).
+  const pre = [
+    cphi,
+    -sphi,
+    sphi,
+    cphi,
+    -(root.x * cphi + root.y * sphi),
+    root.x * sphi - root.y * cphi,
+  ];
+
+  return composeMatrix(core, pre);
 }
 
 /**

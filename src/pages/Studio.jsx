@@ -34,7 +34,7 @@ import RightPanel from "../components/RightPanel";
 import LayerGroupModal from "../components/LayerGroupModal";
 import CloudSaveModal from "../components/CloudSaveModal";
 import PatternPickerModal from "../components/PatternPickerModal";
-import { parseForPlacement, centerTransform } from "../lib/scene/placement";
+import { centerTransform } from "../lib/scene/placement";
 import StudioSubmitModal from "../components/org/StudioSubmitModal";
 import useLayers from "../lib/useLayers";
 import useLayerGroups from "../lib/useLayerGroups";
@@ -277,6 +277,15 @@ export default function Studio({ submitOrg = null } = {}) {
     loadLayerSet,
     bgColor,
     setBgColor,
+    // Custom-glyph store (WI-3). The document-level map of imported motif glyphs.
+    // Threaded into the render (via RightPanel → useCanvas), the undo/redo snapshot
+    // (createDocumentIO), and every document persistence surface (share / cloud /
+    // draft / group / example). addCustomGlyph is the WI-4 import entry point;
+    // setCustomGlyphs is the bulk document-load seam (used by loadDocumentLayers).
+    customGlyphs,
+    // WI-5 import entry point — MotifDevice stamps an imported glyph through this.
+    addCustomGlyph,
+    setCustomGlyphs,
     // Naqsha Panels (WI-6). The panel array + setter are owned by useLayers (it
     // also persists `panels` to `sonoform-panels` and each `layer.panelId` to
     // `sonoform-layers` automatically). Studio threads them into cloud
@@ -364,11 +373,13 @@ export default function Studio({ submitOrg = null } = {}) {
   const panelsRef = useRef(panels);
   const bgColorRef = useRef(bgColor);
   const operationsRef = useRef(operations);
+  const customGlyphsRef = useRef(customGlyphs);
   useEffect(() => {
     panelsRef.current = panels;
     bgColorRef.current = bgColor;
     operationsRef.current = operations;
-  }, [panels, bgColor, operations]);
+    customGlyphsRef.current = customGlyphs;
+  }, [panels, bgColor, operations, customGlyphs]);
   // Getters wrapped in useCallback so the ref reads live in a stable handler
   // (not an inline render-phase arrow), keeping capture reading the latest slice
   // values without re-creating the engine each render.
@@ -376,6 +387,7 @@ export default function Studio({ submitOrg = null } = {}) {
   const getPanels = useCallback(() => panelsRef.current, []);
   const getBgColor = useCallback(() => bgColorRef.current, []);
   const getOperations = useCallback(() => operationsRef.current, []);
+  const getCustomGlyphs = useCallback(() => customGlyphsRef.current, []);
   const { capture: captureDoc, restore: restoreDocBase } = useMemo(
     () =>
       createDocumentIO({
@@ -383,12 +395,14 @@ export default function Studio({ submitOrg = null } = {}) {
         getPanels,
         getBgColor,
         getOperations,
+        getCustomGlyphs, // WI-3: capture the custom-glyph store in each snapshot
         captureAssignments,
         captureCanvas,
         loadLayerSet,
         setPanels,
         setBgColor,
         restoreOperations: setOperations, // plain non-recording setter (S5)
+        setCustomGlyphs, // WI-3: restore resets the store (defaults {} for old snaps)
         restoreAssignments,
         restoreCanvas,
       }),
@@ -397,11 +411,13 @@ export default function Studio({ submitOrg = null } = {}) {
       getPanels,
       getBgColor,
       getOperations,
+      getCustomGlyphs,
       captureAssignments,
       captureCanvas,
       loadLayerSet,
       setPanels,
       setBgColor,
+      setCustomGlyphs,
       restoreAssignments,
       restoreCanvas,
     ]
@@ -446,12 +462,19 @@ export default function Studio({ submitOrg = null } = {}) {
   // the restore() replay keep the RAW loadLayerSet — they must NOT clear. Tier-1
   // / Tier-2 reload-persistence (S8/S9) imports a compatible tail on top of this
   // always-safe clear floor.
+  // WI-3: doc-load also swaps in the incoming document's custom-glyph store. The
+  // 2nd arg defaults to {} so EVERY genuine doc-load (group / example / cloud /
+  // share / draft recovery) that omits it RESETS the store — never leaking the
+  // previous document's glyphs into a doc that has none (referential-integrity
+  // risk #1). The RAW loadLayerSet at structural-edit sites intentionally does
+  // NOT touch customGlyphs (those aren't doc loads).
   const loadDocumentLayers = useCallback(
-    (newLayers) => {
+    (newLayers, newCustomGlyphs = {}) => {
       historyRef.current?.clear();
+      setCustomGlyphs(newCustomGlyphs);
       loadLayerSet(newLayers);
     },
-    [loadLayerSet]
+    [loadLayerSet, setCustomGlyphs]
   );
 
   // === Tier-2 cloud history persistence (undo-history-plan §7, S9) ===
@@ -809,18 +832,24 @@ export default function Studio({ submitOrg = null } = {}) {
   const [importError, setImportError] = useState(null);
   const importErrorTimer = useRef(null);
 
+  // Surface a brief inline import-error banner (auto-clears after 4s). Shared by
+  // File>Import, click-to-place, and the Motif device's "Import SVG as motif…".
+  const showImportError = useCallback((message) => {
+    setImportError(message || "Could not import this SVG.");
+    clearTimeout(importErrorTimer.current);
+    importErrorTimer.current = setTimeout(() => setImportError(null), 4000);
+  }, []);
+
   const handleImportSVG = useCallback(
     (svgText) => {
       const outcome = addImportedLayer(svgText);
       if (!outcome.ok) {
-        setImportError(outcome.error || "Could not import this SVG.");
-        clearTimeout(importErrorTimer.current);
-        importErrorTimer.current = setTimeout(() => setImportError(null), 4000);
+        showImportError(outcome.error || "Could not import this SVG.");
       } else {
         setImportError(null);
       }
     },
-    [addImportedLayer]
+    [addImportedLayer, showImportError]
   );
 
   // Click-to-place commit: drop the armed asset centred on the canvas point the
@@ -986,6 +1015,7 @@ export default function Studio({ submitOrg = null } = {}) {
     // round-trip. Always pass the real array + setter.
     panels,
     setPanels,
+    customGlyphs, // WI-3: embedded in the saved/draft config as a sibling of layers
     loadLayerSet: loadDocumentLayers, // cloud load + draft recovery are document loads (I5)
     applyCanvasSize,
     markCleanFrom,
@@ -1259,6 +1289,9 @@ export default function Studio({ submitOrg = null } = {}) {
     margin,
     bgColor,
     layers,
+    // WI-3: carry the custom-glyph store so a shared design that uses an imported
+    // motif reproduces (the glyph is referenced by layers' glyphRef, not inline).
+    customGlyphs,
   });
 
   const handleConfirmSave = () => {
@@ -1273,12 +1306,14 @@ export default function Studio({ submitOrg = null } = {}) {
       }
     }
     const name = saveName.trim() || "Untitled";
-    saveGroup(name, layers, canvasW, canvasH, thumbnail);
+    saveGroup(name, layers, canvasW, canvasH, thumbnail, customGlyphs);
     setUI("showSaveDialog", false);
   };
 
   const handleLoadGroup = (group) => {
-    loadDocumentLayers(group.layers);
+    // WI-3: a saved group carries its custom-glyph store; default {} resets the
+    // store for a pre-WI-3 group (no field) so it never inherits current glyphs.
+    loadDocumentLayers(group.layers, group.customGlyphs ?? {});
     if (group.canvasW && group.canvasH) {
       applyCanvasSize(group.canvasW, group.canvasH);
     }
@@ -1294,7 +1329,9 @@ export default function Studio({ submitOrg = null } = {}) {
     (example) => {
       const cfg = example?.config;
       if (!cfg?.layers) return;
-      loadDocumentLayers(cfg.layers);
+      // WI-3: a curated example may bundle custom glyphs; default {} resets the
+      // store for examples that don't (the common case) rather than leaking.
+      loadDocumentLayers(cfg.layers, cfg.customGlyphs ?? {});
       if (typeof cfg.bgColor === "string") setBgColor(cfg.bgColor);
       if (cfg.canvasW && cfg.canvasH) {
         applyCanvasSize(cfg.canvasW, cfg.canvasH);
@@ -1405,6 +1442,8 @@ export default function Studio({ submitOrg = null } = {}) {
           // canvas render is byte-identical to today; the real panels fold in
           // per-panel visibility only in laser mode.
           panels={activeProfileId === "laser" ? panels : []}
+          // Custom-glyph store (WI-3): resolves motif glyphRefs at the render seam.
+          customGlyphs={customGlyphs}
           // 3D preview (S1): mounts the lazy three.js host over the canvas when a
           // sub-mode is active; 'off' → byte-identical 2D path.
           threeDMode={threeD.subMode}
@@ -1751,6 +1790,12 @@ export default function Studio({ submitOrg = null } = {}) {
             // tree uses (removeLayer / onDeleteLayer).
             onAddMotif={addMotifLayer}
             onRemoveLayer={removeLayer}
+            // WI-5: the Motif device lists imported glyphs (customGlyphs) in its
+            // picker and imports new ones — addCustomGlyph stamps + returns an id,
+            // showImportError reuses the same inline banner File>Import uses.
+            customGlyphs={customGlyphs}
+            addCustomGlyph={addCustomGlyph}
+            onImportError={showImportError}
           />,
           inspectorSlot
         )}

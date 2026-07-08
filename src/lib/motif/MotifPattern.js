@@ -37,7 +37,12 @@ export default class MotifPattern extends Pattern {
     this.svgElements = [];
 
     const p = params || {};
-    const glyph = getGlyph(p.glyphRef);
+    // Glyph resolution (WI-3): prefer the glyph INJECTED by the render seam
+    // (useCanvas resolves glyphRef against the document custom-glyph store and
+    // injects the object here), keeping this class decoupled from that store.
+    // Fall back to the built-in library by glyphRef when nothing is injected —
+    // back-compat for existing built-in motifs and non-injecting callers.
+    const glyph = p.glyph ?? getGlyph(p.glyphRef);
     const hostPaths = Array.isArray(p.hostPaths) ? p.hostPaths : [];
     // No glyph ⇒ nothing to stamp. (hostPaths may be empty in SEMANTIC mode —
     // a Grid/Spiral host has no polyline geometry, so the guard cannot require
@@ -85,9 +90,14 @@ export default class MotifPattern extends Pattern {
     const c = ctx.color(color || '#000000');
     if (c && typeof c.setAlpha === 'function') c.setAlpha(alpha);
 
+    // Optional motif ROOT (glyph-local): the point that coincides with the
+    // anchor + growth-direction angle. Built-in glyphs carry none ⇒ default
+    // no-op ⇒ byte-identical output to the pre-root pipeline (WI-2).
+    const root = glyph.root || { x: 0, y: 0, angle: 0 };
+
     for (const placement of placements) {
       // THE single matrix. Feeds BOTH emitters below — no second transform path.
-      const m = placementMatrix(placement, glyph.viewRadius);
+      const m = placementMatrix(placement, glyph.viewRadius, root);
 
       // ── canvas: pre-transformed absolute vertices ──────────────────────────
       for (const gp of glyph.paths) {

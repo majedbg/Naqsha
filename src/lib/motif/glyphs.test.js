@@ -23,6 +23,42 @@ describe('getGlyph', () => {
   it('returns undefined for an unknown id', () => {
     expect(getGlyph('does-not-exist')).toBeUndefined();
   });
+
+  // Document-aware resolution (WI-3): a 2nd `customGlyphs` map argument lets the
+  // built-in library be extended per-document. Built-ins ALWAYS win; the custom
+  // map is only consulted for ids the built-in library doesn't own.
+  describe('document-aware (customGlyphs)', () => {
+    const custom = {
+      cg1: { id: 'cg1', name: 'Imported', paths: [{ d: 'M0,0 L1,0 L1,1 Z', closed: true }], viewRadius: 1 },
+    };
+
+    it('resolves a custom glyph from the customGlyphs map', () => {
+      expect(getGlyph('cg1', custom)).toBe(custom.cg1);
+    });
+
+    it('built-in wins over the custom map for the same id', () => {
+      const shadow = { leaf: { id: 'leaf', name: 'Fake', paths: [], viewRadius: 1 } };
+      expect(getGlyph('leaf', shadow)).toBe(MOTIF_GLYPHS.leaf);
+    });
+
+    it('built-in still resolves by exact reference with a customGlyphs arg present', () => {
+      expect(getGlyph('leaf', custom)).toBe(MOTIF_GLYPHS.leaf);
+    });
+
+    it('unknown id with a customGlyphs map returns undefined', () => {
+      expect(getGlyph('nope', custom)).toBeUndefined();
+    });
+
+    it('back-compat: single-arg call is unchanged (no crash, built-in or undefined)', () => {
+      expect(getGlyph('cg1')).toBeUndefined();
+      expect(getGlyph('leaf')).toBe(MOTIF_GLYPHS.leaf);
+    });
+
+    it('tolerates a null/undefined customGlyphs map', () => {
+      expect(getGlyph('cg1', null)).toBeUndefined();
+      expect(getGlyph('cg1', undefined)).toBeUndefined();
+    });
+  });
 });
 
 describe('leaf glyph shape', () => {

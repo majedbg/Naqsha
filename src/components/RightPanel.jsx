@@ -62,6 +62,11 @@ export default function RightPanel({
   // exactly as before. Studio laser-gates this: it passes the real panels only in
   // laser mode and [] otherwise.
   panels = [],
+  // Custom-glyph store (WI-3). Forwarded to useCanvas as its 13th/last positional
+  // arg so a motif layer's glyphRef resolves against the document's imported
+  // glyphs at the render seam. DEFAULTS to {} so every other caller (ShareView,
+  // mobile, tests) resolves built-ins only — byte-identical to before.
+  customGlyphs = {},
   // 3D preview (S1, PRD D1). `threeDMode` ∈ {'off','panel-stack','height-surface'}.
   // When != 'off' the lazy <Canvas3DHost> mounts over the canvas region and the
   // p5 surface is HIDDEN (visibility, NOT unmounted — p5 state is preserved).
@@ -222,7 +227,8 @@ export default function RightPanel({
     operations,
     machineProfile,
     colorView,
-    panels
+    panels,
+    customGlyphs
   );
 
   // Surface-A texture-mode marks (S5, PRD D3/D6). Built 2D-side here — where the

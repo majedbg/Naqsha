@@ -24,6 +24,9 @@ export function createDocumentIO({
   getPanels,
   getBgColor,
   getOperations,
+  // WI-3: the per-document custom-glyph store. Optional so pre-WI-3 callers /
+  // stub stores that don't pass it capture `{}` and restore is a safe no-op.
+  getCustomGlyphs = () => ({}),
   captureAssignments,
   captureCanvas,
   // bulk setters (restore writes every slice back, synchronously)
@@ -31,6 +34,7 @@ export function createDocumentIO({
   setPanels,
   setBgColor,
   restoreOperations,
+  setCustomGlyphs = () => {},
   restoreAssignments,
   restoreCanvas,
 }) {
@@ -40,6 +44,9 @@ export function createDocumentIO({
     panels: structuredClone(getPanels()),
     bgColor: getBgColor(),
     operations: structuredClone(getOperations()),
+    // customGlyphs is referenced BY layers (glyphRef) but lives outside them, so
+    // it must be captured explicitly — deep-cloned like the other object slices.
+    customGlyphs: structuredClone(getCustomGlyphs()),
     assignments: captureAssignments(),
     canvas: captureCanvas(),
   });
@@ -52,6 +59,10 @@ export function createDocumentIO({
     setPanels(s.panels);
     setBgColor(s.bgColor);
     restoreOperations(s.operations);
+    // Default to {} so restoring a pre-WI-3 snapshot (no field) — or crossing
+    // into a document that never had custom glyphs — RESETS the store rather than
+    // leaking the prior document's glyphs (referential-integrity risk #1).
+    setCustomGlyphs(s.customGlyphs ?? {});
     restoreAssignments(s.assignments);
     restoreCanvas(s.canvas);
     // selection is NOT in the snapshot (D1); best-effort re-selection is the

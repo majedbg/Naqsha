@@ -45,6 +45,33 @@ function genId() {
   return `layer-${nextId++}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+// Custom-glyph id scheme (WI-3). Mirrors genId: a monotonic counter plus a
+// random suffix. The random segment makes the id collision-safe across reloads
+// WITHOUT syncing the counter from persisted keys (unlike nextId/layers) — two
+// documents merged or reloaded can't clash, and stability across a session lets
+// motif layers reference `cg-<n>-<rand>` verbatim.
+let nextCgNum = 1;
+function genGlyphId() {
+  return `cg-${nextCgNum++}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+const CUSTOM_GLYPHS_STORAGE_KEY = 'sonoform-custom-glyphs';
+
+// Load the per-document custom-glyph map from localStorage (guest-gated by the
+// caller). Tolerates absent/corrupt storage → {} (old docs simply lack the
+// field — there is no migration hook to run).
+function loadCustomGlyphs() {
+  try {
+    const raw = localStorage.getItem(CUSTOM_GLYPHS_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    return parsed;
+  } catch {
+    return {};
+  }
+}
+
 function randomSeed() {
   return Math.floor(Math.random() * 100000);
 }
@@ -192,6 +219,17 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
     return DEFAULT_BG_COLOR;
   });
 
+  // Per-document custom-glyph store (WI-3): a map { [id]: glyph } of imported
+  // SVGs reusable as motifs. A custom glyph mirrors a built-in (glyphs.js
+  // MOTIF_GLYPHS shape) plus a `root`. It is a document-level asset referenced by
+  // motif layers via `glyphRef`, so — unlike an imported-path layer's on-layer
+  // pathData — it does NOT ride along inside `layers`; every persistence surface
+  // must carry it as a sibling of `layers` (documentSnapshot / shareLink /
+  // cloud+draft). Guests (persistToLocal:false) hold it in memory only.
+  const [customGlyphs, setCustomGlyphs] = useState(() =>
+    persistToLocal ? loadCustomGlyphs() : {}
+  );
+
   // Debounced save to localStorage. 3000ms (undo-history-plan §10/§12): the
   // unified-history Tier-1 writer rides this same cadence, and a longer window
   // coalesces undo/redo bursts. Trade-off: worst-case crash-loss grows from
@@ -205,10 +243,13 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
         localStorage.setItem(STORAGE_KEY, JSON.stringify(layers));
         localStorage.setItem(BG_STORAGE_KEY, bgColor);
         savePanels(panels); // sonoform-panels (WI-1) rides the same debounce
+        // sonoform-custom-glyphs (WI-3) rides the same debounce so guest work
+        // survives a reload exactly like layers/panels.
+        localStorage.setItem(CUSTOM_GLYPHS_STORAGE_KEY, JSON.stringify(customGlyphs));
       } catch { /* storage full or unavailable */ }
     }, 3000);
     return () => clearTimeout(saveTimer.current);
-  }, [layers, bgColor, panels]);
+  }, [layers, bgColor, panels, customGlyphs]);
 
   // `patternType` optional (from the pattern picker). The `typeof === 'string'`
   // guard means a bare `onClick={addLayer}` (which would pass an event) still
@@ -350,7 +391,9 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
       const index = prev.length;
       const layer = {
         id,
-        name: motifAutoName(host, getGlyph(opts.glyphRef)),
+        // WI-3: resolve the auto-name glyph against the document store too, so a
+        // motif built on an imported glyph names correctly (built-in still wins).
+        name: motifAutoName(host, getGlyph(opts.glyphRef, customGlyphs)),
         nameIsCustom: false,
         locked: false,
         type: MOTIF_TYPE,
@@ -378,7 +421,7 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
       return [...prev, layer];
     });
     return { ok: true, id };
-  }, [cap, layers, recordStructuralFn]);
+  }, [cap, layers, customGlyphs, recordStructuralFn]);
 
   const duplicateLayer = useCallback((id) => {
     recordStructuralFn(); // history: discrete structural entry
@@ -750,6 +793,16 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
     );
   }, [recordStructuralFn]);
 
+  // Add a custom glyph to the document store (WI-3). Assigns a stable unique id
+  // (genGlyphId), stamps it onto the stored glyph (mirroring built-ins, which
+  // carry their own `id`), and returns the id so a caller (WI-4 import) can point
+  // a motif layer's `glyphRef` at it. Pure additive — never touches `layers`.
+  const addCustomGlyph = useCallback((glyph) => {
+    const id = genGlyphId();
+    setCustomGlyphs((prev) => ({ ...prev, [id]: { ...glyph, id } }));
+    return id;
+  }, []);
+
   const loadLayerSet = useCallback((newLayers) => {
     // Sync nextId to avoid collisions
     let maxNum = 0;
@@ -769,6 +822,10 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
     changeLayerPattern,
     randomizeLayer, randomizeAll, randomizeLayerParams, randomizeAllParams,
     loadLayerSet, bgColor, setBgColor,
+    // Custom-glyph store (WI-3): the map + additive accessor + bulk setter (the
+    // restore/document-load seam). Studio threads customGlyphs into the render
+    // (useCanvas), createDocumentIO (undo/redo), and every doc persistence path.
+    customGlyphs, addCustomGlyph, setCustomGlyphs,
     panels, setPanels,
     cap, // effective tier layer cap (downstream P6/P7 panel duplicate-cap gating)
   };

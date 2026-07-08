@@ -272,6 +272,14 @@ function deviceProfile() {
  * @param {{ specs?: import('../../lib/three3d/sheetSpecs.js').SheetSpec[],
  *           marksByPanel?: Record<string, Array<{process:string,tint:string,intensity:number,svg:string}>> }} props
  */
+// TEMP DIAGNOSTIC (revert after test): force every panel to TEXTURE mode. Ribbon
+// stroke geometry has no mip chain, so a dense/minified hatch undersamples into
+// crawling moiré; the texture path is mipmapped + anisotropic and should band-limit
+// it to a soft hatch. If the moiré vanishes with this ON, ribbon undersampling is
+// confirmed and the real fix is to route dense/minified marks to texture. Flip back
+// to `false` (or delete) once verified.
+const FORCE_TEXTURE_MODE = true;
+
 export default function Marks({ specs = [], marksByPanel = {} }) {
   const routes = useMemo(
     () => routePanelRenderModes(marksByPanel, deviceProfile()),
@@ -283,7 +291,7 @@ export default function Marks({ specs = [], marksByPanel = {} }) {
         const marks = marksByPanel[spec.panelId];
         if (!marks || marks.length === 0) return null;
         const front = spec.zOffset + spec.thickness / 2;
-        const useRibbon = routes[spec.panelId] === 'ribbon';
+        const useRibbon = !FORCE_TEXTURE_MODE && routes[spec.panelId] === 'ribbon';
         return marks
           .filter((m) => m.svg)
           .map((m, i) => {

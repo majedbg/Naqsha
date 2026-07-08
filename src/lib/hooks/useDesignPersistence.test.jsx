@@ -102,4 +102,26 @@ describe("useDesignPersistence", () => {
     // Token stripped from the URL after hydration.
     expect(window.location.search).toBe("");
   });
+
+  // WI-3: a shared design that uses an imported motif carries its custom-glyph
+  // store in the token; hydration must hand it to the document-load seam
+  // (loadLayerSet's 2nd arg) so the motif resolves after the link is opened.
+  it("share hydration passes customGlyphs to the document-load seam", () => {
+    const customGlyphs = { "cg-1": { id: "cg-1", name: "Imported", paths: [{ d: "M0,0 Z", closed: true }], viewRadius: 1 } };
+    const token = encodeShare({ layers: makeLayers(42), customGlyphs });
+    window.history.replaceState({}, "", `/?s=${token}`);
+    const props = baseProps();
+    renderHook(() => useDesignPersistence(props));
+    expect(props.loadLayerSet).toHaveBeenCalledWith(expect.any(Array), customGlyphs);
+  });
+
+  // Cross-document reset: an OLD share (no customGlyphs field) must reset the
+  // store to {} through the seam, never leak the prior document's glyphs.
+  it("share hydration of a doc WITHOUT customGlyphs resets the store to {}", () => {
+    const token = encodeShare({ layers: makeLayers(42) });
+    window.history.replaceState({}, "", `/?s=${token}`);
+    const props = baseProps();
+    renderHook(() => useDesignPersistence(props));
+    expect(props.loadLayerSet).toHaveBeenCalledWith(expect.any(Array), {});
+  });
 });

@@ -19,6 +19,11 @@ export default function useCloudPersistence({
   bgColor,
   panels,
   setPanels,
+  // WI-3: the per-document custom-glyph store (map). Embedded in the saved/draft
+  // config as a sibling of `layers`; on load/recover it is handed back to the
+  // document-load seam (loadLayerSet's 2nd arg). Undefined when a caller predates
+  // WI-3 → config carries `customGlyphs: undefined` (harmless).
+  customGlyphs,
   loadLayerSet,
   applyCanvasSize,
   markCleanFrom,
@@ -75,7 +80,9 @@ export default function useCloudPersistence({
     // StrictMode (dev) updaters run twice, which would double-apply the config.
     if (!pendingDraft) return;
     const cfg = pendingDraft.config || {};
-    if (cfg.layers) loadLayerSet(cfg.layers);
+    // WI-3: pass the draft's custom glyphs to the document-load seam; default {}
+    // so an old draft with no field resets the store (no cross-doc leak).
+    if (cfg.layers) loadLayerSet(cfg.layers, cfg.customGlyphs ?? {});
     if (cfg.canvasW && cfg.canvasH) applyCanvasSize(cfg.canvasW, cfg.canvasH);
     if (pendingDraft.name) setDesignName(pendingDraft.name);
     clearDraft(mountKey);
@@ -97,7 +104,7 @@ export default function useCloudPersistence({
   const handleSaveToCloud = useCallback(async ({ manual = false } = {}) => {
     if (!user) return;
     const thumbnail = captureThumbnail();
-    const config = { layers, canvasW, canvasH, presetIndex, panels };
+    const config = { layers, canvasW, canvasH, presetIndex, panels, customGlyphs };
     // Tier-2 (S9): embed the undo/redo tail in the SAVED design config on MANUAL
     // save only (⌘S / Save button → `{ manual: true }`). Autosave's no-arg call
     // leaves `manual` false, so the high-frequency writes never carry the tail.
@@ -178,6 +185,7 @@ export default function useCloudPersistence({
     markCleanFrom,
     bgColor,
     panels,
+    customGlyphs,
     limits.historySnapshots,
     retryDelays,
     getHistoryTail,
@@ -194,7 +202,9 @@ export default function useCloudPersistence({
           design.config.panels,
           savedLayers || []
         );
-        if (savedLayers) loadLayerSet(normLayers);
+        // WI-3: forward the saved custom-glyph store to the document-load seam;
+        // default {} so an old design without the field resets the store.
+        if (savedLayers) loadLayerSet(normLayers, design.config.customGlyphs ?? {});
         setPanels?.(normPanels);
         if (cw && ch) applyCanvasSize(cw, ch);
         setCurrentDesignId(design.id);

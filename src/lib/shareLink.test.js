@@ -48,6 +48,23 @@ describe('encodeShare / decodeShare', () => {
     expect(typeof decoded.v).toBe('number');
   });
 
+  // WI-3: a share state carrying a per-document custom-glyph store must survive
+  // the base64url round-trip intact (it is a sibling of `layers`, referenced by a
+  // motif layer's glyphRef). This is the "share a design that uses an imported
+  // motif" failure mode — the glyph must travel WITH the layers.
+  it('round-trips customGlyphs alongside layers (referential integrity)', () => {
+    const state = {
+      layers: [{ id: 'l1', patternType: 'motif', params: { glyphRef: 'cg-1' } }],
+      customGlyphs: {
+        'cg-1': { id: 'cg-1', name: 'Imported', paths: [{ d: 'M0,-5 L5,0 L0,5 L-5,0 Z', closed: true }], viewRadius: 5, root: { x: 0, y: 0, angle: 0 } },
+      },
+    };
+    const decoded = decodeShare(encodeShare(state));
+    expect(decoded.customGlyphs['cg-1']).toBeDefined();
+    // The shared layer's glyphRef still resolves inside the decoded doc.
+    expect(decoded.customGlyphs[decoded.layers[0].params.glyphRef].paths[0].d).toBe('M0,-5 L5,0 L0,5 L-5,0 Z');
+  });
+
   it('round-trips an empty state object', () => {
     const token = encodeShare({});
     const decoded = decodeShare(token);

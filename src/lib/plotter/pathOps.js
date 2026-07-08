@@ -112,6 +112,255 @@ export function parsePathD(d) {
   return { points, closed };
 }
 
+// ---------------------------------------------------------------------------
+// flattenPathD — curve-aware path flattener
+//
+// Same contract as parsePathD ({ points, closed }), but it UNDERSTANDS the
+// curve commands parsePathD samples at a fixed step count (C/S) plus the ones
+// it ignores entirely (Q/T quadratics, A elliptical arcs). Every curve is
+// tessellated ADAPTIVELY to a flatness tolerance `tol` (px): recursive
+// de Casteljau subdivision for béziers, sagitta-bounded sampling for arcs.
+// Smaller tol => smoother polyline / more vertices.
+//
+// SAFETY RAIL: for any `d` containing only M / L / Z commands, this returns
+// vertices IDENTICAL to parsePathD(d) — the M/L/Z branches below are copied
+// verbatim from parsePathD (same tokenizer number regex, same implicit-L
+// after M, same lowercase-as-absolute quirk, same Number.isFinite guard).
+// The built-in motif glyphs are all M/L/Z, so a later consumer swap is a
+// byte-for-byte no-op on them.
+//
+// Not supported (documented, deliberate): true RELATIVE commands — lowercase
+// c/s/q/t/a are read as absolute, mirroring the historical M/L/Z handling; and
+// packed arc-flag digits (e.g. "a5 5 0 0113 13") — keep flags space-separated.
+
+// Default flatness tolerance in px. 0.25px is well below a plotter pen width
+// and sub-pixel at typical print scale, so the polyline reads as a smooth
+// curve while keeping the vertex count modest.
+const FLATTEN_TOL = 0.25;
+
+// Recursion guard for adaptive subdivision — 2^24 leaf segments is far more
+// than any sane tol demands, and stops pathological inputs looping forever.
+const MAX_SUBDIV_DEPTH = 24;
+
+// Tokenizer for flattenPathD ONLY (parsePathD keeps its own, narrower one so
+// its behaviour is untouched). Recognises the full curve command set.
+function tokenizeFlat(d) {
+  return d.match(/[MLZCSQTAmlzcsqta]|-?\d+(?:\.\d+)?(?:e[-+]?\d+)?/gi) || [];
+}
+
+// Adaptively flatten a cubic Bézier into `out`. Mirrors sampleCubic's contract:
+// p0 is NOT emitted (already the last vertex), p3 IS emitted EXACTLY (its own
+// coords, not a recomputed midpoint), control points never surface. Subdivides
+// at t=0.5 (de Casteljau) until both control points sit within `tol` of the
+// P0→P3 chord.
+function flattenCubic(p0, c1, c2, p3, tol, out, depth = 0) {
+  if (depth >= MAX_SUBDIV_DEPTH
+      || (perpDist(c1, p0, p3) <= tol && perpDist(c2, p0, p3) <= tol)) {
+    out.push([p3[0], p3[1]]);
+    return;
+  }
+  const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+  const l1 = mid(p0, c1);
+  const m = mid(c1, c2);
+  const r2 = mid(c2, p3);
+  const l2 = mid(l1, m);
+  const r1 = mid(m, r2);
+  const mp = mid(l2, r1); // on-curve point at t=0.5
+  flattenCubic(p0, l1, l2, mp, tol, out, depth + 1);
+  flattenCubic(mp, r1, r2, p3, tol, out, depth + 1);
+}
+
+// Adaptively flatten a quadratic Bézier into `out`. Same emit contract as
+// flattenCubic (p0 excluded, p2 exact). Flatness = control point's distance to
+// the P0→P2 chord.
+function flattenQuad(p0, c, p2, tol, out, depth = 0) {
+  if (depth >= MAX_SUBDIV_DEPTH || perpDist(c, p0, p2) <= tol) {
+    out.push([p2[0], p2[1]]);
+    return;
+  }
+  const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+  const l = mid(p0, c);
+  const r = mid(c, p2);
+  const mp = mid(l, r); // on-curve point at t=0.5
+  flattenQuad(p0, l, mp, tol, out, depth + 1);
+  flattenQuad(mp, r, p2, tol, out, depth + 1);
+}
+
+// Flatten an SVG elliptical-arc command into `out`, following the endpoint→
+// centre parameterization of the SVG spec (F.6.5) with the radii out-of-range
+// correction (F.6.6). p0 is the current point; (rx,ry,phiDeg,largeArc,sweep)
+// are the arc params; p is the endpoint. p0 is NOT emitted; the endpoint IS
+// emitted exactly. Degenerate cases collapse to a straight line (endpoint only).
+function flattenArc(p0, rx, ry, phiDeg, largeArc, sweep, p, tol, out) {
+  rx = Math.abs(rx);
+  ry = Math.abs(ry);
+  // Coincident endpoints => nothing to draw; zero radius => straight line.
+  if (p0[0] === p[0] && p0[1] === p[1]) return;
+  if (rx === 0 || ry === 0) { out.push([p[0], p[1]]); return; }
+
+  const phi = (phiDeg * Math.PI) / 180;
+  const cosP = Math.cos(phi);
+  const sinP = Math.sin(phi);
+  // Step 1: midpoint delta rotated into the ellipse's local frame.
+  const dx = (p0[0] - p[0]) / 2;
+  const dy = (p0[1] - p[1]) / 2;
+  const x1 = cosP * dx + sinP * dy;
+  const y1 = -sinP * dx + cosP * dy;
+  // Step 2 (F.6.6): scale radii up if they cannot span the endpoints.
+  const lambda = (x1 * x1) / (rx * rx) + (y1 * y1) / (ry * ry);
+  if (lambda > 1) {
+    const s = Math.sqrt(lambda);
+    rx *= s;
+    ry *= s;
+  }
+  // Step 2: centre in the local frame.
+  const rxSq = rx * rx;
+  const rySq = ry * ry;
+  const num = rxSq * rySq - rxSq * y1 * y1 - rySq * x1 * x1;
+  const den = rxSq * y1 * y1 + rySq * x1 * x1;
+  let coef = den === 0 ? 0 : Math.sqrt(Math.max(0, num / den));
+  if (largeArc === sweep) coef = -coef;
+  const cxp = (coef * rx * y1) / ry;
+  const cyp = (-coef * ry * x1) / rx;
+  // Step 3: centre back in absolute coordinates.
+  const cx = cosP * cxp - sinP * cyp + (p0[0] + p[0]) / 2;
+  const cy = sinP * cxp + cosP * cyp + (p0[1] + p[1]) / 2;
+  // Step 4: start angle and sweep angle.
+  const angle = (ux, uy, vx, vy) => {
+    const dot = ux * vx + uy * vy;
+    const len = Math.hypot(ux, uy) * Math.hypot(vx, vy);
+    let a = Math.acos(Math.min(1, Math.max(-1, len === 0 ? 1 : dot / len)));
+    if (ux * vy - uy * vx < 0) a = -a;
+    return a;
+  };
+  const theta1 = angle(1, 0, (x1 - cxp) / rx, (y1 - cyp) / ry);
+  let dTheta = angle((x1 - cxp) / rx, (y1 - cyp) / ry, (-x1 - cxp) / rx, (-y1 - cyp) / ry);
+  if (!sweep && dTheta > 0) dTheta -= 2 * Math.PI;
+  else if (sweep && dTheta < 0) dTheta += 2 * Math.PI;
+  // Segment count from the sagitta bound: for a step dθ the chord error of a
+  // circle of radius r is r(1 - cos(dθ/2)) ≈ r·dθ²/8, so dθ ≤ sqrt(8·tol/r).
+  // Use the larger radius as the conservative worst case for the ellipse.
+  const rMax = Math.max(rx, ry);
+  const maxStep = Math.sqrt(Math.max(1e-9, (8 * tol) / rMax));
+  const segs = Math.max(1, Math.ceil(Math.abs(dTheta) / maxStep));
+  for (let s = 1; s <= segs; s++) {
+    // Emit the exact endpoint on the final step to pin it precisely.
+    if (s === segs) { out.push([p[0], p[1]]); break; }
+    const th = theta1 + (dTheta * s) / segs;
+    const ex = Math.cos(th) * rx;
+    const ey = Math.sin(th) * ry;
+    out.push([cosP * ex - sinP * ey + cx, sinP * ex + cosP * ey + cy]);
+  }
+}
+
+export function flattenPathD(d, tol = FLATTEN_TOL) {
+  if (!d || typeof d !== 'string') return { points: [], closed: false };
+  const t = Number.isFinite(tol) && tol > 0 ? tol : FLATTEN_TOL;
+  const tokens = tokenizeFlat(d);
+  const points = [];
+  let closed = false;
+  let cmd = null;          // current command letter (uppercased)
+  let cur = [0, 0];        // current on-curve point (start anchor for next cmd)
+  let prevCubicC2 = null;  // previous C/S 2nd control point (for S reflection)
+  let prevQuadC = null;    // previous Q/T control point (for T reflection)
+  let i = 0;
+  while (i < tokens.length) {
+    const tok = tokens[i];
+    if (/^[Zz]$/.test(tok)) { closed = true; cmd = null; prevCubicC2 = null; prevQuadC = null; i++; continue; }
+    if (/^[MLCSQTAmlcsqta]$/.test(tok)) { cmd = tok.toUpperCase(); i++; continue; }
+    // Numeric token: dispatch on the current command. Implicit repeats reuse
+    // the same command (SVG polyline / polybezier semantics).
+    const c = cmd || 'L';
+    if (c === 'M' || c === 'L') {
+      // --- copied verbatim from parsePathD (byte-identity rail) ---
+      const x = parseFloat(tokens[i]);
+      const y = parseFloat(tokens[i + 1]);
+      if (Number.isFinite(x) && Number.isFinite(y)) { points.push([x, y]); cur = [x, y]; }
+      prevCubicC2 = null; prevQuadC = null;
+      if (c === 'M') cmd = 'L'; // extra coordinate sets after M are implicit L
+      i += 2;
+    } else if (c === 'C') {
+      const c1x = parseFloat(tokens[i]);
+      const c1y = parseFloat(tokens[i + 1]);
+      const c2x = parseFloat(tokens[i + 2]);
+      const c2y = parseFloat(tokens[i + 3]);
+      const ex = parseFloat(tokens[i + 4]);
+      const ey = parseFloat(tokens[i + 5]);
+      if ([c1x, c1y, c2x, c2y, ex, ey].every(Number.isFinite)) {
+        flattenCubic(cur, [c1x, c1y], [c2x, c2y], [ex, ey], t, points);
+        cur = [ex, ey];
+        prevCubicC2 = [c2x, c2y];
+        prevQuadC = null;
+      }
+      i += 6;
+    } else if (c === 'S') {
+      const c2x = parseFloat(tokens[i]);
+      const c2y = parseFloat(tokens[i + 1]);
+      const ex = parseFloat(tokens[i + 2]);
+      const ey = parseFloat(tokens[i + 3]);
+      if ([c2x, c2y, ex, ey].every(Number.isFinite)) {
+        // First control = reflection of the previous cubic 2nd control about
+        // the current point; if the previous command was not C/S it coincides
+        // with the current point.
+        const c1 = prevCubicC2
+          ? [2 * cur[0] - prevCubicC2[0], 2 * cur[1] - prevCubicC2[1]]
+          : [cur[0], cur[1]];
+        flattenCubic(cur, c1, [c2x, c2y], [ex, ey], t, points);
+        cur = [ex, ey];
+        prevCubicC2 = [c2x, c2y];
+        prevQuadC = null;
+      }
+      i += 4;
+    } else if (c === 'Q') {
+      const cxp = parseFloat(tokens[i]);
+      const cyp = parseFloat(tokens[i + 1]);
+      const ex = parseFloat(tokens[i + 2]);
+      const ey = parseFloat(tokens[i + 3]);
+      if ([cxp, cyp, ex, ey].every(Number.isFinite)) {
+        flattenQuad(cur, [cxp, cyp], [ex, ey], t, points);
+        cur = [ex, ey];
+        prevQuadC = [cxp, cyp];
+        prevCubicC2 = null;
+      }
+      i += 4;
+    } else if (c === 'T') {
+      const ex = parseFloat(tokens[i]);
+      const ey = parseFloat(tokens[i + 1]);
+      if ([ex, ey].every(Number.isFinite)) {
+        // Control = reflection of the previous quadratic control about the
+        // current point; if the previous command was not Q/T it coincides
+        // with the current point.
+        const ctrl = prevQuadC
+          ? [2 * cur[0] - prevQuadC[0], 2 * cur[1] - prevQuadC[1]]
+          : [cur[0], cur[1]];
+        flattenQuad(cur, ctrl, [ex, ey], t, points);
+        cur = [ex, ey];
+        prevQuadC = ctrl;
+        prevCubicC2 = null;
+      }
+      i += 2;
+    } else if (c === 'A') {
+      const rx = parseFloat(tokens[i]);
+      const ry = parseFloat(tokens[i + 1]);
+      const rot = parseFloat(tokens[i + 2]);
+      const laf = parseFloat(tokens[i + 3]);
+      const sf = parseFloat(tokens[i + 4]);
+      const ex = parseFloat(tokens[i + 5]);
+      const ey = parseFloat(tokens[i + 6]);
+      if ([rx, ry, rot, laf, sf, ex, ey].every(Number.isFinite)) {
+        flattenArc(cur, rx, ry, rot, laf !== 0, sf !== 0, [ex, ey], t, points);
+        cur = [ex, ey];
+        prevCubicC2 = null;
+        prevQuadC = null;
+      }
+      i += 7;
+    } else {
+      i++;
+    }
+  }
+  return { points, closed };
+}
+
 export function pathDFromPoints(points, closed = false) {
   if (!points.length) return '';
   let d = `M${points[0][0].toFixed(2)},${points[0][1].toFixed(2)}`;

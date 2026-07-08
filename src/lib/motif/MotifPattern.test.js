@@ -10,9 +10,11 @@
 //
 // Env: pure JS (RecordingContext) — no jsdom.
 
+import { vi } from 'vitest';
 import MotifPattern from './MotifPattern.js';
 import { RecordingContext } from '../patterns/drawingContext.js';
 import { placeMotifs } from './placementEngine.js';
+import * as glyphs from './glyphs.js';
 import { getGlyph } from './glyphs.js';
 import { parsePathD } from '../plotter/pathOps.js';
 
@@ -221,6 +223,49 @@ describe('MotifPattern dual-emit parity', () => {
     endShapes.forEach((c) => expect(c.args[0]).toBe(ctx.CLOSE));
   });
 
+  it('CHARACTERIZATION: built-in glyph (no root) emits the exact pre-root svgElements', () => {
+    // Absolute value pin (the parity/determinism tests above are all relational
+    // and would NOT catch a uniform shift). Built-in glyphs carry no `root`, so
+    // WI-2's root pre-transform must default to a no-op ⇒ byte-identical output.
+    const { inst } = run(baseParams());
+    expect(inst.svgElements).toEqual([
+      '<g transform="matrix(-0.693242 0.693242 -0.693242 -0.693242 100 100)"><path d="M0,-10 L7,-4 L8,5 L2,10 L-6,6 L-7,-2 L-2,-8 Z" fill="none"/></g>',
+      '<g transform="matrix(-0.693242 0.693242 -0.693242 -0.693242 300 300)"><path d="M0,-10 L7,-4 L8,5 L2,10 L-6,6 L-7,-2 L-2,-8 Z" fill="none"/></g>',
+    ]);
+  });
+
+  it('WIRING: a glyph carrying a `root` maps the LOCAL ROOT POINT onto the anchor (3rd-arg is load-bearing)', () => {
+    // Anchors for baseParams() land the local origin at (100,100) and (300,300)
+    // (pinned above). With a rooted glyph, the ROOT POINT — not the origin —
+    // must land there. If generate() dropped the 3rd placementMatrix arg, the
+    // translation would stay at the anchor and this test would go red.
+    const ROOT = { x: 3, y: 4, angle: 0 };
+    const spy = vi
+      .spyOn(glyphs, 'getGlyph')
+      // Build the base glyph from MOTIF_GLYPHS (NOT getGlyph — that's the spy).
+      .mockImplementation((id) => ({ ...glyphs.MOTIF_GLYPHS[id], root: ROOT }));
+    try {
+      const { inst } = run(baseParams());
+      const anchors = [
+        [100, 100],
+        [300, 300],
+      ];
+      const insts = svgInstances(inst.svgElements);
+      expect(insts.length).toBe(2);
+      insts.forEach(({ matrix }, i) => {
+        // The root point maps onto the anchor…
+        const [rx, ry] = localApply(ROOT.x, ROOT.y, matrix);
+        expect(rx).toBeCloseTo(anchors[i][0], 6);
+        expect(ry).toBeCloseTo(anchors[i][1], 6);
+        // …and the raw translation (local-origin landing) has SHIFTED off the
+        // anchor, proving the root pre-transform actually applied (not a no-op).
+        expect(Math.hypot(matrix[4] - anchors[i][0], matrix[5] - anchors[i][1])).toBeGreaterThan(1);
+      });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it('no-op when the glyph is missing', () => {
     const { inst, ctx } = run(baseParams({ glyphRef: 'does-not-exist' }));
     expect(inst.svgElements).toEqual([]);
@@ -231,6 +276,48 @@ describe('MotifPattern dual-emit parity', () => {
     const { inst, ctx } = run(baseParams({ hostPaths: [] }));
     expect(inst.svgElements).toEqual([]);
     expect(ctx.calls.filter((c) => c.op === 'vertex').length).toBe(0);
+  });
+
+  // WI-3: MotifPattern reads an INJECTED glyph (`params.glyph`) resolved upstream
+  // by useCanvas against the document custom-glyph store, staying decoupled from
+  // the store itself. It falls back to the built-in getGlyph(glyphRef) only when
+  // no glyph is injected.
+  describe('injected-glyph resolution (WI-3)', () => {
+    // A glyph NOT in MOTIF_GLYPHS — proves the injected object is used, not a
+    // built-in lookup. Distinctive `d` so we can assert it reached the SVG.
+    const CUSTOM_GLYPH = {
+      id: 'cg-custom',
+      name: 'Custom',
+      paths: [{ d: 'M0,-6 L6,0 L0,6 L-6,0 Z', closed: true }],
+      viewRadius: 6,
+    };
+
+    it('uses params.glyph when injected (custom id absent from MOTIF_GLYPHS)', () => {
+      const { inst } = run(baseParams({ glyphRef: 'cg-custom', glyph: CUSTOM_GLYPH }));
+      expect(inst.svgElements.length).toBe(2);
+      // The injected glyph's verbatim path d reached every emitted instance.
+      expect(inst.svgElements.every((el) => el.includes('M0,-6 L6,0 L0,6 L-6,0 Z'))).toBe(true);
+    });
+
+    it('injected glyph WINS over the glyphRef built-in fallback', () => {
+      // glyphRef points at a real built-in (leaf) but a custom glyph is injected;
+      // the injected object must be what renders.
+      const { inst } = run(baseParams({ glyphRef: 'leaf', glyph: CUSTOM_GLYPH }));
+      expect(inst.svgElements.every((el) => el.includes('M0,-6 L6,0 L0,6 L-6,0 Z'))).toBe(true);
+      expect(inst.svgElements.some((el) => el.includes('M0,-10'))).toBe(false);
+    });
+
+    it('falls back to the built-in when no glyph is injected (back-compat)', () => {
+      const { inst } = run(baseParams({ glyphRef: 'leaf' }));
+      expect(inst.svgElements.length).toBe(2);
+      expect(inst.svgElements.every((el) => el.includes('M0,-10'))).toBe(true);
+    });
+
+    it('graceful degrade: missing glyph AND none injected → renders nothing (stripped-glyph failure mode)', () => {
+      const { inst, ctx } = run(baseParams({ glyphRef: 'cg-missing' }));
+      expect(inst.svgElements).toEqual([]);
+      expect(ctx.calls.filter((c) => c.op === 'vertex').length).toBe(0);
+    });
   });
 });
 

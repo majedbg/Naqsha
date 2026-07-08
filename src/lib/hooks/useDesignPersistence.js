@@ -85,7 +85,10 @@ export default function useDesignPersistence({
     const state = decodeShare(token);
     if (!state) return;
     if (Array.isArray(state.layers) && state.layers.length > 0)
-      loadLayerSet(state.layers);
+      // WI-3: hand the shared doc's custom-glyph store to the document-load seam
+      // (loadLayerSet's 2nd arg). Default `{}` so an OLD share with no field
+      // RESETS the store rather than leaking the prior document's glyphs.
+      loadLayerSet(state.layers, state.customGlyphs ?? {});
     if (typeof state.canvasW === "number") setCanvasW(state.canvasW);
     if (typeof state.canvasH === "number") setCanvasH(state.canvasH);
     if (typeof state.presetIndex === "number") setPresetIndex(state.presetIndex);

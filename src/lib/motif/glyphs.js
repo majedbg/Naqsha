@@ -75,9 +75,14 @@ export const MOTIF_GLYPHS = {
 };
 
 /**
+ * Resolve a glyph by id. Document-aware (WI-3): a built-in glyph ALWAYS wins;
+ * the optional per-document `customGlyphs` map (owned by useLayers) is consulted
+ * only for ids the built-in library doesn't own. Single-arg calls stay
+ * back-compat (built-in or undefined), so untouched callers never break.
  * @param {string} id
+ * @param {Record<string, Glyph>} [customGlyphs] per-document custom-glyph store
  * @returns {Glyph|undefined}
  */
-export function getGlyph(id) {
-  return MOTIF_GLYPHS[id];
+export function getGlyph(id, customGlyphs) {
+  return MOTIF_GLYPHS[id] ?? customGlyphs?.[id];
 }

@@ -54,6 +54,9 @@ export default function MobileStudio() {
     changeLayerPattern,
     bgColor,
     setBgColor,
+    // WI-3: custom-glyph store, forwarded to RightPanel → useCanvas so a motif's
+    // glyphRef resolves against imported glyphs on the mobile canvas too.
+    customGlyphs,
   } = useLayers({ persistToLocal: limits.localStorage, maxLayers: limits.maxLayers });
 
   const patternInstancesRef = useRef({});
@@ -142,6 +145,7 @@ export default function MobileStudio() {
           canvasContainerRef={canvasContainerRef}
           bgColor={bgColor}
           onBgColorChange={setBgColor}
+          customGlyphs={customGlyphs}
           unit={unit}
         />
       </div>

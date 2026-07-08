@@ -87,6 +87,79 @@ describe('matrixToSVG', () => {
   });
 });
 
+describe('placementMatrix root: non-zero root maps LOCAL root point + growth axis', () => {
+  it('the local root point (root.x,root.y) lands exactly on (placement.x,placement.y)', () => {
+    // radius === viewRadius ⇒ s=1, no rotation, no flip. root=(2,3). The matrix
+    // must pre-translate the root to the origin so it re-lands on the anchor.
+    const placement = { x: 100, y: 50, rotation: 0, radius: V, flip: false };
+    const root = { x: 2, y: 3, angle: 0 };
+    const m = placementMatrix(placement, V, root);
+    const landed = applyMatrix({ x: root.x, y: root.y }, m);
+    expect(landed.x).toBeCloseTo(100, 9);
+    expect(landed.y).toBeCloseTo(50, 9);
+  });
+
+  it('the growth axis (local angle root.angle) aligns to placement.rotation', () => {
+    // placement rotation = 90°, root.angle = 30°, root at local origin, s=1.
+    // The local growth vector (cos30,sin30) must map to world direction 90°,
+    // i.e. straight up (0, +1) — NOT (0,-1) (wrong-sign R(+angle) ⇒ 150° ⇒ x<0).
+    const placement = { x: 0, y: 0, rotation: 90, radius: V, flip: false };
+    const root = { x: 0, y: 0, angle: 30 };
+    const m = placementMatrix(placement, V, root);
+    const a = 30 * (Math.PI / 180);
+    const base = applyMatrix({ x: 0, y: 0 }, m);
+    const tip = applyMatrix({ x: Math.cos(a), y: Math.sin(a) }, m);
+    const dir = { x: tip.x - base.x, y: tip.y - base.y };
+    expect(dir.x).toBeCloseTo(0, 9); // discriminates wrong-sign rotation
+    expect(dir.y).toBeCloseTo(1, 9); // both x≈0 AND y>0 required
+  });
+
+  it('flip does NOT corrupt the root pre-translate: rooted point still lands on the anchor', () => {
+    // flip folds into the core scale (sx) and must stay OUT of the root turn.
+    // With flip=true the root point (2,3) must STILL map onto (100,50).
+    const placement = { x: 100, y: 50, rotation: 0, radius: V, flip: true };
+    const root = { x: 2, y: 3, angle: 0 };
+    const m = placementMatrix(placement, V, root);
+    const landed = applyMatrix({ x: root.x, y: root.y }, m);
+    expect(landed.x).toBeCloseTo(100, 9);
+    expect(landed.y).toBeCloseTo(50, 9);
+    // And the transform is a genuine mirror (flip survived): det < 0.
+    const det = m[0] * m[3] - m[1] * m[2];
+    expect(det).toBeLessThan(0);
+  });
+});
+
+// FROZEN copy of the pre-root formula (as of the WI-2 characterization). This is
+// the reference the identity/default-root case must match BYTE-FOR-BYTE — it is
+// intentionally NOT `placementMatrix` itself (that would be circular).
+function oldMatrix(placement, viewRadius) {
+  const s = placement.radius / viewRadius;
+  const sx = s * (placement.flip ? -1 : 1);
+  const sy = s;
+  const theta = (placement.rotation * Math.PI) / 180;
+  const cos = Math.cos(theta);
+  const sin = Math.sin(theta);
+  return [cos * sx, sin * sx, -sin * sy, cos * sy, placement.x, placement.y];
+}
+
+describe('placementMatrix root: default/absent is byte-identical to the pre-root formula', () => {
+  const cases = [
+    { name: 'identity', p: { x: 0, y: 0, rotation: 0, radius: V, flip: false } },
+    { name: 'translate', p: { x: 10, y: 20, rotation: 0, radius: V, flip: false } },
+    { name: 'non-zero rotation', p: { x: 3, y: -7, rotation: 37, radius: 8, flip: false } },
+    { name: 'flip=true', p: { x: 0, y: 0, rotation: 0, radius: V, flip: true } },
+    { name: 'flip + rotation', p: { x: -4, y: 9, rotation: 123, radius: 2 * V, flip: true } },
+    { name: 'small radius', p: { x: 1, y: 1, rotation: 15, radius: 0.5, flip: false } },
+    { name: 'large radius', p: { x: 500, y: 300, rotation: -66, radius: 250, flip: true } },
+  ];
+  it.each(cases)('$name: absent root ⇒ exact same [a,b,c,d,e,f]', ({ p }) => {
+    expect(placementMatrix(p, V)).toEqual(oldMatrix(p, V));
+  });
+  it.each(cases)('$name: explicit {0,0,0} root ⇒ exact same [a,b,c,d,e,f]', ({ p }) => {
+    expect(placementMatrix(p, V, { x: 0, y: 0, angle: 0 })).toEqual(oldMatrix(p, V));
+  });
+});
+
 describe('determinism', () => {
   it('placementMatrix + applyMatrix are pure: identical inputs produce toEqual outputs', () => {
     const placement = { x: 3, y: -7, rotation: 37, radius: 8, flip: true };

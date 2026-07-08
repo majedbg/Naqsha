@@ -4,7 +4,7 @@
 // plus the exported deepMergeBinding helper's partial-patch invariant.
 
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import Inspector from "./Inspector";
 import {
   MOTIF_TYPE,
@@ -202,6 +202,139 @@ describe("MotifDevice", () => {
     const [, patch] = onUpdateLayer.mock.calls[0];
     expect(patch.params.binding.selection.rate.n).toBe(4);
     expect(patch.params.binding.selection.roles).toEqual(["crossing"]);
+  });
+
+  // ── Custom glyphs (WI-5): the picker lists imported motifs alongside
+  //    built-ins, and getGlyph resolves a custom id for the row swatch/label.
+  const customGlyph = (id, name) => ({
+    id,
+    name,
+    tradition: "imported",
+    paths: [{ d: "M0,0 L4,4", closed: false }],
+    viewRadius: 5,
+    root: { x: 0, y: 0, angle: 0 },
+  });
+
+  it("lists custom glyphs alongside built-ins; selecting one updates glyphRef", () => {
+    const onUpdateLayer = vi.fn();
+    const motif = motifLayer("m1", "host1", defaultBinding);
+    const customGlyphs = { "cg-1": customGlyph("cg-1", "My Vine") };
+    render(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={onUpdateLayer}
+        onChangeLayerPattern={() => {}}
+        customGlyphs={customGlyphs}
+      />
+    );
+    fireEvent.click(screen.getByTestId("motif-toggle"));
+    // Built-in AND custom both selectable.
+    expect(screen.getByRole("option", { name: "Leaf" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "My Vine" })).toBeInTheDocument();
+
+    fireEvent.change(screen.getByTestId("motif-glyph"), {
+      target: { value: "cg-1" },
+    });
+    const [id, patch] = onUpdateLayer.mock.calls.at(-1);
+    expect(id).toBe("m1");
+    expect(patch.params.glyphRef).toBe("cg-1");
+  });
+
+  it("resolves a CUSTOM glyphRef for the row (select value + swatch path)", () => {
+    const customGlyphs = { "cg-9": customGlyph("cg-9", "Custom Fern") };
+    const motif = motifLayer("m1", "host1", defaultBinding);
+    motif.params.glyphRef = "cg-9"; // this motif points at the custom glyph
+    render(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+        customGlyphs={customGlyphs}
+      />
+    );
+    fireEvent.click(screen.getByTestId("motif-toggle"));
+    // The select holds the custom id (option exists) and shows its name.
+    expect(screen.getByTestId("motif-glyph")).toHaveValue("cg-9");
+    expect(screen.getByRole("option", { name: "Custom Fern" })).toBeInTheDocument();
+    // getGlyph(glyphRef, customGlyphs) resolved → swatch draws the custom `d`.
+    const row = screen.getByTestId("motif-row");
+    expect(row.querySelector('path[d="M0,0 L4,4"]')).not.toBeNull();
+  });
+
+  // ── Import SVG as motif (WI-5): the row's "Import" affordance runs real
+  //    importMotif, stamps the glyph via addCustomGlyph, and rebinds THIS row.
+  it("import: an OK SVG stamps a custom glyph and points this row at the new id", async () => {
+    const onUpdateLayer = vi.fn();
+    const addCustomGlyph = vi.fn(() => "cg-test");
+    const onImportError = vi.fn();
+    const motif = motifLayer("m1", "host1", defaultBinding);
+    render(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={onUpdateLayer}
+        onChangeLayerPattern={() => {}}
+        addCustomGlyph={addCustomGlyph}
+        onImportError={onImportError}
+      />
+    );
+    fireEvent.click(screen.getByTestId("motif-toggle"));
+    fireEvent.click(screen.getByTestId("motif-import"));
+    const svg =
+      '<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0 L10 0 L5 10 Z"/></svg>';
+    const file = new File([svg], "vine.svg", { type: "image/svg+xml" });
+    fireEvent.change(screen.getByTestId("motif-import-input"), {
+      target: { files: [file] },
+    });
+
+    await waitFor(() => expect(addCustomGlyph).toHaveBeenCalledTimes(1));
+    const glyph = addCustomGlyph.mock.calls[0][0];
+    expect(glyph.tradition).toBe("imported");
+    expect(Array.isArray(glyph.paths)).toBe(true);
+    // This row's glyphRef is rebound to the returned id.
+    await waitFor(() =>
+      expect(
+        onUpdateLayer.mock.calls.some(
+          ([id, patch]) => id === "m1" && patch.params?.glyphRef === "cg-test"
+        )
+      ).toBe(true)
+    );
+    expect(onImportError).not.toHaveBeenCalled();
+  });
+
+  it("import: a no-path SVG surfaces an error and does NOT stamp or rebind", async () => {
+    const onUpdateLayer = vi.fn();
+    const addCustomGlyph = vi.fn(() => "cg-test");
+    const onImportError = vi.fn();
+    const motif = motifLayer("m1", "host1", defaultBinding);
+    render(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={onUpdateLayer}
+        onChangeLayerPattern={() => {}}
+        addCustomGlyph={addCustomGlyph}
+        onImportError={onImportError}
+      />
+    );
+    fireEvent.click(screen.getByTestId("motif-toggle"));
+    fireEvent.click(screen.getByTestId("motif-import"));
+    const svg =
+      '<svg xmlns="http://www.w3.org/2000/svg"><rect width="10" height="10"/></svg>';
+    const file = new File([svg], "norect.svg", { type: "image/svg+xml" });
+    fireEvent.change(screen.getByTestId("motif-import-input"), {
+      target: { files: [file] },
+    });
+
+    await waitFor(() => expect(onImportError).toHaveBeenCalledTimes(1));
+    expect(onImportError.mock.calls[0][0]).toEqual(expect.any(String));
+    expect(addCustomGlyph).not.toHaveBeenCalled();
+    // No glyphRef rebind occurred.
+    expect(
+      onUpdateLayer.mock.calls.some(([, patch]) => patch?.params?.glyphRef)
+    ).toBe(false);
   });
 
   it("Remove calls onRemoveLayer with the motif id", () => {

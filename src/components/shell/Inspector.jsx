@@ -22,7 +22,7 @@
 // selected layer; when it resolves to a layer we show its controls, otherwise we
 // show a neutral document/empty state. Multi-select is out of scope (#6).
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import PatternSelect from "../PatternSelect";
 import PatternParams from "../PatternParams";
 import DockToggle from "./DockToggle";
@@ -53,6 +53,7 @@ import { resolveModulationForTarget } from "../../lib/fields/resolveModulationFo
 import { ANCHOR_POS, ANCHOR_MID, ANCHOR_NEG } from "../../lib/fields/colormap";
 import { isMotifLayer, motifHostId, deepMergeBinding } from "../../lib/motif/motifLayer";
 import { MOTIF_GLYPHS, getGlyph } from "../../lib/motif/glyphs";
+import { importMotif } from "../../lib/motif/importMotif";
 
 // Modulation-scoped param control: the Grid's `warpNodes` slider (2–24). Reuses
 // the file's `accent-violet` range styling. Rendered INSIDE a <ModulationParamBox>
@@ -568,13 +569,21 @@ const MOTIF_ROLES = [
 // placement binding. Every write re-spreads the whole params.binding via
 // deepMergeBinding so a partial patch never clobbers another branch — same
 // re-spread invariant as ModulatorDevice, extended to a nested schema.
-function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer }) {
+function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, customGlyphs, addCustomGlyph, onImportError }) {
   // Collapsed by default (mobile discoverability: the device sits at the TOP of
   // the Inspector for a host layer but stays folded until the user opens it).
   // Declared BEFORE the self-hide early return — the component renders
   // unconditionally and hides itself, so the hook must run every render
   // (Rules of Hooks).
   const [open, setOpen] = useState(false);
+
+  // Import-SVG-as-motif plumbing (WI-5). A single device-level hidden file input
+  // is shared by every row's "Import" button; the row that opened it is tracked
+  // in a ref (set synchronously on click, read in the async change handler) so
+  // no re-render has to settle between the click and the file-chosen event.
+  // Declared BEFORE the self-hide early return (rules-of-hooks).
+  const importInputRef = useRef(null);
+  const importTargetIdRef = useRef(null);
 
   // Self-hide: a motif layer isn't a host, and only anchor-capable pattern
   // types host motifs today.
@@ -583,6 +592,11 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer }
   const motifs = (layers || []).filter(
     (l) => isMotifLayer(l) && motifHostId(l) === layer.id
   );
+
+  // Imported motif glyphs (WI-5) — listed in the picker under a "Custom"
+  // optgroup, alongside the read-only built-ins. Optional/undefined-safe so the
+  // device still renders standalone (legacy callers / tests without a store).
+  const customList = Object.values(customGlyphs || {});
 
   // Rebuild params.binding whole on every write (deep-merge the patch), then
   // re-spread params (onUpdateLayer shallow-merges the top level).
@@ -593,6 +607,43 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer }
         binding: deepMergeBinding(m.params?.binding, bindingPatch),
       },
     });
+
+  // Arm the shared file input for a specific motif row, then open the picker.
+  const openImportFor = (motifId) => {
+    importTargetIdRef.current = motifId;
+    importInputRef.current?.click();
+  };
+
+  // File chosen → parse via importMotif. On success, stamp the glyph into the
+  // document store (addCustomGlyph returns its id) and rebind THIS row's
+  // glyphRef so it renders immediately on the host. On failure, surface the
+  // error through the same seam Studio uses for SVG-import errors — no stamp,
+  // no rebind. Mirrors Studio.handleImportFileChange's read-then-handle gesture.
+  const handleImportChange = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow re-importing the same file
+    const targetId = importTargetIdRef.current;
+    importTargetIdRef.current = null;
+    if (!file || !targetId) return;
+    let text;
+    try {
+      text = await file.text();
+    } catch {
+      onImportError?.("Could not read that file.");
+      return;
+    }
+    const result = importMotif(text);
+    if (!result.ok) {
+      onImportError?.(result.error || "Could not import this SVG.");
+      return;
+    }
+    const newId = addCustomGlyph?.(result.glyph);
+    if (!newId) return;
+    const target = motifs.find((mm) => mm.id === targetId);
+    onUpdateLayer(targetId, {
+      params: { ...(target?.params ?? {}), glyphRef: newId },
+    });
+  };
 
   const addMotif = () =>
     onAddMotif?.(layer.id, {
@@ -633,6 +684,17 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer }
 
       {open && (
         <>
+          {/* Shared hidden file input backing every row's "Import SVG as motif…"
+              button. The armed row is tracked in importTargetIdRef. Mirrors the
+              File>Import idiom in Studio (hidden input + accept + reset value). */}
+          <input
+            ref={importInputRef}
+            type="file"
+            accept=".svg,image/svg+xml"
+            data-testid="motif-import-input"
+            className="hidden"
+            onChange={handleImportChange}
+          />
           {motifs.length === 0 && (
             <p className="text-[11px] text-ink-soft/70">
               No motifs on this host.
@@ -641,7 +703,7 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer }
 
           {motifs.map((m) => {
         const glyphRef = m.params?.glyphRef;
-        const glyph = getGlyph(glyphRef);
+        const glyph = getGlyph(glyphRef, customGlyphs);
         const roles = Array.isArray(m.params?.binding?.selection?.roles)
           ? m.params.binding.selection.roles
           : [];
@@ -687,11 +749,22 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer }
                 }
                 className="flex-1 rounded-xs border border-hairline bg-paper px-1 py-0.5 text-[11px] text-ink outline-none focus:border-violet"
               >
-                {Object.values(MOTIF_GLYPHS).map((g) => (
-                  <option key={g.id} value={g.id}>
-                    {g.name}
-                  </option>
-                ))}
+                <optgroup label="Built-in">
+                  {Object.values(MOTIF_GLYPHS).map((g) => (
+                    <option key={g.id} value={g.id}>
+                      {g.name}
+                    </option>
+                  ))}
+                </optgroup>
+                {customList.length > 0 && (
+                  <optgroup label="Custom">
+                    {customList.map((g) => (
+                      <option key={g.id} value={g.id}>
+                        {g.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
               </select>
               <button
                 type="button"
@@ -703,6 +776,18 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer }
                 ×
               </button>
             </div>
+
+            {/* Import SVG as motif — replaces THIS row's glyph with an imported
+                one. Built-ins above stay read-only (P1); only the selection
+                changes here, never the built-in geometry. */}
+            <button
+              type="button"
+              data-testid="motif-import"
+              onClick={() => openImportFor(m.id)}
+              className="w-full rounded-xs border border-hairline bg-paper px-2 py-0.5 text-[11px] text-ink-soft outline-none transition-colors hover:border-violet hover:text-ink"
+            >
+              Import SVG as motif…
+            </button>
 
             {/* Roles — which anchor kinds this motif adorns */}
             <div className="flex flex-wrap gap-x-3 gap-y-1">
@@ -798,7 +883,7 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer }
 // The param-editing body for one selected layer. Split into its own component so
 // usePatternCache (a hook) is only called when a layer is actually selected —
 // hooks can't be called conditionally inside Inspector itself.
-function SelectedLayerInspector({ layer, layers, unit, profileId, onUpdateLayer, onChangeLayerPattern, onVariableWeightChange, onPreviewField, onClosePreview, threeDSubMode, threeDFocusLayerId, onAddMotif, onRemoveLayer }) {
+function SelectedLayerInspector({ layer, layers, unit, profileId, onUpdateLayer, onChangeLayerPattern, onVariableWeightChange, onPreviewField, onClosePreview, threeDSubMode, threeDFocusLayerId, onAddMotif, onRemoveLayer, customGlyphs, addCustomGlyph, onImportError }) {
   // Pattern swap: route through the same cache machine LayerCard uses, applied via
   // the pair-aware onChangeLayerPattern when present (falls back to a plain param
   // update so the component works standalone / in tests without a router).
@@ -842,6 +927,9 @@ function SelectedLayerInspector({ layer, layers, unit, profileId, onUpdateLayer,
         onUpdateLayer={onUpdateLayer}
         onAddMotif={onAddMotif}
         onRemoveLayer={onRemoveLayer}
+        customGlyphs={customGlyphs}
+        addCustomGlyph={addCustomGlyph}
+        onImportError={onImportError}
       />
 
       {/* Collapsible, grouped param controls (Structure / Scale / Variation /
@@ -924,6 +1012,13 @@ export default function Inspector({
   // so the Inspector still renders standalone / in legacy callers.
   onAddMotif,
   onRemoveLayer,
+  // Custom-glyph store (WI-5) + import seam. `customGlyphs` lists imported
+  // motifs in the picker; `addCustomGlyph` stamps a newly-imported glyph and
+  // returns its id; `onImportError` surfaces a parse failure the same way Studio
+  // surfaces SVG-import errors. All optional (standalone / legacy callers).
+  customGlyphs,
+  addCustomGlyph,
+  onImportError,
 }) {
   // Resolved font for the text-properties readouts (cap-height / engrave
   // warnings). May be null on first paint before useFont resolves — the panel's
@@ -990,6 +1085,9 @@ export default function Inspector({
       threeDFocusLayerId={threeDFocusLayerId}
       onAddMotif={onAddMotif}
       onRemoveLayer={onRemoveLayer}
+      customGlyphs={customGlyphs}
+      addCustomGlyph={addCustomGlyph}
+      onImportError={onImportError}
     />
   );
 }

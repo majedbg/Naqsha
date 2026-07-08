@@ -8,6 +8,8 @@ import { resolveMoireSource } from './moirePair';
 import { resolveModulationsForTarget, composeModulationParam } from './fields/resolveModulationForTarget';
 import { resolveMotifHostParams } from './motif/resolveMotifHost';
 import { collectMotifHostGeometry } from './motif/collectHostGeometry';
+import { isMotifLayer } from './motif/motifLayer';
+import { getGlyph } from './motif/glyphs';
 import { handlesFor } from './transform/handles';
 import { drawTextNode } from './text/drawTextNode';
 import { isTextLayer, textNodeFromLayer } from './text/textLayer';
@@ -63,7 +65,14 @@ export default function useCanvas(
   // adapter) WITHOUT mutating `layer.visible`. Additive + LAST positional arg, so
   // callers that don't pass it get `[]` → `effectiveVisible` degrades to
   // `layer.visible` and behaviour is byte-identical to before panels existed.
-  panels = []
+  panels = [],
+  // WI-3 custom-glyph store: the document's `{ [id]: glyph }` map. Used to
+  // resolve a motif layer's `glyphRef` at the render seam and INJECT the glyph
+  // object into its renderParams (below), so MotifPattern stays decoupled from
+  // the store AND the in-app SVG export (which reuses these baked instances) sees
+  // the same resolution. Additive + LAST positional arg, default `{}` → callers
+  // that don't pass it resolve built-ins only (byte-identical to before).
+  customGlyphs = {}
 ) {
   const p5Ref = useRef(null);
   const debounceRef = useRef(null);
@@ -235,6 +244,21 @@ export default function useCanvas(
         renderParams = { ...renderParams, ...motifHost };
       }
 
+      // Motif GLYPH resolution (WI-3). Resolve the layer's `glyphRef` against the
+      // built-in library first, then the document custom-glyph store, and inject
+      // the resolved glyph OBJECT so MotifPattern (and the export path that reuses
+      // its baked svgElements) stays decoupled from the store. Mirrors the
+      // motifHost injection above. A MISSING glyph (e.g. a shared doc whose custom
+      // glyph was stripped) resolves to undefined → no injection → MotifPattern's
+      // built-in fallback also misses → renders nothing (graceful degrade, no
+      // crash). Built-in motifs inject the same built-in object getGlyph returns,
+      // so their output is byte-identical to before. Gated on isMotifLayer so
+      // every other layer type is untouched.
+      if (isMotifLayer(layer)) {
+        const glyph = getGlyph(renderParams.glyphRef, customGlyphs);
+        if (glyph) renderParams = { ...renderParams, glyph };
+      }
+
       const instance = new PatternClass();
       newInstances[layer.id] = instance;
 
@@ -340,7 +364,7 @@ export default function useCanvas(
     // switching machine profile) re-resolves every layer's stroke and repaints.
     // `panels` is a dep so toggling a panel's visibility (new array identity)
     // gives renderAll a new identity → the debounce effect re-fires and repaints.
-  }, [layers, canvasW, canvasH, bgColor, font, operations, outputMode, colorView, panels]);
+  }, [layers, canvasW, canvasH, bgColor, font, operations, outputMode, colorView, panels, customGlyphs]);
 
   // Initialize p5 instance
   useEffect(() => {

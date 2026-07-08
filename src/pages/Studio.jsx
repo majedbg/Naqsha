@@ -57,6 +57,8 @@ import { exportPanelsZip } from "../lib/panelExport";
 import { isTextLayer } from "../lib/text/textLayer";
 import { useFont } from "../lib/text/fontRegistry";
 import { useAuth } from "../lib/AuthContext";
+import useGlobalMotifLibrary from "../lib/hooks/useGlobalMotifLibrary";
+import { canUseGlobalLibrary } from "../lib/motifLibraryEntitlement";
 import { useGate } from "../lib/useGate";
 import AuthButton from "../components/AuthButton";
 import ThemeToggle from "../components/ui/ThemeToggle";
@@ -95,6 +97,13 @@ const LibraryView = lazy(() => import("../components/library/LibraryView"));
 export default function Studio({ submitOrg = null } = {}) {
   const { loading, user, signIn } = useAuth();
   const { tier, limits, check } = useGate();
+  // P4 global motif library (DECISIONS D1). Loads the signed-in user's promoted
+  // motifs (empty when logged-out/offline) and exposes `promote` for "Save to my
+  // library". The premium entitlement is a scaffold that ships ON-for-all
+  // (canUseGlobalLibrary → true); the LOGIN gate is enforced at the button.
+  const { motifs: libraryMotifs, promote: promoteMotif } =
+    useGlobalMotifLibrary(user);
+  const canSaveToLibrary = canUseGlobalLibrary({ user, tier });
   // Admin entry point, relocated into the MenuBar now that TopNav no longer
   // renders over the studio route (the standalone Naqsha bar was dropped).
   const navigate = useNavigate();
@@ -1737,6 +1746,14 @@ export default function Studio({ submitOrg = null } = {}) {
                 close();
               }}
               onCancel={close}
+              // P4: promote the working glyph to the user's GLOBAL library. The
+              // premium entitlement ships ON-for-all (canSaveToLibrary); the
+              // LOGIN gate is real — logged-out prompts sign-in (onRequireSignIn)
+              // instead of promoting. promote() is offline-graceful (no throw).
+              canSaveToLibrary={canSaveToLibrary}
+              isLoggedIn={!!user}
+              onSaveToLibrary={(glyph) => promoteMotif(glyph)}
+              onRequireSignIn={signIn}
             />
           );
         })()}
@@ -1928,6 +1945,13 @@ export default function Studio({ submitOrg = null } = {}) {
                 },
               })
             }
+            // P4 global library: list the user's promoted motifs in a "My
+            // library" optgroup, and COPY a chosen library glyph into the
+            // document's customGlyphs keyed by its uuid (self-contained doc —
+            // share links carry the copy). updateCustomGlyph is an idempotent
+            // keyed upsert; the Inspector rebinds the row after the copy.
+            libraryMotifs={libraryMotifs}
+            onCopyLibraryGlyph={(glyph) => updateCustomGlyph?.(glyph.id, glyph)}
           />,
           inspectorSlot
         )}

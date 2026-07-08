@@ -569,7 +569,7 @@ const MOTIF_ROLES = [
 // placement binding. Every write re-spreads the whole params.binding via
 // deepMergeBinding so a partial patch never clobbers another branch — same
 // re-spread invariant as ModulatorDevice, extended to a nested schema.
-function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, customGlyphs, addCustomGlyph, onImportError, onEditGlyph, onNewMotif }) {
+function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, customGlyphs, addCustomGlyph, onImportError, onEditGlyph, onNewMotif, libraryMotifs, onCopyLibraryGlyph }) {
   // Collapsed by default (mobile discoverability: the device sits at the TOP of
   // the Inspector for a host layer but stays folded until the user opens it).
   // Declared BEFORE the self-hide early return — the component renders
@@ -596,7 +596,16 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, 
   // Imported motif glyphs (WI-5) — listed in the picker under a "Custom"
   // optgroup, alongside the read-only built-ins. Optional/undefined-safe so the
   // device still renders standalone (legacy callers / tests without a store).
-  const customList = Object.values(customGlyphs || {});
+  //
+  // P4: a third "My library" optgroup lists the user's GLOBAL library motifs.
+  // A placed library motif is COPIED into customGlyphs keyed by its uuid, so it
+  // would otherwise appear in BOTH groups — dedupe it out of "Custom" so each id
+  // shows exactly once (under "My library" if it's a library motif).
+  const library = libraryMotifs || [];
+  const libraryIds = new Set(library.map((m) => m.id));
+  const customList = Object.values(customGlyphs || {}).filter(
+    (g) => !libraryIds.has(g.id)
+  );
 
   // Rebuild params.binding whole on every write (deep-merge the patch), then
   // re-spread params (onUpdateLayer shallow-merges the top level).
@@ -769,11 +778,20 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, 
                 data-testid="motif-glyph"
                 aria-label="Glyph"
                 value={glyphRef ?? ""}
-                onChange={(e) =>
+                onChange={(e) => {
+                  const val = e.target.value;
+                  // COPY-on-use (P4): selecting a global-library motif copies its
+                  // glyph into the document's customGlyphs keyed by uuid (unless
+                  // already present — idempotent), THEN rebinds the row. The doc
+                  // stays self-contained (share links carry the copy).
+                  const lib = library.find((x) => x.id === val);
+                  if (lib && !customGlyphs?.[val]) {
+                    onCopyLibraryGlyph?.(lib.glyph);
+                  }
                   onUpdateLayer(m.id, {
-                    params: { ...m.params, glyphRef: e.target.value },
-                  })
-                }
+                    params: { ...m.params, glyphRef: val },
+                  });
+                }}
                 className="flex-1 rounded-xs border border-hairline bg-paper px-1 py-0.5 text-[11px] text-ink outline-none focus:border-violet"
               >
                 <optgroup label="Built-in">
@@ -783,6 +801,15 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, 
                     </option>
                   ))}
                 </optgroup>
+                {library.length > 0 && (
+                  <optgroup label="My library">
+                    {library.map((lm) => (
+                      <option key={lm.id} value={lm.id}>
+                        {lm.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
                 {customList.length > 0 && (
                   <optgroup label="Custom">
                     {customList.map((g) => (
@@ -933,7 +960,7 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, 
 // The param-editing body for one selected layer. Split into its own component so
 // usePatternCache (a hook) is only called when a layer is actually selected —
 // hooks can't be called conditionally inside Inspector itself.
-function SelectedLayerInspector({ layer, layers, unit, profileId, onUpdateLayer, onChangeLayerPattern, onVariableWeightChange, onPreviewField, onClosePreview, threeDSubMode, threeDFocusLayerId, onAddMotif, onRemoveLayer, customGlyphs, addCustomGlyph, onImportError, onEditGlyph, onNewMotif }) {
+function SelectedLayerInspector({ layer, layers, unit, profileId, onUpdateLayer, onChangeLayerPattern, onVariableWeightChange, onPreviewField, onClosePreview, threeDSubMode, threeDFocusLayerId, onAddMotif, onRemoveLayer, customGlyphs, addCustomGlyph, onImportError, onEditGlyph, onNewMotif, libraryMotifs, onCopyLibraryGlyph }) {
   // Pattern swap: route through the same cache machine LayerCard uses, applied via
   // the pair-aware onChangeLayerPattern when present (falls back to a plain param
   // update so the component works standalone / in tests without a router).
@@ -982,6 +1009,8 @@ function SelectedLayerInspector({ layer, layers, unit, profileId, onUpdateLayer,
         onImportError={onImportError}
         onEditGlyph={onEditGlyph}
         onNewMotif={onNewMotif}
+        libraryMotifs={libraryMotifs}
+        onCopyLibraryGlyph={onCopyLibraryGlyph}
       />
 
       {/* Collapsible, grouped param controls (Structure / Scale / Variation /
@@ -1077,6 +1106,11 @@ export default function Inspector({
   // "New motif…" (WI-P2-4, draw-from-scratch): create a blank custom glyph,
   // rebind this row to it, and open the pen editor. Receives (layerId). Optional.
   onNewMotif,
+  // P4 global library: the signed-in user's promoted motifs (`{id,name,glyph}[]`)
+  // listed in a "My library" optgroup, and the COPY-on-use seam that stamps a
+  // chosen library glyph into the document's customGlyphs. Both optional.
+  libraryMotifs,
+  onCopyLibraryGlyph,
 }) {
   // Resolved font for the text-properties readouts (cap-height / engrave
   // warnings). May be null on first paint before useFont resolves — the panel's
@@ -1148,6 +1182,8 @@ export default function Inspector({
       onImportError={onImportError}
       onEditGlyph={onEditGlyph}
       onNewMotif={onNewMotif}
+      libraryMotifs={libraryMotifs}
+      onCopyLibraryGlyph={onCopyLibraryGlyph}
     />
   );
 }

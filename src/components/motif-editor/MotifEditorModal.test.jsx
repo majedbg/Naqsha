@@ -533,3 +533,59 @@ describe('MotifEditorModal — Preview toggle mounts the mini full-canvas', () =
     expect(screen.queryByTestId('motif-editor-mini-preview')).toBeNull();
   });
 });
+
+// ── P4: "Save to my library" (promote) — login gate + premium scaffold ───────
+describe('MotifEditorModal — Save to my library (P4)', () => {
+  it('entitled + logged in: shows the promote button; click promotes the serialized glyph', () => {
+    const onSaveToLibrary = vi.fn();
+    render(
+      <MotifEditorModal
+        glyphId="cg-1"
+        glyph={importedGlyph}
+        layers={[]}
+        canSaveToLibrary
+        isLoggedIn
+        onSaveToLibrary={onSaveToLibrary}
+      />
+    );
+    const btn = screen.getByTestId('motif-editor-save-library');
+    fireEvent.click(btn);
+    expect(onSaveToLibrary).toHaveBeenCalledTimes(1);
+    // Serialized working glyph (verbatim d), never the raw stored glyph.
+    expect(onSaveToLibrary.mock.calls[0][0].paths[0].d).toBe(importedGlyph.paths[0].d);
+  });
+
+  it('logged OUT: the button prompts sign-in and does NOT promote', () => {
+    const onSaveToLibrary = vi.fn();
+    const onRequireSignIn = vi.fn();
+    render(
+      <MotifEditorModal
+        glyphId="cg-1"
+        glyph={importedGlyph}
+        layers={[]}
+        canSaveToLibrary
+        isLoggedIn={false}
+        onSaveToLibrary={onSaveToLibrary}
+        onRequireSignIn={onRequireSignIn}
+      />
+    );
+    const btn = screen.getByTestId('motif-editor-save-library');
+    fireEvent.click(btn);
+    expect(onSaveToLibrary).not.toHaveBeenCalled();
+    expect(onRequireSignIn).toHaveBeenCalledTimes(1);
+  });
+
+  it('NOT entitled (premium gate flipped on): the button is hidden entirely', () => {
+    render(
+      <MotifEditorModal
+        glyphId="cg-1"
+        glyph={importedGlyph}
+        layers={[]}
+        canSaveToLibrary={false}
+        isLoggedIn
+        onSaveToLibrary={vi.fn()}
+      />
+    );
+    expect(screen.queryByTestId('motif-editor-save-library')).toBeNull();
+  });
+});

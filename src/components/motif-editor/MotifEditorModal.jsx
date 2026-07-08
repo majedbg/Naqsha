@@ -71,6 +71,17 @@ export default function MotifEditorModal({
   // (New motif / Duplicate-to-edit, not yet bound in the document) still stamps on
   // its host. Edit sessions are already bound → no effect.
   targetLayerId = null,
+  // ── P4: promote to the user's GLOBAL library ("Save to my library", D1) ──────
+  // TWO distinct gates: (1) premium entitlement `canSaveToLibrary` — the scaffold
+  // ships ON-for-all (Studio passes canUseGlobalLibrary()=true), and when false
+  // the button is HIDDEN (flip-to-premium later hides it for un-entitled tiers);
+  // (2) the LOGIN gate `isLoggedIn` — logged-out shows the button but it prompts
+  // sign-in (onRequireSignIn) instead of promoting. onSaveToLibrary receives the
+  // serialized working glyph (verbatim d), same as Save.
+  canSaveToLibrary = false,
+  isLoggedIn = false,
+  onSaveToLibrary,
+  onRequireSignIn,
 }) {
   const {
     working,
@@ -307,7 +318,30 @@ export default function MotifEditorModal({
         {/* Footer — discard / fork / commit. Hierarchy: Save is the load-bearing
             saffron fill; Save as copy is the secondary violet outline; Cancel is
             a quiet ghost. */}
-        <div className="flex shrink-0 items-center justify-end gap-2 border-t border-hairline px-4 py-3">
+        <div className="flex shrink-0 items-center justify-between gap-2 border-t border-hairline px-4 py-3">
+          {/* Promote to the global library — left-aligned, distinct from the
+              document commit actions. Hidden when the premium scaffold is flipped
+              off for this tier; logged-out prompts sign-in instead of saving. */}
+          <div className="flex items-center">
+            {canSaveToLibrary && (
+              <button
+                type="button"
+                data-testid="motif-editor-save-library"
+                onClick={() =>
+                  isLoggedIn ? onSaveToLibrary?.(serialize()) : onRequireSignIn?.()
+                }
+                title={
+                  isLoggedIn
+                    ? 'Save this motif to your global library'
+                    : 'Sign in to save this motif to your library'
+                }
+                className="rounded-xs border border-hairline px-3 py-1.5 text-xs text-ink-soft transition-colors hover:border-violet hover:text-ink"
+              >
+                {isLoggedIn ? 'Save to my library' : 'Sign in to save to library'}
+              </button>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
           <button
             type="button"
             data-testid="motif-editor-cancel"
@@ -332,6 +366,7 @@ export default function MotifEditorModal({
           >
             Save
           </button>
+          </div>
         </div>
       </div>
     </div>

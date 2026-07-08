@@ -353,4 +353,88 @@ describe("MotifDevice", () => {
     fireEvent.click(screen.getByTestId("motif-remove"));
     expect(onRemoveLayer).toHaveBeenCalledWith("m1");
   });
+
+  // ── P4: global "My library" optgroup + COPY-on-use ──────────────────────────
+  const libMotif = (id, name) => ({
+    id,
+    name,
+    glyph: {
+      id,
+      name,
+      tradition: "custom",
+      paths: [{ d: "M1,1 L9,9", closed: false }],
+      viewRadius: 6,
+      root: { x: 0, y: 0, angle: 0 },
+    },
+  });
+
+  it('lists a "My library" optgroup and copies the glyph into the doc on select', () => {
+    const onUpdateLayer = vi.fn();
+    const onCopyLibraryGlyph = vi.fn();
+    const motif = motifLayer("m1", "host1", defaultBinding);
+    render(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={onUpdateLayer}
+        onChangeLayerPattern={() => {}}
+        customGlyphs={{}}
+        libraryMotifs={[libMotif("lib-uuid-1", "Saved Vine")]}
+        onCopyLibraryGlyph={onCopyLibraryGlyph}
+      />
+    );
+    fireEvent.click(screen.getByTestId("motif-toggle"));
+    // The library motif is offered as an option.
+    expect(
+      screen.getByRole("option", { name: "Saved Vine" })
+    ).toBeInTheDocument();
+    fireEvent.change(screen.getByTestId("motif-glyph"), {
+      target: { value: "lib-uuid-1" },
+    });
+    // COPY-on-use: the library glyph is copied into the document keyed by uuid…
+    expect(onCopyLibraryGlyph).toHaveBeenCalledTimes(1);
+    expect(onCopyLibraryGlyph.mock.calls[0][0].id).toBe("lib-uuid-1");
+    // …and the row is rebound to that uuid.
+    const [id, patch] = onUpdateLayer.mock.calls.at(-1);
+    expect(id).toBe("m1");
+    expect(patch.params.glyphRef).toBe("lib-uuid-1");
+  });
+
+  it('hides the "My library" optgroup when the library is empty', () => {
+    const motif = motifLayer("m1", "host1", defaultBinding);
+    render(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+        libraryMotifs={[]}
+      />
+    );
+    fireEvent.click(screen.getByTestId("motif-toggle"));
+    expect(screen.queryByText("My library")).toBeNull();
+  });
+
+  it("does NOT re-copy a library motif already present in the doc (idempotent)", () => {
+    const onCopyLibraryGlyph = vi.fn();
+    const motif = motifLayer("m1", "host1", defaultBinding);
+    const lib = libMotif("lib-uuid-2", "Saved Fern");
+    render(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+        customGlyphs={{ "lib-uuid-2": lib.glyph }}
+        libraryMotifs={[lib]}
+        onCopyLibraryGlyph={onCopyLibraryGlyph}
+      />
+    );
+    fireEvent.click(screen.getByTestId("motif-toggle"));
+    fireEvent.change(screen.getByTestId("motif-glyph"), {
+      target: { value: "lib-uuid-2" },
+    });
+    // Already in the doc → no redundant copy (just a rebind).
+    expect(onCopyLibraryGlyph).not.toHaveBeenCalled();
+  });
 });

@@ -13,11 +13,12 @@
 // The canonical, ordered region-label list lives in `./regions.js` (a non-
 // component module) so this file only exports components.
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import usePanelWidth from '../../lib/hooks/usePanelWidth';
 import usePanelHeight from '../../lib/hooks/usePanelHeight';
 import { useInspectorDock } from '../../lib/hooks/useInspectorDock';
 import { InspectorDockProvider } from './inspectorDockContext';
+import { RunPlanProvider, useRunPlan } from './runPlanContext';
 import {
   InspectorSlotProvider,
   MenuSlotProvider,
@@ -208,7 +209,29 @@ export function StatusBarRegion({ children, contentRef, className = '' }) {
 // Pro shell layout. Two top rows (decision 9: menu bar + contextual control
 // bar), a three-column body (tool strip + object tree | canvas | inspector +
 // operations panel), and a bottom status bar.
-export default function AppShell({ children }) {
+//
+// The default export wraps this in <RunPlanProvider> (below) so the Run Plan is
+// a shell-morph: the hosted Studio (a child in the Canvas region) can open the
+// plan, and the shell reads that state here to add calm morph chrome. When the
+// plan is closed this renders exactly as before — same root div, no extra DOM,
+// no plan-mode attribute — preserving the flag-OFF / byte-identical guarantee.
+function AppShellInner({ children }) {
+  // Run Plan open/closed (Lane F, PRD #73). Read from the provider the default
+  // export mounts around this subtree.
+  const { isOpen: planOpen, close: closePlan } = useRunPlan();
+
+  // While the plan is open, Esc returns to the design surface (a calm, universal
+  // exit that mirrors the "Back to design" affordance). No listener when closed,
+  // so nothing intercepts Esc on the design surface.
+  useEffect(() => {
+    if (!planOpen) return undefined;
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape') closePlan();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [planOpen, closePlan]);
+
   // The Inspector region's inner mount node, captured via a callback ref and
   // published through InspectorSlotProvider so the hosted Studio (a sibling in
   // the Canvas region) can portal its selection-driven Inspector into it (B3 /
@@ -243,7 +266,27 @@ export default function AppShell({ children }) {
   const shelfHeight = dock.collapsed ? COLLAPSED_HEIGHT : shelf.height;
 
   return (
-    <div className="flex flex-col h-dvh bg-paper">
+    <div
+      className="flex flex-col h-dvh bg-paper"
+      // Present only while the plan is open, so plan-mode styling can hook it
+      // and the closed shell stays byte-identical (attribute omitted when false).
+      data-plan-mode={planOpen ? 'true' : undefined}
+    >
+      {/* Calm shell-level exit from the Run Plan back to the design surface. Only
+          rendered while the plan is open; Esc does the same (see effect above). */}
+      {planOpen && (
+        <button
+          type="button"
+          onClick={closePlan}
+          className="absolute left-md top-md z-20 inline-flex items-center gap-1.5 rounded-xs border border-hairline bg-paper px-sm py-2xs text-xs text-ink-soft transition-colors duration-fast hover:text-ink focus-visible:outline focus-visible:outline-1 focus-visible:outline-violet"
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+            <polyline points="15 18 9 12 15 6" />
+          </svg>
+          Back to design
+        </button>
+      )}
+
       <MenuBarRegion contentRef={setMenuNode} />
       <ControlBarRegion contentRef={setControlBarNode} />
 
@@ -331,5 +374,17 @@ export default function AppShell({ children }) {
 
       <StatusBarRegion contentRef={setStatusBarNode} />
     </div>
+  );
+}
+
+// Mounts the RunPlanProvider around the whole shell — including the hosted Studio
+// (a child) — so entries below can open the Run Plan and the shell can morph to
+// it. The provider renders no DOM, so the closed shell is byte-identical to
+// before.
+export default function AppShell({ children }) {
+  return (
+    <RunPlanProvider>
+      <AppShellInner>{children}</AppShellInner>
+    </RunPlanProvider>
   );
 }

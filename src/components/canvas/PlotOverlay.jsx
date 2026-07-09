@@ -122,6 +122,10 @@ export default function PlotOverlay({
   bedSize = null, // { width, height, unit:'mm' } — machine reachable area
   sheetRect = null, // { x, y, width, height } px — the Sheet work-piece
   opRows = null, // [{ opId, color }] — tint→Operation lookup for two-way highlight
+  // Two-way locate (PRD story 25): the shared target set from the panel side —
+  // { opId } rings that Operation's draw segments, { layerId } rings the
+  // matching ghosted crop. Ephemeral: click-again or Esc clears it.
+  locate = null,
   playing = false,
   onLocate = () => {},
   onPlayingChange = null,
@@ -216,19 +220,50 @@ export default function PlotOverlay({
     return m;
   }, [opRows]);
 
+  // Locate ring state (mirrors RunPlanPanel). The prop is the shared target
+  // (panel → canvas); a segment/crop click echoes locally so the ring paints
+  // even before the parent round-trips. Sentinel: undefined = defer to the
+  // prop, null = explicitly cleared.
+  const [localLocate, setLocalLocate] = useState(undefined);
+  useEffect(() => {
+    setLocalLocate(undefined); // a new shared target wins over a stale echo
+  }, [locate]);
+  const effectiveLocate = localLocate === undefined ? locate ?? null : localLocate;
+
+  const clearLocate = useCallback(() => {
+    setLocalLocate(null);
+    onLocate(null);
+  }, [onLocate]);
+
+  // Ephemeral: clicking the located segment/crop again toggles off; Esc clears.
+  useEffect(() => {
+    if (!effectiveLocate) return undefined;
+    const onKey = (e) => {
+      if (e.key === 'Escape') clearLocate();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [effectiveLocate, clearLocate]);
+
   const locateSegment = useCallback(
     (seg) => {
       const opId = colorToOpId.get(seg.color);
-      if (opId != null) onLocate({ opId }); // unresolvable colour → no-op (don't fire undefined)
+      if (opId == null) return; // unresolvable colour → no-op (don't fire undefined)
+      if (effectiveLocate?.opId === opId) return clearLocate();
+      setLocalLocate({ opId });
+      onLocate({ opId });
     },
-    [colorToOpId, onLocate]
+    [colorToOpId, onLocate, effectiveLocate, clearLocate]
   );
 
   const locateCrop = useCallback(
     (crop) => {
-      if (crop.layerId != null) onLocate({ layerId: crop.layerId });
+      if (crop.layerId == null) return;
+      if (effectiveLocate?.layerId === crop.layerId) return clearLocate();
+      setLocalLocate({ layerId: crop.layerId });
+      onLocate({ layerId: crop.layerId });
     },
-    [onLocate]
+    [onLocate, effectiveLocate, clearLocate]
   );
 
   const span = Math.max(canvasW || 0, canvasH || 0, 1);
@@ -355,6 +390,54 @@ export default function PlotOverlay({
               />
             )
           )}
+
+          {/* Locate ring — the two-way highlight (PRD story 25). A calm violet
+              halo hugging the located Operation's draw segments or the located
+              crop's own outline. STATIC — it renders under reduced motion too;
+              only the run-dot animation is motion-gated. */}
+          {effectiveLocate?.opId != null &&
+            route
+              .filter(
+                (seg) =>
+                  seg.type === 'draw' &&
+                  colorToOpId.get(seg.color) === effectiveLocate.opId
+              )
+              .map((seg, i) => (
+                <line
+                  key={`lr-${i}`}
+                  data-overlay="locate-ring"
+                  className="machine-locate-ring"
+                  x1={seg.from[0]}
+                  y1={seg.from[1]}
+                  x2={seg.to[0]}
+                  y2={seg.to[1]}
+                  stroke="var(--violet, #7c4dff)"
+                  strokeOpacity={0.45}
+                  strokeWidth={drawW * 3.5}
+                  strokeLinecap="round"
+                  style={{ pointerEvents: 'none' }}
+                />
+              ))}
+          {effectiveLocate?.layerId != null &&
+            (Array.isArray(crops) ? crops : [])
+              .filter((crop) => crop.layerId === effectiveLocate.layerId)
+              .map((crop, i) => {
+                const Tag = crop.closed ? 'polygon' : 'polyline';
+                return (
+                  <Tag
+                    key={`lrc-${i}`}
+                    data-overlay="locate-ring"
+                    className="machine-locate-ring"
+                    points={pointsAttr(crop.points)}
+                    fill="none"
+                    stroke="var(--violet, #7c4dff)"
+                    strokeOpacity={0.45}
+                    strokeWidth={cropW * 3.5}
+                    strokeLinejoin="round"
+                    style={{ pointerEvents: 'none' }}
+                  />
+                );
+              })}
 
           {/* Run-dot — the head running the plan in execution order. Violet (the
               one load-bearing ornamental accent; --saffron is reserved for Export).

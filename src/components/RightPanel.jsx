@@ -138,6 +138,7 @@ export default function RightPanel({
   plotOpRows = null, // [{opId,color}] tint→Operation lookup for the two-way highlight
   sheetRect = null, // { x, y, width, height } px — the Sheet work-piece
   plotPlaying = false, // run the animated head
+  plotLocate = null, // the shared locate target (panel row → canvas ring), PRD story 25
   onPlotLocate = () => {}, // canvas click → { opId? | layerId? } so the plan highlights the row
   onPlotPlayingChange = null, // Play/Pause toggled on canvas → Lane I observes
   prefersReducedMotion, // bool; PlotOverlay falls back to the CSS query when undefined
@@ -735,6 +736,7 @@ export default function RightPanel({
             bedSize={bedSize}
             sheetRect={sheetRect}
             playing={plotPlaying}
+            locate={plotLocate}
             onLocate={onPlotLocate}
             onPlayingChange={onPlotPlayingChange}
             prefersReducedMotion={prefersReducedMotion}

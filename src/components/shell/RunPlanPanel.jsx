@@ -15,7 +15,7 @@
 // accent across this lane, reserved for the "Export run" action — nothing else
 // here uses it. The Optimize stack's Apply is a quiet violet (see OptimizeRows).
 
-import { useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import { OptimizeRows } from "./OptimizeControls";
 
 // Calm, specific, action-phrased warning copy (.impeccable principle 7): name
@@ -61,10 +61,31 @@ function Metric({ label, value }) {
   );
 }
 
+// Minutes for the deltas readout — same rounding as the headline (a projection,
+// not a promise, so whole minutes).
+function minutes(sec) {
+  return Math.round((sec ?? 0) / 60);
+}
+
+// The applied Optimize stack is "current" when at least one row is enabled and
+// no enabled row's preview tolerance has drifted from its applied value —
+// i.e. there is nothing pending to preview, so before→after collapses to the
+// single figure the machine will actually pay.
+function appliedStackIsCurrent(optimizations) {
+  const rows = Object.values(optimizations ?? {}).filter((o) => o?.enabled);
+  if (rows.length === 0) return false;
+  return rows.every(
+    (o) => o.tolerance === undefined || o.tolerance === o.appliedTolerance
+  );
+}
+
 export default function RunPlanPanel({
   runPlan,
   profileLabel,
   sheetLine,
+  // Two-way locate (PRD story 25): the shared target arrives as `locate` (set
+  // from the canvas side) and leaves through onLocate (row clicks / clear).
+  locate,
   onLocate = () => {},
   optimizations,
   onUpdateOptimization = () => {},
@@ -78,6 +99,53 @@ export default function RunPlanPanel({
   const warnings = runPlan?.warnings ?? [];
   const totalSec = runPlan?.estimate?.totalSec ?? 0;
   const headlineMin = Math.round(totalSec / 60);
+  const penSwaps = runPlan?.estimate?.penSwaps ?? 0;
+
+  // Locate ring state. The prop is the shared target (canvas → panel); a row
+  // click echoes locally so the ring paints even before the parent round-trips.
+  // Sentinel: undefined = defer to the prop, null = explicitly cleared.
+  const [localLocate, setLocalLocate] = useState(undefined);
+  useEffect(() => {
+    setLocalLocate(undefined); // a new shared target wins over a stale echo
+  }, [locate]);
+  const effectiveLocate = localLocate === undefined ? locate ?? null : localLocate;
+
+  const clearLocate = useCallback(() => {
+    setLocalLocate(null);
+    onLocate(null);
+  }, [onLocate]);
+
+  // Ephemeral: clicking the located row again toggles it off; Esc clears.
+  const locateOp = (opId) => {
+    if (effectiveLocate?.opId === opId) return clearLocate();
+    setLocalLocate({ opId });
+    onLocate({ opId });
+  };
+
+  useEffect(() => {
+    if (!effectiveLocate) return undefined;
+    const onKey = (e) => {
+      if (e.key === "Escape") clearLocate();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [effectiveLocate, clearLocate]);
+
+  // Live before→after readout: preview figures until the applied stack is
+  // current, then the single current figure (no arrow — nothing is pending).
+  const deltasLine = (() => {
+    if (!optimizeDeltas) return null;
+    const { travelBeforeM, travelAfterM, timeBeforeSec, timeAfterSec } = optimizeDeltas;
+    const collapsed = appliedStackIsCurrent(optimizations);
+    const travel = collapsed
+      ? `Travel ${Number(travelAfterM).toFixed(1)} m`
+      : `Travel ${Number(travelBeforeM).toFixed(1)} m → ${Number(travelAfterM).toFixed(1)} m`;
+    if (timeBeforeSec == null || timeAfterSec == null) return travel;
+    const time = collapsed
+      ? `Estimated ${minutes(timeAfterSec)} min`
+      : `Estimated ${minutes(timeBeforeSec)} → ${minutes(timeAfterSec)} min`;
+    return `${travel} · ${time}`;
+  })();
 
   return (
     <section
@@ -119,17 +187,51 @@ export default function RunPlanPanel({
       {/* Per-Operation breakdown, in machine execution order. Each row locates
           its Operation on the canvas. */}
       <div className="shrink-0 px-lg py-md">
-        <h3 className="mb-sm text-xs font-semibold uppercase tracking-wider text-ink-soft">
+        <h3 className="mb-sm flex items-baseline justify-between text-xs font-semibold uppercase tracking-wider text-ink-soft">
           Operations
+          {/* Pen Swap count (story 27, plotter only) — the estimate already
+              pays PEN_SWAP_SEC per swap; this says HOW MANY, the markers below
+              say WHERE. Quiet: part of the header, never an alarm. */}
+          {penSwaps > 0 && (
+            <span data-testid="pen-swap-count" className="num font-normal normal-case">
+              {penSwaps} Pen {penSwaps === 1 ? "Swap" : "Swaps"}
+            </span>
+          )}
         </h3>
         <ul className="space-y-1">
-          {opRows.map((op) => (
-            <li key={op.opId}>
+          {opRows.map((op, i) => {
+            const prev = opRows[i - 1];
+            // A Pen change happens between adjacent groups whose pen differs —
+            // pen slots only exist on plotter rows, so laser/drag plans never
+            // render a marker.
+            const swapBefore =
+              i > 0 &&
+              prev?.penSlot != null &&
+              op.penSlot != null &&
+              prev.penSlot !== op.penSlot;
+            const located = effectiveLocate?.opId === op.opId;
+            return (
+            <Fragment key={op.opId}>
+            {swapBefore && (
+              <li
+                data-testid="pen-swap-marker"
+                aria-hidden="true"
+                className="px-sm py-3xs text-center text-[10px] uppercase tracking-wide text-ink-soft"
+              >
+                Pen change
+              </li>
+            )}
+            <li>
               <button
                 type="button"
                 data-testid="run-plan-op-row"
-                onClick={() => onLocate({ opId: op.opId })}
-                className="flex w-full items-center gap-sm rounded-xs border border-hairline bg-paper px-sm py-2xs text-left transition-colors duration-fast hover:bg-paper-warm focus-visible:outline focus-visible:outline-1 focus-visible:outline-violet"
+                aria-current={located ? "true" : undefined}
+                onClick={() => locateOp(op.opId)}
+                className={`flex w-full items-center gap-sm rounded-xs border bg-paper px-sm py-2xs text-left transition-colors duration-fast hover:bg-paper-warm focus-visible:outline focus-visible:outline-1 focus-visible:outline-violet ${
+                  located
+                    ? "border-violet ring-1 ring-violet"
+                    : "border-hairline"
+                }`}
               >
                 {/* Colour swatch — the Operation's own drawn colour (user
                     content), never chrome. */}
@@ -149,7 +251,9 @@ export default function RunPlanPanel({
                 <Metric label="est" value={formatDuration(op.sec)} />
               </button>
             </li>
-          ))}
+            </Fragment>
+            );
+          })}
         </ul>
       </div>
 
@@ -159,16 +263,9 @@ export default function RunPlanPanel({
         <h3 className="mb-sm text-xs font-semibold uppercase tracking-wider text-ink-soft">
           Optimize
         </h3>
-        {optimizeDeltas && (
-          <p className="num mb-sm text-xs text-ink-soft">
-            <span className="block">
-              Travel {optimizeDeltas.travelBeforeM} m → {optimizeDeltas.travelAfterM} m
-            </span>
-            {optimizeDeltas.timeBeforeSec != null && optimizeDeltas.timeAfterSec != null && (
-              <span className="block">
-                Time {formatDuration(optimizeDeltas.timeBeforeSec)} → {formatDuration(optimizeDeltas.timeAfterSec)}
-              </span>
-            )}
+        {deltasLine && (
+          <p data-testid="optimize-deltas" className="num mb-sm text-xs text-ink-soft">
+            {deltasLine}
           </p>
         )}
         <div className="space-y-1">

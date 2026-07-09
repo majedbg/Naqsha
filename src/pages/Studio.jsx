@@ -1797,6 +1797,7 @@ export default function Studio({ submitOrg = null } = {}) {
           plotOpRows={plotOpRows}
           sheetRect={sheetRect}
           plotPlaying={plotPlaying}
+          plotLocate={planLocate}
           onPlotLocate={handlePlanLocate}
           onPlotPlayingChange={setPlotPlaying}
           prefersReducedMotion={prefersReducedMotion}
@@ -2163,6 +2164,7 @@ export default function Studio({ submitOrg = null } = {}) {
               runPlan={runPlan}
               profileLabel={profileLabel}
               sheetLine={sheetLine}
+              locate={planLocate}
               onLocate={handlePlanLocate}
               optimizations={optimizations}
               onUpdateOptimization={updateOptimization}

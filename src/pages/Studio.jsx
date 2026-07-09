@@ -2183,6 +2183,15 @@ export default function Studio({ submitOrg = null } = {}) {
             // Active machine profile (#17, C8) — capability-gates the
             // variable-weight UI (drag-cutter hides it).
             profileId={activeProfileId}
+            // Sheet inspector (#75): empty selection = document properties.
+            // Size commits route through the SAME handleDocumentSetupApply path
+            // the Document Setup dialog uses (recordBatch = one undo entry, and
+            // the dialog round-trips the same canvasW/canvasH — single source
+            // of truth). Profile/unit halves untouched: size only.
+            canvasW={canvasW}
+            canvasH={canvasH}
+            bedSize={bedSize}
+            onApplySheetSize={handleDocumentSetupApply}
             onUpdateLayer={updateLayer}
             onChangeLayerPattern={changeLayerPattern}
             onVariableWeightChange={handleVariableWeightChange}

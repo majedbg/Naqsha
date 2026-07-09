@@ -5,6 +5,7 @@
 // draw in — so path data doesn't need transforming on export.
 
 import { optimizeGroup } from './plotter/pipeline';
+import { hybridClipMarkup } from './plotter/hybridClip.js';
 import { PPI, MM_PER_IN } from './plotter/constants.js';
 import { resolveOperation } from './operations.js';
 import { realizeVariableWeightElements } from './variableWeight.js';
@@ -157,12 +158,30 @@ function variableWeightGroup(layer, instance, profileId) {
   return `<g id="${layer.id}" opacity="${(layer.opacity ?? 100) / 100}">\n${inner}\n  </g>`;
 }
 
-export function buildAllLayersSVG(layers, patternInstances, canvasW, canvasH, includeHidden = false, { metadata = false, manifest, optimizations, profileId, font } = {}) {
+// Hybrid Sheet clipping (#73 merge blocker, ADR 0001): when the cropToSheet
+// Export preference is ON and a sheetRect is supplied, each placed layer is
+// routed through hybridClipMarkup — paths that cross or fall outside the Sheet
+// are re-emitted as clipped polyline fragments; everything fully inside keeps
+// its native markup byte-untouched (curve fidelity). This makes the FILE agree
+// with the Export Receipt and the Run Plan, which already clip via
+// runPlanModel; without it the receipt said "N paths cropped" while the
+// exported file still contained them. cropToSheet defaults true (matching
+// runPlanModel) but clipping needs BOTH flags — callers that pass no sheetRect
+// (all legacy call sites) get byte-identical output.
+export function buildAllLayersSVG(layers, patternInstances, canvasW, canvasH, includeHidden = false, { metadata = false, manifest, optimizations, profileId, font, cropToSheet = true, sheetRect = null } = {}) {
+  // Clip only when the preference asks for it AND there is a Sheet to clip
+  // against — the same doClip rule runPlanModel applies, so file and plan
+  // decide identically.
+  const doClip = !!(cropToSheet && sheetRect);
   // Reverse so bottom layers come first in SVG (matching visual order)
   const ordered = [...layers].reverse();
   const groups = ordered
     .filter((l) => includeHidden || l.visible)
     .map((l) => {
+      // Text layers are NOT clipped: runPlanModel skips them entirely (they
+      // have no pattern instance), so clipping them here would make the file
+      // crop more than the Receipt/plan report — the agreement contract wins.
+      // Flagged gap: text overflowing the Sheet is invisible to all three.
       if (isTextLayer(l)) return textLayerGroup(l, font);
       const instance = patternInstances[l.id];
       if (!instance) return '';
@@ -177,7 +196,12 @@ export function buildAllLayersSVG(layers, patternInstances, canvasW, canvasH, in
       const rawGroup = vwGroup ?? instance.toSVGGroup(l.id, l.color, l.opacity, { roleColors });
       const group = vwGroup || roleColors ? rawGroup : maybeOptimize(rawGroup, optimizations);
       const content = (bgRect ? bgRect + '\n  ' : '') + group;
-      return wrapLayerTransform(content, l, canvasW, canvasH);
+      // Clip AFTER placement: sheetRect lives in canvas px space, so the layer
+      // transform must already be applied for crossing/outside detection to
+      // see the geometry where it actually lands on the Sheet. A fully-inside
+      // layer returns the placed string unchanged (byte-identical).
+      const placed = wrapLayerTransform(content, l, canvasW, canvasH);
+      return doClip ? hybridClipMarkup(placed, sheetRect).markup : placed;
     })
     .join('\n  ');
   const meta = buildMeta({ metadata, manifest });

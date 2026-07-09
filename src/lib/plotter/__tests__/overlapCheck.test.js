@@ -101,3 +101,61 @@ describe('countOverlaps / intersect', () => {
     expect(count).toBe(2);
   });
 });
+
+// ── determinism under permutation (the truncation-honesty contract) ──────────
+//
+// Physical overlap is a property of the geometry laid on the sheet, NOT of the
+// order the paths are drawn in — permuting or reversing paths cannot change how
+// often the plot crosses itself. So countOverlaps must return the SAME count
+// for the same multiset of segments regardless of input order, even when the
+// MAX_SEGMENTS cap engages. The legacy cap took the first 3000 segments in
+// input order, which made the count order-dependent: the Reorder optimization
+// permuted paths, the cap sampled a different subset, and the Run Plan's
+// overlaps warning collapsed (e.g. 85 → 0) with no geometric change.
+describe('countOverlaps — deterministic under path permutation when truncated', () => {
+  // 40 X-crosses in the left band (80 single-segment paths → 40 true crossings)
+  // plus 3000 crossing-free parallel segments far to the right: 3080 segments
+  // total, exceeding the 3000 cap so truncation MUST engage.
+  const makeX = (cx, cy, r) => [
+    { points: [[cx - r, cy - r], [cx + r, cy + r]] },
+    { points: [[cx - r, cy + r], [cx + r, cy - r]] },
+  ];
+  const crosses = [];
+  for (let i = 0; i < 40; i++) crosses.push(...makeX(100 + i * 20, 100, 5));
+  const parallels = [];
+  for (let i = 0; i < 3000; i++) {
+    parallels.push({ points: [[10000, i * 2], [10010, i * 2]] });
+  }
+
+  it('same count whether the crossing paths come first or last', () => {
+    const crossesFirst = countOverlaps([...crosses, ...parallels]);
+    const crossesLast = countOverlaps([...parallels, ...crosses]);
+    // The cap engages either way…
+    expect(crossesFirst.truncated).toBe(true);
+    expect(crossesLast.truncated).toBe(true);
+    // …but the count is a property of the geometry, not of path order.
+    expect(crossesLast.count).toBe(crossesFirst.count);
+    // And the truncated count stays a meaningful lower bound, not zero.
+    expect(crossesFirst.count).toBeGreaterThan(0);
+  });
+
+  it('same count when every path is direction-reversed (Reorder may flip paths)', () => {
+    const reversed = [...parallels, ...crosses].map((p) => ({
+      ...p, points: [...p.points].reverse(),
+    }));
+    const forward = countOverlaps([...crosses, ...parallels]);
+    const flipped = countOverlaps(reversed);
+    expect(flipped.truncated).toBe(true);
+    expect(flipped.count).toBe(forward.count);
+  });
+
+  it('does NOT flag truncated at exactly MAX_SEGMENTS (nothing was dropped)', () => {
+    // 3001 points → exactly 3000 segments: every segment is tested, so the
+    // count is exact and truncated must be false.
+    const pts = [];
+    for (let i = 0; i <= 3000; i++) pts.push([i, i % 2 === 0 ? 0 : 1]);
+    const result = countOverlaps([{ points: pts }]);
+    expect(result.segmentCount).toBe(3000);
+    expect(result.truncated).toBe(false);
+  });
+});

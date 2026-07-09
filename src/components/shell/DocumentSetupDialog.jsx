@@ -26,24 +26,13 @@ import { useEffect, useRef, useState } from "react";
 import { PROFILE_IDS, getProfile } from "../../lib/machineProfiles";
 import { PRESET_SIZES, PPI } from "../../constants";
 import { pxToUnit, unitToPx } from "../../lib/units";
-
-// The sentinel "Custom" entry in PRESET_SIZES (width/height: null).
-const CUSTOM_PRESET_INDEX = PRESET_SIZES.findIndex((p) => p.width === null);
-
-// Round a unit value for display: integers for mm/px, 2dp for inches.
-function roundForUnit(v, unit) {
-  if (unit === "in") return Math.round(v * 100) / 100;
-  return Math.round(v);
-}
-
-// Given the live canvas px dims, find the matching named preset (if any) —
-// mirrors useCanvasSize's applyCanvasSize matching. Falls back to Custom.
-function presetIndexForSize(w, h) {
-  const idx = PRESET_SIZES.findIndex(
-    (p) => p.width !== null && Math.round(p.width * PPI) === Math.round(w) && Math.round(p.height * PPI) === Math.round(h)
-  );
-  return idx >= 0 ? idx : CUSTOM_PRESET_INDEX;
-}
+// Display rounding + preset matching are single-sourced with the
+// SheetInspector (#75) so the two Sheet-editing surfaces can't drift.
+import {
+  CUSTOM_PRESET_INDEX,
+  presetIndexForSize,
+  roundForUnit,
+} from "../../lib/workPieceSize";
 
 export default function DocumentSetupDialog({
   open,

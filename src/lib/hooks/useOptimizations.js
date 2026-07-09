@@ -13,6 +13,51 @@ const INITIAL = {
   reorder: { enabled: false },
 };
 
+// Run Plan persistence (PRD #73, ADR 0002). Applied optimize values stay OUTSIDE
+// the ⌘Z snapshot (their way back is the plan's own Revert) but must PERSIST WITH
+// THE DOCUMENT — previously bare useState, they silently vanished on reload and
+// changed what export produced. These two pure helpers are the document blob's
+// serialize/deserialize contract; the persistence layer embeds the snapshot as a
+// sibling of layers/panels and forwards the stored field back on load/recover.
+
+// The APPLIED-ONLY subset that persists. The preview `tolerance` (what the slider
+// shows) is deliberately dropped — only Apply commits it into `appliedTolerance`,
+// and export reads only `enabled && appliedTolerance`, so preview drift must
+// never ride into the saved document.
+export function serializeApplied(opt) {
+  return {
+    simplify: {
+      enabled: opt.simplify.enabled,
+      appliedTolerance: opt.simplify.appliedTolerance,
+    },
+    merge: {
+      enabled: opt.merge.enabled,
+      appliedTolerance: opt.merge.appliedTolerance,
+    },
+    reorder: { enabled: opt.reorder.enabled },
+  };
+}
+
+// Build a full optimizations state from a persisted applied-only blob. Missing/
+// malformed input (an OLD document with no `optimizations` field) migrates to
+// "none applied" (INITIAL) without throwing — the required safe failure mode.
+// A partial blob fills absent steps from INITIAL. Preview `tolerance` is always
+// restored from INITIAL because it never persists. Returns a FRESH clone so
+// hydrating never mutates INITIAL or leaks state across documents.
+export function hydrateApplied(persisted) {
+  const src = persisted && typeof persisted === "object" ? persisted : {};
+  const step = (key) => ({
+    enabled: src[key]?.enabled ?? false,
+    tolerance: INITIAL[key].tolerance,
+    appliedTolerance: src[key]?.appliedTolerance ?? null,
+  });
+  return {
+    simplify: step("simplify"),
+    merge: step("merge"),
+    reorder: { enabled: src.reorder?.enabled ?? false },
+  };
+}
+
 export default function useOptimizations() {
   const [optimizations, setOptimizations] = useState(INITIAL);
 
@@ -29,6 +74,14 @@ export default function useOptimizations() {
         [key]: { ...cur, enabled: true, appliedTolerance: cur.tolerance },
       };
     });
+  }, []);
+
+  // Runtime hydration seam (ADR 0002). Called AFTER a cloud load / draft recover
+  // with the document's persisted applied-optimizations field (undefined for an
+  // old blob → migrates to "none applied"). A plain setState, so it never enters
+  // the ⌘Z history and matches the "applied opts live outside undo" boundary.
+  const hydrateOptimizations = useCallback((persisted) => {
+    setOptimizations(hydrateApplied(persisted));
   }, []);
 
   const revertOptimization = useCallback((key) => {
@@ -64,12 +117,19 @@ export default function useOptimizations() {
     appliedOptimizations.reorder.enabled ? "reorder" : null,
   ].filter(Boolean);
 
+  // Applied-only snapshot for the document-persistence layer to save (sibling of
+  // layers/panels in the blob). Derived from live state so it always reflects the
+  // latest Apply/Revert; the preview `tolerance` is stripped by serializeApplied.
+  const serializedOptimizations = serializeApplied(optimizations);
+
   return {
     optimizations,
     updateOptimization,
     applyOptimization,
     revertOptimization,
+    hydrateOptimizations,
     appliedOptimizations,
     appliedOpsList,
+    serializedOptimizations,
   };
 }

@@ -25,6 +25,14 @@
 // tree above fill the column and keeps the operations panel compact at the
 // bottom. When collapsed, the header shows how many optimizations are applied so
 // the state isn't hidden silently.
+//
+// Shared row rendering: the Optimize stack also moves INTO the Run Plan (Lane F,
+// PRD #73), where the maker sees the same simplify / merge / reorder controls in
+// the pre-flight face. The row rendering is exported as <OptimizeRows/> so both
+// this collapsible shelf panel and RunPlanPanel render byte-identical controls
+// from the same source. The Apply affordance is a quiet VIOLET outline (not
+// saffron): across the Run Plan lane saffron is the single load-bearing accent,
+// reserved for the plan's "Export run" action.
 
 import { useState } from "react";
 
@@ -86,7 +94,7 @@ function OptimizeRow({ def, opt, onUpdate, onApply, onRevert }) {
                 ? "bg-tone-ok/10 text-tone-ok cursor-default"
                 : stale
                   ? "bg-tone-mild/10 text-tone-mild hover:bg-tone-mild/20"
-                  : "bg-saffron text-ink hover:bg-saffron-hover"
+                  : "border border-violet text-violet hover:bg-violet/10"
             }`}
           >
             {applyLabel}
@@ -116,6 +124,28 @@ function OptimizeRow({ def, opt, onUpdate, onApply, onRevert }) {
       )}
     </div>
   );
+}
+
+// The three optimize rows, extracted so both this collapsible shelf panel and
+// the Run Plan's Optimize stack (Lane F) render the SAME controls from one
+// source. Presentational: every mutation routes OUT through onUpdate / onApply /
+// onRevert (key), so whoever hosts these rows commits identical applied state.
+export function OptimizeRows({
+  optimizations,
+  onUpdate = () => {},
+  onApply = () => {},
+  onRevert = () => {},
+}) {
+  return ROWS.map((def) => (
+    <OptimizeRow
+      key={def.key}
+      def={def}
+      opt={optimizations?.[def.key] ?? {}}
+      onUpdate={onUpdate}
+      onApply={onApply}
+      onRevert={onRevert}
+    />
+  ));
 }
 
 export default function OptimizeControls({
@@ -168,16 +198,12 @@ export default function OptimizeControls({
       </button>
       {open && (
         <div id="optimize-body" className="space-y-1 overflow-auto p-1.5">
-          {ROWS.map((def) => (
-            <OptimizeRow
-              key={def.key}
-              def={def}
-              opt={optimizations?.[def.key] ?? {}}
-              onUpdate={onUpdate}
-              onApply={onApply}
-              onRevert={onRevert}
-            />
-          ))}
+          <OptimizeRows
+            optimizations={optimizations}
+            onUpdate={onUpdate}
+            onApply={onApply}
+            onRevert={onRevert}
+          />
         </div>
       )}
     </div>

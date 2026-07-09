@@ -23,6 +23,11 @@ export default function StatusBar({
   cursor = null,
   profileId = 'laser',
   bedSize,
+  // Run Plan opener (PRD #73). When supplied, the machine/bed cluster becomes a
+  // button that opens the pre-flight Run Plan — "tap the machine to see what it
+  // will do". Omitted (legacy / no provider) → the cluster stays a plain span,
+  // byte-unchanged.
+  onOpenRunPlan,
 }) {
   const zoomPct = `${Math.round((Number.isFinite(zoom) ? zoom : 1) * 100)}%`;
   const profile = getProfile(profileId);
@@ -55,13 +60,29 @@ export default function StatusBar({
           : `X – · Y – ${unit}`}
       </span>
 
-      {/* Active machine / bed — pushed to the right. */}
-      <span aria-label="Active bed" className="ml-auto num">
-        {profile.label}
-        {bedW != null && bedH != null
-          ? ` · ${bedW} × ${bedH} ${bedUnit}`
-          : ''}
-      </span>
+      {/* Active machine / bed — pushed to the right. A button opening the Run
+          Plan when a handler is wired; otherwise a plain readout. */}
+      {onOpenRunPlan ? (
+        <button
+          type="button"
+          aria-label="Active bed"
+          title="Plan the run"
+          onClick={onOpenRunPlan}
+          className="ml-auto num rounded-xs px-1 -mx-1 text-ink-soft transition-colors duration-fast hover:text-ink hover:bg-paper-warm focus-visible:outline focus-visible:outline-1 focus-visible:outline-violet"
+        >
+          {profile.label}
+          {bedW != null && bedH != null
+            ? ` · ${bedW} × ${bedH} ${bedUnit}`
+            : ''}
+        </button>
+      ) : (
+        <span aria-label="Active bed" className="ml-auto num">
+          {profile.label}
+          {bedW != null && bedH != null
+            ? ` · ${bedW} × ${bedH} ${bedUnit}`
+            : ''}
+        </span>
+      )}
     </div>
   );
 }

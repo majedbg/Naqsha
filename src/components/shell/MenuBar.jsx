@@ -178,8 +178,11 @@ export default function MenuBar({
   onDocumentSetup,
   onUndo,
   onRedo,
-  onToggleOverlays,
-  overlaysOn = false,
+  // Run Plan entry (PRD #73) — File▸Run plan… opens the pre-flight destination.
+  // Present-but-disabled until the owner wires it.
+  onRunPlan,
+  // Preferences modal opener (ADR 0001) — Edit▸Preferences….
+  onOpenPreferences,
   onGenerateAI,
   // Photo → Pattern stepper opener (issue #49) — OPTIONAL; gated upstream.
   onExtractPattern,
@@ -264,7 +267,17 @@ export default function MenuBar({
           disabled: !onDocumentSetup,
         },
         { separator: true },
-        { label: "Export…", onSelect: onExport },
+        // Two-path export (Run Plan, PRD #73 / ADR 0001): the quick "Export SVG…"
+        // (⌘E — writes the file + an Export Receipt) and "Run plan…" (⇧⌘E — the
+        // pre-flight destination) sit ADJACENT so the maker chooses between "just
+        // give me the file" and "let me see what the machine will do".
+        { label: "Export SVG…", onSelect: onExport, shortcut: "⌘E" },
+        {
+          label: "Run plan…",
+          onSelect: onRunPlan,
+          disabled: !onRunPlan,
+          shortcut: "⇧⌘E",
+        },
         // Submit to org… (org/admin MVP) — in-app path to a workshop's cut queue.
         // Disabled (no handler) until the user is signed in.
         {
@@ -290,6 +303,15 @@ export default function MenuBar({
           disabled: !onRedo,
           shortcut: "⇧⌘Z",
         },
+        { separator: true },
+        // Preferences… (Run Plan, ADR 0001) — the app-level Preferences modal
+        // (currently the crop-to-Sheet Export toggle). Present-but-disabled until
+        // the owner supplies a handler, matching the other conditional items.
+        {
+          label: "Preferences…",
+          onSelect: onOpenPreferences,
+          disabled: !onOpenPreferences,
+        },
       ],
     },
     {
@@ -300,16 +322,10 @@ export default function MenuBar({
         { label: "Rulers", disabled: true },
         { label: "Zoom in", disabled: true },
         { label: "Zoom out", disabled: true },
-        // Overlays (C7 / #15) — plot preview + overlap highlights over the canvas.
-        // Live the moment Studio supplies a toggle handler; renders as a checkbox
-        // item reflecting the current on/off state.
-        {
-          label: "Overlays",
-          checkable: true,
-          checked: overlaysOn,
-          onSelect: onToggleOverlays,
-          disabled: !onToggleOverlays,
-        },
+        // The standalone "Overlays" toggle RETIRED into the Run Plan (PRD #73):
+        // the canvas machine view now activates WITH the plan (File▸Run plan… /
+        // ⇧⌘E), not a separate View toggle, so there is a single place the maker
+        // sees "what the machine will do".
         // Bed size (moved out of Document Setup, per the UX reframe) — checkable
         // preset submenu + a "None" entry that hides the bed overlay entirely.
         bedSizeItem,

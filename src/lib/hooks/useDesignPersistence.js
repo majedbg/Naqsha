@@ -27,15 +27,24 @@ export default function useDesignPersistence({
   setUnit,
   setMargin,
   persistToLocal,
+  // Run Plan applied Optimizations (PRD #73, ADR 0002). The applied-only snapshot
+  // (useOptimizations.serializedOptimizations) is now part of the DIRTY SIGNAL:
+  // applying / reverting an Optimization changes what export produces, so it must
+  // schedule an autosave the same way a layer edit does. Optional + defaulted, so
+  // callers/tests that don't wire it hash exactly as before (opts → null).
+  optimizations,
 }) {
   const cleanRef = useRef(null);
 
   // Serialize the canvas for comparison. paramsCache is excluded: it's derived
   // cache that mutates on pattern-type switches without a user-visible change.
+  // `opts` folds the applied Optimizations into the signal; absent → null, so the
+  // hash is byte-stable for callers that never pass it.
   const serializeState = useCallback(
-    (lyrs, bg) =>
+    (lyrs, bg, opts) =>
       JSON.stringify({
         bg,
+        opts: opts ?? null,
         // eslint-disable-next-line no-unused-vars
         layers: lyrs.map(({ paramsCache, ...rest }) => rest),
       }),
@@ -44,18 +53,19 @@ export default function useDesignPersistence({
 
   // Snapshot an explicit just-loaded/just-saved state as the clean baseline.
   // Takes the values directly (not React state) so it's correct even when
-  // called in the same tick as the setState that applied them.
+  // called in the same tick as the setState that applied them. `opts` defaults to
+  // the current applied Optimizations so existing 2-arg call sites keep working.
   const markCleanFrom = useCallback(
-    (lyrs, bg) => {
-      cleanRef.current = serializeState(lyrs, bg);
+    (lyrs, bg, opts = optimizations) => {
+      cleanRef.current = serializeState(lyrs, bg, opts);
     },
-    [serializeState]
+    [serializeState, optimizations]
   );
 
   const isDirty = useCallback(() => {
     if (cleanRef.current === null) return true;
-    return serializeState(layers, bgColor) !== cleanRef.current;
-  }, [serializeState, layers, bgColor]);
+    return serializeState(layers, bgColor, optimizations) !== cleanRef.current;
+  }, [serializeState, layers, bgColor, optimizations]);
 
   // First-run baseline: only when there's no share token and no stored work do
   // the pristine defaults count as clean. Otherwise cleanRef stays null (dirty)

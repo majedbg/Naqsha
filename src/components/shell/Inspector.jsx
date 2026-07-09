@@ -26,6 +26,7 @@ import { useState, useRef } from "react";
 import PatternSelect from "../PatternSelect";
 import PatternParams from "../PatternParams";
 import DockToggle from "./DockToggle";
+import SheetInspector from "./SheetInspector";
 import usePatternCache from "../../lib/usePatternCache";
 import {
   buildLayerParamsValue,
@@ -1124,6 +1125,16 @@ export default function Inspector({
   // goes through this (Studio wraps copy+rebind in recordBatch = ONE undo entry)
   // instead of the legacy two-call onCopyLibraryGlyph + onUpdateLayer. Optional.
   onUseLibraryGlyph,
+  // Sheet inspector (#75): with nothing selected AND these provided, the empty
+  // state becomes the Sheet inspector (work-piece dims + preset + bed line).
+  // All optional — legacy callers / standalone tests keep the neutral
+  // placeholder. Studio routes onApplySheetSize through the SAME
+  // handleDocumentSetupApply path the Document Setup dialog uses (one code
+  // path mutates the work piece; recordBatch = one undo entry per commit).
+  canvasW,
+  canvasH,
+  bedSize,
+  onApplySheetSize,
 }) {
   // Resolved font for the text-properties readouts (cap-height / engrave
   // warnings). May be null on first paint before useFont resolves — the panel's
@@ -1155,6 +1166,25 @@ export default function Inspector({
   }
 
   if (!layer) {
+    // Sheet inspector (#75): empty selection = document properties (the Figma
+    // mechanic), when Studio wires the Sheet props. DockToggle stays with the
+    // branch, mirroring the placeholder below.
+    if (typeof canvasW === "number" && typeof canvasH === "number") {
+      return (
+        <div className="flex h-full flex-col">
+          <div className="flex justify-end p-1">
+            <DockToggle />
+          </div>
+          <SheetInspector
+            canvasW={canvasW}
+            canvasH={canvasH}
+            unit={unit}
+            bedSize={bedSize}
+            onApplySize={onApplySheetSize}
+          />
+        </div>
+      );
+    }
     // Neutral document / empty state — single-select drives the inspector, so
     // with nothing selected there is no per-object editor to show.
     return (

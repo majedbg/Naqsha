@@ -3,10 +3,11 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import MenuBar from "./MenuBar";
 
-// Issue #15 (Lane C / C7): the View menu's "Overlays" placeholder becomes LIVE —
-// it toggles the canvas plot-preview + overlap overlay. Mirrors the Undo/Redo
-// conditional-enable pattern (#8): disabled until a handler is supplied, fires
-// the handler when chosen, and reflects the current on/off state.
+// Run Plan (PRD #73): the View menu's "Overlays" toggle is RETIRED. The canvas
+// machine view no longer has its own View toggle — it now activates WITH the Run
+// Plan (File▸Run plan… / ⇧⌘E), so there is a single place the maker sees "what
+// the machine will do". This suite pins the retirement: the Overlays item is GONE
+// from the View menu, and the plan entry lives in File instead.
 vi.mock("../../lib/useTheme", () => ({
   useTheme: () => ({ theme: "light", toggleTheme: vi.fn() }),
 }));
@@ -27,39 +28,38 @@ function baseHandlers(overrides = {}) {
 }
 
 const openView = () => fireEvent.click(screen.getByRole("button", { name: "View" }));
+const openFile = () => fireEvent.click(screen.getByRole("button", { name: "File" }));
 
-describe("MenuBar — View > Overlays toggle (#15)", () => {
-  it("renders Overlays disabled when no toggle handler is provided (placeholder)", () => {
+describe("MenuBar — View > Overlays retired into the Run Plan (#73)", () => {
+  it("the View menu no longer offers an Overlays item", () => {
     render(<MenuBar {...baseHandlers()} />);
     openView();
     expect(
-      screen.getByRole("menuitemcheckbox", { name: /overlays/i })
-    ).toBeDisabled();
+      screen.queryByRole("menuitemcheckbox", { name: /overlays/i })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("menuitem", { name: /overlays/i })
+    ).not.toBeInTheDocument();
   });
 
-  it("Overlays becomes live and invokes the toggle handler when provided", () => {
-    const onToggleOverlays = vi.fn();
-    render(<MenuBar {...baseHandlers({ onToggleOverlays })} />);
+  it("even when a (legacy) overlay toggle handler is passed, no Overlays item appears", () => {
+    // The prop is gone from MenuBar; passing it must NOT resurrect the item.
+    render(<MenuBar {...baseHandlers({ onToggleOverlays: vi.fn(), overlaysOn: true })} />);
     openView();
-    const item = screen.getByRole("menuitemcheckbox", { name: /overlays/i });
-    expect(item).not.toBeDisabled();
-    fireEvent.click(item);
-    expect(onToggleOverlays).toHaveBeenCalledTimes(1);
+    expect(
+      screen.queryByRole("menuitemcheckbox", { name: /overlays/i })
+    ).not.toBeInTheDocument();
   });
 
-  it("reflects the current overlay state (checked when on)", () => {
-    const onToggleOverlays = vi.fn();
-    const { rerender } = render(
-      <MenuBar {...baseHandlers({ onToggleOverlays, overlaysOn: false })} />
-    );
-    openView();
-    expect(
-      screen.getByRole("menuitemcheckbox", { name: /overlays/i })
-    ).toHaveAttribute("aria-checked", "false");
-
-    rerender(<MenuBar {...baseHandlers({ onToggleOverlays, overlaysOn: true })} />);
-    expect(
-      screen.getByRole("menuitemcheckbox", { name: /overlays/i })
-    ).toHaveAttribute("aria-checked", "true");
+  it("the Run Plan entry lives in File as 'Run plan…' (⇧⌘E), adjacent to Export SVG… (⌘E)", () => {
+    const onRunPlan = vi.fn();
+    render(<MenuBar {...baseHandlers({ onRunPlan })} />);
+    openFile();
+    const exportItem = screen.getByRole("menuitem", { name: /export svg/i });
+    const runPlanItem = screen.getByRole("menuitem", { name: /run plan/i });
+    expect(exportItem).toBeInTheDocument();
+    expect(runPlanItem).toBeInTheDocument();
+    fireEvent.click(runPlanItem);
+    expect(onRunPlan).toHaveBeenCalledTimes(1);
   });
 });

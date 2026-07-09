@@ -24,6 +24,17 @@ export default function useCloudPersistence({
   // document-load seam (loadLayerSet's 2nd arg). Undefined when a caller predates
   // WI-3 → config carries `customGlyphs: undefined` (harmless).
   customGlyphs,
+  // Run Plan applied optimizations (PRD #73, ADR 0002). The APPLIED-only snapshot
+  // (from useOptimizations.serializedOptimizations — preview tolerance already
+  // stripped) rides the document `config` as a sibling of layers, so applied
+  // optimize values PERSIST WITH THE DOCUMENT instead of vanishing on reload.
+  // Undefined for a caller that predates the wiring → config carries no field
+  // (harmless, back-compatible). Deliberately absent from the ⌘Z snapshot.
+  optimizations,
+  // Hydrate seam, invoked AFTER a cloud load / draft recover with the stored
+  // `config.optimizations` (undefined for an OLD blob → the seam migrates to
+  // "none applied"). Mirrors importHistoryTail: always called, never throws.
+  hydrateOptimizations = null,
   loadLayerSet,
   applyCanvasSize,
   markCleanFrom,
@@ -85,9 +96,19 @@ export default function useCloudPersistence({
     if (cfg.layers) loadLayerSet(cfg.layers, cfg.customGlyphs ?? {});
     if (cfg.canvasW && cfg.canvasH) applyCanvasSize(cfg.canvasW, cfg.canvasH);
     if (pendingDraft.name) setDesignName(pendingDraft.name);
+    // Restore the draft's applied optimizations (undefined for an old draft →
+    // "none applied"). Outside the ⌘Z snapshot; recovered via the plan's seam.
+    hydrateOptimizations?.(cfg.optimizations);
     clearDraft(mountKey);
     setPendingDraft(null);
-  }, [pendingDraft, mountKey, loadLayerSet, applyCanvasSize, setDesignName]);
+  }, [
+    pendingDraft,
+    mountKey,
+    loadLayerSet,
+    applyCanvasSize,
+    setDesignName,
+    hydrateOptimizations,
+  ]);
 
   const captureThumbnail = useCallback(() => {
     const container = canvasContainerRef.current;
@@ -104,7 +125,18 @@ export default function useCloudPersistence({
   const handleSaveToCloud = useCallback(async ({ manual = false } = {}) => {
     if (!user) return;
     const thumbnail = captureThumbnail();
-    const config = { layers, canvasW, canvasH, presetIndex, panels, customGlyphs };
+    const config = {
+      layers,
+      canvasW,
+      canvasH,
+      presetIndex,
+      panels,
+      customGlyphs,
+      // Applied optimizations embedded verbatim (already the applied-only subset).
+      // Undefined when unwired → the key reads as absent, so old callers/tests
+      // that exact-match the config are unaffected.
+      optimizations,
+    };
     // Tier-2 (S9): embed the undo/redo tail in the SAVED design config on MANUAL
     // save only (⌘S / Save button → `{ manual: true }`). Autosave's no-arg call
     // leaves `manual` false, so the high-frequency writes never carry the tail.
@@ -186,6 +218,7 @@ export default function useCloudPersistence({
     bgColor,
     panels,
     customGlyphs,
+    optimizations,
     limits.historySnapshots,
     retryDelays,
     getHistoryTail,
@@ -225,6 +258,10 @@ export default function useCloudPersistence({
         // (validateTail → importTail). A version/checksum mismatch silently
         // drops it and keeps the document — the required safe failure mode.
         importHistoryTail?.(design.config.history);
+        // Applied optimizations (ADR 0002): forward the stored field to the plan's
+        // hydrate seam (undefined for an OLD design → migrates to "none applied").
+        // Runs after the document-load seam, mirroring importHistoryTail.
+        hydrateOptimizations?.(design.config.optimizations);
       } catch (err) {
         console.error("Cloud load failed:", err);
       }
@@ -238,6 +275,7 @@ export default function useCloudPersistence({
       layers,
       bgColor,
       importHistoryTail,
+      hydrateOptimizations,
     ]
   );
 

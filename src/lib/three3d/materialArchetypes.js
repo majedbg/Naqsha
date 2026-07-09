@@ -1,5 +1,12 @@
 // Material Archetypes — the in-code render archetypes for the 3D appearance
-// system (spec: docs/material-3d-appearance-plan.md §3.1–§3.2; locked decision L1).
+// system (spec: docs/material-3d-appearance-plan.md §3.1–§3.2; locked decision L1),
+// and — per ADR 0003 (fidelity-first preview) — THE SINGLE SOURCE OF OPTICS for
+// every preview material. The `MaterialDescriptor` (sheetSpecs.js) carries
+// substrate IDENTITY only (kind, color, thickness); everything about how a
+// material RENDERS (roughness, IOR, transmission, edge behavior) resolves here,
+// grounded in measured stock properties (PMMA: IOR 1.49, ~92% transmittance @ 3mm,
+// polished-cast roughness ≈ 0.02). Numbers are calibrated under
+// THREE.NeutralToneMapping (Scene3D) — do not retune under a different mapper.
 //
 // "Archetypes in code, params as data." A small FIXED set of render archetypes
 // live here as default AppearanceParams; the R3F/`.jsx` layer reads these defaults
@@ -12,17 +19,24 @@
 // the registry and resolver can be unit-tested without WebGL. Three-specific
 // material construction lives in the `.jsx` (S4+).
 //
-// AppearanceParams contract (§3.1):
+// AppearanceParams contract (§3.1, edge model revised by ADR 0003):
 //   archetype     — one of ARCHETYPE_NAMES
 //   tintHex       — '#rrggbb' base color (resolver overrides from materialSheetHex)
 //   transmission  — 0..1 acrylic see-through (0 for wood/opaque/mirror)
 //   roughness     — 0..1
 //   metalness     — 0..1 (1 = mirror; 0 for plain acrylic/wood)
 //   ior           — ~1.49 acrylic; ignored by opaque/metal
-//   edgeGain      — 0..~8 perimeter emissive strength (0 = no glow)
-//   rimGain       — 0..~2 face fresnel emissive strength
+//   edgeGain      — 0..~8 EMISSIVE strength of the slab's side faces. Under the
+//                   fidelity model only genuinely fluorescent stock emits: the
+//                   fluorescent archetype is the ONLY entry > 0. Non-fluorescent
+//                   acrylic edge brightness is the non-emissive edge-face material
+//                   (edgeFace.js), not a gain here.
 //   texturePath   — null | '/textures/...' (reserved; only wood may set it later, L6)
 //   clearcoat     — 0..1 (pearlescent's reserved nacre term; 0 elsewhere)
+//
+// (rimGain — the full-slab additive Fresnel shell term — was REMOVED with the
+// shell itself, ADR 0003: an additive glow over the whole surface is a stylized
+// render, not a material proof.)
 
 // The eight v1 archetypes (§3.2). `opaque-tinted` is the safe fallback for any
 // material that matches no finish — S1's corpus fixture asserts no KNOWN name
@@ -34,14 +48,12 @@ export const DEFAULT_ARCHETYPE = 'opaque-tinted';
 // per-archetype invariants (transmission/edgeGain/metalness) are the look contract
 // and are asserted in the co-located test.
 export const ARCHETYPE_DEFAULTS = Object.freeze({
-  // High edge glow, mid transmission, saturated tint, low roughness — the only
-  // archetype that glows hard. (Source corpus: in-code `green-fluorescent`.)
-  // edgeGain/rimGain were dialed back (6.0→3.0, 1.2→0.7): at the old values the
-  // fluorescent blew out the whole panel to solid yellow under the dark 'Studio'
-  // env (IBL dimmed to 0.3) + SelectiveBloom — the emissive had nothing to compete
-  // with, so the glow saturated the face and buried the marks. 3.0/0.7 keeps the
-  // "only archetype that glows hard" character while staying readable in the dark
-  // preset; brighter HDRIs were never the problem.
+  // The ONLY archetype with emissive edges — real fluorescent PMMA collects light
+  // and re-emits it at the cut faces, so a modest genuine emissive on the SIDE
+  // faces (edgeFace.js routes edgeGain there, registered for bloom) is fidelity,
+  // not stylization (ADR 0003 exception). edgeGain 2.0 is provisional pending
+  // reference-photo calibration; the old 3.0/6.0 values were tuned for the removed
+  // whole-selection bloom pipeline and blew out under it.
   'fluorescent-acrylic': Object.freeze({
     archetype: 'fluorescent-acrylic',
     tintHex: '#e6e954',
@@ -49,25 +61,26 @@ export const ARCHETYPE_DEFAULTS = Object.freeze({
     roughness: 0.12,
     metalness: 0,
     ior: 1.49,
-    edgeGain: 3.0,
-    rimGain: 0.7,
+    edgeGain: 2.0,
     clearcoat: 0,
     texturePath: null,
   }),
-  // Highly transmissive, near-zero tint, only a hint of edge glow.
+  // Clear cast PMMA ground truth (ADR 0003): IOR 1.49, ~92–95% transmittance,
+  // polished-cast surface roughness ≈ 0.02 (was 0.05 — cast acrylic is glossier
+  // than that). Edge brightness comes from the non-emissive edge-face material.
   'clear-acrylic': Object.freeze({
     archetype: 'clear-acrylic',
     tintHex: '#e7e7e7',
     transmission: 0.95,
-    roughness: 0.05,
+    roughness: 0.02,
     metalness: 0,
     ior: 1.49,
-    edgeGain: 0.3,
-    rimGain: 0.5,
+    edgeGain: 0,
     clearcoat: 0,
     texturePath: null,
   }),
-  // Mid transmission, tinted, small edge gain (the last-resort acrylic bucket).
+  // Mid transmission, tinted (the last-resort acrylic bucket). Frosted/satin
+  // finishes scatter — hence the higher roughness than clear cast.
   'translucent-acrylic': Object.freeze({
     archetype: 'translucent-acrylic',
     tintHex: '#cccccc',
@@ -75,12 +88,11 @@ export const ARCHETYPE_DEFAULTS = Object.freeze({
     roughness: 0.22,
     metalness: 0,
     ior: 1.49,
-    edgeGain: 0.8,
-    rimGain: 0.6,
+    edgeGain: 0,
     clearcoat: 0,
     texturePath: null,
   }),
-  // Solid, glossy, NO edge glow.
+  // Solid, glossy, non-emissive.
   'opaque-acrylic': Object.freeze({
     archetype: 'opaque-acrylic',
     tintHex: '#888888',
@@ -89,12 +101,11 @@ export const ARCHETYPE_DEFAULTS = Object.freeze({
     metalness: 0,
     ior: 1.49,
     edgeGain: 0,
-    rimGain: 0,
     clearcoat: 0,
     texturePath: null,
   }),
   // Opaque, glossy, slightly metallic with a clearcoat sheen — v1 nacre
-  // approximation. No edge glow.
+  // approximation. Non-emissive.
   'pearlescent-acrylic': Object.freeze({
     archetype: 'pearlescent-acrylic',
     tintHex: '#aab0c0',
@@ -103,11 +114,10 @@ export const ARCHETYPE_DEFAULTS = Object.freeze({
     metalness: 0.2,
     ior: 1.49,
     edgeGain: 0,
-    rimGain: 0.3,
     clearcoat: 0.6,
     texturePath: null,
   }),
-  // Fully metallic, near-mirror-smooth, opaque, NO edge glow.
+  // Fully metallic, near-mirror-smooth, opaque, non-emissive.
   'mirror-acrylic': Object.freeze({
     archetype: 'mirror-acrylic',
     tintHex: '#cfd2d6',
@@ -116,11 +126,10 @@ export const ARCHETYPE_DEFAULTS = Object.freeze({
     metalness: 1.0,
     ior: 1.49,
     edgeGain: 0,
-    rimGain: 0,
     clearcoat: 0,
     texturePath: null,
   }),
-  // Opaque procedural grain (v1), matte-ish, non-metallic, NO edge glow.
+  // Opaque procedural grain (v1), matte-ish, non-metallic, non-emissive.
   // texturePath reserved for committed grain images as a follow-up (L6).
   wood: Object.freeze({
     archetype: 'wood',
@@ -130,7 +139,6 @@ export const ARCHETYPE_DEFAULTS = Object.freeze({
     metalness: 0,
     ior: 1.49,
     edgeGain: 0,
-    rimGain: 0,
     clearcoat: 0,
     texturePath: null,
   }),
@@ -144,7 +152,6 @@ export const ARCHETYPE_DEFAULTS = Object.freeze({
     metalness: 0,
     ior: 1.49,
     edgeGain: 0,
-    rimGain: 0,
     clearcoat: 0,
     texturePath: null,
   }),
@@ -177,7 +184,49 @@ export function appearanceToUniforms(params = {}) {
     uMetalness: params.metalness,
     uIor: params.ior,
     uEdgeGain: params.edgeGain,
-    uRimGain: params.rimGain,
     uClearcoat: params.clearcoat,
+  };
+}
+
+// ── Substrate-fallback optics (ADR 0003, "archetypes own optics") ─────────────
+// When NO material lens is active, a slab renders from its substrate descriptor —
+// which now carries identity only (kind, color, thickness). These maps resolve a
+// substrate KIND to the archetype whose optics stand in for it, folding in the
+// per-kind roughness the descriptor used to duplicate (D7: plywood ~0.8, mdf ~0.9,
+// cardstock ~1.0 matte; unknown "other" stock ~0.7).
+const SUBSTRATE_ARCHETYPE_BY_KIND = Object.freeze({
+  acrylic: 'clear-acrylic',
+  plywood: 'wood',
+  mdf: 'wood',
+  cardstock: 'wood',
+});
+const SUBSTRATE_ROUGHNESS_BY_KIND = Object.freeze({
+  plywood: 0.8,
+  mdf: 0.9,
+  cardstock: 1.0,
+  other: 0.7,
+});
+
+/**
+ * Optics for a bare substrate kind (the no-material-lens fallback). Acrylic reads
+ * as clear cast PMMA (transmission 0.95, roughness 0.02, IOR 1.49); the wood-like
+ * kinds share the wood archetype with their per-kind matte roughness; anything
+ * unknown falls back to the inert opaque-tinted optics at the neutral 0.7. Color
+ * stays the DESCRIPTOR's business (identity) — this returns optics only.
+ * @param {string|undefined} kind
+ * @returns {{ archetype:string, transmission:number, roughness:number,
+ *             metalness:number, ior:number, clearcoat:number }}
+ */
+export function substrateOptics(kind) {
+  const known = Object.prototype.hasOwnProperty.call(SUBSTRATE_ARCHETYPE_BY_KIND, kind);
+  const archetype = known ? SUBSTRATE_ARCHETYPE_BY_KIND[kind] : DEFAULT_ARCHETYPE;
+  const d = ARCHETYPE_DEFAULTS[archetype];
+  return {
+    archetype,
+    transmission: d.transmission,
+    roughness: SUBSTRATE_ROUGHNESS_BY_KIND[known ? kind : 'other'] ?? d.roughness,
+    metalness: d.metalness,
+    ior: d.ior,
+    clearcoat: d.clearcoat,
   };
 }

@@ -13,10 +13,14 @@
 // Precedence (spec §3.5): when a material lens is active (`appearance` present) the
 // resolved archetype DRIVES the material — its transmission/clearcoat decide the
 // render mode, overriding the substrate descriptor's intrinsic type. When no
-// material is selected (`appearance` null) the result is BYTE-IDENTICAL to the
-// pre-S4 substrate-descriptor behavior (the no-material fallback, asserted below).
+// material is selected (`appearance` null) the descriptor supplies IDENTITY only
+// (kind decides the render mode via `type`, color tints) and the OPTICS come from
+// the archetypes' substrate fallback (materialArchetypes.substrateOptics) — the
+// single source of optics per ADR 0003. (This replaced the pre-S4 byte-identical
+// contract, under which the descriptor carried its own roughness/ior duplicate.)
 //
 // Imports NO three: stays node-testable.
+import { substrateOptics } from './materialArchetypes.js';
 
 /**
  * @typedef {'transmission'|'standard'|'physical'} SheetMaterialMode
@@ -25,10 +29,9 @@
  *   SheetMaterialProps
  */
 
-// Acrylic PMMA index of refraction; the fallback when a source omits ior.
+// Acrylic PMMA index of refraction; the fallback when an appearance omits ior.
 const DEFAULT_IOR = 1.49;
-// Pre-S4 Sheets defaults, preserved for the no-material fallback path.
-const TRANSMISSIVE_DEFAULT_ROUGHNESS = 0.15;
+// Fallback roughness when an appearance omits it (matches the pre-ADR-0003 value).
 const STANDARD_DEFAULT_ROUGHNESS = 0.8;
 
 /**
@@ -39,26 +42,31 @@ const STANDARD_DEFAULT_ROUGHNESS = 0.8;
  * @returns {SheetMaterialProps}
  */
 export function resolveSheetMaterial({ appearance = null, descriptor = {} } = {}) {
-  // No material lens → reproduce the pre-S4 substrate-descriptor behavior exactly.
+  // No material lens → descriptor identity (type/kind/color) + archetype optics.
   if (!appearance) {
     if (descriptor.type === 'transmissive') {
+      // A transmissive descriptor is acrylic by construction (sheetSpecs D7); the
+      // `|| 'acrylic'` guards a kind-less descriptor from landing in the opaque
+      // fallback optics (transmission 0 inside transmission mode).
+      const optics = substrateOptics(descriptor.kind || 'acrylic');
       return {
         mode: 'transmission',
         color: descriptor.color,
-        transmission: 1,
-        roughness: descriptor.roughness ?? TRANSMISSIVE_DEFAULT_ROUGHNESS,
+        transmission: optics.transmission,
+        roughness: optics.roughness,
         metalness: 0,
-        ior: descriptor.ior ?? DEFAULT_IOR,
+        ior: optics.ior,
         clearcoat: 0,
       };
     }
+    const optics = substrateOptics(descriptor.kind);
     return {
       mode: 'standard',
       color: descriptor.color,
       transmission: 0,
-      roughness: descriptor.roughness ?? STANDARD_DEFAULT_ROUGHNESS,
+      roughness: optics.roughness,
       metalness: 0,
-      ior: descriptor.ior ?? DEFAULT_IOR,
+      ior: optics.ior,
       clearcoat: 0,
     };
   }

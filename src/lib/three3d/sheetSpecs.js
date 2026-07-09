@@ -14,8 +14,12 @@
  * arg description is not literal arity; there is no single global substrate.
  * Missing/partial substrate falls back to DEFAULT_SUBSTRATE.
  *
- * @typedef {{ type:'transmissive'|'standard', kind:string, color:string,
- *             roughness:number, ior?:number }} MaterialDescriptor
+ * The descriptor carries substrate IDENTITY ONLY (ADR 0003): kind + color here,
+ * thickness on the spec. All OPTICS (roughness, IOR, transmission) resolve from
+ * the Material Archetypes (materialArchetypes.js `substrateOptics`) — the single
+ * source of optics — via sheetMaterial.js. Duplicating optics here was the bug.
+ *
+ * @typedef {{ type:'transmissive'|'standard', kind:string, color:string }} MaterialDescriptor
  * @typedef {{ panelId:string, order:number, zOffset:number, size:[number,number],
  *             thickness:number, materialDescriptor:MaterialDescriptor,
  *             layerIds:string[] }} SheetSpec
@@ -43,20 +47,16 @@ export function clampSpacing(mm) {
   return Math.min(SPACING_MAX, Math.max(SPACING_MIN, mm));
 }
 
-// Acrylic ≈ 1.49 ior (PMMA), low roughness for clean transmission (D7).
-const ACRYLIC_IOR = 1.49;
-const ACRYLIC_ROUGHNESS = 0.15;
-// Opaque-kind roughness per D7: wood ~0.8, mdf ~0.9, cardstock ~1.0 matte.
-const ROUGHNESS_BY_KIND = { plywood: 0.8, mdf: 0.9, cardstock: 1.0 };
 // "other" → opaque NEUTRAL (D7): a fixed mid-grey, deliberately NOT the
 // substrate's own color so an unknown stock reads as un-specified, not painted.
 const NEUTRAL_OTHER_COLOR = '#9a9a9a';
-const OTHER_ROUGHNESS = 0.7;
 
 /**
- * Material descriptor for one substrate (D7). Acrylic → transmissive (ior≈1.49)
- * tinted by substrate.color; plywood/mdf/cardstock → opaque standard tinted, with
- * per-kind roughness; anything else → opaque neutral standard.
+ * Material descriptor for one substrate (D7, identity only — ADR 0003). Acrylic →
+ * transmissive tinted by substrate.color; plywood/mdf/cardstock → opaque standard
+ * tinted; anything else → opaque neutral standard. NO optics here: roughness/IOR/
+ * transmission come from the archetypes (materialArchetypes.substrateOptics) when
+ * sheetMaterial.js resolves the slab.
  * @param {{ kind?:string, color?:string, thickness?:number }} [substrate]
  * @returns {MaterialDescriptor}
  */
@@ -64,12 +64,12 @@ export function materialDescriptorForSubstrate(substrate = {}) {
   const kind = substrate.kind;
   const color = substrate.color || DEFAULT_SUBSTRATE.color;
   if (kind === 'acrylic') {
-    return { type: 'transmissive', kind, color, ior: ACRYLIC_IOR, roughness: ACRYLIC_ROUGHNESS };
+    return { type: 'transmissive', kind, color };
   }
   if (kind === 'plywood' || kind === 'mdf' || kind === 'cardstock') {
-    return { type: 'standard', kind, color, roughness: ROUGHNESS_BY_KIND[kind] };
+    return { type: 'standard', kind, color };
   }
-  return { type: 'standard', kind: 'other', color: NEUTRAL_OTHER_COLOR, roughness: OTHER_ROUGHNESS };
+  return { type: 'standard', kind: 'other', color: NEUTRAL_OTHER_COLOR };
 }
 
 /**

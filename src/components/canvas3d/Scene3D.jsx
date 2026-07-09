@@ -8,6 +8,7 @@
 // src/lib/three3d and stays on the 2D side of the boundary so it can be unit-tested.
 import { useMemo, useRef, useState, useEffect, useCallback } from 'react';
 import { Canvas, useThree, useFrame } from '@react-three/fiber';
+import * as THREE from 'three';
 import { useBloomSelectionStore, BloomSelectionContext } from './bloomSelection.js';
 import CameraRig from './CameraRig.jsx';
 import SceneEnvironment from './SceneEnvironment.jsx';
@@ -77,6 +78,27 @@ function SnapshotCapture({ requestRef, onCapture }) {
 // Default Surface A inter-panel spacing (PRD D11, mm). S6 wires the slider here as
 // local state; persistence to localStorage is S11's job (D13).
 const DEFAULT_SPACING_MM = SPACING_DEFAULT;
+// How long the EffectComposer lingers after the bloom selection empties (ms). The
+// selection empties/refills within frames as the pointer skims across marks;
+// remounting the composer each time re-allocates its render targets (a visible
+// hitch) — so unmount is debounced while mount stays immediate (ADR 0003 #5).
+const BLOOM_UNMOUNT_LINGER_MS = 250;
+
+/**
+ * True while `selection` is non-empty, holding true for `lingerMs` after it
+ * empties — the mount gate for the on-demand EffectComposer (ADR 0003 #5).
+ * Mount is immediate (the `nonEmpty ||` term needs no state); only the unmount
+ * is deferred, via a timeout that trails the live value (async setState only).
+ */
+function useLingeringNonEmpty(selection, lingerMs) {
+  const nonEmpty = selection.length > 0;
+  const [trailingNonEmpty, setTrailingNonEmpty] = useState(nonEmpty);
+  useEffect(() => {
+    const id = setTimeout(() => setTrailingNonEmpty(nonEmpty), nonEmpty ? 0 : lingerMs);
+    return () => clearTimeout(id);
+  }, [nonEmpty, lingerMs]);
+  return nonEmpty || trailingNonEmpty;
+}
 // Default canvas mm-bounds when the host doesn't supply real ones (keeps the
 // scene non-degenerate in isolation; RightPanel passes the true design size).
 const DEFAULT_BOUNDS_MM = { width: 200, height: 200 };
@@ -177,6 +199,9 @@ export default function Scene3D({
   // — see bloomSelection.jsx). Emissive marks/drape lines register via useBloomRef;
   // `bloomSelection` (membership-stable) feeds SelectiveBloom's `selection` prop.
   const { selection: bloomSelection, register: registerBloom } = useBloomSelectionStore();
+  // On-demand post-processing (ADR 0003 #5): the composer exists only while
+  // something actually blooms (hover annotation, fluorescent edges, drape lines).
+  const bloomActive = useLingeringNonEmpty(bloomSelection, BLOOM_UNMOUNT_LINGER_MS);
 
   const isPanelStack = mode === 'panel-stack';
   // Depend on the PRIMITIVE bounds (not the object identity, which the host
@@ -314,6 +339,13 @@ export default function Scene3D({
         // the 3D overlay is open (Canvas3DHost lazy boundary), so "always" costs GPU
         // only during active preview, not for the whole 2D app.
         frameloop="always"
+        // Khronos PBR Neutral (ADR 0003 #8): designed for true-to-life product/
+        // material color — the R3F ACES default lifts and desaturates brights,
+        // which is the wrong direction for a material proof. Every archetype and
+        // environment intensity is calibrated against Neutral. EmissiveBloom's
+        // trailing ToneMapping effect applies the SAME curve while the on-demand
+        // composer is mounted, so the base image never shifts.
+        gl={{ toneMapping: THREE.NeutralToneMapping }}
         style={{ width: '100%', height: '100%' }}
         onCreated={({ gl }) => {
           // Surface-A ribbon marks crop to the sheet rectangle via per-material
@@ -378,15 +410,18 @@ export default function Scene3D({
             </>
           )}
 
-          {/* Surface B keeps a gentler bloom: its only emissive element is the
-              thin drape lines, and a softer pass avoids any glow leaking onto the
-              (now transparent, dimmer) relief. Surface A's marks want the full
-              groove glow. */}
-          <EmissiveBloom
-            lights={bloomLights}
-            intensity={isPanelStack ? 1.4 : 0.6}
-            selection={bloomSelection}
-          />
+          {/* On-demand bloom (ADR 0003 #5): mounted only while the selection is
+              non-empty (with a short unmount linger) — the default Surface-A view
+              runs with zero post-processing. Surface A blooms only the hover
+              annotation / fluorescent edges; Surface B keeps a gentler pass for
+              its thin emissive drape lines. */}
+          {bloomActive && (
+            <EmissiveBloom
+              lights={bloomLights}
+              intensity={isPanelStack ? 1.4 : 0.6}
+              selection={bloomSelection}
+            />
+          )}
         </BloomSelectionContext.Provider>
       </Canvas>
 

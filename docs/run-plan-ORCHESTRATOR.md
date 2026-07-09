@@ -1,8 +1,14 @@
 # Run Plan — Orchestrator Prompt
 
+> **STATUS: EXECUTED 2026-07-08 → branch `feat/run-plan`** (10 lane commits, 43 files,
+> +5,022 lines, 4,102 tests green, E2E spine verified). **Do not re-run.**
+> Remaining pre-merge work (gap-closing pass, run on Fable 5, 2026-07-09): file-crop
+> three-way agreement in svgExport; overlap basis excludes Reorder + surfaces
+> truncation; locate highlight ring; optimizeDeltas readout; Pen Swap markers.
+>
 > **Generated:** 2026-07-08 12:03 EDT
 > **Spec:** PRD [#73](https://github.com/majedbg/Naqsha/issues/73) · `CONTEXT.md` · `docs/adr/0001` · `docs/adr/0002`
-> **Usage:** paste everything below the divider into a fresh Opus session as the opening prompt. Orchestrator and all subagents run on Opus.
+> **Usage (historical):** paste everything below the divider into a fresh session as the opening prompt.
 > **Pre-condition (already satisfied as of generation time):** `main` == `origin/main` at `5815fe8`, working tree clean.
 
 ---

@@ -44,6 +44,18 @@ describe('hdriEnvironments registry', () => {
     }
   });
 
+  it('every entry carries a calibrated environmentIntensity (ADR 0003 #9)', () => {
+    for (const e of HDRI_ENVIRONMENTS) {
+      expect(Number.isFinite(e.environmentIntensity), `${e.id} missing intensity`).toBe(true);
+      expect(e.environmentIntensity).toBeGreaterThan(0);
+      expect(e.environmentIntensity).toBeLessThanOrEqual(3);
+    }
+  });
+
+  it('studio keeps its long-standing 0.3 IBL (the dark glow-first calibration)', () => {
+    expect(getEnvironmentById('studio').environmentIntensity).toBeCloseTo(0.3, 5);
+  });
+
   it('ENVIRONMENT_IDS matches the registry order', () => {
     expect(ENVIRONMENT_IDS).toEqual(HDRI_ENVIRONMENTS.map((e) => e.id));
   });

@@ -314,6 +314,116 @@ describe('PlotOverlay — run animation (~15s, execution order)', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Locate highlight ring (two-way, PRD story 25). The `locate` prop is the
+// shared highlight target ({ opId } | { layerId }); the overlay paints a calm
+// violet casing UNDER the located operation's draw segments (or the located
+// layer's crop) — a painted-cell affordance, not a glow, and static, so it is
+// reduced-motion safe by construction. Clicking a segment paints it locally
+// too (standalone before Lane-I wiring) and reports the target out; ephemeral:
+// clicking the located segment again or pressing Esc clears it and reports
+// null so shared state agrees in both directions.
+// ---------------------------------------------------------------------------
+describe('PlotOverlay — locate highlight ring (two-way)', () => {
+  it('rings the located Operation draw segments in violet when locate is supplied', () => {
+    const { container } = render(
+      <PlotOverlay
+        route={machineRoute()}
+        opRows={OP_ROWS}
+        locate={{ opId: 'op-cut' }}
+        canvasW={200}
+        canvasH={200}
+      />
+    );
+    const rings = container.querySelectorAll('[data-overlay="locate-ring"]');
+    expect(rings.length).toBe(1); // op-cut owns exactly one draw segment
+    expect(rings[0].getAttribute('stroke')).toContain('--violet');
+    // The ring hugs the segment it locates (same endpoints as the #cc0000 draw).
+    expect(rings[0].getAttribute('x1')).toBe('0');
+    expect(rings[0].getAttribute('y1')).toBe('0');
+    expect(rings[0].getAttribute('x2')).toBe('10');
+    expect(rings[0].getAttribute('y2')).toBe('0');
+  });
+
+  it('clicking a draw segment paints the ring locally and reports the target out', () => {
+    const onLocate = vi.fn();
+    const { container } = render(
+      <PlotOverlay route={machineRoute()} opRows={OP_ROWS} canvasW={200} canvasH={200} onLocate={onLocate} />
+    );
+    expect(container.querySelectorAll('[data-overlay="locate-ring"]').length).toBe(0);
+    const green = [...container.querySelectorAll('[data-overlay="route"]')].find(
+      (l) => l.getAttribute('stroke') === '#00aa55'
+    );
+    fireEvent.click(green);
+    expect(onLocate).toHaveBeenCalledWith({ opId: 'op-score' });
+    expect(container.querySelectorAll('[data-overlay="locate-ring"]').length).toBe(1);
+  });
+
+  it('is ephemeral — clicking the located segment again clears the ring and reports null', () => {
+    const onLocate = vi.fn();
+    const { container } = render(
+      <PlotOverlay route={machineRoute()} opRows={OP_ROWS} canvasW={200} canvasH={200} onLocate={onLocate} />
+    );
+    const red = [...container.querySelectorAll('[data-overlay="route"]')].find(
+      (l) => l.getAttribute('stroke') === '#cc0000'
+    );
+    fireEvent.click(red);
+    fireEvent.click(red);
+    expect(container.querySelectorAll('[data-overlay="locate-ring"]').length).toBe(0);
+    expect(onLocate).toHaveBeenLastCalledWith(null);
+  });
+
+  it('Esc clears the ring and reports null', () => {
+    const onLocate = vi.fn();
+    const { container } = render(
+      <PlotOverlay
+        route={machineRoute()}
+        opRows={OP_ROWS}
+        locate={{ opId: 'op-cut' }}
+        canvasW={200}
+        canvasH={200}
+        onLocate={onLocate}
+      />
+    );
+    expect(container.querySelectorAll('[data-overlay="locate-ring"]').length).toBe(1);
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(container.querySelectorAll('[data-overlay="locate-ring"]').length).toBe(0);
+    expect(onLocate).toHaveBeenLastCalledWith(null);
+  });
+
+  it('locate { layerId } rings the matching ghosted crop', () => {
+    const { container } = render(
+      <PlotOverlay
+        route={machineRoute()}
+        crops={CROPS}
+        locate={{ layerId: 'L9' }}
+        canvasW={200}
+        canvasH={200}
+      />
+    );
+    const rings = container.querySelectorAll('[data-overlay="locate-ring"]');
+    expect(rings.length).toBe(1);
+    expect(rings[0].getAttribute('stroke')).toContain('--violet');
+    // Polygon ring traces the crop's own points.
+    expect(rings[0].tagName.toLowerCase()).toBe('polygon');
+    expect(rings[0].getAttribute('points')).toBe('100,100 120,100 120,120');
+  });
+
+  it('the ring is static and stays visible under prefers-reduced-motion', () => {
+    const { container } = render(
+      <PlotOverlay
+        route={machineRoute()}
+        opRows={OP_ROWS}
+        locate={{ opId: 'op-cut' }}
+        canvasW={200}
+        canvasH={200}
+        prefersReducedMotion
+      />
+    );
+    expect(container.querySelectorAll('[data-overlay="locate-ring"]').length).toBe(1);
+  });
+});
+
 describe('PlotOverlay — Play control', () => {
   it('the Play button toggles the run-through on and reports it out', () => {
     const onPlayingChange = vi.fn();

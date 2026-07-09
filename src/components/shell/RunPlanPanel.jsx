@@ -15,6 +15,7 @@
 // accent across this lane, reserved for the "Export run" action — nothing else
 // here uses it. The Optimize stack's Apply is a quiet violet (see OptimizeRows).
 
+import { useEffect, useState } from "react";
 import { OptimizeRows } from "./OptimizeControls";
 
 // Calm, specific, action-phrased warning copy (.impeccable principle 7): name
@@ -28,6 +29,15 @@ const WARNING_COPY = {
 };
 
 function warningLine(warning) {
+  // Sampled overlap check: `truncated` means the checker hit its sampling cap,
+  // so `count` is a LOWER BOUND, not a total. Say so — and when the sweep was
+  // too dense to count anything (count 0 + truncated), say THAT; never render
+  // "0 overlaps" and never suppress the row (principle 7: specific and calm).
+  if (warning.type === "overlaps" && warning.truncated) {
+    return typeof warning.count === "number" && warning.count > 0
+      ? `${WARNING_COPY.overlaps} (at least ${warning.count} overlaps · sampled)`
+      : "Paths are too dense to fully check for overlaps. Show the area.";
+  }
   const base = WARNING_COPY[warning.type] ?? "Something needs a look. Show it.";
   return typeof warning.count === "number" ? `${base} (${warning.count})` : base;
 }

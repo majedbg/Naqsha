@@ -14,9 +14,27 @@
 //
 // THE PIPELINE (ADR-0002 order): extraction → clip-to-Sheet (honoring the
 // cropToSheet Export preference) → applied Optimizations → group layers by
-// Operation → overlapCheck on the POST-applied geometry (what the machine
-// actually runs, retiring the legacy pre-optimize overlap basis) → profile-aware
-// runEstimate → warning taxonomy → route + ghosted-crop geometry.
+// Operation → overlapCheck (see basis note below) → profile-aware runEstimate →
+// warning taxonomy → route + ghosted-crop geometry.
+//
+// THE OVERLAP-WARNING BASIS (why Reorder is excluded):
+// ADR-0002 says warnings describe what the machine will actually run, retiring
+// the legacy pre-optimize basis. For overlaps that means the geometry after
+// simplify + merge + clip — those steps genuinely CHANGE the strokes the
+// machine lays down (simplify drops vertices, merge removes duplicate passes),
+// so their effect on the count is real. Reorder is deliberately EXCLUDED:
+// it only permutes (and may flip) paths to cut pen-up travel; the SET of
+// strokes on the sheet is identical, and self-overlap of physical geometry is
+// invariant under draw-order permutation. So the pre-reorder basis still
+// describes exactly what the machine runs. Excluding Reorder also means the
+// warning can never appear to change just because the maker toggled Reorder —
+// the shipped bug where countOverlaps' first-N segment cap sampled a different
+// subset after reordering and the count collapsed (85 → 0; Revert restored 85).
+// countOverlaps is now ALSO order-independent under truncation (canonical
+// spatial sampling — see overlapCheck.js), so this exclusion is belt and
+// braces: the basis states the physics; the sampler enforces it.
+// Reorder DOES still apply to everything that is genuinely order-dependent:
+// the estimate (travel), opRows, and the animated route.
 //
 // BOUNDARY (ADR-0002): this model conditions how the machine executes; it never
 // mutates the design. Clip and Optimizations are applied to EXTRACTED polylines,
@@ -58,7 +76,12 @@
 //   warnings  array of { type, ...payload, locate }. Taxonomy (PRD story 25):
 //             'sheet-exceeds-bed', 'cropped-paths', 'overlaps', 'unresolved-layer'.
 //             `locate` carries what the canvas highlights (layerIds / paths /
-//             samples / sheetRect). No auto-fix (v1).
+//             samples / sheetRect). No auto-fix (v1). The 'overlaps' warning is
+//             { type:'overlaps', count, truncated, samples, locate:{samples} }:
+//             `truncated` is true exactly when the segment cap engaged, in
+//             which case `count` is a lower bound and the UI must phrase it as
+//             "at least N" (a truncated zero still emits the warning — "too
+//             dense to fully check" must never read as "no overlaps").
 //   route     buildRouteFromLayers over the post-applied, post-clip geometry in
 //             machine EXECUTION order (not stacking order) — the animated
 //             run-through. Tinted by Operation color (the machine view).
@@ -73,7 +96,9 @@
 // stats basis; it under-counts inter-op travel. Flagged for a future cross-group
 // travel term. See the Wave-2 report's human-eyes items.
 
-import { buildPlottableLayers, buildRouteFromLayers } from './fabricationPipeline.js';
+import {
+  buildPlottableLayers, buildRouteFromLayers, applyOptimizationsToPaths,
+} from './fabricationPipeline.js';
 import { runEstimate } from './runEstimate.js';
 import { countOverlaps } from './overlapCheck.js';
 import { resolveOperation, operationIdForRole } from '../operations.js';
@@ -102,12 +127,34 @@ export function runPlanModel(input = {}) {
   const doClip = !!(cropToSheet && sheetRect);
   const clip = doClip ? { sheetRect } : null;
 
-  // Build the canonical run ONCE: extract → (clip) → applied Optimizations. Every
-  // downstream projection reads from THIS single result — the agreement contract.
+  // Build the canonical run ONCE: extract → (clip) → applied Optimizations —
+  // but with the stack SPLIT (see the overlap-basis note in the header):
+  //   1. simplify + merge run inside buildPlottableLayers — they condition the
+  //      strokes themselves, so they belong to the overlap-warning basis;
+  //   2. reorder is applied AFTERWARD, per layer (same per-layer application
+  //      applyOptimizationsToPaths would do inside the pipeline), producing the
+  //      machine geometry (`machinePaths`) that the estimate, opRows and route
+  //      read. Reorder only permutes/flips paths, so `paths` and `machinePaths`
+  //      lay the identical strokes — they differ only in draw order.
+  // Every downstream projection reads from THIS single result — the agreement
+  // contract.
+  const conditioningOnly = appliedOptimizations
+    ? { simplify: appliedOptimizations.simplify, merge: appliedOptimizations.merge }
+    : null;
+  const reorderOnly = appliedOptimizations?.reorder?.enabled
+    ? { reorder: appliedOptimizations.reorder }
+    : null;
+
   const plottable = buildPlottableLayers(layers, instances, {
-    optimizations: appliedOptimizations,
+    optimizations: conditioningOnly,
     clip,
   });
+  // NOTE: entry.stats (computed pre-reorder) are not read here — run numbers
+  // come from runEstimate over machinePaths below.
+  const entries = plottable.map((l) => ({
+    ...l,
+    machinePaths: reorderOnly ? applyOptimizationsToPaths(l.paths, reorderOnly) : l.paths,
+  }));
 
   // Resolve each visible layer to its Operation. An unassigned/unresolvable layer
   // FIRST falls back to the document-default Operation (operationIdForRole('cut'))
@@ -123,7 +170,7 @@ export function runPlanModel(input = {}) {
   const groups = new Map(); // opId → { operation, layers: [plottableEntry…] }
   const unresolved = [];    // plottable entries with no resolvable Operation
 
-  for (const entry of plottable) {
+  for (const entry of entries) {
     const layer = layersById.get(entry.layerId);
     let operation = resolveOperation(operations, layer?.operationId);
     if (!operation) operation = resolveOperation(operations, defaultOpId);
@@ -142,11 +189,12 @@ export function runPlanModel(input = {}) {
   );
 
   // Assemble the estimate's opGroups in execution order: each group's paths are
-  // the concat of its member layers' post-applied polylines.
+  // the concat of its member layers' post-applied MACHINE polylines (reorder
+  // included — travel time is genuinely order-dependent).
   const opGroups = orderedGroups.map((g) => ({
     opId: g.operation.id,
     operation: g.operation,
-    paths: g.layers.flatMap((l) => l.paths),
+    paths: g.layers.flatMap((l) => l.machinePaths),
   }));
 
   const estimate = runEstimate(opGroups, profileId);
@@ -173,7 +221,7 @@ export function runPlanModel(input = {}) {
   // tinted by Operation color (the machine view re-tints paths by operation). One
   // synthetic entry per member layer preserves per-path order within a group.
   const routeLayers = orderedGroups.flatMap((g) =>
-    g.layers.map((l) => ({ color: g.operation.color, paths: l.paths }))
+    g.layers.map((l) => ({ color: g.operation.color, paths: l.machinePaths }))
   );
   const route = buildRouteFromLayers(routeLayers);
 
@@ -214,12 +262,20 @@ export function runPlanModel(input = {}) {
     });
   }
 
-  // 'overlaps' — self-intersections on the POST-applied, fabricated geometry only
-  // (what the machine actually runs). Optimizations that remove a double-back
-  // therefore genuinely lower this count.
-  const fabricatedPaths = opGroups.flatMap((g) => g.paths);
-  const overlaps = countOverlaps(fabricatedPaths);
-  if (overlaps.count > 0) {
+  // 'overlaps' — self-intersections on the post-simplify+merge+clip geometry of
+  // the resolvable layers, EXCLUDING reorder (see the overlap-basis note in the
+  // header): simplify/merge genuinely change the strokes (a merge that removes a
+  // duplicate pass really lowers this count), while reorder only permutes draw
+  // order and cannot change physical overlap — so toggling Reorder must never
+  // move this number. `truncated` is true exactly when countOverlaps' segment
+  // cap engaged; the count is then a lower bound and the UI renders "at least
+  // N". A truncated zero still warns — "too dense to fully check" must never
+  // silently read as "no overlaps".
+  const overlapBasisPaths = orderedGroups.flatMap(
+    (g) => g.layers.flatMap((l) => l.paths)
+  );
+  const overlaps = countOverlaps(overlapBasisPaths);
+  if (overlaps.count > 0 || overlaps.truncated) {
     warnings.push({
       type: 'overlaps',
       count: overlaps.count,

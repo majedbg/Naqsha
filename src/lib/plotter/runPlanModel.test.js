@@ -198,6 +198,18 @@ describe('runPlanModel — warning taxonomy', () => {
     expect(postW).toBeUndefined();
   });
 
+  it("'overlaps': carries truncated=false when under the segment cap (count is exact)", () => {
+    const layers = [layer('a')];
+    const instances = { a: fakeInstance(OVERLAP_GROUP) };
+    const { warnings } = runPlanModel({
+      layers, instances, operations: OPS, profileId: 'laser',
+    });
+    const w = warnings.find((x) => x.type === 'overlaps');
+    expect(w).toBeTruthy();
+    expect(w.count).toBe(2);
+    expect(w.truncated).toBe(false); // the UI renders the exact count, no "at least"
+  });
+
   it("'unresolved-layer': warns only AFTER the document-default fallback also fails", () => {
     // Empty operation library: neither the layer's op nor operationIdForRole('cut')
     // resolves, so the layer is genuinely unassignable.
@@ -248,6 +260,88 @@ describe('runPlanModel — crop honors cropToSheet', () => {
     expect(model.warnings.find((w) => w.type === 'cropped-paths')).toBeUndefined();
     // Geometry runs off the (unclipped) Sheet unchanged.
     expect(model.opRows[0].opId).toBe('op-cut');
+  });
+});
+
+// ── the overlaps warning basis excludes Reorder ──────────────────────────────
+//
+// Reorder permutes (and may flip) paths to cut pen-up travel; it lays the EXACT
+// same strokes on the sheet. Physical overlap is invariant under draw-order
+// permutation, so applying Reorder must never change the overlaps count. The
+// shipped bug: countOverlaps capped at MAX_SEGMENTS by taking the first N
+// segments in draw order, so Reorder re-shuffled which subset got sampled and
+// the warning collapsed (e.g. 85 → 0; Revert restored 85) with zero geometric
+// change. Simplify and merge DO stay in the basis — they genuinely remove
+// geometry (dropped vertices, duplicate passes), so their effect on the count
+// is real.
+
+describe("runPlanModel — 'overlaps' basis excludes Reorder (draw order cannot change physical overlap)", () => {
+  // Dense single-layer fixture that EXCEEDS the 3000-segment cap (3079 segs):
+  //  - 40 X-crosses (80 single-segment paths, 40 true crossings) in the left
+  //    band around x∈[95,885], y≈100 — document-order FIRST;
+  //  - one crossing-free 3000-point zigzag (2999 segments) that STARTS at (0,0)
+  //    (so greedy Reorder picks it first) then jumps to x≥5000 — document-order
+  //    LAST.
+  // Under the legacy first-N cap: document order samples all crosses (count 40);
+  // Reorder puts the zigzag's 2999 segments first, the crosses fall off the cap,
+  // and the count collapses to 0. The fixed basis must be identical either way.
+  function denseGroup() {
+    let paths = '';
+    for (let i = 0; i < 40; i++) {
+      const cx = 100 + i * 20;
+      paths += `<path d="M${cx - 5},95 L${cx + 5},105" stroke="#000"/>`;
+      paths += `<path d="M${cx - 5},105 L${cx + 5},95" stroke="#000"/>`;
+    }
+    let d = 'M0,0 L5000,0';
+    for (let i = 1; i <= 2998; i++) d += ` L${5000 + i},${i % 2}`;
+    paths += `<path d="${d}" stroke="#000"/>`;
+    return `<g id="L"><g transform="translate(0,0)">${paths}</g></g>`;
+  }
+
+  const layers = [layer('a')];
+  const instances = { a: fakeInstance(denseGroup()) };
+  const base = { layers, instances, operations: OPS, profileId: 'plotter' };
+
+  it('INVARIANCE: reorder on vs off → identical overlap count; truncated surfaced', () => {
+    const off = runPlanModel({ ...base, appliedOptimizations: null });
+    const on = runPlanModel({
+      ...base, appliedOptimizations: { reorder: { enabled: true } },
+    });
+
+    const wOff = off.warnings.find((w) => w.type === 'overlaps');
+    const wOn = on.warnings.find((w) => w.type === 'overlaps');
+    expect(wOff).toBeTruthy();
+    expect(wOn).toBeTruthy(); // the shipped bug made this vanish entirely
+    // Same document, same strokes on the sheet → same count.
+    expect(wOn.count).toBe(wOff.count);
+    expect(wOff.count).toBeGreaterThan(0);
+    // The cap engaged (3079 > 3000 segments), so the warning must say so — the
+    // UI renders "at least N" from { count, truncated }.
+    expect(wOff.truncated).toBe(true);
+    expect(wOn.truncated).toBe(true);
+
+    // Reorder still applies to the RUN itself (estimate + route) — only the
+    // overlap basis excludes it. Document order starts at the first cross
+    // (~[95,95]); greedy reorder starts at the zigzag ([0,0]).
+    expect(on.route[0].to).not.toEqual(off.route[0].to);
+  });
+
+  it('INVARIANCE holds below the cap too (small doc, exact count)', () => {
+    const smallLayers = [layer('a')];
+    const smallInstances = { a: fakeInstance(OVERLAP_GROUP) };
+    const smallBase = {
+      layers: smallLayers, instances: smallInstances, operations: OPS, profileId: 'plotter',
+    };
+    const off = runPlanModel({ ...smallBase, appliedOptimizations: null });
+    const on = runPlanModel({
+      ...smallBase, appliedOptimizations: { reorder: { enabled: true } },
+    });
+    const wOff = off.warnings.find((w) => w.type === 'overlaps');
+    const wOn = on.warnings.find((w) => w.type === 'overlaps');
+    expect(wOff.count).toBe(2);
+    expect(wOn.count).toBe(2);
+    expect(wOff.truncated).toBe(false);
+    expect(wOn.truncated).toBe(false);
   });
 });
 

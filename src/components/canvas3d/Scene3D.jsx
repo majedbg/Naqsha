@@ -46,6 +46,7 @@ import {
   BG_INTENSITY_MIN,
   BG_INTENSITY_MAX,
 } from '../../lib/three3d/hdriEnvironments.js';
+import { PROCESS_ANNOTATION_HEX } from '../../lib/three3d/markTexture.js';
 
 // Placeholder content bounds (S2). Stable identity so CameraRig's zoom-fit effect
 // doesn't re-run every render. Used for height-surface (B, later) + the empty
@@ -148,6 +149,10 @@ export default function Scene3D({
   // so we render the slab opaque during motion and restore the glass on settle, when
   // the user is actually studying it. See Sheets.jsx `isMoving`.
   const [isInteracting, setIsInteracting] = useState(false);
+  // Hover annotation (ADR 0003 #4): the process of the mark mesh currently under
+  // the pointer (Marks.jsx reports it), or null. Drives the process-color badge
+  // below — the ONLY place the laser color convention appears in 3D.
+  const [hoveredProcess, setHoveredProcess] = useState(null);
   // Persisted view-prefs (D13/S11), read ONCE on mount. Spacing + exaggeration
   // seed their sliders below; camera is never persisted (always zoom-fits).
   const persisted = useMemo(() => loadPreview3DSettings(), []);
@@ -340,7 +345,11 @@ export default function Scene3D({
                marks floated in front of each sheet (S5). Ribbon marks land in S10. */
             <>
               <Sheets specs={sheetSpecs} appearance={appearance} isMoving={isInteracting} />
-              <Marks specs={sheetSpecs} marksByPanel={marksByPanel ?? {}} />
+              <Marks
+                specs={sheetSpecs}
+                marksByPanel={marksByPanel ?? {}}
+                onHoverProcess={setHoveredProcess}
+              />
             </>
           ) : (
             /* Surface B — modulation height-surface relief (S8, D5/D10): the
@@ -475,6 +484,25 @@ export default function Scene3D({
           </>
         )}
       </div>
+
+      {/* Hover annotation badge (ADR 0003 #4): names the hovered mark's process in
+          its convention color (cut red / score blue / …). Marks themselves render
+          as physical reactions — this badge (+ the transient emissive highlight on
+          the hovered mesh) is the only 3D surface where process identity shows.
+          Bottom-CENTER: spacing owns bottom-left, environment bottom-right. */}
+      {isPanelStack && hoveredProcess && (
+        <div
+          data-testid="canvas3d-process-annotation"
+          className="pointer-events-none absolute bottom-3 left-1/2 flex -translate-x-1/2 items-center gap-2 rounded-md border border-white/10 bg-black/40 px-3 py-1.5 text-xs font-medium text-white/90 backdrop-blur"
+        >
+          <span
+            aria-hidden="true"
+            className="h-2.5 w-2.5 shrink-0 rounded-full"
+            style={{ backgroundColor: PROCESS_ANNOTATION_HEX[hoveredProcess] || '#ffffff' }}
+          />
+          <span className="capitalize">{hoveredProcess}</span>
+        </div>
+      )}
 
       {/* Surface-A stack-spacing slider (D11): 0–60mm, default 12mm. Panel-stack
           only — height-surface (B) has no inter-panel gap. */}

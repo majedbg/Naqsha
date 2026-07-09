@@ -128,28 +128,58 @@ describe('reactionStrokeColor — burn / shadow / pen (ported behaviors)', () =>
   });
 });
 
-// ── Behavior 8: reactionEmissive — 3D emissive tint + glow scale ───────────────
-import { reactionEmissive, BURN_GLOW_SCALE } from './materialReaction.js';
+// ── Behavior 8: reactionSurface — 3D physical mark surface (ADR 0003) ─────────
+// Replaces reactionEmissive: a mark is the substrate's physical reaction (frost /
+// kerf seam / char), a matte diffuse surface with an opacity presence axis — never
+// an emissive annotation.
+import {
+  reactionSurface, REACTION_OPACITY, KERF_TARGET, BURN_TARGET,
+} from './materialReaction.js';
 
-describe('reactionEmissive — 3D emissive treatment', () => {
-  it('lighten → brightened hue-preserving tint, full intensity', () => {
-    const r = reactionEmissive('#E6E954', 'lighten', 'score');
+describe('reactionSurface — 3D physical mark surface', () => {
+  it('lighten engrave/score → hue-preserving FROST of the sheet (L3), score fainter', () => {
+    const engrave = reactionSurface('#E6E954', 'lighten', 'engrave');
+    const score = reactionSurface('#E6E954', 'lighten', 'score');
+    for (const r of [engrave, score]) {
+      expect(luminance(r.tint)).toBeGreaterThan(luminance('#E6E954'));
+      expect(B(r.tint)).toBeLessThan(R(r.tint)); // still yellow, never plain white
+    }
+    expect(engrave.tint).toBe(score.tint); // same frost — faintness lives on opacity
+    expect(score.opacity).toBeLessThan(engrave.opacity);
+  });
+
+  it('lighten cut → a kerf-thin DARK seam (the slot shadow), the most present mark', () => {
+    const cut = reactionSurface('#E6E954', 'lighten', 'cut');
+    expect(cut.tint).toBe(KERF_TARGET);
+    expect(luminance(cut.tint)).toBeLessThan(0.15);
+    expect(cut.opacity).toBe(REACTION_OPACITY.cut);
+    expect(cut.opacity).toBeGreaterThan(REACTION_OPACITY.engrave);
+  });
+
+  it('burn → CHAR toward the warm near-black, deeper per process (score<engrave<cut)', () => {
+    const sheet = '#D8B988';
+    const s = reactionSurface(sheet, 'burn', 'score');
+    const e = reactionSurface(sheet, 'burn', 'engrave');
+    const c = reactionSurface(sheet, 'burn', 'cut');
+    for (const m of [s, e, c]) expect(luminance(m.tint)).toBeLessThan(luminance(sheet));
+    expect(luminance(e.tint)).toBeLessThan(luminance(s.tint));
+    expect(luminance(c.tint)).toBeLessThan(luminance(e.tint));
+    // warm char: it heads toward BURN_TARGET, not a cool black
+    expect(luminance(c.tint)).toBeGreaterThanOrEqual(luminance(BURN_TARGET) - 1e-9);
+  });
+
+  it('other (unknown stock) chars too — NO annotation color path left in 3D', () => {
+    const r = reactionSurface('#C9C2B5', 'other', 'cut');
     expect(r.tint).not.toBeNull();
-    expect(luminance(r.tint)).toBeGreaterThan(luminance('#E6E954'));
-    expect(B(r.tint)).toBeLessThan(R(r.tint)); // still yellow, not white
-    expect(r.intensityScale).toBe(1);
+    expect(luminance(r.tint)).toBeLessThan(luminance('#C9C2B5'));
   });
-  it('burn → dark char tint, DAMPED intensity so it reads matte (L4)', () => {
-    const lit = reactionEmissive('#E6E954', 'lighten', 'cut');
-    const burn = reactionEmissive('#6B4A2B', 'burn', 'cut');
-    expect(burn.tint).not.toBeNull();
-    expect(luminance(burn.tint)).toBeLessThan(luminance(lit.tint));
-    expect(burn.intensityScale).toBe(BURN_GLOW_SCALE);
-    expect(BURN_GLOW_SCALE).toBeLessThan(1);
-  });
-  it('other → null tint (caller uses the laser convention), full intensity', () => {
-    const r = reactionEmissive('#C9C2B5', 'other', 'cut');
-    expect(r.tint).toBeNull();
-    expect(r.intensityScale).toBe(1);
+
+  it('carries the presence order cut > engrave > score on OPACITY', () => {
+    expect(REACTION_OPACITY.cut).toBeGreaterThan(REACTION_OPACITY.engrave);
+    expect(REACTION_OPACITY.engrave).toBeGreaterThan(REACTION_OPACITY.score);
+    for (const cat of ['lighten', 'burn', 'other']) {
+      expect(reactionSurface('#888888', cat, 'cut').opacity)
+        .toBeGreaterThan(reactionSurface('#888888', cat, 'score').opacity);
+    }
   });
 });

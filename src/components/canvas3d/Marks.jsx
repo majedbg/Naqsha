@@ -6,39 +6,42 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
-import { routePanelRenderModes } from '../../lib/three3d/markTexture.js';
+import { routePanelRenderModes, PROCESS_ANNOTATION_HEX } from '../../lib/three3d/markTexture.js';
 import { clampAnisotropy, chooseRasterScale } from '../../lib/three3d/textureFiltering.js';
 import { buildRibbonGeometry } from './ribbonGeometry.js';
 import { useBloomRef } from './bloomSelection.js';
 
 /**
- * Surface A marks (S5 texture baseline + S10 ribbon enhancement, PRD D3/D6, §3.1).
+ * Surface A marks (S5 texture baseline + S10 ribbon enhancement, PRD D3/D6, §3.1;
+ * reaction model per ADR 0003).
  *
  * Per panel, markTexture.routePanelRenderModes (pure, 2D-side) picks the render mode
  * from the panel's stroke-path count + device profile (D6): sparse desktop panels
  * (≤PATH_CAP paths, DPR≥1.5, non-mobile) → RIBBON geometry; else → TEXTURE.
  *
- * TEXTURE mode (S5, always-works): each per-process emissive SVG (built 2D-side by
+ * TEXTURE mode (S5, always-works): each per-process mark SVG (built 2D-side by
  * markTexture.buildPanelMarkSVGs) is rasterized to an offscreen canvas →
- * THREE.CanvasTexture → an emissive plane floated just in front of that sheet's
- * front face.
+ * THREE.CanvasTexture → a plane floated just in front of that sheet's front face.
  *
  * RIBBON mode (S10): the SAME per-process SVG is parsed and stroked into true vector
- * geometry (ribbonGeometry.buildRibbonGeometry) and lit emissive — crisp at any zoom,
- * no raster. If a panel's geometry comes back null (degenerate SVG), that process
- * falls back to its texture plane so marks NEVER silently vanish.
+ * geometry (ribbonGeometry.buildRibbonGeometry) — crisp at any zoom, no raster. If a
+ * panel's geometry comes back null (degenerate SVG), that process falls back to its
+ * texture plane so marks NEVER silently vanish.
  *
- * Either way there is one layer PER PROCESS so each carries its own emissiveIntensity
- * (depth score) — cut glows strongest, then engrave, then score (D3). Hue
- * (cut≈red / score≈blue / engrave≈neutral) is the texture tint / the ribbon emissive.
+ * MARKS ARE PHYSICAL REACTIONS, NOT ANNOTATIONS (ADR 0003): each per-process layer
+ * renders as a matte diffuse surface — roughness 1, normal tone mapping, NO
+ * emissive — in the substrate's reaction tint (frosted engraving on acrylic,
+ * kerf-dark cut seam, char on wood), with the process depth carried by the layer's
+ * `opacity` (cut most present > engrave > score). The old model (emissive tint ×
+ * intensity × toneMapped=false × always-on SelectiveBloom) is gone — it is why
+ * clear acrylic used to "glow".
  *
- * Bloom (D12): every mark mesh registers into the bloom selection via a stable ref
- * (useBloomRef, bloomSelection.jsx) so the selection-gated SelectiveBloom
- * (EmissiveBloom.jsx) glows ONLY the marks — never the transmissive sheet. (This
- * replaces the @react-three/postprocessing <Select>/<Selection> context, whose
- * self-retriggering effect froze the tab — see bloomSelection.jsx.) Texture marks
- * have a TRANSPARENT field and ribbons are bare stroke geometry, so only groove
- * pixels exist in the bloom buffer.
+ * HOVER ANNOTATION (ADR 0003 #4): pointer-hovering a mark mesh tints it toward its
+ * process color (PROCESS_ANNOTATION_HEX — cut red, score blue…) via a bounded
+ * emissive highlight, and reports the process to the host (`onHoverProcess`) so the
+ * DOM overlay can name it. ONLY while hovered does the mesh register into the bloom
+ * selection (useBloomRef, bloomSelection.js) — which is also what mounts the
+ * on-demand EffectComposer (Scene3D). An idle scene has zero post-processing.
  */
 
 // High-DPI raster cap (px) on the longest texture edge — keeps marks crisp under
@@ -65,8 +68,13 @@ const MAX_TEXTURE_EDGE = 4096;
 // resolved before mipmaps + max-anisotropy filter it. Bounded: floor == cap, so a
 // mark texture is never larger than the (now 4096px) perf budget allows.
 const MIN_TEXTURE_EDGE = MAX_TEXTURE_EDGE;
-// Global emissive multiplier; the per-process depth score scales it per plane.
-const BASE_EMISSIVE = 2.4;
+// Emissive intensity of the HOVER annotation highlight (ADR 0003 #4) — bounded and
+// modest: an inspection affordance, not a mode. Idle marks have NO emissive at all.
+const HOVER_EMISSIVE = 0.9;
+// Idle emissive: pure black + zero intensity ≡ no emission. Kept as constants (and
+// `emissiveMap` kept permanently bound) so hover toggles UNIFORMS only — swapping
+// the map/color between null and a value would recompile the shader per hover.
+const NO_EMISSIVE = '#000000';
 // Tiny z step (mm) so stacked per-process planes layer in a stable order.
 const Z_EPSILON = 0.05;
 // Base lift (mm) floating every mark just off the sheet's front face so the
@@ -176,36 +184,58 @@ function useSvgTexture(svg) {
 }
 
 /**
- * One emissive mark plane for a single process of one sheet.
- * @param {{ svg:string, intensity:number, size:[number,number], z:number }} props
+ * One physical mark plane (the Reaction surface) for a single process of one sheet.
+ * Matte lit diffuse — the texture carries the reaction tint, `opacity` its presence.
+ * Hover = the process-color annotation (emissive highlight + bloom membership).
+ * NOTE: the raycast hit area is the full plane rectangle (the texture's transparent
+ * field is not alpha-tested) — acceptable for an inspection affordance; ribbons
+ * give the precise per-stroke hit where the D6 route allows them.
+ * @param {{ svg:string, process:string, opacity:number, size:[number,number],
+ *           z:number, onHoverProcess?:(p:string|null)=>void }} props
  */
-function MarkPlane({ svg, intensity, size, z }) {
+function MarkPlane({ svg, process, opacity, size, z, onHoverProcess }) {
   const texture = useSvgTexture(svg);
-  // Opt this emissive plane into the SelectiveBloom selection (D12) without the
-  // looping <Select> wrapper — see bloomSelection.jsx.
+  const [hovered, setHovered] = useState(false);
+  // Bloom membership is HOVER-ONLY (ADR 0003 #5): attaching/detaching the stable
+  // ref callback registers/unregisters this mesh, which is what mounts/unmounts
+  // the on-demand composer. Idle marks are not bloom members.
   const bloomRef = useBloomRef();
   const [w = 0, h = 0] = size || [];
   if (!texture || !w || !h) return null;
+  const annotation = PROCESS_ANNOTATION_HEX[process] || '#ffffff';
   return (
-    <mesh ref={bloomRef} position={[0, 0, z]}>
+    <mesh
+      ref={hovered ? bloomRef : null}
+      position={[0, 0, z]}
+      onPointerOver={(e) => {
+        e.stopPropagation();
+        setHovered(true);
+        onHoverProcess?.(process);
+      }}
+      onPointerOut={() => {
+        setHovered(false);
+        onHoverProcess?.(null);
+      }}
+    >
       <planeGeometry args={[w, h]} />
-        {/* color black so the lit diffuse contributes nothing; `map` carries the
-            alpha (transparent field), `emissiveMap` carries the glow, scaled by the
-            process depth score so the depth ORDER holds across planes (D3). */}
+        {/* Lit diffuse decal: `map` carries the reaction tint + alpha (transparent
+            field); white base so the texture reads as-is; roughness 1 = matte
+            frost/char; NORMAL tone mapping (fidelity, ADR 0003). The emissive
+            channel exists solely for the hover annotation and is black/0 idle. */}
         <meshStandardMaterial
-          color="#000000"
+          color="#ffffff"
           map={texture}
-          emissive="#ffffff"
+          emissive={hovered ? annotation : NO_EMISSIVE}
           emissiveMap={texture}
-          emissiveIntensity={BASE_EMISSIVE * (intensity ?? 1)}
+          emissiveIntensity={hovered ? HOVER_EMISSIVE : 0}
           transparent
+          opacity={opacity ?? 1}
           depthWrite={false}
           // Bias depth toward the camera so the (coplanar, depthWrite-false) mark
           // wins the test against the sheet face — kills the surface shimmer.
           polygonOffset
           polygonOffsetFactor={POLYGON_OFFSET_FACTOR}
           polygonOffsetUnits={POLYGON_OFFSET_UNITS}
-          toneMapped={false}
           roughness={1}
           metalness={0}
         />
@@ -214,40 +244,57 @@ function MarkPlane({ svg, intensity, size, z }) {
 }
 
 /**
- * One emissive RIBBON for a single process of one sheet (S10): the per-process mark
- * SVG stroked into true vector geometry, baked into the sheet's centered plane frame
- * (size) so it overlays the texture-mode marks exactly. emissive = the process tint,
- * scaled by the depth-score intensity (same axes as MarkPlane). If the geometry is
- * null (degenerate SVG), render `fallback` (the texture plane) so marks never vanish.
- * @param {{ svg:string, tint:string, intensity:number, size:[number,number],
- *           z:number, fallback:React.ReactNode }} props
+ * One physical RIBBON (the Reaction surface as true vector geometry, S10): the
+ * per-process mark SVG stroked into geometry, baked into the sheet's centered plane
+ * frame (size) so it overlays the texture-mode marks exactly. Matte lit diffuse in
+ * the reaction tint with the presence `opacity` (same axes as MarkPlane); hover =
+ * the process-color annotation. If the geometry is null (degenerate SVG), render
+ * `fallback` (the texture plane) so marks never vanish.
+ * @param {{ svg:string, tint:string, process:string, opacity:number,
+ *           size:[number,number], z:number, fallback:React.ReactNode,
+ *           onHoverProcess?:(p:string|null)=>void }} props
  */
-function RibbonMesh({ svg, tint, intensity, size, z, fallback }) {
+function RibbonMesh({ svg, tint, process, opacity, size, z, fallback, onHoverProcess }) {
   const [w = 0, h = 0] = size || [];
   const geometry = useMemo(
     () => (svg && w && h ? buildRibbonGeometry(svg, { width: w, height: h }) : null),
     [svg, w, h],
   );
-  // Crop the ribbon (and its bloom halo) to the sheet rectangle — ribbon geometry,
-  // unlike the viewBox-cropped texture raster, carries any path points that spill
-  // past the canvas (e.g. spirograph loops larger than the sheet).
+  const [hovered, setHovered] = useState(false);
+  // Crop the ribbon to the sheet rectangle — ribbon geometry, unlike the
+  // viewBox-cropped texture raster, carries any path points that spill past the
+  // canvas (e.g. spirograph loops larger than the sheet).
   const clippingPlanes = useSheetClipPlanes(w, h);
-  // Opt this emissive ribbon into the SelectiveBloom selection (D12) without the
-  // looping <Select> wrapper — see bloomSelection.jsx.
+  // Hover-only bloom membership (see MarkPlane) — drives the on-demand composer.
   const bloomRef = useBloomRef();
   // Ribbon geometry IS uploaded to the GPU once meshed → dispose on change/unmount.
   useEffect(() => () => geometry?.dispose?.(), [geometry]);
   if (!geometry) return fallback ?? null;
+  const annotation = PROCESS_ANNOTATION_HEX[process] || '#ffffff';
   return (
-    /* color black so lit diffuse contributes nothing; the glow is pure emissive in
-       the process tint, scaled by the depth score so the cut>engrave>score order
-       holds. DoubleSide because the SVG→world Y-flip reverses winding. */
-    <mesh ref={bloomRef} position={[0, 0, z]} geometry={geometry}>
+    /* Matte diffuse stroke in the reaction tint (frost/kerf/char) — no idle
+       emissive, normal tone mapping (ADR 0003). DoubleSide because the SVG→world
+       Y-flip reverses winding. */
+    <mesh
+      ref={hovered ? bloomRef : null}
+      position={[0, 0, z]}
+      geometry={geometry}
+      onPointerOver={(e) => {
+        e.stopPropagation();
+        setHovered(true);
+        onHoverProcess?.(process);
+      }}
+      onPointerOut={() => {
+        setHovered(false);
+        onHoverProcess?.(null);
+      }}
+    >
         <meshStandardMaterial
-          color="#000000"
-          emissive={tint || '#ffffff'}
-          emissiveIntensity={BASE_EMISSIVE * (intensity ?? 1)}
-          toneMapped={false}
+          color={tint || '#ffffff'}
+          emissive={hovered ? annotation : NO_EMISSIVE}
+          emissiveIntensity={hovered ? HOVER_EMISSIVE : 0}
+          transparent
+          opacity={opacity ?? 1}
           side={THREE.DoubleSide}
           depthWrite={false}
           clippingPlanes={clippingPlanes}
@@ -282,9 +329,10 @@ function deviceProfile() {
  * mark SVG yields no geometry.
  *
  * @param {{ specs?: import('../../lib/three3d/sheetSpecs.js').SheetSpec[],
- *           marksByPanel?: Record<string, Array<{process:string,tint:string,intensity:number,svg:string}>> }} props
+ *           marksByPanel?: Record<string, Array<{process:string,tint:string,opacity:number,svg:string}>>,
+ *           onHoverProcess?: (process: string|null) => void }} props
  */
-export default function Marks({ specs = [], marksByPanel = {} }) {
+export default function Marks({ specs = [], marksByPanel = {}, onHoverProcess = null }) {
   const routes = useMemo(
     () => routePanelRenderModes(marksByPanel, deviceProfile()),
     [marksByPanel],
@@ -303,25 +351,36 @@ export default function Marks({ specs = [], marksByPanel = {} }) {
             // stacked processes keep a stable front-to-back order (cut/engrave/score).
             const z = front + SURFACE_LIFT + Z_EPSILON * i;
             const plane = (
-              <MarkPlane svg={m.svg} intensity={m.intensity} size={spec.size} z={z} />
+              <MarkPlane
+                svg={m.svg}
+                process={m.process}
+                opacity={m.opacity}
+                size={spec.size}
+                z={z}
+                onHoverProcess={onHoverProcess}
+              />
             );
             return useRibbon ? (
               <RibbonMesh
                 key={`${spec.panelId}-${m.process}`}
                 svg={m.svg}
                 tint={m.tint}
-                intensity={m.intensity}
+                process={m.process}
+                opacity={m.opacity}
                 size={spec.size}
                 z={z}
                 fallback={plane}
+                onHoverProcess={onHoverProcess}
               />
             ) : (
               <MarkPlane
                 key={`${spec.panelId}-${m.process}`}
                 svg={m.svg}
-                intensity={m.intensity}
+                process={m.process}
+                opacity={m.opacity}
                 size={spec.size}
                 z={z}
+                onHoverProcess={onHoverProcess}
               />
             );
           });

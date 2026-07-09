@@ -1,109 +1,175 @@
 // Behind the 3D dynamic-import boundary (reached only via Canvas3DHost → Scene3D).
 // Imports three/@react-three/* — must NEVER be imported from a 2D render-path
-// module, or three.js leaks into the 2D bundle (PRD D9). The pure spec builder it
-// consumes (lib/three3d/sheetSpecs.js) is three-free and stays on the 2D side.
+// module, or three.js leaks into the 2D bundle (PRD D9). The pure builders it
+// consumes (lib/three3d/sheetSpecs.js, sheetMaterial.js, edgeFace.js) are
+// three-free and stay on the 2D side.
 import { MeshTransmissionMaterial } from '@react-three/drei';
 import { resolveSheetMaterial } from '../../lib/three3d/sheetMaterial.js';
-import EdgeGlow from './EdgeGlow.jsx';
+import { resolveEdgeFace } from '../../lib/three3d/edgeFace.js';
+import { useBloomRef } from './bloomSelection.js';
 import WoodGrain from './WoodGrain.jsx';
 
 /**
- * Surface A slabs (S4, PRD D7/D11). Renders one extruded box per sheet spec
- * (lib/three3d/sheetSpecs.buildSheetSpecs): a slab in the xy design plane,
- * thickness extruded along z, centered on the origin in xy and positioned at
- * `zOffset` along z (the stacking axis). World units are mm (1 unit = 1 mm).
+ * Surface A slabs (S4, PRD D7/D11; edge + orbit model per ADR 0003). Renders one
+ * extruded box per sheet spec (lib/three3d/sheetSpecs.buildSheetSpecs): a slab in
+ * the xy design plane, thickness extruded along z, centered on the origin in xy
+ * and positioned at `zOffset` along z (the stacking axis). World units are mm
+ * (1 unit = 1 mm) — spec.thickness is physical.
  *
- * Material per descriptor (D7): `transmissive` → drei MeshTransmissionMaterial
- * (acrylic, ior≈1.49, tinted); `standard` → opaque meshStandardMaterial
- * (plywood/mdf/cardstock tinted, "other" neutral) with per-kind roughness.
+ * Face material per the pure `resolveSheetMaterial` (S4, §3.5): when `appearance`
+ * is present the resolved ARCHETYPE drives the material (transmission / standard /
+ * physical mode + all optics); when null, the substrate descriptor's IDENTITY
+ * (type/kind/color) plus the archetypes' substrate-fallback optics decide it.
  *
- * No marks yet — S5 (texture) / S10 (ribbon) drape the engraved/cut grooves onto
- * these sheets using each spec's `layerIds`.
+ * EDGE-FACE MATERIAL (ADR 0003 #6): a transmissive slab's four SIDE faces carry
+ * their own lit, tone-mapped material (edgeFace.resolveEdgeFace) — slightly
+ * brighter than the face, faint green cast for colorless PMMA, the concentrated
+ * tint for colored acrylic — approximating the total-internal-reflection edge
+ * brightness of a real sheet. This replaced the additive Fresnel shell + emissive
+ * rim bars (EdgeGlow, deleted): non-additive, non-bloomed, no post-processing.
+ * Mechanically: TWO coincident multi-material boxes per transmissive slab — the
+ * face mesh renders slots 4/5 (±z) with the transmission material and hides its
+ * side slots; the edge mesh renders slots 0–3 (±x/±y) and hides its face slots —
+ * so every box face is drawn exactly once (no z-fighting) and the edge mesh stays
+ * a SEPARATE object. That separation matters for the one exception: FLUORESCENT
+ * acrylic really fluoresces at its cut edges, so its edge mesh carries a modest
+ * genuine emissive (archetype edgeGain) and registers into the bloom selection —
+ * one of the triggers that mounts the on-demand composer (Scene3D, #5).
  *
- * `appearance` (S3/S4, spec §3.5) is the selected material's resolved
- * AppearanceParams (from resolveAppearance), threaded live from Studio's Material
- * lens. S4 routes every slab through the pure `resolveSheetMaterial` helper:
- *   - when `appearance` is present the resolved ARCHETYPE drives the material — its
- *     transmission/clearcoat pick the render mode (transmission / standard /
- *     physical), and tint/roughness/metalness/ior/clearcoat come from the
- *     archetype, OVERRIDING the substrate descriptor (so e.g. an opaque material
- *     on an acrylic slab renders opaque, mirror renders metallic, pearlescent
- *     renders with a clearcoat sheen);
- *   - when `appearance` is null (Operation lens / no material) the helper returns
- *     the substrate-descriptor result, byte-identical to the pre-S4 fallback.
- * Edge/rim glow (edgeGain/rimGain) lands in S5 as separate emissive rim meshes
- * (EdgeGlow.jsx, rendered per slab beside the base material); procedural wood grain
- * is S6. S4 only sets the base material channels.
- *
- * `isMoving` (from Scene3D ← CameraRig) drops the acrylic's screen-space refraction
- * while the camera is in motion: transmitted marks re-imaged through the slab alias
- * into a tiling grid at grazing orbit angles (an inherent screen-space-refraction
- * limit, not a buffer-resolution bug — drei's `resolution` is bypassed under
- * `transmissionSampler`). Rendering the slab opaque DURING motion and restoring the
- * glass on settle sidesteps the artifact entirely, at the moment the user is
- * actually inspecting the piece. The MTM stays mounted (no FBO churn); only its
- * `transmission` toggles, so the cost is a one-time shader-variant compile, cached
- * thereafter.
+ * GHOST-TRANSPARENT ORBIT FALLBACK (ADR 0003 #7): while `isMoving` (CameraRig →
+ * Scene3D), transmissive slabs drop `transmission` to 0 and render as a plain
+ * transparent physical surface (opacity GHOST_OPACITY) instead — the motion gate
+ * exists because screen-space refraction re-images the marks into a tiling grid at
+ * grazing orbit angles, and a NON-transmissive transparent material avoids that
+ * artifact without flashing an opaque white card (the previous swap). The MTM
+ * stays mounted and only its uniforms/flags toggle (transmission, transparent,
+ * opacity — MTM extends MeshPhysicalMaterial, so `transmission: 0 + transparent`
+ * IS the "plain transparent MeshPhysicalMaterial" of the decision, minus a
+ * material swap), which keeps the transition smooth: no shader recompile beyond
+ * the first toggle, no FBO churn. The edge faces ghost in step so a solid frame
+ * never hangs on a see-through sheet.
  *
  * @param {{ specs?: import('../../lib/three3d/sheetSpecs.js').SheetSpec[],
  *           appearance?: import('../../lib/three3d/resolveAppearance.js').AppearanceParams|null,
  *           isMoving?: boolean }} props
  */
+
+// Ghost opacity while the camera moves (ADR 0003 #7): present enough to keep the
+// stack readable, sparse enough that the marks behind it stay inspectable.
+const GHOST_OPACITY = 0.25;
+// boxGeometry material-slot order: +x, -x, +y, -y (the four cut edges)…
+const SIDE_SLOTS = [0, 1, 2, 3];
+// …then +z, -z (the sheet's front/back faces).
+const FACE_SLOTS = [4, 5];
+// Idle emissive constants (uniform-only hover-free variant of Marks.jsx's pattern):
+// black + 0 ≡ no emission without swapping the emissive map/color type.
+const NO_EMISSIVE = '#000000';
+
+/** Invisible filler for the box slots another mesh owns (skipped by the renderer,
+ *  including in the shadow pass — three checks per-group material visibility). */
+function HiddenSlots({ slots }) {
+  return slots.map((i) => (
+    <meshBasicMaterial key={i} attach={`material-${i}`} visible={false} />
+  ));
+}
+
+/**
+ * One transmissive (acrylic-family) slab: coincident face + edge meshes (see the
+ * component doc). `mat` is the resolved face material, `edge` the resolved
+ * edge-face material.
+ */
+function TransmissiveSlab({ spec, mat, edge, isMoving }) {
+  // Bloom membership for the fluorescent edge mesh ONLY (real fluorescence —
+  // ADR 0003 exception). Non-emissive edges never join the selection.
+  const bloomRef = useBloomRef();
+  const [w = 0, h = 0] = spec.size || [];
+  const emissiveEdges = !!edge.emissive && edge.emissiveIntensity > 0;
+  return (
+    <group>
+      {/* Front/back faces — the transmission material. */}
+      <mesh position={[0, 0, spec.zOffset]} castShadow receiveShadow>
+        {/* boxGeometry args = [x=width, y=height, z=thickness] */}
+        <boxGeometry args={[w, h, spec.thickness]} />
+        <HiddenSlots slots={SIDE_SLOTS} />
+        {FACE_SLOTS.map((i) => (
+          // transmissionSampler (main's perf fix): all acrylic faces sample ONE
+          // shared scene buffer instead of each rendering the scene into its own
+          // FBO per frame. Values stay archetype-driven (resolveSheetMaterial).
+          <MeshTransmissionMaterial
+            key={i}
+            attach={`material-${i}`}
+            transmissionSampler
+            color={mat.color}
+            ior={mat.ior}
+            roughness={mat.roughness}
+            thickness={spec.thickness}
+            // Ghost-transparent orbit fallback (#7): refraction OFF + a thin
+            // plain-transparent surface during motion; the archetype's real
+            // transmission returns the instant the camera settles.
+            transmission={isMoving ? 0 : mat.transmission}
+            transparent={isMoving}
+            opacity={isMoving ? GHOST_OPACITY : 1}
+            samples={8}
+            // The settled-glass tuning (see git history for the full derivation):
+            // samples=8 keeps the refraction blur from banding; chromatic
+            // aberration stays near-zero so the marks re-imaged through the slab
+            // don't fringe into colored tiles.
+            anisotropy={0.1}
+            chromaticAberration={0.002}
+          />
+        ))}
+      </mesh>
+      {/* The four cut edges — the edge-face material (lit, tone-mapped,
+          non-additive). Registered for bloom only when genuinely emissive
+          (fluorescent). */}
+      <mesh position={[0, 0, spec.zOffset]} ref={emissiveEdges ? bloomRef : null}>
+        <boxGeometry args={[w, h, spec.thickness]} />
+        {SIDE_SLOTS.map((i) => (
+          <meshStandardMaterial
+            key={i}
+            attach={`material-${i}`}
+            color={edge.color}
+            roughness={edge.roughness}
+            metalness={edge.metalness}
+            emissive={emissiveEdges ? edge.emissive : NO_EMISSIVE}
+            emissiveIntensity={emissiveEdges ? edge.emissiveIntensity : 0}
+            transparent={isMoving}
+            opacity={isMoving ? GHOST_OPACITY : 1}
+          />
+        ))}
+        <HiddenSlots slots={FACE_SLOTS} />
+      </mesh>
+    </group>
+  );
+}
+
 export default function Sheets({ specs = [], appearance = null, isMoving = false }) {
   return (
     <group data-testid="sheet-stack">
       {specs.map((spec) => {
         const [w = 0, h = 0] = spec.size || [];
         const m = spec.materialDescriptor || {};
-        // Pure decision (S4): which three material + appearance channels this slab
-        // gets. `appearance` present → archetype drives it; null → byte-identical
-        // substrate-descriptor fallback. samples/resolution/chromaticAberration etc.
-        // are MTM RENDER config (not appearance) and stay hard-wired below.
+        // Pure decisions (S4 + ADR 0003): which three material the faces get, and
+        // whether/how the side faces differ.
         const mat = resolveSheetMaterial({ appearance, descriptor: m });
+        const edge = resolveEdgeFace({ appearance, descriptor: m });
+        if (mat.mode === 'transmission' && edge.distinct) {
+          return (
+            <TransmissiveSlab
+              key={spec.panelId}
+              spec={spec}
+              mat={mat}
+              edge={edge}
+              isMoving={isMoving}
+            />
+          );
+        }
+        // Opaque slabs: sides share the face material — one plain box.
         return (
-          <group key={spec.panelId}>
-          <mesh position={[0, 0, spec.zOffset]} castShadow receiveShadow>
+          <mesh key={spec.panelId} position={[0, 0, spec.zOffset]} castShadow receiveShadow>
             {/* boxGeometry args = [x=width, y=height, z=thickness] */}
             <boxGeometry args={[w, h, spec.thickness]} />
-            {mat.mode === 'transmission' ? (
-              // transmissionSampler (main's perf fix): all acrylic sheets sample ONE
-              // shared scene buffer instead of each rendering the whole scene into its
-              // own FBO every frame — the biggest per-frame GPU win for the acrylic
-              // stack (kills the bloom freeze / steady-state cost). Values stay
-              // archetype-driven (S4 resolveSheetMaterial), so clear vs translucent vs
-              // fluorescent keep distinct transmission/tint/roughness/ior.
-              <MeshTransmissionMaterial
-                transmissionSampler
-                color={mat.color}
-                ior={mat.ior}
-                roughness={mat.roughness}
-                thickness={spec.thickness}
-                // Gate refraction OFF during camera motion (transmission→0 renders
-                // the slab opaque, killing the grazing-angle mark tiling); the
-                // archetype's real transmission returns the instant the camera
-                // settles. See the `isMoving` note in this component's JSDoc.
-                transmission={isMoving ? 0 : mat.transmission}
-                samples={8}
-                // ── Mark-through-slab tuning ──
-                // The emissive marks are re-imaged through this slab by SCREEN-SPACE
-                // refraction, which undersamples the high-frequency hatch into a tiling
-                // grid at grazing orbit angles ("tiling on orbit" / "fluorescent
-                // aliasing"). That is an inherent limit of screen-space refraction, not a
-                // buffer-resolution bug: under `transmissionSampler` drei routes sampling
-                // to three's SHARED `_transmissionRenderTarget` (sized to the full
-                // viewport by renderer.transmissionResolutionScale=1.0), and drei's own
-                // per-material `resolution` FBO is never rendered in that path — so a
-                // `resolution` prop here would be inert (verified in drei source). The
-                // tiling is instead sidestepped at its only visible moment by the
-                // `isMoving` refraction gate above (slab goes opaque during motion).
-                // What DOES help the settled glass: samples=8 (was 4) keeps the refraction
-                // blur from banding; chromaticAberration 0.002 (was 0.02) drops the
-                // RGB-split fringing that read as colored tiles on the marks while keeping
-                // a faint edge tint.
-                anisotropy={0.1}
-                chromaticAberration={0.002}
-              />
-            ) : mat.mode === 'physical' ? (
+            {mat.mode === 'physical' ? (
               /* Pearlescent nacre (S4, §3.2): opaque + a clearcoat sheen, which
                  meshStandardMaterial can't do — keeps it distinct from plain
                  opaque-acrylic. */
@@ -117,10 +183,9 @@ export default function Sheets({ specs = [], appearance = null, isMoving = false
             ) : appearance?.archetype === 'wood' ? (
               /* Procedural wood grain (S6, §3.2/L6). ONLY on the wood archetype
                  when a material lens is active — the no-material substrate fallback
-                 (appearance === null) stays a plain standard material, byte-
-                 identical to pre-S4. The grain math is the unit-tested woodGrain.js;
-                 this material mirrors it in GLSL. No texture loaded (texturePath
-                 reserved). */
+                 (appearance === null) stays a plain standard material. The grain
+                 math is the unit-tested woodGrain.js; this material mirrors it in
+                 GLSL. No texture loaded (texturePath reserved). */
               <WoodGrain
                 color={mat.color}
                 roughness={mat.roughness}
@@ -136,12 +201,6 @@ export default function Sheets({ specs = [], appearance = null, isMoving = false
               />
             )}
           </mesh>
-          {/* Acrylic cut-edge glow (S5, §3.4/§3.6). Only when a material lens is
-              active; EdgeGlow self-gates to archetypes with edgeGain/rimGain > 0
-              (fluorescent glows hard; opaque/mirror/wood render nothing). Driven by
-              the designated key light + registered for bloom via <Select>. */}
-          {appearance && <EdgeGlow spec={spec} appearance={appearance} />}
-          </group>
         );
       })}
     </group>

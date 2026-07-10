@@ -10,7 +10,7 @@ import { useCallback } from "react";
 // recording its own history entry (`addCustomGlyph` records structurally,
 // `updateLayer` records via the edit-coalescing path), so a single "Save a new
 // motif" gesture cost the user two ⌘Z presses. `onUseLibraryGlyph` (~2259) got
-// this right by wrapping copy+rebind in `recordBatch`. This hook generalizes
+// this right by wrapping copy + point-glyphRef in `recordBatch`. This hook generalizes
 // that pattern to every glyph-write call site (grilled decision 2 in
 // docs/motif-session-ORCHESTRATOR.md): `recordBatch` opens a single coalesce
 // window (real begin/endCoalesce, not a second history call) so nested
@@ -56,8 +56,8 @@ export default function useGlyphCommits({
     [layers, addCustomGlyph, updateLayer, recordBatch]
   );
 
-  // In-place restamp of an existing custom glyph (Save on a glyph already in
-  // the document — no layer write, since `glyphRef` already points at it).
+  // In-place commit of new geometry to an existing custom glyph (Save on one
+  // already in the document — no layer write; `glyphRef` already points at it).
   // `updateCustomGlyph` already records its own single structural entry, so no
   // `recordBatch` wrapping is needed here.
   const updateGlyph = useCallback(

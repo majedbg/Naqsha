@@ -19,11 +19,35 @@ import useGlyphCommits from "./useGlyphCommits";
 function useWired() {
   const historyRef = useRef(null);
   const restoringRef = useRef(false);
+  const editKeyRef = useRef(null);
 
+  // BOTH real recorders must be wired (exactly as recordSites.integration.test
+  // does) for the atomicity tests to DISCRIMINATE: `updateLayer` records
+  // exclusively via recordEdit (useLayers.js ~562), so a harness without it
+  // never produces the second history entry recordBatch exists to fold away —
+  // the one-entry assertions would pass even with recordBatch stripped from
+  // the hook (found by adversarial review of the first cut of this file).
+  const flushEdit = useCallback(() => {
+    if (editKeyRef.current !== null) {
+      editKeyRef.current = null;
+      historyRef.current?.endCoalesce();
+    }
+  }, []);
+  const recordEdit = useCallback((signature) => {
+    if (restoringRef.current) return;
+    const api = historyRef.current;
+    if (!api) return;
+    if (editKeyRef.current !== null && editKeyRef.current !== signature) {
+      api.endCoalesce();
+    }
+    editKeyRef.current = signature;
+    api.beginCoalesce({ idleMs: 400 });
+  }, []);
   const recordStructural = useCallback(() => {
     if (restoringRef.current) return;
+    flushEdit();
     historyRef.current?.record();
-  }, []);
+  }, [flushEdit]);
   // recordBatch (mirrors Studio + recordSites.integration.test.jsx): fold a
   // multi-slice write into ONE history entry via begin/endCoalesce.
   const recordBatch = useCallback((fn) => {
@@ -40,7 +64,7 @@ function useWired() {
     }
   }, []);
 
-  const layersApi = useLayers({ persistToLocal: false, recordStructural });
+  const layersApi = useLayers({ persistToLocal: false, recordEdit, recordStructural });
 
   const layersRef = useRef(layersApi.layers);
   useEffect(() => {
@@ -140,6 +164,9 @@ describe("useGlyphCommits", () => {
         params: { foo: "bar", count: 3 },
       })
     );
+    // Let the param-edit burst idle-close (real recordEdit wiring) so the
+    // commit below starts from a clean history state, as it would in the app.
+    act(() => vi.advanceTimersByTime(500));
 
     let newId;
     act(() => {
@@ -175,7 +202,7 @@ describe("useGlyphCommits", () => {
     expect(result.current.history.canUndo).toBe(false);
   });
 
-  it("updateGlyph restamps an existing custom glyph in place (Save on an existing custom glyph)", () => {
+  it("updateGlyph commits new geometry to an existing custom glyph in place (Save on an existing custom glyph)", () => {
     const { result } = renderHook(() => useWired());
     const layerId = firstLayer(result).id;
     let newId;
@@ -188,7 +215,7 @@ describe("useGlyphCommits", () => {
       result.current.glyphCommits.updateGlyph(newId, testGlyph({ name: "Renamed" }))
     );
     expect(result.current.layersApi.customGlyphs[newId].name).toBe("Renamed");
-    // The layer's glyphRef is untouched by an in-place restamp.
+    // The layer's glyphRef is untouched by an in-place commit.
     expect(firstLayer(result).params.glyphRef).toBe(newId);
     expect(result.current.history.canUndo).toBe(true);
 
@@ -238,7 +265,7 @@ describe("useGlyphCommits", () => {
     expect(result.current.history.canUndo).toBe(false);
   });
 
-  it("placeFromLibrary skips the copy when the glyph is already in the doc, still rebinding in ONE entry", () => {
+  it("placeFromLibrary skips the copy when the glyph is already in the doc, still committing the params write in ONE entry", () => {
     const { result } = renderHook(() => useWired());
     const layerId = firstLayer(result).id;
     const libGlyph = { id: "lib-3", ...testGlyph({ name: "Original" }) };
@@ -256,8 +283,8 @@ describe("useGlyphCommits", () => {
     expect(firstLayer(result).params).toEqual({ glyphRef: "lib-3", scale: 2 });
     expect(result.current.history.canUndo).toBe(true);
 
-    // ONE entry reverts the rebind (the copy never happened, so there is
-    // nothing more to undo).
+    // ONE entry reverts the params write (the copy never happened, so there
+    // is nothing more to undo).
     act(() => result.current.history.undo());
     expect(firstLayer(result).params?.glyphRef).toBeUndefined();
     expect(result.current.history.canUndo).toBe(false);

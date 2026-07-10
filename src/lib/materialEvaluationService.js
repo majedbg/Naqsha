@@ -146,13 +146,25 @@ export async function submitEvaluation({
   });
 
   const bucket = supabase.storage.from(EVALUATION_BUCKET);
+
+  // Best-effort orphan cleanup (D5, grilled 2026-07-10): any failure after the
+  // first upload removes what was already written, so a failed submission
+  // leaves no unreachable objects behind. Cleanup failures are swallowed —
+  // the ORIGINAL error is always the one thrown.
+  const uploaded = [];
+  const cleanup = () => bucket.remove(uploaded).catch(() => {});
+
   const uploads = [
     [photoPath, photoFile, photoFile.type],
     [renderPath, renderBlob, 'image/png'],
   ];
   for (const [path, body, contentType] of uploads) {
     const { error } = await bucket.upload(path, body, { contentType, upsert: false });
-    if (error) throw error;
+    if (error) {
+      if (uploaded.length) await cleanup();
+      throw error;
+    }
+    uploaded.push(path);
   }
 
   const { data, error } = await supabase
@@ -164,7 +176,10 @@ export async function submitEvaluation({
     })
     .select()
     .single();
-  if (error) throw error;
+  if (error) {
+    await cleanup();
+    throw error;
+  }
   return rowToEvaluation(data);
 }
 

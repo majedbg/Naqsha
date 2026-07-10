@@ -266,11 +266,28 @@ describe('submitEvaluation', () => {
     expect(client.from).not.toHaveBeenCalled();
   });
 
-  it('throws when the insert errors', async () => {
-    mockSupabase({
+  it('throws when the insert errors AND best-effort-removes both uploaded objects (D5 grill)', async () => {
+    const { storageBucket } = mockSupabase({
       fromImpl: () => makeChain({ data: null, error: { message: 'insert failed' } }),
     });
     await expect(submitEvaluation(args)).rejects.toMatchObject({ message: 'insert failed' });
+    expect(storageBucket.remove).toHaveBeenCalledTimes(1);
+    const removed = storageBucket.remove.mock.calls[0][0];
+    expect(removed.some((p) => p.endsWith('/photo.jpg'))).toBe(true);
+    expect(removed.some((p) => p.endsWith('/render.png'))).toBe(true);
+  });
+
+  it('cleans up the FIRST object when the second upload fails, and never masks the original error', async () => {
+    const bucket = makeStorageBucket();
+    bucket.upload
+      .mockResolvedValueOnce({ data: { path: 'p' }, error: null })
+      .mockResolvedValueOnce({ data: null, error: { message: 'render upload failed' } });
+    // Cleanup itself failing must not replace the original error.
+    bucket.remove.mockRejectedValue(new Error('cleanup also failed'));
+    const { client } = mockSupabase({ bucket });
+    await expect(submitEvaluation(args)).rejects.toMatchObject({ message: 'render upload failed' });
+    expect(bucket.remove).toHaveBeenCalledWith([expect.stringMatching(/\/photo\.jpg$/)]);
+    expect(client.from).not.toHaveBeenCalled();
   });
 
   it('rejects an invalid submission before touching the network', async () => {

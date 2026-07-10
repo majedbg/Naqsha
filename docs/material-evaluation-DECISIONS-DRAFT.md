@@ -94,6 +94,13 @@ anyone but its owner.
 project" energy, but needs moderation before it's safe); org-scoped reads
 (no org context in Studio yet).
 
+**✅ GRILLED 2026-07-10 — LOCKED (Majed):** owner-only stands as authored.
+Two corollaries locked with it: (1) the future re-assessment job reads via
+**service role only** (a server-side job) — client RLS is never widened for
+aggregation; (2) no admin-read policy — dogfood evidence review happens in the
+Supabase dashboard. A `visibility` column is deliberately deferred to the
+piece-vs-render grill (adding it later is one defaulted column).
+
 ## D5 — Storage layout & limits
 
 **Decision.** One private bucket `material-evaluations`; objects at
@@ -107,9 +114,16 @@ anything is written.
 
 **Alternatives.** Two buckets (photo/render) — no benefit, doubles policy
 surface; server-generated id with a two-phase insert — more round-trips for no
-gain at this scale. **Note:** a failed insert after successful uploads leaves
-two orphaned objects; accepted for slice 1 (owner-only bucket, re-submit
-overwrites nothing since ids are fresh). Cleanup/compensation is a grill topic.
+gain at this scale.
+
+**✅ GRILLED 2026-07-10 — LOCKED (Majed):** (1) orphaned objects are handled by
+**best-effort client cleanup** — any failure after the first upload removes the
+already-written objects, cleanup failures never mask the original error
+(implemented in `submitEvaluation`, 2 tests); a transactional edge function is
+the graduation path, not slice-1 work. (2) The mime allowlist **stays
+png/jpeg/webp** — iOS Safari transcodes HEIC→JPEG when `accept` excludes it,
+and browsers can't render HEIC in `<img>` anyway; the desktop-.heic edge case
+gets a clear validation message. (3) 10 MB cap unchanged.
 
 ## D6 — One row per pairing; archetype denormalized at capture time
 
@@ -198,14 +212,17 @@ because `submissions` already means org job submissions (org-admin feature).
 
 ## What needs Majed's judgment before ADR-ification
 
-1. **Visibility & the documentation-doubling question (D4/D3):** private
-   calibration evidence vs. public maker showcase — one feature or two? This
-   drives moderation, RLS, and whether `kind` splits into two features.
+1. ~~D4 read model~~ — **GRILLED + LOCKED 2026-07-10** (owner-only,
+   service-role aggregation, no admin policy). Still open from the same
+   cluster: the documentation-doubling question (private calibration evidence
+   vs. public maker showcase — one feature or two?) belongs to the
+   piece-vs-render grill.
 2. **Comparability constraints (D7):** should capture lock a pose/scene?
    Should photo upload get staging guidance? Without either, is the evidence
    pool usable at all (the vision's own trust question)?
-3. **Orphaned-object cleanup (D5)** and whether submission needs to be
-   transactional (edge function?) before this ships beyond dogfood.
+3. ~~Orphaned-object cleanup (D5)~~ — **GRILLED + LOCKED 2026-07-10**
+   (best-effort client cleanup shipped; mime allowlist and 10 MB cap stand;
+   edge function deferred to graduation).
 4. **Supplier/batch metadata (D10):** structured columns or keep free-text
    `note` until the re-assessment design forces the question?
 5. **Scene3D merge coordination (D2):** land the calibration harness's

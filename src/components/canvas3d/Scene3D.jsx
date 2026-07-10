@@ -67,7 +67,17 @@ const PLACEHOLDER_BOX = { min: [-1, -1, -1], max: [1, 1, 1] };
  */
 function SnapshotCapture({ requestRef, onCapture }) {
   const gl = useThree((s) => s.gl);
-  useFrame(() => {
+  useFrame((state) => {
+    // REGRESSION GUARD (found by the calibration harness): ANY positive-priority
+    // useFrame subscription flips R3F into manual-render mode (internal.priority
+    // > 0 disables the automatic gl.render). This component subscribes at
+    // priority 2 PERMANENTLY, so once the EffectComposer went on-demand
+    // (ADR 0003 #5) an idle scene — composer unmounted, nothing blooming — had
+    // NO renderer left and stayed black. When we are the ONLY positive-priority
+    // subscriber (internal.priority === 1), render the base frame here; when the
+    // composer is mounted (internal.priority > 1) it has already rendered at
+    // priority 1 and we must not double-render.
+    if (state.internal.priority === 1) state.gl.render(state.scene, state.camera);
     if (!requestRef.current) return;
     requestRef.current = false;
     onCapture(gl.domElement.toDataURL('image/png'));

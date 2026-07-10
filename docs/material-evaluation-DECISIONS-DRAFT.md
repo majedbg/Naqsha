@@ -64,6 +64,12 @@ comes back as a black PNG (see `material-eval-2-dialog-sidebyside.png`). The
 submission flow itself is unaffected — only the pixels are — and the fix is
 already written on the harness's side.
 
+**✅ RESOLVED 2026-07-10:** the calibration harness merged to origin/main
+(`587282b` fix + `219aca8` harness). This branch was rebased onto it (clean —
+adjacent hunks, no conflict), suite 4215 green, and the browser run re-verified:
+the Evaluate capture now returns a real render (turquoise sheet + marks on the
+new light-gray backdrop). D2's blocker is closed.
+
 ## D3 — Feature shape: material-vs-render only, with a `kind` seam
 
 **Decision.** Slice 1 implements only the v1 framing (photo of raw Sheet vs.

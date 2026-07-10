@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../lib/AuthContext";
 import useMaterialEvaluations from "../lib/hooks/useMaterialEvaluations";
@@ -14,12 +15,23 @@ import useMaterialEvaluations from "../lib/hooks/useMaterialEvaluations";
 // placeholders so its metadata is still reviewable.
 
 function Pane({ url, alt, testId, label }) {
+  // A signed URL can be present but dead (1h TTL expired with the page open,
+  // or a dangling path) — onError falls back to the same placeholder as a
+  // missing URL instead of a broken <img> (review finding).
+  const [failed, setFailed] = useState(false);
+  const showImage = url && !failed;
   return (
     <figure className="flex min-w-0 flex-1 flex-col gap-1">
       <figcaption className="text-xs font-medium text-ink-soft">{label}</figcaption>
       <div className="flex aspect-square items-center justify-center overflow-hidden rounded-md border border-ink/10 bg-paper-warm">
-        {url ? (
-          <img data-testid={testId} src={url} alt={alt} className="h-full w-full object-contain" />
+        {showImage ? (
+          <img
+            data-testid={testId}
+            src={url}
+            alt={alt}
+            onError={() => setFailed(true)}
+            className="h-full w-full object-contain"
+          />
         ) : (
           <span className="px-3 text-center text-xs text-ink-soft/60">Image unavailable</span>
         )}

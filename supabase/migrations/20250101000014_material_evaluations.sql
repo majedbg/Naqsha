@@ -97,6 +97,7 @@ on conflict (id) do nothing;
 -- per-user-folder pattern.
 create policy "Evaluation owners manage own objects"
   on storage.objects for all
+  to authenticated
   using (
     bucket_id = 'material-evaluations'
     and (storage.foldername(name))[1] = auth.uid()::text

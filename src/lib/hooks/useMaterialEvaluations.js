@@ -79,11 +79,17 @@ export default function useMaterialEvaluations(user) {
   const submit = useCallback(
     async (args) => {
       if (!userId) return null; // login gate is enforced in the UI; belt-and-braces
+      // Same seq guard as refresh (review finding): a sign-out or refresh while
+      // the submit is in flight bumps the seq, and this resolution must not
+      // dispatch into the newer state (prepending into a signed-out reset).
+      const mySeq = seqRef.current;
       try {
         const stored = await submitEvaluation({ ...args, userId });
+        if (mySeq !== seqRef.current) return null;
         if (stored) dispatch({ type: "prepend", evaluation: stored });
         return stored;
       } catch (error) {
+        if (mySeq !== seqRef.current) return null;
         dispatch({ type: "submitError", error });
         return null; // graceful — the caller shows "couldn't submit", never crashes
       }

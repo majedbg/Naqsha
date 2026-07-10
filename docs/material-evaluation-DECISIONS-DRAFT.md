@@ -231,6 +231,29 @@ because `submissions` already means org job submissions (org-admin feature).
    edge function deferred to graduation).
 4. **Supplier/batch metadata (D10):** structured columns or keep free-text
    `note` until the re-assessment design forces the question?
-5. **Scene3D merge coordination (D2):** land the calibration harness's
-   black-frame fix before or with this branch; eyeball a real in-app capture.
+5. ~~Scene3D merge coordination (D2)~~ — **RESOLVED** (harness merged,
+   rebased, real capture verified).
 6. **Migration 014 review + apply** (human-gated, alongside pending 009–013).
+
+---
+
+## Adversarial review (Opus, 2026-07-10)
+
+**Verdict: mergeable — no blockers, no majors.** RLS/storage scoping, anon-policy
+isolation (005/007 don't bleed), the untouched-archetypes constraint, layering,
+login gate, and test honesty all attacked and confirmed clean.
+
+**Fixed on the branch** (each with a pinning test): Save-image click now resets
+`captureTarget` (two-click misroute); `/evaluations` panes fall back on `<img>`
+`onError` (expired TTL); the hook's `submit` gained the same seq guard as
+`refresh` (sign-out mid-flight can't prepend into reset state); the dialog
+refuses ✕/Escape while a submit is in flight (outcome stays visible); storage
+policy tightened `to authenticated` (free — 014 unapplied).
+
+**Logged as fast-follows, deliberately not fixed in slice 1:**
+- Non-transactional **row-orphan** (insert commits, response lost → cleanup
+  deletes objects, row dangles) — the D5 edge-function graduation path; the
+  `onError` placeholder now at least renders it gracefully.
+- Batch `createSignedUrls` instead of per-object signing (perf).
+- `dataUrlToBlob` corrupt-base64 → raw error (unreachable from `toDataURL`).
+- Dialog focus trap / initial focus / focus restore (a11y).

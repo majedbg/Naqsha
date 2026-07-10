@@ -90,6 +90,31 @@ describe('useMaterialEvaluations — submit', () => {
     expect(result.current.evaluations.map((e) => e.id)).toEqual(['b', 'a']);
   });
 
+  it('drops a submit that resolves AFTER sign-out: no prepend into the reset state', async () => {
+    loadEvaluations.mockResolvedValue([]);
+    let resolveSubmit;
+    submitEvaluation.mockReturnValue(new Promise((r) => { resolveSubmit = r; }));
+    const { result, rerender } = renderHook(({ user }) => useMaterialEvaluations(user), {
+      initialProps: { user: USER },
+    });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    let p;
+    act(() => {
+      p = result.current.submit({ material: { id: 'clear' } });
+    });
+    // Sign out while the submit is in flight — rerender is act-wrapped by RTL,
+    // so the user-change effect (seq bump + reset) flushes BEFORE we resolve.
+    rerender({ user: null });
+    let out;
+    await act(async () => {
+      resolveSubmit(EVAL_B);
+      out = await p;
+    });
+    expect(out).toBeNull();
+    expect(result.current.evaluations).toEqual([]); // no ghost prepend
+  });
+
   it('is graceful on a submit failure: resolves null + surfaces error, never throws', async () => {
     const boom = new Error('upload failed');
     submitEvaluation.mockRejectedValue(boom);

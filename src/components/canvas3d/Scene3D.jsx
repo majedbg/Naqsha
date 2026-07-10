@@ -471,6 +471,9 @@ export default function Scene3D({
           onClick={() => {
             // Raise the flag; <SnapshotCapture> reads the composited canvas on the
             // next frame (frameloop="always" guarantees one lands promptly).
+            // Reset the target too: an unconsumed Evaluate click must not
+            // hijack this download (review finding: two-click misroute).
+            captureTarget.current = 'download';
             captureRequest.current = true;
           }}
           className="rounded-md border border-white/10 bg-black/40 px-2.5 py-1.5 text-xs font-medium text-white/80 backdrop-blur transition hover:bg-black/60 hover:text-white"

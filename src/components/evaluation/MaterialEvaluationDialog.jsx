@@ -57,14 +57,18 @@ export default function MaterialEvaluationDialog({ material, renderDataUrl, onCl
     [photoPreview],
   );
 
-  // Escape closes (PatternPickerModal precedent, without its drag guard).
+  // Escape closes (PatternPickerModal precedent, without its drag guard) —
+  // EXCEPT mid-submit: closing then would hide the success/failure outcome of
+  // a write that completes anyway (review finding). The ✕ shares the guard.
+  const closable = phase !== "submitting";
   useEffect(() => {
+    if (!closable) return undefined;
     const onKey = (e) => {
       if (e.key === "Escape") onClose?.();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [onClose, closable]);
 
   const valid = validateSubmission({ material, photoFile, renderDataUrl });
   const canSubmit = !!user && valid.ok && phase !== "submitting" && phase !== "done";
@@ -110,7 +114,8 @@ export default function MaterialEvaluationDialog({ material, renderDataUrl, onCl
             type="button"
             data-testid="evaluation-close"
             aria-label="Close"
-            onClick={() => onClose?.()}
+            disabled={!closable}
+            onClick={() => closable && onClose?.()}
             className="rounded-md border border-white/10 px-2 py-1 text-xs text-white/70 hover:bg-white/10 hover:text-white"
           >
             ✕

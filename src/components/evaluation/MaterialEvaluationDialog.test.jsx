@@ -146,4 +146,27 @@ describe("MaterialEvaluationDialog — submit", () => {
     fireEvent.click(screen.getByTestId("evaluation-close"));
     expect(onClose).toHaveBeenCalled();
   });
+
+  it("refuses to close (✕ and Escape) while a submit is in flight", async () => {
+    let resolveSubmit;
+    mockSubmit.mockReturnValue(new Promise((r) => { resolveSubmit = r; }));
+    const onClose = vi.fn();
+    renderDialog({ onClose });
+    pickPhoto();
+    fireEvent.click(screen.getByTestId("evaluation-submit"));
+
+    // Mid-submit: the outcome must stay visible, so close is guarded.
+    expect(screen.getByTestId("evaluation-close")).toBeDisabled();
+    fireEvent.click(screen.getByTestId("evaluation-close"));
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onClose).not.toHaveBeenCalled();
+
+    await waitFor(async () => {
+      resolveSubmit({ id: "eval-1" });
+      expect(await screen.findByTestId("evaluation-success")).toBeInTheDocument();
+    });
+    // Settled: closable again.
+    fireEvent.click(screen.getByTestId("evaluation-close"));
+    expect(onClose).toHaveBeenCalled();
+  });
 });

@@ -7,7 +7,7 @@
 // open vision question — see DECISIONS-DRAFT).
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 
 let mockAuth = { user: null, loading: false, signIn: vi.fn() };
@@ -95,6 +95,16 @@ describe("EvaluationsPage — the side-by-side list", () => {
     expect(screen.getByText("Turquoise Opaque")).toBeInTheDocument();
     expect(screen.getByText(/opaque-acrylic/)).toBeInTheDocument();
     expect(screen.getByText(/daylight/)).toBeInTheDocument();
+  });
+
+  it("falls back to the placeholder when a PRESENT signed URL fails to load (expired TTL)", () => {
+    mockHookState.evaluations = [EVAL_A];
+    renderPage();
+    // Simulate the 1h-TTL-expired 404: the <img> error event must swap to the
+    // same "unavailable" placeholder as a missing URL, not a broken image.
+    fireEvent.error(screen.getByTestId("evaluation-photo-a"));
+    expect(screen.queryByTestId("evaluation-photo-a")).not.toBeInTheDocument();
+    expect(screen.getAllByText(/unavailable/i).length).toBeGreaterThan(0);
   });
 
   it("keeps a row reviewable when its signed URLs are null (placeholder, no broken img)", () => {

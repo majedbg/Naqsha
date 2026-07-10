@@ -38,13 +38,8 @@ import { centerTransform } from "../lib/scene/placement";
 import StudioSubmitModal from "../components/org/StudioSubmitModal";
 import MotifEditorModal from "../components/motif-editor/MotifEditorModal";
 import { parseDToAnchors, anchorsToD } from "../lib/motif/pathModel";
-import { getGlyph } from "../lib/motif/glyphs";
-
-// Synthetic glyph id for a CREATE session (New motif / Duplicate-to-edit): the
-// working copy is edited off a transient draft and only written to the store on
-// Save, so it needs a stable key for the Preview override without ever being a
-// real store entry. Never persisted.
-const MOTIF_DRAFT_ID = "__motif_draft__";
+import useMotifEditorSession from "../lib/hooks/useMotifEditorSession";
+import useGlyphCommits from "../lib/hooks/useGlyphCommits";
 
 // Run Plan title label per Machine Profile (CONTEXT.md vocabulary: "Run Plan:
 // Laser cutting", "Run Plan: Pen plotting"). Deliberately DISTINCT from
@@ -593,9 +588,6 @@ export default function Studio({ submitOrg = null } = {}) {
   // selected yet (so the shell inspector is populated) and self-heals when the
   // selected layer is removed.
   const [selectedLayerIdState, setSelectedLayerId] = useState(null);
-  // Pen-editor open-state (WI-P2-2): { glyphId, layerId } while the modal edits a
-  // custom glyph on behalf of a motif row; null when closed.
-  const [motifEditor, setMotifEditor] = useState(null);
   const selectionExists =
     selectedLayerIdState != null &&
     layers.some((l) => l.id === selectedLayerIdState);
@@ -1079,6 +1071,43 @@ export default function Studio({ submitOrg = null } = {}) {
     clearTimeout(importErrorTimer.current);
     importErrorTimer.current = setTimeout(() => setImportError(null), 4000);
   }, []);
+
+  // Glyph Commits (Wave 1, #77) — the single write-owner for every
+  // `customGlyphs` + `glyphRef` write in the app. Used directly below for the
+  // Motif device's library copy/use seams; `useMotifEditorSession` also
+  // consumes it internally for its own Save/Save-as-copy/import commits.
+  const glyphCommits = useGlyphCommits({
+    addCustomGlyph,
+    updateCustomGlyph,
+    updateLayer,
+    recordBatch,
+    layers,
+    customGlyphs,
+  });
+
+  // Motif Edit Session (Wave 2, #77) — owns the pen-editor lifecycle (open's
+  // fork decision, openNew, importFromFile, Save/Save-as-copy/Cancel) that used
+  // to be split across this component's own state + a modal-rendering IIFE and
+  // Inspector's openEditorFor/handleImportChange. `onError` reuses the exact
+  // banner seam File>Import already renders through (showImportError); the
+  // four promote-gate props pass straight through to the modal (grilled
+  // decision 5, docs/motif-session-ORCHESTRATOR.md).
+  const motifSession = useMotifEditorSession({
+    layers,
+    customGlyphs,
+    addCustomGlyph,
+    updateCustomGlyph,
+    updateLayer,
+    recordBatch,
+    parseD: parseDToAnchors,
+    anchorsToD,
+    previewContext: motifPreviewContext,
+    onError: showImportError,
+    canSaveToLibrary,
+    isLoggedIn: !!user,
+    onSaveToLibrary: (glyph) => promoteMotif(glyph),
+    onRequireSignIn: signIn,
+  });
 
   const handleImportSVG = useCallback(
     (svgText) => {
@@ -1965,65 +1994,12 @@ export default function Studio({ submitOrg = null } = {}) {
         />
       )}
 
-      {/* Pen-editor modal (WI-P2-2). Edits a WORKING COPY of the custom glyph;
-          the document mutates only on commit. Save → updateCustomGlyph restamps
-          every layer through the render seam (no per-layer iteration). Save as
-          copy → fork a new glyph + rebind only this layer. Cancel → discard. */}
-      {motifEditor &&
-        (() => {
-          // A CREATE session (New motif / Duplicate-to-edit) carries a transient
-          // `draftGlyph` that is NOT in the store — so its Save CREATES + binds a
-          // new glyph, and Cancel discards it with zero document mutation (D6). An
-          // EDIT session resolves the glyph from the store and Saves in place.
-          const isDraft = !!motifEditor.draftGlyph;
-          const editGlyph =
-            motifEditor.draftGlyph ?? getGlyph(motifEditor.glyphId, customGlyphs);
-          if (!editGlyph) return null;
-          const close = () => setMotifEditor(null);
-          const bindLayerTo = (newId) => {
-            if (!newId) return;
-            const layer = layers.find((l) => l.id === motifEditor.layerId);
-            if (layer) {
-              updateLayer(layer.id, {
-                params: { ...layer.params, glyphRef: newId },
-              });
-            }
-          };
-          return (
-            <MotifEditorModal
-              glyphId={motifEditor.glyphId}
-              glyph={editGlyph}
-              layers={layers}
-              targetLayerId={motifEditor.layerId}
-              initialTool={motifEditor.initialTool ?? "direct-select"}
-              parseD={parseDToAnchors}
-              anchorsToD={anchorsToD}
-              previewContext={motifPreviewContext}
-              onSave={(glyph) => {
-                if (isDraft) {
-                  // First real write for a drawn-from-scratch / duplicated glyph.
-                  bindLayerTo(addCustomGlyph?.(glyph));
-                } else {
-                  updateCustomGlyph?.(motifEditor.glyphId, glyph);
-                }
-                close();
-              }}
-              onSaveAsCopy={(glyph) => {
-                bindLayerTo(addCustomGlyph?.(glyph));
-                close();
-              }}
-              onCancel={close}
-              // P4: promote the working glyph to the user's GLOBAL library. The
-              // premium entitlement ships ON-for-all (canSaveToLibrary); the
-              // LOGIN gate is real — logged-out prompts sign-in (onRequireSignIn)
-              // instead of promoting. promote() is offline-graceful (no throw).
-              canSaveToLibrary={canSaveToLibrary}
-              isLoggedIn={!!user}
-              onSaveToLibrary={(glyph) => promoteMotif(glyph)}
-              onRequireSignIn={signIn}
-            />
-          );
-        })()}
+      {/* Pen-editor modal (Motif Edit Session, Wave 3, #77). The session hook
+          (useMotifEditorSession) owns the whole lifecycle — open's fork
+          decision, Save/Save-as-copy/Cancel, the Draft Glyph resolution — and
+          hands back a dumb `modalProps` bag matching MotifEditorModal's frozen
+          prop contract verbatim. Nothing here decides WHAT the modal shows. */}
+      {motifSession.isOpen && <MotifEditorModal {...motifSession.modalProps} />}
 
 
       {/* Pro-shell top menu bar (B5 / #8). Portaled into the shell's Menu bar
@@ -2210,59 +2186,33 @@ export default function Studio({ submitOrg = null } = {}) {
             onAddMotif={addMotifLayer}
             onRemoveLayer={removeLayer}
             // WI-5: the Motif device lists imported glyphs (customGlyphs) in its
-            // picker and imports new ones — addCustomGlyph stamps + returns an id,
-            // showImportError reuses the same inline banner File>Import uses.
+            // picker (read-only prop — writes route through the session/commits
+            // below).
             customGlyphs={customGlyphs}
-            addCustomGlyph={addCustomGlyph}
-            onImportError={showImportError}
-            // Open the pen editor for a motif row's glyph (WI-P2-2). Built-in
-            // rows duplicate-to-edit inside MotifDevice first, so this always
-            // receives a CUSTOM glyph id + the originating layer id.
-            // A custom glyph opens in place (glyphId set, no draft). A built-in
-            // Duplicate-to-edit passes a DRAFT (3rd arg) + a null id → a CREATE
-            // session keyed by MOTIF_DRAFT_ID; nothing hits the store until Save.
-            onEditGlyph={(glyphId, layerId, draftGlyph = null) =>
-              setMotifEditor({
-                glyphId: draftGlyph ? MOTIF_DRAFT_ID : glyphId,
-                layerId,
-                draftGlyph,
-              })
-            }
-            // "New motif…" (WI-P2-4, draw-from-scratch): open the pen editor on a
-            // blank DRAFT glyph (NOT written to the store — D6: Cancel discards it,
-            // Save creates+binds). Pen tool active so the user draws immediately.
-            onNewMotif={(layerId) =>
-              setMotifEditor({
-                glyphId: MOTIF_DRAFT_ID,
-                layerId,
-                initialTool: "pen",
-                draftGlyph: {
-                  name: "New motif",
-                  tradition: "custom",
-                  paths: [],
-                  viewRadius: 0,
-                  root: { x: 0, y: 0, angle: 0 },
-                },
-              })
-            }
+            // Open the pen editor for a motif row's glyph (Wave 3, #77): the
+            // fork decision (custom → in place, built-in → duplicate-to-edit)
+            // now lives entirely in the session's `open(layerId, glyphRef)`, so
+            // this is a direct pass-through — Inspector no longer decides
+            // anything, it just names which layer + ref the user pointed at.
+            onEditGlyph={motifSession.open}
+            // "New motif…" (draw-from-scratch): a blank Draft Glyph, pen tool
+            // active. Direct pass-through — same (layerId) signature Inspector
+            // already called.
+            onNewMotif={motifSession.openNew}
+            // Import SVG as motif (Wave 3, #77): the full read → parse → error
+            // → commit flow now lives in the session; Inspector keeps only the
+            // <input type=file> arming/click mechanics and hands the raw file
+            // + target layer id through.
+            onImportFile={motifSession.importFromFile}
             // P4 global library: list the user's promoted motifs in a "My
-            // library" optgroup, and COPY a chosen library glyph into the
-            // document's customGlyphs keyed by its uuid (self-contained doc —
-            // share links carry the copy). updateCustomGlyph is an idempotent
-            // keyed upsert; the Inspector rebinds the row after the copy.
+            // library" optgroup. Copy-on-select and copy+rebind-as-one-undo-
+            // entry now route through useGlyphCommits (Wave 1, #77) — the same
+            // write-owner the session uses internally, so every glyph write in
+            // the app funnels through one seam.
             libraryMotifs={libraryMotifs}
-            onCopyLibraryGlyph={(glyph) => updateCustomGlyph?.(glyph.id, glyph)}
-            // P5-2: copy-on-use as ONE undo entry. A library select is copy +
-            // rebind (two document mutations); recordBatch folds them into a
-            // single history entry so one ⌘Z reverts the whole placement. The
-            // copy is skipped when the glyph is already in the doc (idempotent).
+            onCopyLibraryGlyph={(glyph) => glyphCommits.copyGlyphToDoc(glyph)}
             onUseLibraryGlyph={(glyph, layerId, params) =>
-              recordBatch(() => {
-                if (!customGlyphs?.[glyph.id]) {
-                  updateCustomGlyph?.(glyph.id, glyph);
-                }
-                updateLayer(layerId, { params });
-              })
+              glyphCommits.placeFromLibrary(glyph, layerId, params)
             }
           />
           ),

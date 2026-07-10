@@ -54,7 +54,6 @@ import { resolveModulationForTarget } from "../../lib/fields/resolveModulationFo
 import { ANCHOR_POS, ANCHOR_MID, ANCHOR_NEG } from "../../lib/fields/colormap";
 import { isMotifLayer, motifHostId, deepMergeBinding } from "../../lib/motif/motifLayer";
 import { MOTIF_GLYPHS, getGlyph } from "../../lib/motif/glyphs";
-import { importMotif } from "../../lib/motif/importMotif";
 
 // Modulation-scoped param control: the Grid's `warpNodes` slider (2–24). Reuses
 // the file's `accent-violet` range styling. Rendered INSIDE a <ModulationParamBox>
@@ -570,7 +569,7 @@ const MOTIF_ROLES = [
 // placement binding. Every write re-spreads the whole params.binding via
 // deepMergeBinding so a partial patch never clobbers another branch — same
 // re-spread invariant as ModulatorDevice, extended to a nested schema.
-function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, customGlyphs, addCustomGlyph, onImportError, onEditGlyph, onNewMotif, libraryMotifs, onCopyLibraryGlyph, onUseLibraryGlyph }) {
+function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, customGlyphs, onEditGlyph, onNewMotif, onImportFile, libraryMotifs, onCopyLibraryGlyph, onUseLibraryGlyph }) {
   // Collapsed by default (mobile discoverability: the device sits at the TOP of
   // the Inspector for a host layer but stays folded until the user opens it).
   // Declared BEFORE the self-hide early return — the component renders
@@ -624,58 +623,26 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, 
     importInputRef.current?.click();
   };
 
-  // Edit / Duplicate-to-edit (WI-P2-2). A CUSTOM glyph opens the pen editor
-  // directly. A BUILT-IN (or an unresolved ref) is read-only, so we fork its
-  // geometry into a DRAFT glyph and open the editor on that draft — never touching
-  // the built-in in place. The draft is NOT written to the store here (D6: the
-  // document mutates only on Save; Cancel discards the fork). Save creates+binds
-  // the copy; the third `onEditGlyph` arg carries the draft (null id ⇒ create).
+  // Edit / Duplicate-to-edit (Wave 3, #77). The fork decision (custom → edit
+  // in place; built-in/unresolved → fork a Draft Glyph) now lives entirely in
+  // the Motif Edit Session's `open(layerId, glyphRef)` (CONTEXT.md "Motifs" —
+  // grilled decision 3). Inspector just names which layer + ref was clicked.
   const openEditorFor = (m) => {
-    const ref = m.params?.glyphRef;
-    const isCustom = ref && !MOTIF_GLYPHS[ref] && !!customGlyphs?.[ref];
-    if (isCustom) {
-      onEditGlyph?.(ref, m.id);
-      return;
-    }
-    const builtIn = getGlyph(ref, customGlyphs) || MOTIF_GLYPHS.leaf;
-    onEditGlyph?.(null, m.id, {
-      name: builtIn.name,
-      tradition: "custom",
-      paths: builtIn.paths,
-      viewRadius: builtIn.viewRadius,
-      root: builtIn.root ?? { x: 0, y: 0, angle: 0 },
-    });
+    onEditGlyph?.(m.id, m.params?.glyphRef);
   };
 
-  // File chosen → parse via importMotif. On success, stamp the glyph into the
-  // document store (addCustomGlyph returns its id) and rebind THIS row's
-  // glyphRef so it renders immediately on the host. On failure, surface the
-  // error through the same seam Studio uses for SVG-import errors — no stamp,
-  // no rebind. Mirrors Studio.handleImportFileChange's read-then-handle gesture.
-  const handleImportChange = async (e) => {
+  // File-input mechanics only (Wave 3, #77): the read → parse → error → commit
+  // flow that used to live here now lives in the session's `importFromFile`
+  // (CONTEXT.md "Motifs" — grilled decision 4), including error reporting
+  // through Studio's `onError` seam. This handler just resolves which row
+  // armed the input and hands the raw file + target layer id through.
+  const handleImportChange = (e) => {
     const file = e.target.files?.[0];
     e.target.value = ""; // allow re-importing the same file
     const targetId = importTargetIdRef.current;
     importTargetIdRef.current = null;
     if (!file || !targetId) return;
-    let text;
-    try {
-      text = await file.text();
-    } catch {
-      onImportError?.("Could not read that file.");
-      return;
-    }
-    const result = importMotif(text);
-    if (!result.ok) {
-      onImportError?.(result.error || "Could not import this SVG.");
-      return;
-    }
-    const newId = addCustomGlyph?.(result.glyph);
-    if (!newId) return;
-    const target = motifs.find((mm) => mm.id === targetId);
-    onUpdateLayer(targetId, {
-      params: { ...(target?.params ?? {}), glyphRef: newId },
-    });
+    onImportFile?.(file, targetId);
   };
 
   const addMotif = () =>
@@ -969,7 +936,7 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, 
 // The param-editing body for one selected layer. Split into its own component so
 // usePatternCache (a hook) is only called when a layer is actually selected —
 // hooks can't be called conditionally inside Inspector itself.
-function SelectedLayerInspector({ layer, layers, unit, profileId, onUpdateLayer, onChangeLayerPattern, onVariableWeightChange, onPreviewField, onClosePreview, threeDSubMode, threeDFocusLayerId, onAddMotif, onRemoveLayer, customGlyphs, addCustomGlyph, onImportError, onEditGlyph, onNewMotif, libraryMotifs, onCopyLibraryGlyph, onUseLibraryGlyph }) {
+function SelectedLayerInspector({ layer, layers, unit, profileId, onUpdateLayer, onChangeLayerPattern, onVariableWeightChange, onPreviewField, onClosePreview, threeDSubMode, threeDFocusLayerId, onAddMotif, onRemoveLayer, customGlyphs, onEditGlyph, onNewMotif, onImportFile, libraryMotifs, onCopyLibraryGlyph, onUseLibraryGlyph }) {
   // Pattern swap: route through the same cache machine LayerCard uses, applied via
   // the pair-aware onChangeLayerPattern when present (falls back to a plain param
   // update so the component works standalone / in tests without a router).
@@ -1014,10 +981,9 @@ function SelectedLayerInspector({ layer, layers, unit, profileId, onUpdateLayer,
         onAddMotif={onAddMotif}
         onRemoveLayer={onRemoveLayer}
         customGlyphs={customGlyphs}
-        addCustomGlyph={addCustomGlyph}
-        onImportError={onImportError}
         onEditGlyph={onEditGlyph}
         onNewMotif={onNewMotif}
+        onImportFile={onImportFile}
         libraryMotifs={libraryMotifs}
         onCopyLibraryGlyph={onCopyLibraryGlyph}
         onUseLibraryGlyph={onUseLibraryGlyph}
@@ -1103,19 +1069,22 @@ export default function Inspector({
   // so the Inspector still renders standalone / in legacy callers.
   onAddMotif,
   onRemoveLayer,
-  // Custom-glyph store (WI-5) + import seam. `customGlyphs` lists imported
-  // motifs in the picker; `addCustomGlyph` stamps a newly-imported glyph and
-  // returns its id; `onImportError` surfaces a parse failure the same way Studio
-  // surfaces SVG-import errors. All optional (standalone / legacy callers).
+  // Custom-glyph store (WI-5) — `customGlyphs` lists imported motifs in the
+  // picker (read-only prop; all writes route through the Motif Edit Session /
+  // Glyph Commits below). Optional (standalone / legacy callers).
   customGlyphs,
-  addCustomGlyph,
-  onImportError,
-  // Open the pen editor for a motif row's glyph (WI-P2-2). Built-ins duplicate
-  // to a custom copy first; the handler receives (glyphId, layerId). Optional.
+  // Open the Motif Edit Session for a motif row's glyph (Wave 3, #77): a
+  // direct pass-through to `useMotifEditorSession`'s `open(layerId, glyphRef)`
+  // — the fork decision (custom edits in place, built-in forks a Draft Glyph)
+  // lives entirely in the session now. Optional.
   onEditGlyph,
-  // "New motif…" (WI-P2-4, draw-from-scratch): create a blank custom glyph,
-  // rebind this row to it, and open the pen editor. Receives (layerId). Optional.
+  // "New motif…" (draw-from-scratch): a direct pass-through to the session's
+  // `openNew(layerId)` — a blank Draft Glyph, pen tool active. Optional.
   onNewMotif,
+  // Import SVG as motif (Wave 3, #77): a direct pass-through to the session's
+  // `importFromFile(file, layerId)` — the full read/parse/error/commit flow
+  // lives entirely in the session now. Optional.
+  onImportFile,
   // P4 global library: the signed-in user's promoted motifs (`{id,name,glyph}[]`)
   // listed in a "My library" optgroup, and the COPY-on-use seam that stamps a
   // chosen library glyph into the document's customGlyphs. Both optional.
@@ -1221,10 +1190,9 @@ export default function Inspector({
       onAddMotif={onAddMotif}
       onRemoveLayer={onRemoveLayer}
       customGlyphs={customGlyphs}
-      addCustomGlyph={addCustomGlyph}
-      onImportError={onImportError}
       onEditGlyph={onEditGlyph}
       onNewMotif={onNewMotif}
+      onImportFile={onImportFile}
       libraryMotifs={libraryMotifs}
       onCopyLibraryGlyph={onCopyLibraryGlyph}
       onUseLibraryGlyph={onUseLibraryGlyph}

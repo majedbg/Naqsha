@@ -3,6 +3,21 @@ import useGlyphCommits from "./useGlyphCommits";
 import { getGlyph, MOTIF_GLYPHS } from "../motif/glyphs.js";
 import { importMotif } from "../motif/importMotif.js";
 
+// Synthetic glyph id for a Draft Glyph session (New motif / Duplicate-to-edit):
+// the working copy is edited off a transient draft (D6 — never in the store
+// until Save) and only written to `customGlyphs` on Save, so `modalProps`
+// needs a stable non-null key for the pen editor's preview override without
+// ever being a real store entry. Never persisted.
+//
+// Wave 3 review (motif-session deepening, #77): this sentinel used to live in
+// Studio.jsx and get threaded in ad hoc (`glyphId: draftGlyph ? MOTIF_DRAFT_ID
+// : glyphId`); the session itself exposed a plain `glyphId: null` for drafts,
+// which only rendered correctly because useCanvas.js's preview-override map
+// happened to tolerate a `null` key. Owning the sentinel here — and always
+// emitting it in `modalProps` for a Draft Glyph session — removes that
+// coincidental tolerance as a load-bearing behavior.
+export const MOTIF_DRAFT_ID = "__motif_draft__";
+
 // useMotifEditorSession — the Motif Edit Session lifecycle (Wave 2, motif-session
 // deepening, #77). CONTEXT.md "Motifs": a Motif Edit Session is the pen-editor
 // lifecycle from open to Save / Save as copy / Cancel / Promote, and it OWNS the
@@ -185,7 +200,11 @@ export default function useMotifEditorSession({
   const modalProps = useMemo(() => {
     if (!isOpen) return null;
     return {
-      glyphId: session.glyphId,
+      // A Draft Glyph session (fork/new) always surfaces the MOTIF_DRAFT_ID
+      // sentinel here — never the internal `null` — so the modal (and its
+      // preview-override map) get a stable non-null key. `save()` still
+      // branches on `session.draftGlyph`, not this value.
+      glyphId: session.draftGlyph ? MOTIF_DRAFT_ID : session.glyphId,
       glyph: editGlyph,
       layers,
       targetLayerId: session.layerId,

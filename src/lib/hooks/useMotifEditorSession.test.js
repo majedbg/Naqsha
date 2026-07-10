@@ -4,7 +4,7 @@ import { renderHook, act } from "@testing-library/react";
 import { useCallback, useEffect, useRef } from "react";
 import useLayers from "../useLayers";
 import useHistory from "../history/useHistory";
-import useMotifEditorSession from "./useMotifEditorSession";
+import useMotifEditorSession, { MOTIF_DRAFT_ID } from "./useMotifEditorSession";
 import { MOTIF_GLYPHS } from "../motif/glyphs.js";
 
 // useMotifEditorSession is the Wave 2 lifecycle module (motif-session-
@@ -149,8 +149,10 @@ describe("useMotifEditorSession — open() fork decision", () => {
     act(() => result.current.session.open(layerId, "leaf"));
 
     expect(result.current.session.isOpen).toBe(true);
-    // glyphId null ⇒ a create/draft session (Save must CREATE, not restamp).
-    expect(result.current.session.modalProps.glyphId).toBeNull();
+    // glyphId is the MOTIF_DRAFT_ID sentinel ⇒ a create/draft session (Save
+    // must CREATE, not restamp). Sanctioned pre-step (Wave 3 review, #77): the
+    // sentinel now lives here, not threaded in ad hoc by Studio.
+    expect(result.current.session.modalProps.glyphId).toBe(MOTIF_DRAFT_ID);
     expect(result.current.session.modalProps.glyph).toEqual({
       name: MOTIF_GLYPHS.leaf.name,
       tradition: "custom",
@@ -169,7 +171,7 @@ describe("useMotifEditorSession — open() fork decision", () => {
 
     act(() => result.current.session.open(layerId, "totally-unknown-ref"));
 
-    expect(result.current.session.modalProps.glyphId).toBeNull();
+    expect(result.current.session.modalProps.glyphId).toBe(MOTIF_DRAFT_ID);
     expect(result.current.session.modalProps.glyph.name).toBe(MOTIF_GLYPHS.leaf.name);
   });
 
@@ -205,7 +207,7 @@ describe("useMotifEditorSession — openNew()", () => {
     act(() => result.current.session.openNew(layerId));
 
     expect(result.current.session.isOpen).toBe(true);
-    expect(result.current.session.modalProps.glyphId).toBeNull();
+    expect(result.current.session.modalProps.glyphId).toBe(MOTIF_DRAFT_ID);
     expect(result.current.session.modalProps.initialTool).toBe("pen");
     expect(result.current.session.modalProps.glyph).toEqual({
       name: "New motif",

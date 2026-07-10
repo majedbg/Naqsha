@@ -4,7 +4,7 @@
 // plus the exported deepMergeBinding helper's partial-patch invariant.
 
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import Inspector from "./Inspector";
 import {
   MOTIF_TYPE,
@@ -263,21 +263,23 @@ describe("MotifDevice", () => {
     expect(row.querySelector('path[d="M0,0 L4,4"]')).not.toBeNull();
   });
 
-  // ── Import SVG as motif (WI-5): the row's "Import" affordance runs real
-  //    importMotif, stamps the glyph via addCustomGlyph, and rebinds THIS row.
-  it("import: an OK SVG stamps a custom glyph and points this row at the new id", async () => {
-    const onUpdateLayer = vi.fn();
-    const addCustomGlyph = vi.fn(() => "cg-test");
-    const onImportError = vi.fn();
+  // ── Import SVG as motif (Wave 3, #77 relocation): the read → parse →
+  //    error → commit flow that used to live here moved entirely into
+  //    useMotifEditorSession's `importFromFile` (grilled decision 4,
+  //    docs/motif-session-ORCHESTRATOR.md) — see its "importFromFile()" suite
+  //    in useMotifEditorSession.test.js for the OK/error/commit coverage.
+  //    Inspector keeps only the file-input mechanics: arm a row, hand the raw
+  //    File + that row's layer id to `onImportFile`, reset the input value.
+  it("import: hands the raw file + this row's layer id to onImportFile", () => {
+    const onImportFile = vi.fn();
     const motif = motifLayer("m1", "host1", defaultBinding);
     render(
       <Inspector
         layers={[hostLayer("host1", "grid"), motif]}
         selectedLayerId="host1"
-        onUpdateLayer={onUpdateLayer}
+        onUpdateLayer={() => {}}
         onChangeLayerPattern={() => {}}
-        addCustomGlyph={addCustomGlyph}
-        onImportError={onImportError}
+        onImportFile={onImportFile}
       />
     );
     fireEvent.click(screen.getByTestId("motif-toggle"));
@@ -285,59 +287,36 @@ describe("MotifDevice", () => {
     const svg =
       '<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0 L10 0 L5 10 Z"/></svg>';
     const file = new File([svg], "vine.svg", { type: "image/svg+xml" });
-    fireEvent.change(screen.getByTestId("motif-import-input"), {
-      target: { files: [file] },
-    });
+    const input = screen.getByTestId("motif-import-input");
+    fireEvent.change(input, { target: { files: [file] } });
 
-    await waitFor(() => expect(addCustomGlyph).toHaveBeenCalledTimes(1));
-    const glyph = addCustomGlyph.mock.calls[0][0];
-    expect(glyph.tradition).toBe("imported");
-    expect(Array.isArray(glyph.paths)).toBe(true);
-    // This row's glyphRef is rebound to the returned id.
-    await waitFor(() =>
-      expect(
-        onUpdateLayer.mock.calls.some(
-          ([id, patch]) => id === "m1" && patch.params?.glyphRef === "cg-test"
-        )
-      ).toBe(true)
-    );
-    expect(onImportError).not.toHaveBeenCalled();
+    expect(onImportFile).toHaveBeenCalledTimes(1);
+    const [passedFile, layerId] = onImportFile.mock.calls[0];
+    expect(passedFile).toBe(file);
+    expect(layerId).toBe("m1");
+    // Input value resets so the same file can be re-imported.
+    expect(input.value).toBe("");
   });
 
-  it("import: a no-path SVG surfaces an error and does NOT stamp or rebind", async () => {
-    const onUpdateLayer = vi.fn();
-    const addCustomGlyph = vi.fn(() => "cg-test");
-    const onImportError = vi.fn();
+  it("import: does nothing if a file is chosen without a row having armed the input", () => {
+    const onImportFile = vi.fn();
     const motif = motifLayer("m1", "host1", defaultBinding);
     render(
       <Inspector
         layers={[hostLayer("host1", "grid"), motif]}
         selectedLayerId="host1"
-        onUpdateLayer={onUpdateLayer}
+        onUpdateLayer={() => {}}
         onChangeLayerPattern={() => {}}
-        addCustomGlyph={addCustomGlyph}
-        onImportError={onImportError}
+        onImportFile={onImportFile}
       />
     );
     fireEvent.click(screen.getByTestId("motif-toggle"));
-    fireEvent.click(screen.getByTestId("motif-import"));
-    // A <text> element carries no drawable outline geometry (importMotif now
-    // converts rect/circle/etc. to paths, so a <rect> would import — use text
-    // to exercise the genuine "no importable geometry" error path).
-    const svg =
-      '<svg xmlns="http://www.w3.org/2000/svg"><text>hi</text></svg>';
-    const file = new File([svg], "notext.svg", { type: "image/svg+xml" });
+    // No click on "motif-import" first — importTargetIdRef stays null.
+    const file = new File(["<svg/>"], "stray.svg", { type: "image/svg+xml" });
     fireEvent.change(screen.getByTestId("motif-import-input"), {
       target: { files: [file] },
     });
-
-    await waitFor(() => expect(onImportError).toHaveBeenCalledTimes(1));
-    expect(onImportError.mock.calls[0][0]).toEqual(expect.any(String));
-    expect(addCustomGlyph).not.toHaveBeenCalled();
-    // No glyphRef rebind occurred.
-    expect(
-      onUpdateLayer.mock.calls.some(([, patch]) => patch?.params?.glyphRef)
-    ).toBe(false);
+    expect(onImportFile).not.toHaveBeenCalled();
   });
 
   it("Remove calls onRemoveLayer with the motif id", () => {

@@ -1,16 +1,20 @@
 // @vitest-environment jsdom
-// The Inspector MotifDevice "Edit" (✎) button wiring (WI-P2-2). Co-located in
-// the motif-editor dir (this WI's owned surface) so it doesn't disturb the
-// existing Inspector.motif.test.jsx. Exercises the two entry paths:
-//   • CUSTOM glyph row → onEditGlyph(glyphId, layerId) directly.
-//   • BUILT-IN glyph row → duplicate-to-edit: fork the geometry into a new
-//     custom glyph, rebind THIS row, THEN open the editor on the copy.
+// The Inspector MotifDevice "Edit" (✎) button wiring. Co-located in the
+// motif-editor dir (this WI's owned surface) so it doesn't disturb the
+// existing Inspector.motif.test.jsx.
+//
+// Wave 3 relocation (motif-session deepening, #77, grilled decision 3):
+// Inspector no longer decides custom-vs-built-in — that fork decision now
+// lives in useMotifEditorSession's `open(layerId, glyphRef)` (covered by
+// useMotifEditorSession.test.js's "open() fork decision" suite). The CUSTOM-
+// row and BUILT-IN-row cases below now assert only the thin delegation:
+// Inspector's Edit button forwards (layerId, glyphRef) verbatim, with no
+// fork/draft-construction logic of its own and no store writes at click time.
 
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import Inspector from '../shell/Inspector';
 import { MOTIF_TYPE, createMotifParams } from '../../lib/motif/motifLayer';
-import { MOTIF_GLYPHS } from '../../lib/motif/glyphs';
 
 vi.mock('../../lib/AuthContext', () => ({
   useAuth: () => ({ tier: 'studio' }),
@@ -54,9 +58,8 @@ const customGlyph = (id, name) => ({
 });
 
 describe('MotifDevice — Edit button', () => {
-  it('CUSTOM row: Edit opens the editor in place (no duplicate)', () => {
+  it('CUSTOM row: Edit forwards (layerId, glyphRef) verbatim to the session-open prop', () => {
     const onEditGlyph = vi.fn();
-    const addCustomGlyph = vi.fn();
     const motif = motifLayer('m1', 'host1', 'cg-7');
     render(
       <Inspector
@@ -65,7 +68,6 @@ describe('MotifDevice — Edit button', () => {
         onUpdateLayer={() => {}}
         onChangeLayerPattern={() => {}}
         customGlyphs={{ 'cg-7': customGlyph('cg-7', 'My Vine') }}
-        addCustomGlyph={addCustomGlyph}
         onEditGlyph={onEditGlyph}
       />
     );
@@ -73,14 +75,13 @@ describe('MotifDevice — Edit button', () => {
     const edit = screen.getByTestId('motif-edit');
     expect(edit).toHaveAttribute('aria-label', 'Edit motif');
     fireEvent.click(edit);
-    expect(onEditGlyph).toHaveBeenCalledWith('cg-7', 'm1');
-    expect(addCustomGlyph).not.toHaveBeenCalled();
+    // (layerId, glyphRef) — matches useMotifEditorSession's open(layerId, glyphRef).
+    expect(onEditGlyph).toHaveBeenCalledWith('m1', 'cg-7');
   });
 
-  it('BUILT-IN row: Edit forks the geometry into a DRAFT and opens it WITHOUT touching the store (D6)', () => {
+  it('BUILT-IN row: Edit forwards (layerId, glyphRef) verbatim — no fork/draft logic and no store writes in Inspector', () => {
     const onEditGlyph = vi.fn();
     const onUpdateLayer = vi.fn();
-    const addCustomGlyph = vi.fn(() => 'cg-new');
     const motif = motifLayer('m1', 'host1', 'leaf'); // built-in
     render(
       <Inspector
@@ -89,7 +90,6 @@ describe('MotifDevice — Edit button', () => {
         onUpdateLayer={onUpdateLayer}
         onChangeLayerPattern={() => {}}
         customGlyphs={{}}
-        addCustomGlyph={addCustomGlyph}
         onEditGlyph={onEditGlyph}
       />
     );
@@ -98,18 +98,12 @@ describe('MotifDevice — Edit button', () => {
     expect(edit).toHaveAttribute('aria-label', 'Duplicate to edit');
     fireEvent.click(edit);
 
-    // The fork is a DRAFT passed to the editor (3rd arg), null id ⇒ create session.
-    // Crucially: NO store write and NO layer rebind happen at open time — that's
-    // deferred to Save, so Cancel discards the fork cleanly (D6).
-    expect(addCustomGlyph).not.toHaveBeenCalled();
+    // The custom-vs-built-in fork decision (and the Draft Glyph construction,
+    // D6) now live entirely in useMotifEditorSession.open — Inspector makes NO
+    // store write and constructs no draft; it only names the (layerId, ref).
     expect(onUpdateLayer).not.toHaveBeenCalled();
     expect(onEditGlyph).toHaveBeenCalledTimes(1);
-    const [id, layerId, draft] = onEditGlyph.mock.calls[0];
-    expect(id).toBeNull();
-    expect(layerId).toBe('m1');
-    expect(draft.tradition).toBe('custom');
-    expect(draft.paths).toEqual(MOTIF_GLYPHS.leaf.paths);
-    expect(draft.root).toEqual({ x: 0, y: 0, angle: 0 });
+    expect(onEditGlyph).toHaveBeenCalledWith('m1', 'leaf');
   });
 
   it('New motif… fires onNewMotif(layerId) for the row (draw-from-scratch)', () => {

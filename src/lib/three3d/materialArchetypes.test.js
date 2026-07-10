@@ -103,8 +103,10 @@ describe('materialArchetypes — per-archetype look invariants (§3.2)', () => {
   it('fluorescent-acrylic is the ONLY archetype whose MARKS glow (markGlow — grooves break TIR like thin edges)', () => {
     const d = ARCHETYPE_DEFAULTS['fluorescent-acrylic'];
     expect(d.markGlow).toBeGreaterThan(0);
-    // Grooves leak less than full open edges: markGlow stays at or under edgeGain.
-    expect(d.markGlow).toBeLessThanOrEqual(d.edgeGain);
+    // A rough groove floor leaks more per unit length than a polished edge, and
+    // thin lines need HDR headroom for the bloom halo — but keep it bounded to
+    // the same order as the edges (sanity rail for calibration).
+    expect(d.markGlow).toBeLessThanOrEqual(d.edgeGain * 2);
     for (const a of Object.values(ARCHETYPE_DEFAULTS)) {
       if (a.archetype !== 'fluorescent-acrylic') {
         expect(a.markGlow, `${a.archetype} marks must not glow`).toBe(0);

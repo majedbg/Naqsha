@@ -55,6 +55,7 @@ const TONE_MAPPING_MODE_NEUTRAL = 8;
  *   intensity?: number,
  *   luminanceThreshold?: number,
  *   mipmapBlur?: boolean,
+ *   radius?: number,
  *   selection?: Array<object>,
  * }} props
  */
@@ -63,6 +64,11 @@ function EmissiveBloom({
   intensity = 1.4,
   luminanceThreshold = 0,
   mipmapBlur = true,
+  // Mipmap-blur spread: how far the glow DIFFUSES past the emitting geometry.
+  // 0.85 (vs the library's tighter default) is sized for the fluorescent groove
+  // glow — a thin engraved line should bleed a soft halo a few line-widths wide,
+  // like real edge-lit engraving (calibration knob, judged vs reference photos).
+  radius = 0.85,
   selection = [],
 }) {
   // multisampling drives MSAA for the WHOLE pass: with an EffectComposer active the
@@ -85,6 +91,7 @@ function EmissiveBloom({
         luminanceThreshold={luminanceThreshold}
         luminanceSmoothing={0.025}
         mipmapBlur={mipmapBlur}
+        radius={radius}
       />
       {/* Close the pass with the SAME Khronos PBR Neutral curve the bare renderer
           uses (tone-mapping parity — see the component doc). Must come AFTER the

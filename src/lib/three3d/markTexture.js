@@ -129,8 +129,19 @@ export function reactionForProcess(process, substrate, appearance = null) {
   const sub = substrate || {};
   const { tint, opacity } = reactionSurface(materialSheetHex(sub), materialCategory(sub), p);
   const markGlow = appearance?.markGlow ?? 0;
-  const emissiveIntensity = markGlow > 0 ? markGlow * GROOVE_ESCAPE[p] : 0;
-  return { process: p, tint, opacity, emissiveIntensity };
+  if (markGlow > 0) {
+    // Fluorescent groove: what escapes is the DYE's emission — the saturated
+    // sheet hue (same color the edges emit), not the whitened frost a plain
+    // acrylic groove shows. Falls back to the frost tint if the appearance
+    // carries no tint (defensive; resolved appearances always do).
+    return {
+      process: p,
+      tint: appearance.tintHex || tint,
+      opacity,
+      emissiveIntensity: markGlow * GROOVE_ESCAPE[p],
+    };
+  }
+  return { process: p, tint, opacity, emissiveIntensity: 0 };
 }
 
 // How much of the TIR-trapped re-emission escapes per process, as a fraction of

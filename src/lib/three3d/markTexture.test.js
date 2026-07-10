@@ -144,7 +144,14 @@ describe('reactionForProcess — process → physical Reaction surface (ADR 0003
 
 describe('reactionForProcess — fluorescent groove glow (markGlow → emissiveIntensity)', () => {
   const SUB = { kind: 'acrylic', color: '#e6e954' };
-  const FLUOR = { archetype: 'fluorescent-acrylic', markGlow: 1.2 };
+  const FLUOR = { archetype: 'fluorescent-acrylic', markGlow: 1.2, tintHex: '#e6e954' };
+
+  it('glowing grooves carry the DYE tint (the saturated sheet hue the edges emit), not the whitened frost', () => {
+    const glowing = reactionForProcess('engrave', SUB, FLUOR);
+    expect(glowing.tint.toLowerCase()).toBe('#e6e954');
+    const frosted = reactionForProcess('engrave', SUB);
+    expect(frosted.tint.toLowerCase()).not.toBe('#e6e954'); // brightened frost, not the raw hue
+  });
 
   it('lights grooves on a fluorescent appearance: cut (kerf walls ≈ edges) ≥ engrave > score, all > 0', () => {
     const cut = reactionForProcess('cut', SUB, FLUOR).emissiveIntensity;

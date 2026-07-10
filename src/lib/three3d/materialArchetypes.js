@@ -80,7 +80,11 @@ export const ARCHETYPE_DEFAULTS = Object.freeze({
     ior: 1.49,
     edgeGain: 2.0,
     faceGlow: 0.15,
-    markGlow: 1.2,
+    // Above edgeGain deliberately: a deep engraving's rough floor + walls leak
+    // MORE per unit length than a polished cut edge, and thin lines need HDR
+    // headroom for the bloom halo to diffuse past the line (user-observed on
+    // physical stock: grooves read "quite glowy", brighter than faces suggest).
+    markGlow: 2.6,
     clearcoat: 0,
     texturePath: null,
   }),

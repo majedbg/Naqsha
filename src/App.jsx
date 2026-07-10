@@ -5,6 +5,7 @@ import StudioRoute from './pages/StudioRoute';
 import AuthCallback from './pages/AuthCallback';
 import ShareView from './pages/ShareView';
 import AdminPage from './pages/AdminPage';
+import EvaluationsPage from './pages/EvaluationsPage';
 import OrgRoute from './pages/org/OrgRoute';
 import OrgSubmitPage from './pages/org/OrgSubmitPage';
 import OrgCreatePage from './pages/org/OrgCreatePage';
@@ -32,6 +33,7 @@ export default function App() {
           <Route path="/auth/callback" element={<AuthCallback />} />
           <Route path="/share/:token" element={<ShareView />} />
           <Route path="/admin" element={<AdminPage />} />
+          <Route path="/evaluations" element={<EvaluationsPage />} />
           <Route path="/o/:slug" element={<OrgRoute />}>
             <Route index element={<OrgSubmitPage />} />
             <Route path="create" element={<OrgCreatePage />} />

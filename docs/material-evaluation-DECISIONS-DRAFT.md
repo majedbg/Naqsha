@@ -58,6 +58,11 @@ composer went on-demand, because `SnapshotCapture`'s positive-priority
 uses the same `SnapshotCapture` pathway, so **in-app captures may come out
 black until that fix lands**. Unit tests can't see this (WebGL). When the
 harness merges, expect a trivial adjacent-lines merge in `Scene3D.jsx`.
+*Empirically confirmed during the overnight browser run:* in a headless Chrome
+against this branch, the 3D viewport does not present and the Evaluate capture
+comes back as a black PNG (see `material-eval-2-dialog-sidebyside.png`). The
+submission flow itself is unaffected — only the pixels are — and the fix is
+already written on the harness's side.
 
 ## D3 — Feature shape: material-vs-render only, with a `kind` seam
 

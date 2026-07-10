@@ -30,3 +30,4 @@ scripts-out
 *.sw?
 .vercel
 .env*.local
+docs/material-references/

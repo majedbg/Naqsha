@@ -190,22 +190,25 @@ function useSvgTexture(svg) {
  * NOTE: the raycast hit area is the full plane rectangle (the texture's transparent
  * field is not alpha-tested) — acceptable for an inspection affordance; ribbons
  * give the precise per-stroke hit where the D6 route allows them.
- * @param {{ svg:string, process:string, opacity:number, size:[number,number],
- *           z:number, onHoverProcess?:(p:string|null)=>void }} props
+ * @param {{ svg:string, process:string, opacity:number, glow?:number,
+ *           glowDrive?:number, size:[number,number], z:number,
+ *           onHoverProcess?:(p:string|null)=>void }} props
  */
-function MarkPlane({ svg, process, opacity, size, z, onHoverProcess }) {
+function MarkPlane({ svg, process, opacity, glow = 0, glowDrive = 1, size, z, onHoverProcess }) {
   const texture = useSvgTexture(svg);
   const [hovered, setHovered] = useState(false);
-  // Bloom membership is HOVER-ONLY (ADR 0003 #5): attaching/detaching the stable
-  // ref callback registers/unregisters this mesh, which is what mounts/unmounts
-  // the on-demand composer. Idle marks are not bloom members.
+  // Bloom membership (ADR 0003 #5): hover annotation, OR a genuinely glowing
+  // fluorescent groove (reaction emissiveIntensity > 0 — the TIR-escape glow).
+  // Attaching/detaching the stable ref callback registers/unregisters this mesh,
+  // which is what mounts/unmounts the on-demand composer.
   const bloomRef = useBloomRef();
+  const glowing = glow > 0;
   const [w = 0, h = 0] = size || [];
   if (!texture || !w || !h) return null;
   const annotation = PROCESS_ANNOTATION_HEX[process] || '#ffffff';
   return (
     <mesh
-      ref={hovered ? bloomRef : null}
+      ref={hovered || glowing ? bloomRef : null}
       position={[0, 0, z]}
       onPointerOver={(e) => {
         e.stopPropagation();
@@ -225,9 +228,13 @@ function MarkPlane({ svg, process, opacity, size, z, onHoverProcess }) {
         <meshStandardMaterial
           color="#ffffff"
           map={texture}
-          emissive={hovered ? annotation : NO_EMISSIVE}
+          // Idle glow (fluorescent grooves only): white emissive × the tinted
+          // emissiveMap = the dye color at `glow × glowDrive`. glowDrive is the
+          // runtime animation seam (mic-volume sync etc.) — a live uniform,
+          // per-frame updatable with zero recompile. Hover annotation overrides.
+          emissive={hovered ? annotation : glowing ? '#ffffff' : NO_EMISSIVE}
           emissiveMap={texture}
-          emissiveIntensity={hovered ? HOVER_EMISSIVE : 0}
+          emissiveIntensity={hovered ? HOVER_EMISSIVE : glowing ? glow * glowDrive : 0}
           transparent
           opacity={opacity ?? 1}
           depthWrite={false}
@@ -251,10 +258,11 @@ function MarkPlane({ svg, process, opacity, size, z, onHoverProcess }) {
  * the process-color annotation. If the geometry is null (degenerate SVG), render
  * `fallback` (the texture plane) so marks never vanish.
  * @param {{ svg:string, tint:string, process:string, opacity:number,
- *           size:[number,number], z:number, fallback:React.ReactNode,
+ *           glow?:number, glowDrive?:number, size:[number,number], z:number,
+ *           fallback:React.ReactNode,
  *           onHoverProcess?:(p:string|null)=>void }} props
  */
-function RibbonMesh({ svg, tint, process, opacity, size, z, fallback, onHoverProcess }) {
+function RibbonMesh({ svg, tint, process, opacity, glow = 0, glowDrive = 1, size, z, fallback, onHoverProcess }) {
   const [w = 0, h = 0] = size || [];
   const geometry = useMemo(
     () => (svg && w && h ? buildRibbonGeometry(svg, { width: w, height: h }) : null),
@@ -265,18 +273,20 @@ function RibbonMesh({ svg, tint, process, opacity, size, z, fallback, onHoverPro
   // viewBox-cropped texture raster, carries any path points that spill past the
   // canvas (e.g. spirograph loops larger than the sheet).
   const clippingPlanes = useSheetClipPlanes(w, h);
-  // Hover-only bloom membership (see MarkPlane) — drives the on-demand composer.
+  // Bloom membership: hover annotation OR fluorescent groove glow (see MarkPlane).
   const bloomRef = useBloomRef();
+  const glowing = glow > 0;
   // Ribbon geometry IS uploaded to the GPU once meshed → dispose on change/unmount.
   useEffect(() => () => geometry?.dispose?.(), [geometry]);
   if (!geometry) return fallback ?? null;
   const annotation = PROCESS_ANNOTATION_HEX[process] || '#ffffff';
   return (
-    /* Matte diffuse stroke in the reaction tint (frost/kerf/char) — no idle
-       emissive, normal tone mapping (ADR 0003). DoubleSide because the SVG→world
-       Y-flip reverses winding. */
+    /* Matte diffuse stroke in the reaction tint (frost/kerf/char) — idle emissive
+       ONLY for fluorescent grooves (TIR-escape glow in the dye tint), normal tone
+       mapping (ADR 0003). DoubleSide because the SVG→world Y-flip reverses
+       winding. */
     <mesh
-      ref={hovered ? bloomRef : null}
+      ref={hovered || glowing ? bloomRef : null}
       position={[0, 0, z]}
       geometry={geometry}
       onPointerOver={(e) => {
@@ -291,8 +301,8 @@ function RibbonMesh({ svg, tint, process, opacity, size, z, fallback, onHoverPro
     >
         <meshStandardMaterial
           color={tint || '#ffffff'}
-          emissive={hovered ? annotation : NO_EMISSIVE}
-          emissiveIntensity={hovered ? HOVER_EMISSIVE : 0}
+          emissive={hovered ? annotation : glowing ? tint || '#ffffff' : NO_EMISSIVE}
+          emissiveIntensity={hovered ? HOVER_EMISSIVE : glowing ? glow * glowDrive : 0}
           transparent
           opacity={opacity ?? 1}
           side={THREE.DoubleSide}
@@ -328,11 +338,16 @@ function deviceProfile() {
  * planes (S5) per the D6 route; ribbon panels fall back to texture per-process when a
  * mark SVG yields no geometry.
  *
+ * `glowDrive` is the runtime multiplier over each mark's reaction emissive
+ * (fluorescent groove glow) — the animation seam: drive it from any live signal
+ * (mic volume, beat clock) and every glowing groove follows, uniform-only.
+ *
  * @param {{ specs?: import('../../lib/three3d/sheetSpecs.js').SheetSpec[],
- *           marksByPanel?: Record<string, Array<{process:string,tint:string,opacity:number,svg:string}>>,
+ *           marksByPanel?: Record<string, Array<{process:string,tint:string,opacity:number,emissiveIntensity?:number,svg:string}>>,
+ *           glowDrive?: number,
  *           onHoverProcess?: (process: string|null) => void }} props
  */
-export default function Marks({ specs = [], marksByPanel = {}, onHoverProcess = null }) {
+export default function Marks({ specs = [], marksByPanel = {}, glowDrive = 1, onHoverProcess = null }) {
   const routes = useMemo(
     () => routePanelRenderModes(marksByPanel, deviceProfile()),
     [marksByPanel],
@@ -350,11 +365,14 @@ export default function Marks({ specs = [], marksByPanel = {}, onHoverProcess = 
             // Lift clear of the face (SURFACE_LIFT), then a tiny per-process step so
             // stacked processes keep a stable front-to-back order (cut/engrave/score).
             const z = front + SURFACE_LIFT + Z_EPSILON * i;
+            const glow = m.emissiveIntensity ?? 0;
             const plane = (
               <MarkPlane
                 svg={m.svg}
                 process={m.process}
                 opacity={m.opacity}
+                glow={glow}
+                glowDrive={glowDrive}
                 size={spec.size}
                 z={z}
                 onHoverProcess={onHoverProcess}
@@ -367,6 +385,8 @@ export default function Marks({ specs = [], marksByPanel = {}, onHoverProcess = 
                 tint={m.tint}
                 process={m.process}
                 opacity={m.opacity}
+                glow={glow}
+                glowDrive={glowDrive}
                 size={spec.size}
                 z={z}
                 fallback={plane}
@@ -378,6 +398,8 @@ export default function Marks({ specs = [], marksByPanel = {}, onHoverProcess = 
                 svg={m.svg}
                 process={m.process}
                 opacity={m.opacity}
+                glow={glow}
+                glowDrive={glowDrive}
                 size={spec.size}
                 z={z}
                 onHoverProcess={onHoverProcess}

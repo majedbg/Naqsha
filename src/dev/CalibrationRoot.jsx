@@ -20,6 +20,7 @@ import { useMemo } from 'react';
 import Canvas3DHost from '../components/canvas3d/Canvas3DHost.jsx';
 import { DEFAULT_PREVIEW_MATERIALS } from '../lib/materialPreview.js';
 import { reactionForProcess } from '../lib/three3d/markTexture.js';
+import { resolveAppearance } from '../lib/three3d/resolveAppearance.js';
 import { PREVIEW3D_STORAGE_KEY } from '../lib/three3d/preview3dPersistence.js';
 import { isEnvironmentId, DEFAULT_ENVIRONMENT_ID } from '../lib/three3d/hdriEnvironments.js';
 
@@ -94,11 +95,18 @@ function substrateFor(material) {
   };
 }
 
-/** Per-process mark layers via the REAL reaction core (substrate-aware tints). */
-function buildSpecimenMarks(substrate) {
+/** Per-process mark layers via the REAL reaction core (substrate-aware tints;
+ *  appearance-aware fluorescent groove glow). */
+function buildSpecimenMarks(substrate, appearance) {
   return SPECIMEN_PROCESSES.map((process) => {
-    const { tint, opacity } = reactionForProcess(process, substrate);
-    return { process, tint, opacity, svg: specimenSvg(tint, SHAPES_BY_PROCESS[process]) };
+    const { tint, opacity, emissiveIntensity } = reactionForProcess(process, substrate, appearance);
+    return {
+      process,
+      tint,
+      opacity,
+      emissiveIntensity,
+      svg: specimenSvg(tint, SHAPES_BY_PROCESS[process]),
+    };
   });
 }
 
@@ -143,7 +151,7 @@ export default function CalibrationRoot({ materialId, sceneId }) {
         layers: [],
       },
       boundsMm: { width: SPECIMEN_W, height: SPECIMEN_H },
-      marksByPanel: { [PANEL_ID]: buildSpecimenMarks(substrate) },
+      marksByPanel: { [PANEL_ID]: buildSpecimenMarks(substrate, resolveAppearance(material)) },
     };
   }, [material]);
 

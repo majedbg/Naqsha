@@ -29,6 +29,7 @@ import Canvas3DHost from "./canvas3d/Canvas3DHost";
 // 3D Surface-A texture path. Imports only 2D-side modules (svgExport/operations/
 // panels), so referencing it here keeps three.js out of the 2D bundle.
 import { buildPanelMarkSVGs } from "../lib/three3d/markTexture";
+import { resolveAppearance } from "../lib/three3d/resolveAppearance";
 // Three-free pure resolver (S9): the guide's ACTIVE modulation-target descriptors
 // for the Surface-B drape. Imports only 2D-side field libs, so it keeps three.js
 // out of the 2D bundle.
@@ -277,8 +278,11 @@ export default function RightPanel({
       canvasW,
       canvasH,
       svgOpts: { font: textFont },
+      // Material-lens appearance: lets the reaction layer light fluorescent
+      // grooves (markGlow → emissiveIntensity); null lens → no glow anywhere.
+      appearance: selectedMaterial ? resolveAppearance(selectedMaterial) : null,
     });
-  }, [threeDSnapshot, patternInstances, canvasW, canvasH, textFont]);
+  }, [threeDSnapshot, patternInstances, canvasW, canvasH, textFont, selectedMaterial]);
 
   // Surface B (S8): the relief source field. Resolved 2D-side from the focus
   // guide layer via fieldForLayer (three-free; LRU-cached internally so this is

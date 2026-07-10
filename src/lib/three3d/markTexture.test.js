@@ -142,6 +142,34 @@ describe('reactionForProcess — process → physical Reaction surface (ADR 0003
   });
 });
 
+describe('reactionForProcess — fluorescent groove glow (markGlow → emissiveIntensity)', () => {
+  const SUB = { kind: 'acrylic', color: '#e6e954' };
+  const FLUOR = { archetype: 'fluorescent-acrylic', markGlow: 1.2 };
+
+  it('lights grooves on a fluorescent appearance: cut (kerf walls ≈ edges) ≥ engrave > score, all > 0', () => {
+    const cut = reactionForProcess('cut', SUB, FLUOR).emissiveIntensity;
+    const engrave = reactionForProcess('engrave', SUB, FLUOR).emissiveIntensity;
+    const score = reactionForProcess('score', SUB, FLUOR).emissiveIntensity;
+    expect(cut).toBeCloseTo(1.2, 5); // full escape: kerf walls are edge surfaces
+    expect(cut).toBeGreaterThanOrEqual(engrave);
+    expect(engrave).toBeGreaterThan(score);
+    expect(score).toBeGreaterThan(0);
+  });
+
+  it('stays dark without a fluorescent appearance: no appearance, markGlow 0, and pen ink all → 0', () => {
+    expect(reactionForProcess('engrave', SUB).emissiveIntensity).toBe(0);
+    expect(reactionForProcess('engrave', SUB, null).emissiveIntensity).toBe(0);
+    expect(reactionForProcess('engrave', SUB, { markGlow: 0 }).emissiveIntensity).toBe(0);
+    expect(reactionForProcess('pen', SUB, FLUOR).emissiveIntensity).toBe(0);
+  });
+
+  it('scales linearly with markGlow (the calibration + glow-drive contract)', () => {
+    const at1 = reactionForProcess('engrave', SUB, { markGlow: 1 }).emissiveIntensity;
+    const at2 = reactionForProcess('engrave', SUB, { markGlow: 2 }).emissiveIntensity;
+    expect(at2).toBeCloseTo(at1 * 2, 5);
+  });
+});
+
 describe('reactionForProcess — substrate-aware reaction (3D mark surface)', () => {
   it('frosts a score/engrave on an ACRYLIC substrate toward a brightened hue of the\n      sheet (not convention blue)', () => {
     const sub = { kind: 'acrylic', color: '#E6E954' };

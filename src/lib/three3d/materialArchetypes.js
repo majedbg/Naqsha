@@ -35,6 +35,13 @@
 //                   the body re-emission of fluorescent stock (LSC literature:
 //                   most re-emission is TIR-guided to the edges, a little escapes
 //                   the faces). Fluorescent is the ONLY entry > 0.
+//   markGlow      — 0..~3 emissive strength of MARKS on the sheet: a groove/kerf
+//                   roughens the surface and breaks TIR, so the trapped dye
+//                   re-emission ESCAPES there — engraved lines glow like thin
+//                   edges (the edge-lit-sign mechanism). Bloomed, scaled per
+//                   process depth in the reaction layer, and multiplied by the
+//                   runtime glow-drive seam (Marks.jsx) for future animation
+//                   (e.g. mic-volume sync). Fluorescent is the ONLY entry > 0.
 //   texturePath   — null | '/textures/...' (reserved; only wood may set it later, L6)
 //   clearcoat     — 0..1 (pearlescent's reserved nacre term; 0 elsewhere)
 //
@@ -73,6 +80,7 @@ export const ARCHETYPE_DEFAULTS = Object.freeze({
     ior: 1.49,
     edgeGain: 2.0,
     faceGlow: 0.15,
+    markGlow: 1.2,
     clearcoat: 0,
     texturePath: null,
   }),
@@ -88,6 +96,7 @@ export const ARCHETYPE_DEFAULTS = Object.freeze({
     ior: 1.49,
     edgeGain: 0,
     faceGlow: 0,
+    markGlow: 0,
     clearcoat: 0,
     texturePath: null,
   }),
@@ -102,6 +111,7 @@ export const ARCHETYPE_DEFAULTS = Object.freeze({
     ior: 1.49,
     edgeGain: 0,
     faceGlow: 0,
+    markGlow: 0,
     clearcoat: 0,
     texturePath: null,
   }),
@@ -115,6 +125,7 @@ export const ARCHETYPE_DEFAULTS = Object.freeze({
     ior: 1.49,
     edgeGain: 0,
     faceGlow: 0,
+    markGlow: 0,
     clearcoat: 0,
     texturePath: null,
   }),
@@ -129,6 +140,7 @@ export const ARCHETYPE_DEFAULTS = Object.freeze({
     ior: 1.49,
     edgeGain: 0,
     faceGlow: 0,
+    markGlow: 0,
     clearcoat: 0.6,
     texturePath: null,
   }),
@@ -142,6 +154,7 @@ export const ARCHETYPE_DEFAULTS = Object.freeze({
     ior: 1.49,
     edgeGain: 0,
     faceGlow: 0,
+    markGlow: 0,
     clearcoat: 0,
     texturePath: null,
   }),
@@ -156,6 +169,7 @@ export const ARCHETYPE_DEFAULTS = Object.freeze({
     ior: 1.49,
     edgeGain: 0,
     faceGlow: 0,
+    markGlow: 0,
     clearcoat: 0,
     texturePath: null,
   }),
@@ -170,6 +184,7 @@ export const ARCHETYPE_DEFAULTS = Object.freeze({
     ior: 1.49,
     edgeGain: 0,
     faceGlow: 0,
+    markGlow: 0,
     clearcoat: 0,
     texturePath: null,
   }),
@@ -203,6 +218,7 @@ export function appearanceToUniforms(params = {}) {
     uIor: params.ior,
     uEdgeGain: params.edgeGain,
     uFaceGlow: params.faceGlow,
+    uMarkGlow: params.markGlow,
     uClearcoat: params.clearcoat,
   };
 }

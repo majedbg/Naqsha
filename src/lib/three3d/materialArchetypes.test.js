@@ -100,6 +100,18 @@ describe('materialArchetypes — per-archetype look invariants (§3.2)', () => {
     }
   });
 
+  it('fluorescent-acrylic is the ONLY archetype whose MARKS glow (markGlow — grooves break TIR like thin edges)', () => {
+    const d = ARCHETYPE_DEFAULTS['fluorescent-acrylic'];
+    expect(d.markGlow).toBeGreaterThan(0);
+    // Grooves leak less than full open edges: markGlow stays at or under edgeGain.
+    expect(d.markGlow).toBeLessThanOrEqual(d.edgeGain);
+    for (const a of Object.values(ARCHETYPE_DEFAULTS)) {
+      if (a.archetype !== 'fluorescent-acrylic') {
+        expect(a.markGlow, `${a.archetype} marks must not glow`).toBe(0);
+      }
+    }
+  });
+
   it('clear-acrylic matches measured cast PMMA: transmission 0.92–0.95, roughness ≈0.02, IOR 1.49 (ADR 0003)', () => {
     const d = ARCHETYPE_DEFAULTS['clear-acrylic'];
     expect(d.transmission).toBeGreaterThanOrEqual(0.92);
@@ -248,6 +260,7 @@ describe('appearanceToUniforms — registry→shader mapping helper (§3.2)', ()
     expect(u.uIor).toBe(params.ior);
     expect(u.uEdgeGain).toBe(params.edgeGain);
     expect(u.uFaceGlow).toBe(params.faceGlow);
+    expect(u.uMarkGlow).toBe(params.markGlow);
     expect(u).not.toHaveProperty('uRimGain'); // shell term removed (ADR 0003)
     expect(u.uTint).toBe(params.tintHex);
   });

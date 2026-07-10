@@ -108,19 +108,35 @@ export function shouldUseTextureMode({ pathCount = 0, pointCount = 0, isMobile =
  *
  * The returned `opacity` is the mark surface's presence (REACTION_OPACITY): the
  * depth order cut > engrave > score is carried by opacity + mix strength, not by
- * any emissive axis (marks no longer glow — see Marks.jsx).
+ * any emissive axis — with ONE exception. On FLUORESCENT stock (the appearance's
+ * markGlow > 0), a groove/kerf breaks TIR and the trapped dye re-emission escapes
+ * there, so marks genuinely glow like thin edges (the edge-lit-sign mechanism;
+ * same ADR 0003 fidelity exception as edgeGain). `emissiveIntensity` carries that:
+ * markGlow × GROOVE_ESCAPE[process] — 0 for every non-fluorescent appearance, for
+ * pen (ink sits ON the surface, no groove), and when no appearance is passed.
  *
  * @param {string|null|undefined} process
  * @param {{ kind?:string, color?:string }|null} [substrate]
- * @returns {{ process:string, tint:string, opacity:number }}
+ * @param {{ markGlow?:number }|null} [appearance] resolved AppearanceParams of the
+ *   active material lens (materialArchetypes) — optional; only markGlow is read.
+ * @returns {{ process:string, tint:string, opacity:number, emissiveIntensity:number }}
  */
-export function reactionForProcess(process, substrate) {
+export function reactionForProcess(process, substrate, appearance = null) {
   const p = PROCESS_ORDER.includes(process) ? process : DEFAULT_PROCESS;
-  if (p === 'pen') return { process: p, tint: PEN_INK_TINT, opacity: REACTION_OPACITY.pen };
+  if (p === 'pen') {
+    return { process: p, tint: PEN_INK_TINT, opacity: REACTION_OPACITY.pen, emissiveIntensity: 0 };
+  }
   const sub = substrate || {};
   const { tint, opacity } = reactionSurface(materialSheetHex(sub), materialCategory(sub), p);
-  return { process: p, tint, opacity };
+  const markGlow = appearance?.markGlow ?? 0;
+  const emissiveIntensity = markGlow > 0 ? markGlow * GROOVE_ESCAPE[p] : 0;
+  return { process: p, tint, opacity, emissiveIntensity };
 }
+
+// How much of the TIR-trapped re-emission escapes per process, as a fraction of
+// the archetype's markGlow: a cut's kerf walls are full edge surfaces (1); an
+// engraved area is wide and rough (0.85); a score is a thin shallow groove (0.5).
+const GROOVE_ESCAPE = Object.freeze({ cut: 1, engrave: 0.85, score: 0.5 });
 
 // Strip buildAllLayersSVG's hardcoded white background so the rasterized texture
 // has a TRANSPARENT field — the mark plane then shows/blooms only marks (D12).
@@ -221,6 +237,7 @@ export function buildPanelMarkSVGs({
   canvasW,
   canvasH,
   svgOpts = {},
+  appearance = null,
 } = {}) {
   const instances = patternInstances || {};
   const visibleLayers = effectiveVisibleLayers(layers, panels);
@@ -246,16 +263,17 @@ export function buildPanelMarkSVGs({
 
     out[p.id] = PROCESS_ORDER.filter((proc) => byProcess.has(proc)).map((process) => {
       const { layers: groupLayers } = byProcess.get(process);
-      // One substrate-aware call: tint (frost/kerf/char) and opacity (presence)
-      // stay consistent for this panel's stock (L3, ADR 0003).
-      const { tint, opacity } = reactionForProcess(process, p.substrate);
+      // One substrate-aware call: tint (frost/kerf/char), opacity (presence) and
+      // emissiveIntensity (fluorescent groove glow, 0 elsewhere) stay consistent
+      // for this panel's stock (L3, ADR 0003).
+      const { tint, opacity, emissiveIntensity } = reactionForProcess(process, p.substrate, appearance);
       // Stroke every layer in this group with the substrate-aware reaction tint;
       // neutralize any layer background so it can't bake a solid block (D12).
       const tinted = groupLayers.map((l) => ({ ...l, color: tint, bgOpacity: 0 }));
       const svg = toTransparentBg(
         buildAllLayersSVG(tinted, instances, canvasW, canvasH, false, svgOpts),
       );
-      return { process, tint, opacity, svg };
+      return { process, tint, opacity, emissiveIntensity, svg };
     });
   }
   return out;

@@ -37,17 +37,17 @@ import WoodGrain from './WoodGrain.jsx';
  * one of the triggers that mounts the on-demand composer (Scene3D, #5).
  *
  * GHOST-TRANSPARENT ORBIT FALLBACK (ADR 0003 #7): while `isMoving` (CameraRig →
- * Scene3D), transmissive slabs drop `transmission` to 0 and render as a plain
- * transparent physical surface (opacity GHOST_OPACITY) instead — the motion gate
- * exists because screen-space refraction re-images the marks into a tiling grid at
- * grazing orbit angles, and a NON-transmissive transparent material avoids that
- * artifact without flashing an opaque white card (the previous swap). The MTM
- * stays mounted and only its uniforms/flags toggle (transmission, transparent,
- * opacity — MTM extends MeshPhysicalMaterial, so `transmission: 0 + transparent`
- * IS the "plain transparent MeshPhysicalMaterial" of the decision, minus a
- * material swap), which keeps the transition smooth: no shader recompile beyond
- * the first toggle, no FBO churn. The edge faces ghost in step so a solid frame
- * never hangs on a see-through sheet.
+ * Scene3D), the MTM face mesh hides and a coincident GHOST TWIN face mesh shows —
+ * a real transparent meshPhysicalMaterial (transmission 0, opacity GHOST_OPACITY).
+ * The motion gate exists because screen-space refraction re-images the marks into
+ * a tiling grid at grazing orbit angles; a NON-transmissive transparent material
+ * avoids that artifact without flashing an opaque card. The twin (not uniform
+ * toggles on the mounted MTM, the first attempt) is load-bearing: drei's MTM
+ * fragment override does not honor `opacity` once its transmission path is
+ * bypassed, so the uniform-toggle ghost rendered as SOLID diffuse — visibly
+ * opaque sheets during orbit on saturated tints (fluorescent). Both twins stay
+ * mounted (visibility flip only — no recompile, no FBO churn); the edge faces
+ * ghost in step so a solid frame never hangs on a see-through sheet.
  *
  * @param {{ specs?: import('../../lib/three3d/sheetSpecs.js').SheetSpec[],
  *           appearance?: import('../../lib/three3d/resolveAppearance.js').AppearanceParams|null,
@@ -86,8 +86,10 @@ function TransmissiveSlab({ spec, mat, edge, isMoving }) {
   const emissiveEdges = !!edge.emissive && edge.emissiveIntensity > 0;
   return (
     <group>
-      {/* Front/back faces — the transmission material. */}
-      <mesh position={[0, 0, spec.zOffset]} castShadow receiveShadow>
+      {/* Front/back faces — the settled transmission material. Hidden (not
+          unmounted) during motion so its compiled program + shared buffer hookup
+          survive the orbit. */}
+      <mesh position={[0, 0, spec.zOffset]} castShadow receiveShadow visible={!isMoving}>
         {/* boxGeometry args = [x=width, y=height, z=thickness] */}
         <boxGeometry args={[w, h, spec.thickness]} />
         <HiddenSlots slots={SIDE_SLOTS} />
@@ -103,12 +105,11 @@ function TransmissiveSlab({ spec, mat, edge, isMoving }) {
             ior={mat.ior}
             roughness={mat.roughness}
             thickness={spec.thickness}
-            // Ghost-transparent orbit fallback (#7): refraction OFF + a thin
-            // plain-transparent surface during motion; the archetype's real
-            // transmission returns the instant the camera settles.
-            transmission={isMoving ? 0 : mat.transmission}
-            transparent={isMoving}
-            opacity={isMoving ? GHOST_OPACITY : 1}
+            transmission={mat.transmission}
+            // Fluorescent body re-emission (faceGlow, LSC model): faint, tinted,
+            // NON-bloomed — the face mesh never joins the bloom selection.
+            emissive={mat.faceGlow > 0 ? mat.color : NO_EMISSIVE}
+            emissiveIntensity={mat.faceGlow ?? 0}
             samples={8}
             // The settled-glass tuning (see git history for the full derivation):
             // samples=8 keeps the refraction blur from banding; chromatic
@@ -116,6 +117,25 @@ function TransmissiveSlab({ spec, mat, edge, isMoving }) {
             // don't fringe into colored tiles.
             anisotropy={0.1}
             chromaticAberration={0.002}
+          />
+        ))}
+      </mesh>
+      {/* Ghost twin faces — the orbit fallback (#7). A REAL transparent
+          meshPhysicalMaterial: drei's MTM ignores `opacity` when its transmission
+          path is off, so the ghost must be its own material, not MTM uniforms. */}
+      <mesh position={[0, 0, spec.zOffset]} visible={isMoving}>
+        <boxGeometry args={[w, h, spec.thickness]} />
+        <HiddenSlots slots={SIDE_SLOTS} />
+        {FACE_SLOTS.map((i) => (
+          <meshPhysicalMaterial
+            key={i}
+            attach={`material-${i}`}
+            color={mat.color}
+            ior={mat.ior}
+            roughness={mat.roughness}
+            transparent
+            opacity={GHOST_OPACITY}
+            depthWrite={false}
           />
         ))}
       </mesh>

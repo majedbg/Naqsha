@@ -14,6 +14,13 @@ import { computeZoomToFit } from '../../lib/three3d/cameraFit.js';
 // instant the glide actually stops, not a beat too early (which would flash the
 // tiling) nor too late (a sticky opaque slab).
 const SETTLE_MS = 160;
+// The damping tail decays exponentially, so 'change' events keep firing for a
+// second-plus of visually STILL camera — each one re-arming the settle timer and
+// holding the ghost long after the user perceives the orbit as over. Damped
+// frames that move the camera less than this fraction of the camera-to-target
+// distance are imperceptible (and can't produce visible refraction tiling), so
+// they no longer count as motion and the settle timer runs out on schedule.
+const MOTION_EPS_FRACTION = 1e-3;
 
 /**
  * Shared camera rig (spec D4): a damped drei OrbitControls plus zoom-to-fit /
@@ -66,11 +73,23 @@ export default function CameraRig({ fitBox = null, resetSignal = 0, onInteractin
 
   // Any controls 'change' (drag, pan, zoom, or a damped frame) marks motion active
   // and re-arms the settle timer; when changes stop for SETTLE_MS we go idle.
+  // Sub-perceptual damped-tail frames (< MOTION_EPS_FRACTION of the view distance
+  // since the last counted event) don't re-arm — they'd otherwise hold the ghost
+  // for the whole exponential tail after the user has let go.
+  const lastCounted = useRef(null);
   const handleControlsChange = useCallback(() => {
+    const target = controls.current?.target;
+    if (target && camera) {
+      const { x, y, z } = camera.position;
+      const prev = lastCounted.current;
+      const eps = MOTION_EPS_FRACTION * camera.position.distanceTo(target);
+      if (prev && Math.hypot(x - prev.x, y - prev.y, z - prev.z) < eps) return;
+      lastCounted.current = { x, y, z };
+    }
     setInteracting(true);
     if (settleTimer.current) clearTimeout(settleTimer.current);
     settleTimer.current = setTimeout(() => setInteracting(false), SETTLE_MS);
-  }, [setInteracting]);
+  }, [setInteracting, camera]);
 
   useEffect(
     () => () => {

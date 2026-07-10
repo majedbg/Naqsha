@@ -31,6 +31,10 @@
 //                   fluorescent archetype is the ONLY entry > 0. Non-fluorescent
 //                   acrylic edge brightness is the non-emissive edge-face material
 //                   (edgeFace.js), not a gain here.
+//   faceGlow      — 0..~0.5 FAINT emissive on the FACE material (non-bloomed),
+//                   the body re-emission of fluorescent stock (LSC literature:
+//                   most re-emission is TIR-guided to the edges, a little escapes
+//                   the faces). Fluorescent is the ONLY entry > 0.
 //   texturePath   — null | '/textures/...' (reserved; only wood may set it later, L6)
 //   clearcoat     — 0..1 (pearlescent's reserved nacre term; 0 elsewhere)
 //
@@ -54,14 +58,21 @@ export const ARCHETYPE_DEFAULTS = Object.freeze({
   // not stylization (ADR 0003 exception). edgeGain 2.0 is provisional pending
   // reference-photo calibration; the old 3.0/6.0 values were tuned for the removed
   // whole-selection bloom pipeline and blew out under it.
+  // Optics per the luminescent-solar-concentrator literature (Wilson 2009,
+  // perylene-doped PMMA): the HOST stays as transparent as clear cast (~92%
+  // outside the dye's narrow absorption band) — the sheet reads as tinted
+  // glass, NOT opaque paint. The dye's re-emission is guided by TIR to the cut
+  // faces (edgeGain), with only a FAINT body glow on the faces (faceGlow,
+  // non-bloomed) standing in for re-emission escaping the faces.
   'fluorescent-acrylic': Object.freeze({
     archetype: 'fluorescent-acrylic',
     tintHex: '#e6e954',
-    transmission: 0.4,
-    roughness: 0.12,
+    transmission: 0.9,
+    roughness: 0.03,
     metalness: 0,
     ior: 1.49,
     edgeGain: 2.0,
+    faceGlow: 0.15,
     clearcoat: 0,
     texturePath: null,
   }),
@@ -76,6 +87,7 @@ export const ARCHETYPE_DEFAULTS = Object.freeze({
     metalness: 0,
     ior: 1.49,
     edgeGain: 0,
+    faceGlow: 0,
     clearcoat: 0,
     texturePath: null,
   }),
@@ -89,6 +101,7 @@ export const ARCHETYPE_DEFAULTS = Object.freeze({
     metalness: 0,
     ior: 1.49,
     edgeGain: 0,
+    faceGlow: 0,
     clearcoat: 0,
     texturePath: null,
   }),
@@ -101,6 +114,7 @@ export const ARCHETYPE_DEFAULTS = Object.freeze({
     metalness: 0,
     ior: 1.49,
     edgeGain: 0,
+    faceGlow: 0,
     clearcoat: 0,
     texturePath: null,
   }),
@@ -114,6 +128,7 @@ export const ARCHETYPE_DEFAULTS = Object.freeze({
     metalness: 0.2,
     ior: 1.49,
     edgeGain: 0,
+    faceGlow: 0,
     clearcoat: 0.6,
     texturePath: null,
   }),
@@ -126,6 +141,7 @@ export const ARCHETYPE_DEFAULTS = Object.freeze({
     metalness: 1.0,
     ior: 1.49,
     edgeGain: 0,
+    faceGlow: 0,
     clearcoat: 0,
     texturePath: null,
   }),
@@ -139,6 +155,7 @@ export const ARCHETYPE_DEFAULTS = Object.freeze({
     metalness: 0,
     ior: 1.49,
     edgeGain: 0,
+    faceGlow: 0,
     clearcoat: 0,
     texturePath: null,
   }),
@@ -152,6 +169,7 @@ export const ARCHETYPE_DEFAULTS = Object.freeze({
     metalness: 0,
     ior: 1.49,
     edgeGain: 0,
+    faceGlow: 0,
     clearcoat: 0,
     texturePath: null,
   }),
@@ -184,6 +202,7 @@ export function appearanceToUniforms(params = {}) {
     uMetalness: params.metalness,
     uIor: params.ior,
     uEdgeGain: params.edgeGain,
+    uFaceGlow: params.faceGlow,
     uClearcoat: params.clearcoat,
   };
 }

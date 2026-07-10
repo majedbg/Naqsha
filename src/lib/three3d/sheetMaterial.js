@@ -81,8 +81,20 @@ export function resolveSheetMaterial({ appearance = null, descriptor = {} } = {}
 
   // See-through archetypes (clear / translucent / fluorescent acrylic) →
   // MeshTransmissionMaterial, with the archetype's own transmission strength.
+  // faceGlow (fluorescent body re-emission, LSC model) rides along as a FAINT
+  // emissive on the face material — non-bloomed; the hot TIR-guided emission
+  // is the edge mesh's edgeGain concern, not this.
   if (transmission > 0) {
-    return { mode: 'transmission', color, transmission, roughness, metalness, ior, clearcoat: 0 };
+    return {
+      mode: 'transmission',
+      color,
+      transmission,
+      roughness,
+      metalness,
+      ior,
+      clearcoat: 0,
+      faceGlow: appearance.faceGlow ?? 0,
+    };
   }
 
   // Opaque + a clearcoat term (pearlescent nacre, §3.2) needs MeshPhysicalMaterial;

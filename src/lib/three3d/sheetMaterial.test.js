@@ -81,7 +81,17 @@ describe('resolveSheetMaterial — appearance drives the material (lens active)'
       expect(out.transmission).toBeGreaterThan(0);
       expect(out.roughness).toBe(params.roughness);
       expect(out.ior).toBe(params.ior);
+      // faceGlow rides through to the face material: fluorescent body
+      // re-emission only, 0 for every other see-through archetype.
+      expect(out.faceGlow).toBe(params.faceGlow);
     }
+    const fluor = resolveSheetMaterial({
+      appearance: appearanceFor('fluorescent-acrylic'),
+      descriptor: {},
+    });
+    expect(fluor.faceGlow).toBeGreaterThan(0);
+    const clear = resolveSheetMaterial({ appearance: appearanceFor('clear-acrylic'), descriptor: {} });
+    expect(clear.faceGlow).toBe(0);
   });
 
   it('opaque-acrylic → standard mode, transmission 0, no metalness/clearcoat', () => {

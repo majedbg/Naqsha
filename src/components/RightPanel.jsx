@@ -44,6 +44,13 @@ const BG_PRESETS = [
 
 const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 5;
+// One wheel step multiplies zoom by this. Deliberately shallow (~1.1^(1/3), a
+// third of the old 1.1-per-step rate) so scroll/trackpad zooming stays
+// controllable.
+const WHEEL_ZOOM_FACTOR = 1.033;
+// Duration of the pan-recenter glide after a zoom-out leaves the whole work
+// piece visible.
+const GLIDE_MS = 200;
 
 export default function RightPanel({
   layers,
@@ -355,14 +362,62 @@ export default function RightPanel({
     return () => window.removeEventListener("resize", calcScale);
   }, [canvasW, canvasH]);
 
-  // Scroll wheel zoom
+  // --- Pan-recenter glide (shell-pan path only) ----------------------------
+  // Live pan readable inside rAF frames / wheel events without stale closures.
+  const panLiveRef = useRef(pan);
+  useEffect(() => {
+    panLiveRef.current = pan;
+  });
+  const glideRafRef = useRef(null);
+  const stopGlide = useCallback(() => {
+    if (glideRafRef.current != null) {
+      cancelAnimationFrame(glideRafRef.current);
+      glideRafRef.current = null;
+    }
+  }, []);
+  useEffect(() => stopGlide, [stopGlide]); // cancel any in-flight glide on unmount
+
+  // Scroll wheel zoom — anchored at the pointer, so the canvas point under the
+  // cursor stays put while the scale changes. Zoom + scale are re-derived from
+  // the rendered rect (not props) so back-to-back wheel events between renders
+  // compute against a consistent base.
   const handleWheel = useCallback(
     (e) => {
       e.preventDefault();
-      const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
-      setZoom((z) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z * factor)));
+      const factor = e.deltaY < 0 ? WHEEL_ZOOM_FACTOR : 1 / WHEEL_ZOOM_FACTOR;
+      const surface = containerRef.current;
+      const wrap = wrapperRef.current;
+      // Legacy/uncontrolled path (no shell pan) or unmeasurable: plain center
+      // zoom, exactly as before (just the shallower step).
+      if (!externalPan || !surface || !wrap || !fitScale) {
+        setZoom((z) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z * factor)));
+        return;
+      }
+      stopGlide();
+      const rect = surface.getBoundingClientRect();
+      const curScale = rect.width / canvasW; // finalScale as actually rendered
+      const curZoom = curScale / fitScale;
+      const nextZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, curZoom * factor));
+      const nextScale = fitScale * nextZoom;
+      setZoom(nextZoom);
+      // Zooming out to where the whole work piece fits: skip the pointer
+      // anchor — the recenter effect below glides the pan home instead, so the
+      // canvas never ends up needlessly offset.
+      const fits =
+        canvasW * nextScale <= wrap.clientWidth &&
+        canvasH * nextScale <= wrap.clientHeight;
+      if (factor < 1 && fits) return;
+      // Keep the canvas point under the pointer fixed: the transform origin is
+      // the canvas center, whose screen position O only the pan moves; scaling
+      // by r about O requires pan += (M − O)(1 − r) for pointer M.
+      const ox = rect.left + curScale * (canvasW / 2);
+      const oy = rect.top + curScale * (canvasH / 2);
+      const r = nextZoom / curZoom;
+      const dx = (e.clientX - ox) * (1 - r);
+      const dy = (e.clientY - oy) * (1 - r);
+      if (dx || dy) onPanBy(dx, dy);
     },
-    [setZoom]
+    [externalPan, setZoom, fitScale, canvasW, canvasH, onPanBy, stopGlide]
   );
 
   // Attach wheel listener with { passive: false } to allow preventDefault
@@ -379,6 +434,41 @@ export default function RightPanel({
 
   const finalScale = fitScale * zoom;
   const zoomPercent = Math.round(zoom * 100);
+
+  // Any zoom OUT that leaves the whole work piece visible glides the pan back
+  // to center (ease-out over GLIDE_MS), so the canvas never sits offset for no
+  // reason. Watching finalScale here catches EVERY zoom-out path — wheel,
+  // canvas −/reset buttons, shell ControlBar — not just the wheel handler.
+  // Shell-pan path only; the glide itself moves pan, not scale, so it never
+  // re-triggers this effect.
+  const prevScaleRef = useRef(finalScale);
+  useEffect(() => {
+    const prevScale = prevScaleRef.current;
+    prevScaleRef.current = finalScale;
+    if (!externalPan || finalScale >= prevScale) return;
+    const wrap = wrapperRef.current;
+    if (!wrap) return;
+    if (
+      canvasW * finalScale > wrap.clientWidth ||
+      canvasH * finalScale > wrap.clientHeight
+    )
+      return;
+    const from = panLiveRef.current;
+    if (!from.x && !from.y) return;
+    stopGlide();
+    const start = performance.now();
+    const step = (now) => {
+      glideRafRef.current = null;
+      const t = Math.min(1, (now - start) / GLIDE_MS);
+      const ease = 1 - (1 - t) ** 3; // cubic ease-out
+      const cur = panLiveRef.current;
+      const dx = from.x * (1 - ease) - cur.x;
+      const dy = from.y * (1 - ease) - cur.y;
+      if (dx || dy) onPanBy(dx, dy);
+      if (t < 1) glideRafRef.current = requestAnimationFrame(step);
+    };
+    glideRafRef.current = requestAnimationFrame(step);
+  }, [finalScale, externalPan, canvasW, canvasH, onPanBy, stopGlide]);
 
   // Pro-shell canvas chrome (B4 / #7): only active when the shell supplies a
   // bed size. Reporting the cursor uses the SAME on-screen scale (finalScale)
@@ -482,8 +572,10 @@ export default function RightPanel({
         return;
       }
 
-      // Hand tool (or held Space): start a screen-space pan drag.
+      // Hand tool (or held Space): start a screen-space pan drag. Cancels any
+      // in-flight recenter glide so it can't fight the user's drag.
       if (handActive) {
+        stopGlide();
         panRef.current = { lastX: e.clientX, lastY: e.clientY };
         capturePointer(e);
         return;
@@ -551,7 +643,7 @@ export default function RightPanel({
       };
       capturePointer(e);
     },
-    [placing, onPlaceAsset, handActive, selectActive, textActive, toCanvasPoint, layers, canvasW, canvasH, selectedNodeId, onSelect, textFont]
+    [placing, onPlaceAsset, handActive, selectActive, textActive, toCanvasPoint, layers, canvasW, canvasH, selectedNodeId, onSelect, textFont, stopGlide]
   );
 
   const handlePointerMove = useCallback(

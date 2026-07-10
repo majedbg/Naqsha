@@ -632,8 +632,8 @@ export default function Studio({ submitOrg = null } = {}) {
 
   // Bed overlay visibility (UX reframe): toggled from View > Bed size — picking
   // a named preset shows it, "None" hides it. Transient view state only (not
-  // persisted); defaults to visible.
-  const [showBed, setShowBed] = useState(true);
+  // persisted); defaults to hidden (View > Bed size > None).
+  const [showBed, setShowBed] = useState(false);
 
   // Document Setup dialog open state (C6 / #14). Opened from the File menu.
   const [documentSetupOpen, setDocumentSetupOpen] = useState(false);

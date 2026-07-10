@@ -5,8 +5,15 @@ import { Environment } from '@react-three/drei';
 import { KEY_LIGHT_POSITION } from '../../lib/three3d/keyLight.js';
 import { getEnvironmentById, isFileEnvironment } from '../../lib/three3d/hdriEnvironments.js';
 
-/** Neutral DARK background (spec D12) so emissive glow + acrylic transmission pop. */
-export const DARK_BG = '#0b0b10';
+/**
+ * Neutral light-gray seamless backdrop, matching the reference-photo staging the
+ * archetypes are calibrated against (Canal Plastics gray/white seamless — see
+ * docs/material-references/canal-plastics/STAGING-NOTES.md). Replaces the dark
+ * D12 backdrop: its "so emissive glow pops" rationale died with ADR 0003
+ * (fidelity-first, no emissive marks), and a dark ground made side-by-side
+ * evaluation dishonest — sheets read darker than any reference photo.
+ */
+export const SEAMLESS_BG = '#d6d7d9';
 
 /**
  * Shared lighting + image-based environment (spec D12, + the HDRI picker;
@@ -16,14 +23,14 @@ export const DARK_BG = '#0b0b10';
  * forwarded via ref so the selective-bloom pass can register it). On top of those,
  * the selected `environmentId` decides the image-based environment + backdrop:
  *
- *   - PRESET env (e.g. 'studio'): drei loads soft IBL from its asset CDN and we keep
- *     the neutral DARK `<color>` backdrop — the glow-first default look. (Why the
+ *   - PRESET env (e.g. 'studio'): drei loads soft IBL from its asset CDN over the
+ *     neutral SEAMLESS_BG backdrop — the reference-staging default look. (Why the
  *     studio entry is calibrated to 0.3: at full IBL the bright preset fully lights
  *     the flat slab — constant normal, uniform IBL term — and clips it to a
- *     featureless bright block against the dark backdrop, burying the marks.)
+ *     featureless bright block, burying the marks.)
  *   - FILE env (a 2K .hdr in /public/hdri/): the HDRI lights the scene AND is shown
  *     AS the background, softened by `backgroundBlurriness` / `backgroundIntensity`
- *     (user sliders) so the room reads as ambiance. Wrapped in Suspense (dark
+ *     (user sliders) so the room reads as ambiance. Wrapped in Suspense (seamless
  *     fallback) so first-load / switching never flashes.
  *
  * EVERY environment's IBL strength comes from its registry entry's
@@ -53,7 +60,7 @@ const SceneEnvironment = forwardRef(function SceneEnvironment(
       <ambientLight intensity={ambientIntensity} />
       <directionalLight ref={keyLightRef} position={KEY_LIGHT_POSITION} intensity={keyIntensity} />
       {fileEnv ? (
-        <Suspense fallback={<color attach="background" args={[DARK_BG]} />}>
+        <Suspense fallback={<color attach="background" args={[SEAMLESS_BG]} />}>
           {/* file env: calibrated IBL from the registry; the Bright slider drives
               backgroundIntensity (backdrop styling) only — never the lighting. */}
           <Environment
@@ -66,10 +73,10 @@ const SceneEnvironment = forwardRef(function SceneEnvironment(
         </Suspense>
       ) : (
         <>
-          {/* preset env: IBL only (no `background`), so the dark backdrop shows.
+          {/* preset env: IBL only (no `background`), so the seamless backdrop shows.
               The registry-calibrated intensity keeps the bright preset HDRI from
               clipping the flat acrylic slab into a featureless block. */}
-          <color attach="background" args={[DARK_BG]} />
+          <color attach="background" args={[SEAMLESS_BG]} />
           <Environment preset={env.preset} environmentIntensity={env.environmentIntensity} />
         </>
       )}

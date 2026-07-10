@@ -171,6 +171,11 @@ export default function Scene3D({
   // Surface B is launched from the Inspector (not the lens), so this "✕" is the
   // in-canvas way out. Optional → the button no-ops when unwired (standalone).
   onClose = null,
+  // Material evaluation (docs/material-evaluation-VISION.md, slice 1): routes a
+  // <SnapshotCapture> frame to an evaluation submission instead of a download.
+  // Optional; the "Evaluate material" button renders only when this is wired
+  // AND a material is selected (the pairing needs a Material Archetype).
+  onEvaluationCapture = null,
 }) {
   const [resetSignal, setResetSignal] = useState(0);
   // Camera-in-motion flag (S?, refraction-tiling bypass). True while the user is
@@ -199,9 +204,20 @@ export default function Scene3D({
   // in-tree <SnapshotCapture> reads the composited canvas on the next frame and
   // downloads it. A ref (not state) so raising it never triggers a React render.
   const captureRequest = useRef(false);
+  // Where the NEXT captured frame goes: 'download' (Save image, D8) or
+  // 'evaluate' (material evaluation, routed to onEvaluationCapture). A ref, not
+  // state — set at click time alongside captureRequest, consumed once.
+  const captureTarget = useRef('download');
   const handleCapture = useCallback(
-    (dataUrl) => downloadDataUrl(dataUrl, buildSnapshotFilename({ designName })),
-    [designName],
+    (dataUrl) => {
+      if (captureTarget.current === 'evaluate') {
+        captureTarget.current = 'download';
+        onEvaluationCapture?.(dataUrl);
+        return;
+      }
+      downloadDataUrl(dataUrl, buildSnapshotFilename({ designName }));
+    },
+    [designName, onEvaluationCapture],
   );
   // Stable array so the bloom pass doesn't re-register lights every render.
   const bloomLights = useMemo(() => [keyLightRef], []);
@@ -461,6 +477,22 @@ export default function Scene3D({
         >
           Save image
         </button>
+        {selectedMaterial && onEvaluationCapture && (
+          <button
+            type="button"
+            data-testid="canvas3d-evaluate-material"
+            title={`Evaluate ${selectedMaterial.name} against your sheet`}
+            onClick={() => {
+              // Same one-frame capture as Save image, routed to the evaluation
+              // flow (photo-vs-render side-by-side) instead of a download.
+              captureTarget.current = 'evaluate';
+              captureRequest.current = true;
+            }}
+            className="rounded-md border border-white/10 bg-black/40 px-2.5 py-1.5 text-xs font-medium text-white/80 backdrop-blur transition hover:bg-black/60 hover:text-white"
+          >
+            Evaluate material
+          </button>
+        )}
         <button
           type="button"
           data-testid="canvas3d-close"

@@ -37,6 +37,7 @@ import PatternPickerModal from "../components/PatternPickerModal";
 import { centerTransform } from "../lib/scene/placement";
 import StudioSubmitModal from "../components/org/StudioSubmitModal";
 import MotifEditorModal from "../components/motif-editor/MotifEditorModal";
+import MaterialEvaluationDialog from "../components/evaluation/MaterialEvaluationDialog";
 import { parseDToAnchors, anchorsToD } from "../lib/motif/pathModel";
 import useMotifEditorSession from "../lib/hooks/useMotifEditorSession";
 import useGlyphCommits from "../lib/hooks/useGlyphCommits";
@@ -629,6 +630,10 @@ export default function Studio({ submitOrg = null } = {}) {
 
   // Document Setup dialog open state (C6 / #14). Opened from the File menu.
   const [documentSetupOpen, setDocumentSetupOpen] = useState(false);
+  // Material evaluation (slice 1, docs/material-evaluation-VISION.md): the
+  // render frame Scene3D's "Evaluate material" button captured, paired with the
+  // material it rendered — non-null opens the side-by-side submission dialog.
+  const [evaluationCapture, setEvaluationCapture] = useState(null);
 
   // Click-to-place: picking an asset arms placement mode ({ svg, paths, bbox })
   // instead of dropping the layer at its native ~0,0 (hard to see / grab). The
@@ -1802,6 +1807,15 @@ export default function Studio({ submitOrg = null } = {}) {
           // non-null only in the Material lens (Operation / no material → null →
           // today's substrate fallback).
           selectedMaterial={selectedMaterialForScene(colorView.colorView)}
+          // Material evaluation (slice 1): Scene3D routes an "Evaluate material"
+          // capture here; the material is re-derived from the SAME lens gate the
+          // scene rendered with, so the pairing records what was on screen.
+          onEvaluationCapture={(dataUrl) =>
+            setEvaluationCapture({
+              dataUrl,
+              material: selectedMaterialForScene(colorView.colorView),
+            })
+          }
           canvasW={canvasW}
           canvasH={canvasH}
           patternInstancesRef={patternInstancesRef}
@@ -1953,6 +1967,17 @@ export default function Studio({ submitOrg = null } = {}) {
           setUI("showPatternPicker", false);
         }}
       />
+
+      {/* Material evaluation side-by-side (slice 1): opens when Scene3D's
+          "Evaluate material" button captures a render frame. Self-contained
+          (owns auth + submission); Studio only threads the capture pairing. */}
+      {evaluationCapture?.material && (
+        <MaterialEvaluationDialog
+          material={evaluationCapture.material}
+          renderDataUrl={evaluationCapture.dataUrl}
+          onClose={() => setEvaluationCapture(null)}
+        />
+      )}
 
       {/* Load modal */}
       {showLoadModal && (

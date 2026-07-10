@@ -41,6 +41,9 @@ export default function Canvas3DHost({
   selectedMaterial = null,
   // Close the overlay (Studio → RightPanel → here → Scene3D's "✕"). Optional.
   onClose = null,
+  // Material evaluation capture (slice 1): Studio's handler for a render frame
+  // routed to an evaluation submission. Optional pass-through, three-free.
+  onEvaluationCapture = null,
 }) {
   return (
     <Suspense
@@ -69,6 +72,7 @@ export default function Canvas3DHost({
         drapeTargets={drapeTargets}
         selectedMaterial={selectedMaterial}
         onClose={onClose}
+        onEvaluationCapture={onEvaluationCapture}
       />
     </Suspense>
   );

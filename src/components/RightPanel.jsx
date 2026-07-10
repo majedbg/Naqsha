@@ -98,6 +98,9 @@ export default function RightPanel({
   // Rebuild. null (default) → Operation lens / no material → today's substrate
   // fallback, so every non-3D caller is unaffected.
   selectedMaterial = null,
+  // Material evaluation (slice 1): Studio's capture handler, threaded to the 3D
+  // host like onClose3D. null (default) → the Evaluate button never renders.
+  onEvaluationCapture = null,
   canvasW,
   canvasH,
   patternInstancesRef,
@@ -912,6 +915,7 @@ export default function RightPanel({
             drapeTargets={drapeTargets}
             selectedMaterial={selectedMaterial}
             onClose={onClose3D}
+            onEvaluationCapture={onEvaluationCapture}
           />
         </div>
       )}

@@ -238,6 +238,11 @@ function MarkPlane({ svg, process, opacity, glow = 0, glowDrive = 1, size, z, on
           transparent
           opacity={opacity ?? 1}
           depthWrite={false}
+          // DoubleSide so the mark shows from BEHIND the sheet too — through a
+          // transmissive slab you see the groove mirrored (the back of this same
+          // plane IS that mirrored view; ribbons are already DoubleSide). Opaque
+          // slabs still hide it from behind: the slab body wins the depth test.
+          side={THREE.DoubleSide}
           // Bias depth toward the camera so the (coplanar, depthWrite-false) mark
           // wins the test against the sheet face — kills the surface shimmer.
           polygonOffset

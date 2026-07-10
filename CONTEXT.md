@@ -55,3 +55,54 @@ A geometry-conditioning step applied to extracted paths before the machine runs
 (simplify, merge, reorder-for-travel). Preview and applied values are distinct; export
 uses only applied values.
 _Avoid_: Transform (reserved for layer move/rotate/scale)
+
+### Motifs
+
+**Glyph**:
+The reusable vector artwork a motif renders — paths, viewRadius, root. Built-ins ship
+with the app; custom glyphs live in the document (`customGlyphs`); promoted glyphs live
+in the user's global motif library.
+_Avoid_: icon, symbol
+
+**Binding**:
+How a motif attaches to its host layer's paths — anchor selection (roles, rate) plus
+placement (sizing, orientation, flip). Reserved for that attachment only.
+_Avoid_: using "bind" for document writes (that is a Glyph Commit)
+
+**Glyph Commit**:
+Writing a glyph into the document's `customGlyphs` and pointing a layer's `glyphRef` at
+it — always one undo entry. The only way glyphs enter the document: Save, Save as copy,
+import, and library copy/use all commit.
+_Avoid_: bind, stamp, rebind (legacy comment language)
+
+**Draft Glyph**:
+A transient glyph owned by the edit session alone — never in the document until Save
+commits it; Cancel discards it with zero document mutation (rule D6).
+_Avoid_: temp glyph
+
+**Motif Edit Session**:
+The pen-editor lifecycle from open to Save / Save as copy / Cancel / Promote. Owns the
+open decision: custom glyph → edit in place; built-in → fork a Draft Glyph; new → blank
+Draft Glyph.
+_Avoid_: editor state, modal state (implementation words)
+
+### Material Preview
+
+**Mark**:
+The visible trace an operation leaves on a sheet — a frosted engraving, a charred
+score, a kerf-thin cut seam. In the 3D preview a mark looks the way the physical
+process leaves it; process-color coding is a 2D-canvas concern (in 3D it appears
+only as a hover annotation).
+_Avoid_: Glow, groove texture (implementation words)
+
+**Reaction**:
+How a substrate responds to a process — laser frosts clear acrylic, chars plywood,
+polishes a cut edge. A mark's appearance is the reaction of its sheet's substrate to
+its operation's process; reactions are physical, not stylistic.
+_Avoid_: Treatment (vague), emissive (implementation; unlit materials do not emit)
+
+**Material Archetype**:
+The calibrated optics recipe a preview material resolves to (clear acrylic,
+fluorescent acrylic, plywood…). The single source of truth for how a material
+renders; grounded in measured properties of the physical stock.
+_Avoid_: Material descriptor (identity only — kind, color, thickness — not optics)

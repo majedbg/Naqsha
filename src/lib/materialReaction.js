@@ -5,7 +5,11 @@
 //
 // Two render shapes, one reaction core:
 //   • reactionStrokeColor — 2D flat stroke (mark sits ON a lit sheet; needs contrast).
-//   • reactionEmissive     — 3D emissive tint + glow scale (mark glows; bloom-aware).
+//   • reactionSurface     — 3D physical mark surface (diffuse tint + presence/opacity).
+//     Replaces the old `reactionEmissive`: under the fidelity-first preview
+//     (ADR 0003) a mark is the physical REACTION of substrate to process — frosted
+//     diffuse on acrylic, char on wood, a kerf-dark cut seam — never an emissive
+//     annotation. Unlit materials do not emit.
 // Both derive from the same classification (materialCategory), sheet hex
 // (materialSheetHex), and hue-preserving brighten — so 2D and 3D agree (L3).
 
@@ -27,10 +31,16 @@ export const MIX = { score: 0.45, engrave: 0.72, cut: 0.92 };
 // shadow etch in the opposite direction so they stay legible and ordered.
 export const MIN_VISIBLE = 0.06;
 export const SHADOW_SCALE = 0.5;
-// Emissive damp for wood: a real burn line is matte char, not a glowing halo. Under
-// selection-gated bloom every selected mark glows by construction, so color alone
-// can't make wood read matte — the intensity must drop (L4).
-export const BURN_GLOW_SCALE = 0.35;
+// 3D mark-surface PRESENCE per process (reactionSurface opacity): how solidly the
+// reaction covers the sheet. Cut removes the most material → most present; score
+// the least → faintest ("score = a fainter engrave", ADR 0003). Pen is ink laid ON
+// the surface — near-solid. These replace the old emissive-intensity depth axis:
+// depth order now lives on OPACITY, matte-ness on the mark material's roughness 1.
+export const REACTION_OPACITY = Object.freeze({ score: 0.45, engrave: 0.8, cut: 0.92, pen: 0.9 });
+// A cut through acrylic reads as a kerf-thin dark seam (you look INTO the slot's
+// shadow, not at a frosted floor) — a fixed neutral near-black, deliberately
+// cooler/less warm than the wood char extreme.
+export const KERF_TARGET = '#141416';
 
 // Named-color → hex fallback for org materials whose `color`/`kind` is free text
 // ('clear', 'natural', 'walnut', …) rather than a hex. Keys are lowercased.
@@ -185,16 +195,27 @@ export function reactionStrokeColor(sheetHex, category, process, opColor) {
   return mix(sheetHex, mixTarget, t);
 }
 
-// The 3D emissive treatment for a process on a given sheet/category. The mark GLOWS
-// (selection-gated bloom), so unlike the 2D stroke there is no contrast floor — the
-// hue is carried straight as the emissive tint and DEPTH is carried by the caller's
-// intensity (× intensityScale). `process` is accepted for API symmetry; the emissive
-// tint is process-independent (depth lives on intensity, per markTexture's model).
-//   lighten → { brightened hue-preserving frost,        intensityScale: 1 }
-//   burn    → { dark warm char near BURN_TARGET,         intensityScale: BURN_GLOW_SCALE (<1, matte) }
-//   other   → { tint: null (caller uses convention tint), intensityScale: 1 }
-export function reactionEmissive(sheetHex, category, process) { // eslint-disable-line no-unused-vars
-  if (category === 'lighten') return { tint: brighten(sheetHex, 1), intensityScale: 1 };
-  if (category === 'burn') return { tint: mix(sheetHex, BURN_TARGET, 0.85), intensityScale: BURN_GLOW_SCALE };
-  return { tint: null, intensityScale: 1 };
+// The 3D PHYSICAL mark surface for a process on a given sheet/category (ADR 0003).
+// The mark is a matte diffuse decal (roughness 1, normal tone mapping, NO emissive)
+// whose { tint, opacity } describe what the laser actually leaves on that stock:
+//   lighten + engrave/score → FROST: hue-preserving near-white of the sheet itself
+//     (L3 — fluorescent yellow frosts to a saturated yellowish-white, never plain
+//     white); score is the same frost, fainter (REACTION_OPACITY).
+//   lighten + cut           → KERF: a thin dark seam (fixed neutral near-black —
+//     the slot's shadow, not a frosted floor).
+//   burn (any process)      → CHAR: the sheet mixed toward the warm near-black
+//     extreme at the process depth (MIX — cut chars furthest, then engrave, score).
+//   other (unknown stock)   → treated like burn (a generic laser darkens), so NO
+//     annotation color ever reaches the 3D path — process identity in 3D is the
+//     hover annotation's job (Marks.jsx), not the mark surface's.
+// Pen is ink laid ON the surface, not a reaction — callers (markTexture) keep it
+// substrate-independent and never route it here.
+export function reactionSurface(sheetHex, category, process) {
+  const opacity = REACTION_OPACITY[process] != null ? REACTION_OPACITY[process] : REACTION_OPACITY.score;
+  if (category === 'lighten') {
+    if (process === 'cut') return { tint: KERF_TARGET, opacity };
+    return { tint: brighten(sheetHex, 1), opacity };
+  }
+  const t = MIX[process] != null ? MIX[process] : MIX.score;
+  return { tint: mix(sheetHex, BURN_TARGET, t), opacity };
 }

@@ -1,57 +1,59 @@
 import { describe, it, expect } from 'vitest';
 import { resolveSheetMaterial } from './sheetMaterial.js';
-import { getArchetypeDefaults } from './materialArchetypes.js';
+import { getArchetypeDefaults, substrateOptics } from './materialArchetypes.js';
 import { resolveAppearance } from './resolveAppearance.js';
 
 // A resolved appearance for a given archetype, tinted (mimics resolveAppearance:
-// registry defaults + a real sheet hex). edgeGain/rimGain are intentionally left in
-// so the test proves S4 IGNORES them (they're S5's glow concern, not material).
+// registry defaults + a real sheet hex). edgeGain is intentionally left in so the
+// test proves S4 IGNORES it (it's the edge-face concern, not the face material).
 const appearanceFor = (archetype, tintHex = '#abcdef') => ({
   ...getArchetypeDefaults(archetype),
   tintHex,
 });
 
 describe('resolveSheetMaterial — no-material fallback (appearance === null)', () => {
-  // The single riskiest review item: material override must NOT change the
-  // no-material path. These assert it stays byte-identical to pre-S4 Sheets.
-  it('transmissive descriptor → transmission mode, descriptor color, transmission 1', () => {
-    const descriptor = { type: 'transmissive', color: '#112233', ior: 1.49, roughness: 0.15 };
+  // ADR 0003: the descriptor supplies IDENTITY (type/kind/color); the OPTICS come
+  // from the archetypes' substrate fallback — asserted against that same source so
+  // an archetype retune can never silently diverge from the fallback path.
+  it('transmissive acrylic descriptor → transmission mode with clear-PMMA archetype optics', () => {
+    const descriptor = { type: 'transmissive', kind: 'acrylic', color: '#112233' };
+    const optics = substrateOptics('acrylic');
     expect(resolveSheetMaterial({ appearance: null, descriptor })).toEqual({
       mode: 'transmission',
       color: '#112233',
-      transmission: 1,
-      roughness: 0.15,
+      transmission: optics.transmission,
+      roughness: optics.roughness,
       metalness: 0,
-      ior: 1.49,
+      ior: optics.ior,
       clearcoat: 0,
     });
   });
 
-  it('transmissive descriptor falls back to ior 1.49 / roughness 0.15 when omitted', () => {
+  it('a kind-less transmissive descriptor still reads as acrylic (never opaque optics)', () => {
     const out = resolveSheetMaterial({ appearance: null, descriptor: { type: 'transmissive', color: '#fff' } });
     expect(out.mode).toBe('transmission');
-    expect(out.ior).toBe(1.49);
-    expect(out.roughness).toBe(0.15);
-    expect(out.transmission).toBe(1);
+    expect(out.ior).toBeCloseTo(1.49, 2);
+    expect(out.transmission).toBe(substrateOptics('acrylic').transmission);
+    expect(out.transmission).toBeGreaterThan(0.9);
   });
 
-  it('standard descriptor → standard mode, descriptor color + roughness, metalness 0', () => {
-    const descriptor = { type: 'standard', color: '#445566', roughness: 0.9 };
+  it('standard descriptor → standard mode, descriptor color, per-kind archetype roughness', () => {
+    const descriptor = { type: 'standard', kind: 'mdf', color: '#445566' };
     expect(resolveSheetMaterial({ appearance: null, descriptor })).toEqual({
       mode: 'standard',
       color: '#445566',
       transmission: 0,
-      roughness: 0.9,
+      roughness: substrateOptics('mdf').roughness,
       metalness: 0,
-      ior: 1.49,
+      ior: substrateOptics('mdf').ior,
       clearcoat: 0,
     });
   });
 
-  it('standard descriptor falls back to roughness 0.8 when omitted', () => {
+  it('an unknown/kind-less standard descriptor gets the neutral fallback roughness', () => {
     const out = resolveSheetMaterial({ appearance: null, descriptor: { type: 'standard', color: '#000' } });
     expect(out.mode).toBe('standard');
-    expect(out.roughness).toBe(0.8);
+    expect(out.roughness).toBe(substrateOptics(undefined).roughness);
     expect(out.metalness).toBe(0);
   });
 
@@ -125,10 +127,9 @@ describe('resolveSheetMaterial — appearance drives the material (lens active)'
     expect(out.transmission).toBe(0);
   });
 
-  it('ignores edgeGain/rimGain (S5 glow concern, not a material channel)', () => {
+  it('ignores edgeGain (the edge-face concern, not a face-material channel)', () => {
     const out = resolveSheetMaterial({ appearance: appearanceFor('fluorescent-acrylic'), descriptor: {} });
     expect(out).not.toHaveProperty('edgeGain');
-    expect(out).not.toHaveProperty('rimGain');
   });
 
   it('end-to-end via resolveAppearance: an opaque-named material renders opaque even on an acrylic slab', () => {

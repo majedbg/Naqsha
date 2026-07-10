@@ -27,16 +27,35 @@ export const DEFAULT_BG_INTENSITY = 0.6;
  * Ordered list of selectable environments. `studio` is first + the default so the
  * current dark, glow-first look is preserved and no HDRI is fetched until the user
  * picks a room.
- * @type {ReadonlyArray<{id:string,label:string,kind:'preset'|'file',preset?:string,file?:string,background:boolean}>}
+ *
+ * `environmentIntensity` (ADR 0003 #9) is each entry's HAND-CALIBRATED IBL scale:
+ * HDRIs are captured at wildly different exposures, so a per-entry intensity is
+ * what makes a reference white sheet read consistently across scenes (all values
+ * tuned under NeutralToneMapping — Scene3D). It scales the LIGHTING only; the
+ * user's Bright slider styles the BACKDROP image (backgroundIntensity) and can
+ * never un-calibrate the IBL. Current file-HDRI values are PROVISIONAL estimates
+ * pending side-by-side calibration against the reference photos
+ * (docs/material-references/); studio keeps its long-standing 0.3 (see
+ * SceneEnvironment.jsx for why the bright preset is dimmed under the dark
+ * backdrop).
+ * @type {ReadonlyArray<{id:string,label:string,kind:'preset'|'file',preset?:string,file?:string,background:boolean,environmentIntensity:number}>}
  */
 export const HDRI_ENVIRONMENTS = Object.freeze([
-  Object.freeze({ id: 'studio', label: 'Studio (dark)', kind: 'preset', preset: 'studio', background: false }),
+  Object.freeze({
+    id: 'studio',
+    label: 'Studio (dark)',
+    kind: 'preset',
+    preset: 'studio',
+    background: false,
+    environmentIntensity: 0.3,
+  }),
   Object.freeze({
     id: 'voortrekker-interior',
     label: 'Voortrekker Interior',
     kind: 'file',
     file: '/hdri/voortrekker_interior_2k.hdr',
     background: true,
+    environmentIntensity: 0.9,
   }),
   Object.freeze({
     id: 'hospital-room-2',
@@ -44,6 +63,7 @@ export const HDRI_ENVIRONMENTS = Object.freeze([
     kind: 'file',
     file: '/hdri/hospital_room_2_2k.hdr',
     background: true,
+    environmentIntensity: 0.85,
   }),
   Object.freeze({
     id: 'pine-attic',
@@ -51,6 +71,7 @@ export const HDRI_ENVIRONMENTS = Object.freeze([
     kind: 'file',
     file: '/hdri/pine_attic_2k.hdr',
     background: true,
+    environmentIntensity: 1.15,
   }),
   Object.freeze({
     id: 'wooden-studio-10',
@@ -58,6 +79,7 @@ export const HDRI_ENVIRONMENTS = Object.freeze([
     kind: 'file',
     file: '/hdri/wooden_studio_10_2k.hdr',
     background: true,
+    environmentIntensity: 1.0,
   }),
   Object.freeze({
     id: 'historic-cloister-passage',
@@ -65,6 +87,7 @@ export const HDRI_ENVIRONMENTS = Object.freeze([
     kind: 'file',
     file: '/hdri/historic_cloister_passage_2k.hdr',
     background: true,
+    environmentIntensity: 1.2,
   }),
   Object.freeze({
     id: 'blinds',
@@ -72,6 +95,7 @@ export const HDRI_ENVIRONMENTS = Object.freeze([
     kind: 'file',
     file: '/hdri/blinds_2k.hdr',
     background: true,
+    environmentIntensity: 0.8,
   }),
   Object.freeze({
     id: 'billiard-hall',
@@ -79,6 +103,7 @@ export const HDRI_ENVIRONMENTS = Object.freeze([
     kind: 'file',
     file: '/hdri/billiard_hall_2k.hdr',
     background: true,
+    environmentIntensity: 1.3,
   }),
 ]);
 

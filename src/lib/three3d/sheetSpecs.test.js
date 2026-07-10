@@ -23,24 +23,27 @@ function panel(order, overrides = {}) {
   };
 }
 
-describe('materialDescriptorForSubstrate', () => {
-  it('maps acrylic to a transmissive descriptor (ior ~1.49) tinted by substrate color', () => {
+describe('materialDescriptorForSubstrate — identity only (ADR 0003)', () => {
+  it('maps acrylic to a transmissive descriptor tinted by substrate color', () => {
     const d = materialDescriptorForSubstrate({ kind: 'acrylic', color: '#0082cd', thickness: 3 });
     expect(d.type).toBe('transmissive');
-    expect(d.ior).toBeCloseTo(1.49, 5);
+    expect(d.kind).toBe('acrylic');
     expect(d.color).toBe('#0082cd');
   });
 
-  it('maps plywood to opaque standard, roughness ~0.8, tinted', () => {
+  it('maps plywood to an opaque standard descriptor, tinted', () => {
     const d = materialDescriptorForSubstrate({ kind: 'plywood', color: '#6b4a2b' });
     expect(d.type).toBe('standard');
-    expect(d.roughness).toBeCloseTo(0.8, 5);
+    expect(d.kind).toBe('plywood');
     expect(d.color).toBe('#6b4a2b');
   });
 
-  it('maps mdf to roughness ~0.9 and cardstock to ~1.0', () => {
-    expect(materialDescriptorForSubstrate({ kind: 'mdf' }).roughness).toBeCloseTo(0.9, 5);
-    expect(materialDescriptorForSubstrate({ kind: 'cardstock' }).roughness).toBeCloseTo(1.0, 5);
+  it('carries NO optics — roughness/ior live on the archetypes, not the descriptor', () => {
+    for (const kind of ['acrylic', 'plywood', 'mdf', 'cardstock', 'other']) {
+      const d = materialDescriptorForSubstrate({ kind, color: '#abcdef' });
+      expect(d, `${kind} leaked roughness`).not.toHaveProperty('roughness');
+      expect(d, `${kind} leaked ior`).not.toHaveProperty('ior');
+    }
   });
 
   it('maps "other" to an opaque neutral standard (NOT tinted by substrate color)', () => {
@@ -105,7 +108,7 @@ describe('buildSheetSpecs — ordering & stacking', () => {
     const specs = buildSheetSpecs({ panels, layers: [], spacing: 0, bounds: BOUNDS });
     expect(specs[0].materialDescriptor.type).toBe('transmissive');
     expect(specs[1].materialDescriptor.type).toBe('standard');
-    expect(specs[1].materialDescriptor.roughness).toBeCloseTo(0.9, 5);
+    expect(specs[1].materialDescriptor.kind).toBe('mdf');
   });
 
   it('falls back to default thickness when a panel has no substrate', () => {

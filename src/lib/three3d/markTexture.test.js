@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   shouldUseTextureMode,
-  treatmentForProcess,
+  reactionForProcess,
   buildPanelMarkSVGs,
   countSvgPaths,
   countSvgPoints,
@@ -9,17 +9,19 @@ import {
   PATH_CAP,
   POINT_CAP,
   TEXTURE_DPR_FLOOR,
+  PROCESS_ANNOTATION_HEX,
 } from './markTexture.js';
 // Substrate-aware reaction core (read-only here) — lets the substrate tests assert
 // against the SAME source of truth markTexture consumes, rather than hardcoded hex.
 import {
   materialSheetHex,
-  reactionEmissive,
-  BURN_GLOW_SCALE,
+  reactionSurface,
+  REACTION_OPACITY,
+  KERF_TARGET,
 } from '../materialReaction.js';
 
-// Relative luminance of an #rrggbb hex (Rec. 601) — used to assert the emissive
-// depth ORDER (cut brightest > engrave > score).
+// Relative luminance of an #rrggbb hex (Rec. 601) — used to assert frost-vs-char
+// directions on the reaction tints.
 function lum(hex) {
   const h = hex.replace(/^#/, '');
   const r = parseInt(h.slice(0, 2), 16);
@@ -106,101 +108,85 @@ describe('routePanelRenderModes — density routing', () => {
   });
 });
 
-describe('treatmentForProcess — process → emissive treatment (D3)', () => {
-  it('maps the depth scores score .45 / engrave .72 / cut .92', () => {
-    expect(treatmentForProcess('score').intensity).toBeCloseTo(0.45, 5);
-    expect(treatmentForProcess('engrave').intensity).toBeCloseTo(0.72, 5);
-    expect(treatmentForProcess('cut').intensity).toBeCloseTo(0.92, 5);
+describe('reactionForProcess — process → physical Reaction surface (ADR 0003)', () => {
+  it('maps the presence opacities score .45 / engrave .8 / cut .92', () => {
+    expect(reactionForProcess('score').opacity).toBeCloseTo(REACTION_OPACITY.score, 5);
+    expect(reactionForProcess('engrave').opacity).toBeCloseTo(REACTION_OPACITY.engrave, 5);
+    expect(reactionForProcess('cut').opacity).toBeCloseTo(REACTION_OPACITY.cut, 5);
   });
 
-  it('uses the laser convention tints (cut≈red, score≈blue, engrave≈neutral)', () => {
-    const cut = treatmentForProcess('cut').tint.toLowerCase();
-    const score = treatmentForProcess('score').tint.toLowerCase();
-    const engrave = treatmentForProcess('engrave').tint;
-    // cut: red dominant
-    expect(parseInt(cut.slice(1, 3), 16)).toBeGreaterThan(parseInt(cut.slice(5, 7), 16));
-    // score: blue dominant
-    expect(parseInt(score.slice(5, 7), 16)).toBeGreaterThan(parseInt(score.slice(1, 3), 16));
-    // engrave: neutral (r≈g≈b), and NOT pure black (must be able to glow)
-    const r = parseInt(engrave.slice(1, 3), 16);
-    const g = parseInt(engrave.slice(3, 5), 16);
-    const b = parseInt(engrave.slice(5, 7), 16);
-    expect(Math.abs(r - g)).toBeLessThan(8);
-    expect(Math.abs(g - b)).toBeLessThan(8);
-    expect(r).toBeGreaterThan(40);
+  it('never emits an annotation color — the hover palette is a separate export', () => {
+    for (const p of ['cut', 'score', 'engrave']) {
+      for (const sub of [undefined, { kind: 'acrylic', color: '#E6E954' }, { kind: 'plywood' }]) {
+        const tint = reactionForProcess(p, sub).tint.toLowerCase();
+        expect(tint).not.toBe(PROCESS_ANNOTATION_HEX.cut);
+        expect(tint).not.toBe(PROCESS_ANNOTATION_HEX.score);
+      }
+    }
+    // and the palette itself still carries the convention for the hover affordance
+    expect(PROCESS_ANNOTATION_HEX.cut).toBe('#ff3b2f');
+    expect(PROCESS_ANNOTATION_HEX.score).toBe('#3b7bff');
   });
 
   it('falls back to cut for an unknown / absent process', () => {
-    expect(treatmentForProcess(undefined).process).toBe('cut');
-    expect(treatmentForProcess('bogus').process).toBe('cut');
-    expect(treatmentForProcess(null).process).toBe('cut');
+    expect(reactionForProcess(undefined).process).toBe('cut');
+    expect(reactionForProcess('bogus').process).toBe('cut');
+    expect(reactionForProcess(null).process).toBe('cut');
+  });
+
+  it('orders the PRESENCE cut > engrave > score (the depth promise, now carried\n      on opacity, not on any emissive axis)', () => {
+    expect(reactionForProcess('cut').opacity)
+      .toBeGreaterThan(reactionForProcess('engrave').opacity);
+    expect(reactionForProcess('engrave').opacity)
+      .toBeGreaterThan(reactionForProcess('score').opacity);
   });
 });
 
-describe('treatmentForProcess — depth order on the intensity axis', () => {
-  it('orders the emissive INTENSITY cut > engrave > score (the D3 depth promise,\n      carried on emissiveIntensity not on color luminance)', () => {
-    expect(treatmentForProcess('cut').intensity)
-      .toBeGreaterThan(treatmentForProcess('engrave').intensity);
-    expect(treatmentForProcess('engrave').intensity)
-      .toBeGreaterThan(treatmentForProcess('score').intensity);
-  });
-
-  it('keeps the tint vivid (full-strength hue), NOT dimmed by intensity', () => {
-    // engrave is the dimmest groove (0.72) yet its tint stays near-white so the
-    // hue is unmuddied — intensity lives on the plane, not the color.
-    expect(lum(treatmentForProcess('engrave').tint)).toBeGreaterThan(200);
-  });
-});
-
-describe('treatmentForProcess — substrate-aware reaction (3D mark color)', () => {
-  it('frosts a score groove on an ACRYLIC substrate toward a brightened hue (not\n      convention blue), at full intensity (lighten → intensityScale 1)', () => {
+describe('reactionForProcess — substrate-aware reaction (3D mark surface)', () => {
+  it('frosts a score/engrave on an ACRYLIC substrate toward a brightened hue of the\n      sheet (not convention blue)', () => {
     const sub = { kind: 'acrylic', color: '#E6E954' };
-    const t = treatmentForProcess('score', sub);
-    const expectedTint = reactionEmissive(materialSheetHex(sub), 'lighten', 'score').tint;
-    expect(t.tint.toLowerCase()).toBe(expectedTint.toLowerCase());
-    // derived frost, NOT the laser-convention blue
+    const t = reactionForProcess('score', sub);
+    const expected = reactionSurface(materialSheetHex(sub), 'lighten', 'score');
+    expect(t.tint.toLowerCase()).toBe(expected.tint.toLowerCase());
     expect(t.tint.toLowerCase()).not.toBe('#3b7bff');
-    // lighten leaves the depth intensity untouched (intensityScale 1)
-    expect(t.intensity).toBeCloseTo(treatmentForProcess('score').intensity, 5);
+    expect(lum(t.tint)).toBeGreaterThan(lum('#E6E954')); // frost is LIGHTER than the sheet
+    expect(t.opacity).toBeCloseTo(REACTION_OPACITY.score, 5);
   });
 
-  it('chars a cut groove on a WOOD substrate to a DARK tint and a MATTE intensity\n      (burn → intensity × BURN_GLOW_SCALE, below convention)', () => {
+  it('renders a CUT on acrylic as the kerf-thin dark seam, not a frost', () => {
+    const t = reactionForProcess('cut', { kind: 'acrylic', color: '#E6E954' });
+    expect(t.tint).toBe(KERF_TARGET);
+    expect(lum(t.tint)).toBeLessThan(40);
+    expect(t.opacity).toBeCloseTo(REACTION_OPACITY.cut, 5);
+  });
+
+  it('chars a cut on a WOOD substrate DARK and WARM, full presence (matte lives on\n      the mark material roughness, no intensity damping axis anymore)', () => {
     const sub = { kind: 'plywood', color: '#6B4A2B' };
-    const t = treatmentForProcess('cut', sub);
-    const convention = treatmentForProcess('cut');
-    const acrylic = treatmentForProcess('cut', { kind: 'acrylic', color: '#E6E954' });
-    // dark char: luminance below both the convention red and the acrylic frost
-    expect(lum(t.tint)).toBeLessThan(lum(convention.tint));
-    expect(lum(t.tint)).toBeLessThan(lum(acrylic.tint));
-    // matte: depth intensity damped by BURN_GLOW_SCALE (< convention)
-    expect(t.intensity).toBeLessThan(convention.intensity);
-    expect(t.intensity).toBeCloseTo(convention.intensity * BURN_GLOW_SCALE, 5);
+    const t = reactionForProcess('cut', sub);
+    expect(t.tint.toLowerCase()).toBe(
+      reactionSurface(materialSheetHex(sub), 'burn', 'cut').tint.toLowerCase(),
+    );
+    expect(lum(t.tint)).toBeLessThan(lum('#6B4A2B'));
+    expect(t.opacity).toBeCloseTo(REACTION_OPACITY.cut, 5);
   });
 
-  it('falls back to the CONVENTION (tint + full intensity) for an other/absent/\n      unrecognized substrate', () => {
-    const convention = treatmentForProcess('cut');
-    // category 'other' (cardstock)
-    const other = treatmentForProcess('cut', { kind: 'cardstock' });
-    expect(other.tint).toBe(convention.tint);
-    expect(other.intensity).toBeCloseTo(convention.intensity, 5);
-    // absent substrate (explicitly undefined 2nd arg)
-    const absent = treatmentForProcess('cut', undefined);
-    expect(absent.tint).toBe(convention.tint);
-    expect(absent.intensity).toBeCloseTo(convention.intensity, 5);
-    // substrate object with no recognizable kind → 'other' → convention
-    const unknown = treatmentForProcess('cut', { kind: 'mystery-foam' });
-    expect(unknown.tint).toBe(convention.tint);
-    expect(unknown.intensity).toBeCloseTo(convention.intensity, 5);
+  it('chars other/absent/unrecognized substrates on the NEUTRAL sheet — the laser\n      convention no longer exists in the 3D mark path', () => {
+    for (const sub of [undefined, { kind: 'cardstock' }, { kind: 'mystery-foam' }]) {
+      const t = reactionForProcess('cut', sub);
+      expect(t.tint.toLowerCase()).toBe(
+        reactionSurface(materialSheetHex(sub || {}), 'other', 'cut').tint.toLowerCase(),
+      );
+      expect(lum(t.tint)).toBeLessThan(lum(materialSheetHex({}))); // darker than the sheet
+    }
   });
 
-  it('keeps PEN ink at the convention regardless of substrate (L7: ink sits ON the\n      surface, it is not a reacting groove)', () => {
-    const onAcrylic = treatmentForProcess('pen', { kind: 'acrylic', color: '#E6E954' });
-    const onWood = treatmentForProcess('pen', { kind: 'walnut' });
-    const convention = treatmentForProcess('pen');
-    expect(onAcrylic.tint).toBe(convention.tint);
-    expect(onAcrylic.intensity).toBeCloseTo(convention.intensity, 5);
-    expect(onWood.tint).toBe(convention.tint);
-    expect(onWood.intensity).toBeCloseTo(convention.intensity, 5);
+  it('keeps PEN as substrate-independent ink (L7: ink sits ON the surface, it is\n      not a reacting groove)', () => {
+    const onAcrylic = reactionForProcess('pen', { kind: 'acrylic', color: '#E6E954' });
+    const onWood = reactionForProcess('pen', { kind: 'walnut' });
+    const bare = reactionForProcess('pen');
+    expect(onAcrylic.tint).toBe(bare.tint);
+    expect(onWood.tint).toBe(bare.tint);
+    expect(onAcrylic.opacity).toBeCloseTo(bare.opacity, 5);
   });
 });
 
@@ -302,10 +288,10 @@ describe('buildPanelMarkSVGs — per-panel, per-process mark layers', () => {
     expect(out['panel-1'].map((m) => m.process)).toEqual(['score']);
   });
 
-  it('carries the depth-score intensity per mark layer (cut .92 / engrave .72)', () => {
+  it('carries the presence opacity per mark layer (cut .92 / engrave .8)', () => {
     const out = setup();
-    expect(out['panel-0'][0].intensity).toBeCloseTo(0.92, 5);
-    expect(out['panel-0'][1].intensity).toBeCloseTo(0.72, 5);
+    expect(out['panel-0'][0].opacity).toBeCloseTo(REACTION_OPACITY.cut, 5);
+    expect(out['panel-0'][1].opacity).toBeCloseTo(REACTION_OPACITY.engrave, 5);
   });
 
   it('puts only that process OWN visible layers in each mark-layer SVG', () => {
@@ -320,11 +306,12 @@ describe('buildPanelMarkSVGs — per-panel, per-process mark layers', () => {
     expect(cutLayer.svg).not.toContain('id="l-score"');
   });
 
-  it('strokes each mark layer in its VIVID process tint (not the raw op color)', () => {
+  it('strokes each mark layer in its REACTION tint (not the raw op color, not an\n      annotation color)', () => {
     const out = setup();
     const cutLayer = out['panel-0'].find((m) => m.process === 'cut');
-    expect(cutLayer.svg.toLowerCase()).toContain(treatmentForProcess('cut').tint.toLowerCase());
+    expect(cutLayer.svg.toLowerCase()).toContain(reactionForProcess('cut').tint.toLowerCase());
     expect(cutLayer.svg.toLowerCase()).not.toContain('#ff0000'); // raw op-cut color gone
+    expect(cutLayer.svg.toLowerCase()).not.toContain(PROCESS_ANNOTATION_HEX.cut); // no annotation red
   });
 
   it('has a TRANSPARENT background (the white bg rect is stripped — D12)', () => {
@@ -363,25 +350,35 @@ describe('buildPanelMarkSVGs — per-panel, per-process mark layers', () => {
     expect(buildPanelMarkSVGs({ panels: [], layers: [] })).toEqual({});
   });
 
-  it('strokes an ACRYLIC-substrate panel\'s marks in the substrate FROST tint (not\n      convention red/blue) — behavior 5', () => {
+  it('frosts an ACRYLIC-substrate panel\'s engraving and seams its cut kerf-dark\n      (no convention red/blue anywhere) — behavior 5', () => {
     const sub = { kind: 'acrylic', color: '#E6E954' };
     const out = buildPanelMarkSVGs({
       panels: [panel(0, { substrate: sub })],
-      layers: [{ id: 'l-cut', panelId: 'panel-0', visible: true, operationId: 'op-cut', opacity: 100 }],
+      layers: [
+        { id: 'l-cut', panelId: 'panel-0', visible: true, operationId: 'op-cut', opacity: 100 },
+        { id: 'l-engrave', panelId: 'panel-0', visible: true, operationId: 'op-engrave', opacity: 100 },
+      ],
       operations: OPERATIONS,
-      patternInstances: { 'l-cut': fakeInstance() },
+      patternInstances: { 'l-cut': fakeInstance(), 'l-engrave': fakeInstance() },
       canvasW: W, canvasH: H,
     });
-    const frost = reactionEmissive(materialSheetHex(sub), 'lighten', 'cut').tint;
-    const mark = out['panel-0'][0];
-    expect(mark.tint.toLowerCase()).toBe(frost.toLowerCase());
-    expect(mark.svg.toLowerCase()).toContain(frost.toLowerCase());
-    // convention tints absent
-    expect(mark.svg.toLowerCase()).not.toContain('#ff3b2f');
-    expect(mark.svg.toLowerCase()).not.toContain('#3b7bff');
+    const cut = out['panel-0'].find((m) => m.process === 'cut');
+    const engrave = out['panel-0'].find((m) => m.process === 'engrave');
+    // engrave frosts to the hue-preserving brightened sheet…
+    const frost = reactionSurface(materialSheetHex(sub), 'lighten', 'engrave').tint;
+    expect(engrave.tint.toLowerCase()).toBe(frost.toLowerCase());
+    expect(engrave.svg.toLowerCase()).toContain(frost.toLowerCase());
+    expect(lum(engrave.tint)).toBeGreaterThan(lum('#E6E954'));
+    // …while the cut is the kerf-thin dark seam
+    expect(cut.tint).toBe(KERF_TARGET);
+    // convention tints absent from both surfaces
+    for (const m of [cut, engrave]) {
+      expect(m.svg.toLowerCase()).not.toContain('#ff3b2f');
+      expect(m.svg.toLowerCase()).not.toContain('#3b7bff');
+    }
   });
 
-  it('chars a WOOD-substrate panel\'s marks DARK and reduces the emitted intensity\n      (× BURN_GLOW_SCALE) — behavior 6', () => {
+  it('chars a WOOD-substrate panel\'s marks DARK and WARM at full presence —\n      behavior 6', () => {
     const sub = { kind: 'plywood', color: '#6B4A2B' };
     const out = buildPanelMarkSVGs({
       panels: [panel(0, { substrate: sub })],
@@ -390,17 +387,16 @@ describe('buildPanelMarkSVGs — per-panel, per-process mark layers', () => {
       patternInstances: { 'l-cut': fakeInstance() },
       canvasW: W, canvasH: H,
     });
-    const char = reactionEmissive(materialSheetHex(sub), 'burn', 'cut').tint;
+    const char = reactionSurface(materialSheetHex(sub), 'burn', 'cut').tint;
     const mark = out['panel-0'][0];
     expect(mark.tint.toLowerCase()).toBe(char.toLowerCase());
     expect(mark.svg.toLowerCase()).toContain(char.toLowerCase());
-    // dark + matte: below convention luminance and convention intensity
-    expect(lum(mark.tint)).toBeLessThan(lum(treatmentForProcess('cut').tint));
-    expect(mark.intensity).toBeCloseTo(treatmentForProcess('cut').intensity * BURN_GLOW_SCALE, 5);
+    expect(lum(mark.tint)).toBeLessThan(lum('#6B4A2B')); // darker than the sheet
+    expect(mark.opacity).toBeCloseTo(REACTION_OPACITY.cut, 5);
     expect(mark.svg.toLowerCase()).not.toContain('#ff3b2f');
   });
 
-  it('leaves an absent/other-substrate panel at the CONVENTION output (regression\n      guard) — behavior 7', () => {
+  it('chars an absent/other-substrate panel on the neutral sheet — the convention\n      output is GONE from the 3D path — behavior 7', () => {
     const out = buildPanelMarkSVGs({
       // panel-0: no substrate at all; panel-1: an 'other' (cardstock) substrate.
       panels: [panel(0), panel(1, { substrate: { kind: 'cardstock' } })],
@@ -414,9 +410,10 @@ describe('buildPanelMarkSVGs — per-panel, per-process mark layers', () => {
     });
     for (const id of ['panel-0', 'panel-1']) {
       const mark = out[id][0];
-      expect(mark.tint).toBe(treatmentForProcess('cut').tint);
-      expect(mark.intensity).toBeCloseTo(treatmentForProcess('cut').intensity, 5);
-      expect(mark.svg.toLowerCase()).toContain('#ff3b2f');
+      expect(mark.tint).toBe(reactionForProcess('cut').tint);
+      expect(mark.opacity).toBeCloseTo(REACTION_OPACITY.cut, 5);
+      expect(mark.svg.toLowerCase()).not.toContain('#ff3b2f');
+      expect(lum(mark.tint)).toBeLessThan(lum(materialSheetHex({})));
     }
   });
 

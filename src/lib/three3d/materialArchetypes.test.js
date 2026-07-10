@@ -6,8 +6,11 @@ import {
   isArchetype,
   getArchetypeDefaults,
   appearanceToUniforms,
+  substrateOptics,
 } from './materialArchetypes.js';
 
+// rimGain was removed with the additive Fresnel shell (ADR 0003) — the contract
+// deliberately has no shell term left.
 const REQUIRED_PARAM_KEYS = [
   'archetype',
   'tintHex',
@@ -16,7 +19,6 @@ const REQUIRED_PARAM_KEYS = [
   'metalness',
   'ior',
   'edgeGain',
-  'rimGain',
   'texturePath',
 ];
 
@@ -61,8 +63,7 @@ describe('materialArchetypes — registry shape', () => {
       expect(d.metalness).toBeLessThanOrEqual(1);
       expect(d.edgeGain).toBeGreaterThanOrEqual(0);
       expect(d.edgeGain).toBeLessThanOrEqual(8);
-      expect(d.rimGain).toBeGreaterThanOrEqual(0);
-      expect(d.rimGain).toBeLessThanOrEqual(2);
+      expect(d).not.toHaveProperty('rimGain'); // the shell term is gone (ADR 0003)
       expect(d.tintHex).toMatch(/^#[0-9a-fA-F]{6}$/);
     }
   });
@@ -73,36 +74,33 @@ describe('materialArchetypes — registry shape', () => {
 });
 
 describe('materialArchetypes — per-archetype look invariants (§3.2)', () => {
-  it('fluorescent-acrylic glows hard: hardest edgeGain of all archetypes, low roughness, some transmission', () => {
+  it('fluorescent-acrylic is the ONLY archetype with emissive edges (real fluorescence — ADR 0003 exception)', () => {
     const d = ARCHETYPE_DEFAULTS['fluorescent-acrylic'];
-    // Relative invariant, not an absolute floor: fluorescent is THE hardest-glowing
-    // archetype (was edgeGain 6.0; dialed to 3.0 so it stops blowing out the whole
-    // panel under the dark Studio env). Assert it still out-glows every other
-    // archetype rather than pinning a magic threshold that tuning must chase.
-    const maxOther = Math.max(
-      ...Object.values(ARCHETYPE_DEFAULTS)
-        .filter((a) => a.archetype !== 'fluorescent-acrylic')
-        .map((a) => a.edgeGain ?? 0),
-    );
-    expect(d.edgeGain).toBeGreaterThan(maxOther);
+    expect(d.edgeGain).toBeGreaterThan(0);
+    for (const a of Object.values(ARCHETYPE_DEFAULTS)) {
+      if (a.archetype !== 'fluorescent-acrylic') {
+        expect(a.edgeGain, `${a.archetype} must not emit`).toBe(0);
+      }
+    }
     expect(d.roughness).toBeLessThanOrEqual(0.2);
     expect(d.transmission).toBeGreaterThan(0);
     expect(d.transmission).toBeLessThan(1);
   });
 
-  it('clear-acrylic is highly transmissive with only a hint of edge glow', () => {
+  it('clear-acrylic matches measured cast PMMA: transmission 0.92–0.95, roughness ≈0.02, IOR 1.49 (ADR 0003)', () => {
     const d = ARCHETYPE_DEFAULTS['clear-acrylic'];
-    expect(d.transmission).toBeGreaterThanOrEqual(0.9);
-    expect(d.edgeGain).toBeLessThanOrEqual(0.5);
+    expect(d.transmission).toBeGreaterThanOrEqual(0.92);
+    expect(d.transmission).toBeLessThanOrEqual(0.95);
+    expect(d.roughness).toBeCloseTo(0.02, 2);
+    expect(d.edgeGain).toBe(0); // edge brightness is the edge-face material, not emissive
     expect(d.ior).toBeCloseTo(1.49, 2);
   });
 
-  it('translucent-acrylic is mid-transmission with a small edge gain', () => {
+  it('translucent-acrylic is mid-transmission, non-emissive', () => {
     const d = ARCHETYPE_DEFAULTS['translucent-acrylic'];
     expect(d.transmission).toBeGreaterThan(0.3);
     expect(d.transmission).toBeLessThan(0.9);
-    expect(d.edgeGain).toBeGreaterThan(0);
-    expect(d.edgeGain).toBeLessThanOrEqual(2);
+    expect(d.edgeGain).toBe(0);
   });
 
   it('opaque-acrylic is solid and glossy with no edge glow', () => {
@@ -148,12 +146,39 @@ describe('materialArchetypes — per-archetype look invariants (§3.2)', () => {
     expect(d.metalness).toBe(0);
   });
 
-  it('only acrylic archetypes have any edge glow; wood + opaque variants do not', () => {
-    expect(ARCHETYPE_DEFAULTS['wood'].edgeGain).toBe(0);
-    expect(ARCHETYPE_DEFAULTS['opaque-acrylic'].edgeGain).toBe(0);
-    expect(ARCHETYPE_DEFAULTS['pearlescent-acrylic'].edgeGain).toBe(0);
-    expect(ARCHETYPE_DEFAULTS['mirror-acrylic'].edgeGain).toBe(0);
-    expect(ARCHETYPE_DEFAULTS['opaque-tinted'].edgeGain).toBe(0);
+});
+
+describe('substrateOptics — no-material-lens fallback optics (ADR 0003)', () => {
+  it('acrylic reads as clear cast PMMA (the archetype IS the optics source)', () => {
+    const o = substrateOptics('acrylic');
+    expect(o.archetype).toBe('clear-acrylic');
+    expect(o.transmission).toBe(ARCHETYPE_DEFAULTS['clear-acrylic'].transmission);
+    expect(o.roughness).toBe(ARCHETYPE_DEFAULTS['clear-acrylic'].roughness);
+    expect(o.ior).toBeCloseTo(1.49, 2);
+  });
+
+  it('folds the per-kind matte roughness into the wood archetype (D7: ply .8 / mdf .9 / cardstock 1.0)', () => {
+    expect(substrateOptics('plywood')).toMatchObject({ archetype: 'wood', roughness: 0.8 });
+    expect(substrateOptics('mdf')).toMatchObject({ archetype: 'wood', roughness: 0.9 });
+    expect(substrateOptics('cardstock')).toMatchObject({ archetype: 'wood', roughness: 1.0 });
+    for (const kind of ['plywood', 'mdf', 'cardstock']) {
+      expect(substrateOptics(kind).transmission).toBe(0);
+      expect(substrateOptics(kind).metalness).toBe(0);
+    }
+  });
+
+  it('unknown / missing kind falls back to inert opaque-tinted optics at the neutral 0.7', () => {
+    for (const kind of ['other', 'titanium', undefined, null]) {
+      const o = substrateOptics(kind);
+      expect(o.archetype).toBe(DEFAULT_ARCHETYPE);
+      expect(o.roughness).toBeCloseTo(0.7, 5);
+      expect(o.transmission).toBe(0);
+    }
+  });
+
+  it('returns optics only — never a color/tint (identity stays on the descriptor)', () => {
+    expect(substrateOptics('acrylic')).not.toHaveProperty('tintHex');
+    expect(substrateOptics('acrylic')).not.toHaveProperty('color');
   });
 });
 
@@ -209,7 +234,7 @@ describe('appearanceToUniforms — registry→shader mapping helper (§3.2)', ()
     expect(u.uMetalness).toBe(params.metalness);
     expect(u.uIor).toBe(params.ior);
     expect(u.uEdgeGain).toBe(params.edgeGain);
-    expect(u.uRimGain).toBe(params.rimGain);
+    expect(u).not.toHaveProperty('uRimGain'); // shell term removed (ADR 0003)
     expect(u.uTint).toBe(params.tintHex);
   });
 

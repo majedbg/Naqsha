@@ -267,3 +267,14 @@ doc + #79.
   sequenced — key per-instance resolution off `'glyphRef' in p`, not truthiness. Modifiers
   already folded into radius/rotation/flip — B1 renders the resolved glyphRef at the matrix,
   no re-applying. `seqId` is a number on sequenced placements; `rejected` may carry `'rest'`.
+- 2026-07-11 — **B1 multi-glyph MotifPattern DONE** (`f7725b1`, +10 MotifPattern +1 useCanvas
+  tests; motif+useCanvas 467 green, build green). generate() now runs
+  `resolveSelection(binding,anchors,{canvasW,canvasH,overrides})` → `resolvePlacements(survivors,
+  {...placement, sequence-when-truthy}, {boundary})` → per-placement glyph resolved from injected
+  `p.glyphs` map (base + every slot ref; useCanvas builds it, isMotifLayer-gated) → single-matrix
+  dual-emit. Per-glyph viewRadius/root. Legacy no-sequence byte-identical. **Independent opus
+  review: SOUND** (21+ legacy cases byte-identical incl field/overrides/string-array no-clobber;
+  per-slot canvas==SVG parity holds). Touched shared `useCanvas.js` (additive+gated). **Seam for
+  C1:** chain-mode overrides read from top-level `binding.overrides` (B1's choice; C1 owns the
+  final schema). Nit (non-blocking): fully-stripped-base-glyph runs the pipeline before skipping
+  (zero observable divergence).

@@ -26,6 +26,9 @@ import {
   normalizePanels,
   loadPanels,
   savePanels,
+  INCH_THICKNESS_PRESETS,
+  inchLabelForMm,
+  thicknessChipLabel,
 } from './panels.js';
 
 // A minimal layer stand-in — only id/panelId/visible matter to these helpers.
@@ -539,5 +542,33 @@ describe('panel.materialId — per-panel material choice', () => {
     const { panels } = normalizePanels([withMat, legacy], []);
     expect(panels[0].materialId).toBe('walnut-plywood');
     expect(panels[1].materialId).toBeUndefined();
+  });
+});
+
+describe('thickness — nominal inch ↔ metric pairs', () => {
+  it('INCH_THICKNESS_PRESETS covers the common acrylic increments, ascending, 1/8 → 3mm', () => {
+    const labels = INCH_THICKNESS_PRESETS.map((p) => p.label);
+    for (const l of ['1/16', '1/8', '3/16', '1/4', '3/8', '1/2']) expect(labels).toContain(l);
+    const mms = INCH_THICKNESS_PRESETS.map((p) => p.mm);
+    expect([...mms].sort((a, b) => a - b)).toEqual(mms);
+    expect(INCH_THICKNESS_PRESETS.find((p) => p.label === '1/8').mm).toBe(3);
+  });
+
+  it('inchLabelForMm matches within tolerance, null outside it or for garbage', () => {
+    expect(inchLabelForMm(3)).toBe('1/8');
+    expect(inchLabelForMm(3.1)).toBe('1/8'); // nominal wiggle
+    expect(inchLabelForMm(6)).toBe('1/4');
+    expect(inchLabelForMm(4)).toBe(null); // between 1/8 (3) and 3/16 (4.5)
+    expect(inchLabelForMm(NaN)).toBe(null);
+  });
+
+  it("thicknessChipLabel: default panel reads '1/8 in'; mm unit reads metric; custom inch is decimal", () => {
+    expect(thicknessChipLabel(createPanel(0).substrate)).toBe('1/8 in');
+    expect(thicknessChipLabel({ thickness: 5.5, thicknessUnit: 'mm' })).toBe('5.5 mm');
+    // no explicit unit + no nominal match → auto falls back to mm (metric presets)
+    expect(thicknessChipLabel({ thickness: 4 })).toBe('4 mm');
+    // explicit inch unit with a custom metric value → decimal inches
+    expect(thicknessChipLabel({ thickness: 4, thicknessUnit: 'in' })).toBe('0.157 in');
+    expect(thicknessChipLabel(undefined)).toBe('1/8 in'); // degenerate → default 3mm, inch naming
   });
 });

@@ -70,6 +70,45 @@ export function presetLabel(preset) {
   return `${preset.kind} · ${preset.thickness}mm`;
 }
 
+// Nominal inch ↔ metric thickness pairs for common acrylic stock, ascending.
+// These are the INDUSTRY pairings ("1/8in (3mm)") — vendors sell metric sheets
+// under inch names — so picking 1/8 stores the 3mm the laser actually sees,
+// and the default panel (3mm) reads back as "1/8 in".
+export const INCH_THICKNESS_PRESETS = [
+  { label: '1/16', mm: 1.5 },
+  { label: '3/32', mm: 2.4 },
+  { label: '1/8', mm: 3 },
+  { label: '3/16', mm: 4.5 },
+  { label: '1/4', mm: 6 },
+  { label: '3/8', mm: 9 },
+  { label: '1/2', mm: 12 },
+  { label: '3/4', mm: 19 },
+  { label: '1', mm: 25.4 },
+];
+
+// The nominal fraction label for a stored mm thickness, or null when the value
+// sits outside every preset's tolerance (a custom metric thickness).
+export function inchLabelForMm(mm, tolerance = 0.25) {
+  if (!Number.isFinite(mm)) return null;
+  const hit = INCH_THICKNESS_PRESETS.find((p) => Math.abs(p.mm - mm) <= tolerance);
+  return hit ? hit.label : null;
+}
+
+// The thickness chip's label. Display unit is substrate.thicknessUnit:
+//   'mm'   → "3 mm";
+//   'in'   → the nominal fraction ("1/8 in") when one matches, else decimal in;
+//   ABSENT → auto: the fraction when one matches (fresh 3mm panel → "1/8 in",
+//            the common stock naming), else mm — so a metric preset (plywood
+//            4mm) never renders as an awkward "0.157 in" uninvited.
+export function thicknessChipLabel(substrate) {
+  const mm = Number.isFinite(substrate?.thickness) ? substrate.thickness : 3;
+  const unit = substrate?.thicknessUnit;
+  if (unit === 'mm') return `${mm} mm`;
+  const frac = inchLabelForMm(mm);
+  if (frac) return `${frac} in`;
+  return unit === 'in' ? `${(mm / 25.4).toFixed(3)} in` : `${mm} mm`;
+}
+
 // Signal the UI uses to enable/disable "add panel" at the hard cap.
 export function canAddPanel(panels) {
   return Array.isArray(panels) && panels.length < MAX_PANELS;

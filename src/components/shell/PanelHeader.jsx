@@ -1,22 +1,61 @@
 // PanelHeader — the collapsible header row above a panel's layers (WI-5, spec
 // §6). A panel is a physical substrate (acrylic, plywood, …) that a subset of
 // layers belongs to via `layer.panelId`. This header carries: a collapse
-// chevron, the panel name (double-click → inline rename), a substrate summary
-// (kind + thickness; click → substrate editor), a visibility toggle, and a
-// delete control (danger ConfirmDialog with a "delete the layers too?" checkbox).
+// chevron, the panel name (double-click → inline rename), a MATERIAL chip
+// (click → auto-collapsing stock picker), a THICKNESS chip (click → in/mm
+// dropdown), a visibility toggle, and a ⋯ menu (which also reaches the
+// substrate-details editor: kind / color / label).
 //
 // It is a DROP TARGET: dropping a dragged layer row reassigns that layer to this
 // panel via onAssignLayerToPanel(layerId, panel.id).
 //
-// Props-driven (handlers injected). The single-open substrate editor is owned by
-// LayerTree (editorOpen + onToggleEditor) so only one panel editor is open at a
-// time, mirroring the row-menu single-open pattern.
+// Props-driven (handlers injected). The single-open substrate-details editor is
+// owned by LayerTree (editorOpen + onToggleEditor) so only one panel editor is
+// open at a time; the material/thickness popovers are row-local (self-owned,
+// like the ⋯ menu) and mutually exclusive within the row.
 
 import { useState, useEffect, useRef } from "react";
-import { SUBSTRATE_KINDS } from "../../lib/panels";
+import {
+  SUBSTRATE_KINDS,
+  INCH_THICKNESS_PRESETS,
+  inchLabelForMm,
+  thicknessChipLabel,
+} from "../../lib/panels";
 import { DEFAULT_PREVIEW_MATERIALS } from "../../lib/materialPreview";
 import ConfirmDialog from "../ui/ConfirmDialog";
 import RowMenu from "./RowMenu";
+
+// Anchored dropdown shared by the row's material + thickness chips: dismisses on
+// outside pointerdown (capture, so a click anywhere else closes it) and Escape —
+// the MaterialPopover pattern (ColorViewControl), row-sized. Right-anchored like
+// RowMenu so it never grows past the panel's clipped right edge.
+function ChipPopover({ onClose, label, testid, children }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const onDown = (e) => {
+      if (ref.current && !ref.current.contains(e.target)) onClose();
+    };
+    const onKey = (e) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("pointerdown", onDown, true);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onDown, true);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [onClose]);
+  return (
+    <div
+      ref={ref}
+      aria-label={label}
+      data-testid={testid}
+      className="absolute right-0 top-full z-50 mt-1 w-52 rounded-sm border border-hairline bg-paper p-1.5 shadow-pop"
+    >
+      {children}
+    </div>
+  );
+}
 
 function ChevronIcon({ collapsed }) {
   return (
@@ -150,10 +189,31 @@ export default function PanelHeader({
   const substrate = panel.substrate || {};
 
   // The panel's own catalog material, if chosen (null = Auto → follow the
-  // canvas-level Material lens). Drives the summary chip label + swatch and the
-  // editor's Material select below.
+  // canvas-level Material lens). Drives the material chip's label + swatch.
   const panelMaterial =
     (panel.materialId && (materials || []).find((m) => m && m.id === panel.materialId)) || null;
+
+  // Row-local popovers (material picker + thickness dropdown) — mutually
+  // exclusive; each auto-collapses on selection, outside click, or Escape.
+  const [materialOpen, setMaterialOpen] = useState(false);
+  const [thicknessOpen, setThicknessOpen] = useState(false);
+  // The thickness dropdown's unit tab. 'in' is the default stock naming (the
+  // fresh 3mm panel reads "1/8 in"); the choice persists on the substrate.
+  const thicknessUnit = substrate.thicknessUnit === "mm" ? "mm" : "in";
+  // mm free-input draft — committed on Enter (single undo record), never per
+  // keystroke. Re-seeded from the panel each time the dropdown opens.
+  const [mmDraft, setMmDraft] = useState("");
+  const openThickness = () => {
+    setMaterialOpen(false);
+    setMmDraft(String(Number.isFinite(substrate.thickness) ? substrate.thickness : 3));
+    setThicknessOpen((o) => !o);
+  };
+  const commitMm = () => {
+    const v = parseFloat(mmDraft);
+    if (Number.isFinite(v) && v > 0) {
+      patchSubstrate({ thickness: v, thicknessUnit: "mm" });
+    }
+  };
 
   // The editor's `kind` is tracked locally so the 'other' → label-input reveal is
   // immediate, independent of whether the parent re-renders the panel prop (it
@@ -222,28 +282,161 @@ export default function PanelHeader({
           </span>
         )}
 
-        {/* Substrate summary — click toggles the substrate editor. When the panel
-            has its own material, the chip leads with a swatch dot + the material
-            name so the per-panel stock reads at a glance. */}
-        <button
-          type="button"
-          aria-expanded={editorOpen}
-          title={`Edit substrate — ${panelMaterial ? panelMaterial.name : substrateSummary(substrate)}`}
-          onClick={() => onToggleEditor?.(panel.id)}
-          className="flex shrink-0 items-center gap-1 rounded-xs border border-hairline bg-paper px-1 py-0.5 text-[10px] text-ink-soft hover:text-ink"
-        >
-          {panelMaterial && (
-            <span
-              data-testid="panel-material-swatch"
-              aria-hidden="true"
-              className="h-2 w-2 shrink-0 rounded-full border border-hairline"
-              style={{ backgroundColor: panelMaterial.hex }}
-            />
+        {/* MATERIAL chip — click opens the stock picker; picking auto-collapses
+            it. Shows a swatch dot + the material name, or "Auto" (follow the
+            canvas-level Material lens). */}
+        <div className="relative shrink-0">
+          <button
+            type="button"
+            aria-label="Panel material"
+            aria-haspopup="listbox"
+            aria-expanded={materialOpen}
+            title={`Panel material — ${panelMaterial ? panelMaterial.name : `Auto (canvas material) · ${substrateSummary(substrate)}`}`}
+            onClick={() => {
+              setThicknessOpen(false);
+              setMaterialOpen((o) => !o);
+            }}
+            className="flex items-center gap-1 rounded-xs border border-hairline bg-paper px-1 py-0.5 text-[10px] text-ink-soft hover:text-ink"
+          >
+            {panelMaterial && (
+              <span
+                data-testid="panel-material-swatch"
+                aria-hidden="true"
+                className="h-2 w-2 shrink-0 rounded-full border border-hairline"
+                style={{ backgroundColor: panelMaterial.hex }}
+              />
+            )}
+            <span className="max-w-[6.5rem] truncate">
+              {panelMaterial ? panelMaterial.name : "Auto"}
+            </span>
+          </button>
+          {materialOpen && (
+            <ChipPopover
+              onClose={() => setMaterialOpen(false)}
+              label="Panel material options"
+              testid="panel-material-popover"
+            >
+              <div role="listbox" aria-label="Panel material options" className="max-h-64 space-y-0.5 overflow-y-auto">
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={!panel.materialId}
+                  onClick={() => {
+                    onUpdatePanel?.(panel.id, { materialId: null });
+                    setMaterialOpen(false);
+                  }}
+                  className={`flex w-full items-center gap-1.5 rounded-xs px-1.5 py-1 text-left text-[11px] ${!panel.materialId ? "bg-accent/15 text-ink" : "text-ink-soft hover:bg-paper-warm hover:text-ink"}`}
+                >
+                  <span aria-hidden className="h-3 w-3 shrink-0 rounded-[2px] border border-dashed border-ink-soft/50" />
+                  Auto (canvas material)
+                </button>
+                {(materials || []).map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    role="option"
+                    aria-selected={panel.materialId === m.id}
+                    onClick={() => {
+                      onUpdatePanel?.(panel.id, { materialId: m.id });
+                      setMaterialOpen(false); // auto-collapse on pick
+                    }}
+                    className={`flex w-full items-center gap-1.5 rounded-xs px-1.5 py-1 text-left text-[11px] ${panel.materialId === m.id ? "bg-accent/15 text-ink" : "text-ink-soft hover:bg-paper-warm hover:text-ink"}`}
+                  >
+                    <span
+                      aria-hidden
+                      className="h-3 w-3 shrink-0 rounded-[2px] border border-hairline"
+                      style={{ backgroundColor: m.hex }}
+                    />
+                    <span className="truncate">{m.name}</span>
+                  </button>
+                ))}
+              </div>
+            </ChipPopover>
           )}
-          {panelMaterial
-            ? `${panelMaterial.name}${substrate.thickness != null ? ` · ${substrate.thickness}mm` : ""}`
-            : substrateSummary(substrate)}
-        </button>
+        </div>
+
+        {/* THICKNESS chip — same footprint as the material chip. Opens a
+            dropdown with an in ↔ mm toggle: inches = the common acrylic
+            increments (nominal metric equivalents stored, so 1/8 → 3mm);
+            mm = a float input committed on Enter. Fresh panels read "1/8 in". */}
+        <div className="relative shrink-0">
+          <button
+            type="button"
+            aria-label="Panel thickness"
+            aria-haspopup="true"
+            aria-expanded={thicknessOpen}
+            title={`Panel thickness — ${thicknessChipLabel(substrate)}`}
+            onClick={openThickness}
+            className="rounded-xs border border-hairline bg-paper px-1 py-0.5 text-[10px] text-ink-soft hover:text-ink"
+          >
+            {thicknessChipLabel(substrate)}
+          </button>
+          {thicknessOpen && (
+            <ChipPopover
+              onClose={() => setThicknessOpen(false)}
+              label="Panel thickness options"
+              testid="panel-thickness-popover"
+            >
+              {/* Unit toggle — persists on the substrate so the chip keeps
+                  reading in the unit the user works in. */}
+              <div role="group" aria-label="Thickness unit" className="mb-1.5 flex gap-0.5">
+                {["in", "mm"].map((u) => (
+                  <button
+                    key={u}
+                    type="button"
+                    aria-pressed={thicknessUnit === u}
+                    onClick={() => patchSubstrate({ thicknessUnit: u })}
+                    className={`flex-1 rounded-xs px-1.5 py-0.5 text-[10px] font-medium ${thicknessUnit === u ? "bg-accent/20 text-accent" : "text-ink-soft hover:bg-paper-warm hover:text-ink"}`}
+                  >
+                    {u}
+                  </button>
+                ))}
+              </div>
+              {thicknessUnit === "in" ? (
+                <div className="grid grid-cols-3 gap-0.5">
+                  {INCH_THICKNESS_PRESETS.map((p) => (
+                    <button
+                      key={p.label}
+                      type="button"
+                      aria-label={`${p.label} inch`}
+                      aria-pressed={inchLabelForMm(substrate.thickness ?? 3) === p.label}
+                      title={`${p.label} in (${p.mm}mm)`}
+                      onClick={() => {
+                        patchSubstrate({ thickness: p.mm, thicknessUnit: "in" });
+                        setThicknessOpen(false);
+                      }}
+                      className={`rounded-xs border px-1 py-1 text-[11px] ${inchLabelForMm(substrate.thickness ?? 3) === p.label ? "border-violet/60 bg-accent/15 text-ink" : "border-hairline text-ink-soft hover:bg-paper-warm hover:text-ink"}`}
+                    >
+                      {p.label}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <label className="flex items-center gap-1 text-[10px] text-ink-soft">
+                  Thickness
+                  <input
+                    type="number"
+                    step="0.1"
+                    min="0.1"
+                    aria-label="Thickness in millimeters"
+                    value={mmDraft}
+                    onChange={(e) => setMmDraft(e.target.value)}
+                    onBlur={commitMm}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        commitMm();
+                        setThicknessOpen(false);
+                      }
+                    }}
+                    className="w-16 rounded-xs border border-hairline bg-paper px-1 py-0.5 text-xs text-ink outline-none"
+                  />
+                  mm
+                </label>
+              )}
+            </ChipPopover>
+          )}
+        </div>
 
         {/* Visibility toggle */}
         <button
@@ -256,8 +449,9 @@ export default function PanelHeader({
           <EyeIcon open={panel.visible} />
         </button>
 
-        {/* ⋯ options menu — folds Rename · Duplicate · Clear all layers · Delete.
-            The relative wrapper anchors RowMenu's `absolute right-0` panel. */}
+        {/* ⋯ options menu — folds Rename · Duplicate · Substrate details… ·
+            Clear all layers · Delete. The relative wrapper anchors RowMenu's
+            `absolute right-0` panel. */}
         <div className="relative shrink-0">
           <button
             type="button"
@@ -277,6 +471,7 @@ export default function PanelHeader({
             onDuplicate={() => onDuplicatePanel?.(panel.id)}
             duplicateDisabled={!canDuplicate}
             duplicateTitle={!canDuplicate ? duplicateDisabledReason : undefined}
+            onEditSubstrate={() => onToggleEditor?.(panel.id)}
             onClearLayers={() => setClearing(true)}
             clearLayersDisabled={!canClearLayers}
             clearLayersLabel="Clear all layers"
@@ -290,31 +485,12 @@ export default function PanelHeader({
         </div>
       </div>
 
-      {/* Substrate editor (single-open, owned by LayerTree via editorOpen). */}
+      {/* Substrate-details editor (single-open, owned by LayerTree via
+          editorOpen; opened from the ⋯ menu). Material + thickness moved onto
+          the row chips — this keeps the remaining identity: kind / color /
+          free-text label. */}
       {editorOpen && (
         <div className="flex flex-wrap items-center gap-2 border-t border-hairline px-2 py-1.5">
-          {/* Per-panel material — the panel's OWN stock for the 3D preview.
-              "Auto" (null) follows the canvas-level Material lens, the
-              pre-per-panel behavior; a concrete choice overrides it for this
-              panel only. Commits through onUpdatePanel like every panel edit,
-              so it persists + undoes with the rest of the panel. */}
-          <label className="flex w-full items-center gap-1 text-[10px] text-ink-soft">
-            Material
-            <select
-              aria-label="Panel material"
-              value={panel.materialId || ""}
-              onChange={(e) => onUpdatePanel?.(panel.id, { materialId: e.target.value || null })}
-              className="min-w-0 flex-1 rounded-xs border border-hairline bg-paper px-1 py-0.5 text-xs text-ink outline-none"
-            >
-              <option value="">Auto (canvas material)</option>
-              {(materials || []).map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.name}
-                </option>
-              ))}
-            </select>
-          </label>
-
           <label className="flex items-center gap-1 text-[10px] text-ink-soft">
             Kind
             <select
@@ -332,17 +508,6 @@ export default function PanelHeader({
                 </option>
               ))}
             </select>
-          </label>
-
-          <label className="flex items-center gap-1 text-[10px] text-ink-soft">
-            Thickness
-            <input
-              type="number"
-              aria-label="Substrate thickness"
-              value={substrate.thickness ?? ""}
-              onChange={(e) => patchSubstrate({ thickness: Number(e.target.value) })}
-              className="w-14 rounded-xs border border-hairline bg-paper px-1 py-0.5 text-xs text-ink outline-none"
-            />
           </label>
 
           <label className="flex items-center gap-1 text-[10px] text-ink-soft">

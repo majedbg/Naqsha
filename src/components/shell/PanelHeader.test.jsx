@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent, within } from "@testing-library/react";
+import { render, screen, fireEvent, within, cleanup } from "@testing-library/react";
 import PanelHeader from "./PanelHeader";
 
 // P5 (panel-row redesign §8): PanelHeader folds every per-panel action into a
@@ -41,13 +41,14 @@ describe("PanelHeader (P5 — ⋯ options menu, trash removed)", () => {
   });
 
   // Slice 2
-  it("opens a menu of exactly Rename · Duplicate · Clear all layers · Delete (no Download; Delete danger-styled)", () => {
+  it("opens a menu of exactly Rename · Duplicate · Substrate details… · Clear all layers · Delete (no Download; Delete danger-styled)", () => {
     render(<PanelHeader panel={makePanel()} />);
     const menu = openMenu();
     const items = within(menu).getAllByRole("menuitem");
     expect(items.map((i) => i.textContent)).toEqual([
       "Rename",
       "Duplicate",
+      "Substrate details…",
       "Clear all layers",
       "Delete",
     ]);
@@ -243,14 +244,14 @@ describe("PanelHeader (P5 — ⋯ options menu, trash removed)", () => {
     expect(onUpdatePanel).toHaveBeenCalledWith(panel.id, { visible: false });
   });
 
-  it("substrate chip toggles the editor via onToggleEditor", () => {
+  it("the ⋯ menu's 'Substrate details…' opens the editor via onToggleEditor", () => {
     const onToggleEditor = vi.fn();
     const panel = makePanel();
     render(
       <PanelHeader panel={panel} onToggleEditor={onToggleEditor} />
     );
-    // The chip shows the substrate summary "acrylic · 3mm".
-    fireEvent.click(screen.getByText(/acrylic · 3mm/i));
+    const menu = openMenu();
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "Substrate details…" }));
     expect(onToggleEditor).toHaveBeenCalledWith(panel.id);
   });
 
@@ -263,7 +264,8 @@ describe("PanelHeader (P5 — ⋯ options menu, trash removed)", () => {
       <PanelHeader panel={panel} editorOpen onUpdatePanel={onUpdatePanel} />
     );
     expect(screen.getByLabelText("Substrate kind")).toBeInTheDocument();
-    expect(screen.getByLabelText("Substrate thickness")).toBeInTheDocument();
+    // Thickness moved to its own row chip — no longer an editor field.
+    expect(screen.queryByLabelText("Substrate thickness")).not.toBeInTheDocument();
     expect(screen.getByLabelText("Substrate color")).toBeInTheDocument();
     // 'other' kind reveals the free-text label field.
     expect(screen.getByLabelText("Substrate label")).toBeInTheDocument();
@@ -283,56 +285,123 @@ describe("PanelHeader (P5 — ⋯ options menu, trash removed)", () => {
   });
 });
 
-describe("PanelHeader — per-panel material (materialId)", () => {
-  function renderWithEditor(panelOverrides = {}, props = {}) {
+describe("PanelHeader — material chip + popover (auto-collapse)", () => {
+  function renderPanel(panelOverrides = {}, props = {}) {
     const onUpdatePanel = vi.fn();
     render(
-      <PanelHeader
-        panel={makePanel(panelOverrides)}
-        editorOpen
-        onUpdatePanel={onUpdatePanel}
-        {...props}
-      />
+      <PanelHeader panel={makePanel(panelOverrides)} onUpdatePanel={onUpdatePanel} {...props} />
     );
     return onUpdatePanel;
   }
+  const openMaterial = () => {
+    fireEvent.click(screen.getByRole("button", { name: "Panel material" }));
+    return screen.getByTestId("panel-material-popover");
+  };
 
-  it("offers a Material select with Auto first plus the preview catalog", () => {
-    renderWithEditor();
-    const select = screen.getByLabelText("Panel material");
-    const options = within(select).getAllByRole("option");
+  it("chip reads 'Auto' by default and opens a listbox with Auto first + the catalog", () => {
+    renderPanel();
+    const chip = screen.getByRole("button", { name: "Panel material" });
+    expect(chip).toHaveTextContent("Auto");
+    const pop = openMaterial();
+    const options = within(pop).getAllByRole("option");
     expect(options[0]).toHaveTextContent("Auto (canvas material)");
     expect(options.map((o) => o.textContent)).toContain("Green Fluorescent");
-    expect(select.value).toBe(""); // no materialId → Auto
   });
 
-  it("choosing a material commits { materialId } through onUpdatePanel", () => {
-    const onUpdatePanel = renderWithEditor();
-    fireEvent.change(screen.getByLabelText("Panel material"), {
-      target: { value: "green-fluorescent" },
-    });
+  it("picking a material commits { materialId } AND auto-collapses the popover", () => {
+    const onUpdatePanel = renderPanel();
+    const pop = openMaterial();
+    fireEvent.click(within(pop).getByRole("option", { name: /Green Fluorescent/ }));
     expect(onUpdatePanel).toHaveBeenCalledWith("panel-1-abc123", {
       materialId: "green-fluorescent",
     });
+    expect(screen.queryByTestId("panel-material-popover")).not.toBeInTheDocument();
   });
 
-  it("switching back to Auto commits { materialId: null }", () => {
-    const onUpdatePanel = renderWithEditor({ materialId: "green-fluorescent" });
-    const select = screen.getByLabelText("Panel material");
-    expect(select.value).toBe("green-fluorescent");
-    fireEvent.change(select, { target: { value: "" } });
+  it("picking Auto commits { materialId: null } and collapses", () => {
+    const onUpdatePanel = renderPanel({ materialId: "green-fluorescent" });
+    const pop = openMaterial();
+    fireEvent.click(within(pop).getByRole("option", { name: /Auto \(canvas material\)/ }));
     expect(onUpdatePanel).toHaveBeenCalledWith("panel-1-abc123", { materialId: null });
+    expect(screen.queryByTestId("panel-material-popover")).not.toBeInTheDocument();
   });
 
-  it("the summary chip leads with the material name + swatch when one is chosen", () => {
-    renderWithEditor({ materialId: "green-fluorescent" });
-    const chip = screen.getByRole("button", { name: /Green Fluorescent · 3mm/ });
+  it("Escape collapses the popover without committing", () => {
+    const onUpdatePanel = renderPanel();
+    openMaterial();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByTestId("panel-material-popover")).not.toBeInTheDocument();
+    expect(onUpdatePanel).not.toHaveBeenCalled();
+  });
+
+  it("chip shows the chosen material's name + swatch dot", () => {
+    renderPanel({ materialId: "green-fluorescent" });
+    const chip = screen.getByRole("button", { name: "Panel material" });
+    expect(chip).toHaveTextContent("Green Fluorescent");
     expect(within(chip).getByTestId("panel-material-swatch")).toBeInTheDocument();
   });
+});
 
-  it("without a materialId the chip keeps the plain substrate summary", () => {
-    render(<PanelHeader panel={makePanel()} />);
-    expect(screen.getByRole("button", { name: /acrylic · 3mm/ })).toBeInTheDocument();
-    expect(screen.queryByTestId("panel-material-swatch")).not.toBeInTheDocument();
+describe("PanelHeader — thickness chip + in/mm dropdown", () => {
+  function renderPanel(panelOverrides = {}) {
+    const onUpdatePanel = vi.fn();
+    render(<PanelHeader panel={makePanel(panelOverrides)} onUpdatePanel={onUpdatePanel} />);
+    return onUpdatePanel;
+  }
+  const openThickness = () => {
+    fireEvent.click(screen.getByRole("button", { name: "Panel thickness" }));
+    return screen.getByTestId("panel-thickness-popover");
+  };
+
+  it("a fresh 3mm panel reads '1/8 in' (nominal stock naming, inch default)", () => {
+    renderPanel();
+    expect(screen.getByRole("button", { name: "Panel thickness" })).toHaveTextContent("1/8 in");
+  });
+
+  it("inch mode lists the common acrylic increments; picking commits the nominal mm and collapses", () => {
+    const onUpdatePanel = renderPanel();
+    const pop = openThickness();
+    for (const frac of ["1/16", "1/8", "3/16", "1/4", "3/8", "1/2"]) {
+      expect(within(pop).getByRole("button", { name: `${frac} inch` })).toBeInTheDocument();
+    }
+    fireEvent.click(within(pop).getByRole("button", { name: "1/4 inch" }));
+    expect(onUpdatePanel).toHaveBeenCalledWith("panel-1-abc123", {
+      substrate: { kind: "acrylic", thickness: 6, color: "#cccccc", thicknessUnit: "in" },
+    });
+    expect(screen.queryByTestId("panel-thickness-popover")).not.toBeInTheDocument();
+  });
+
+  it("the mm tab shows a float input (seeded from the panel) committed on Enter", () => {
+    const onUpdatePanel = renderPanel({
+      substrate: { kind: "acrylic", thickness: 3, color: "#cccccc", thicknessUnit: "mm" },
+    });
+    // chip reads mm when the panel's unit is mm
+    expect(screen.getByRole("button", { name: "Panel thickness" })).toHaveTextContent("3 mm");
+    const pop = openThickness();
+    const input = within(pop).getByLabelText("Thickness in millimeters");
+    expect(input.value).toBe("3");
+    fireEvent.change(input, { target: { value: "5.5" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onUpdatePanel).toHaveBeenCalledWith("panel-1-abc123", {
+      substrate: { kind: "acrylic", thickness: 5.5, color: "#cccccc", thicknessUnit: "mm" },
+    });
+    expect(screen.queryByTestId("panel-thickness-popover")).not.toBeInTheDocument();
+  });
+
+  it("the unit toggle persists thicknessUnit on the substrate", () => {
+    const onUpdatePanel = renderPanel();
+    const pop = openThickness();
+    fireEvent.click(within(pop).getByRole("button", { name: "mm" }));
+    expect(onUpdatePanel).toHaveBeenCalledWith("panel-1-abc123", {
+      substrate: { kind: "acrylic", thickness: 3, color: "#cccccc", thicknessUnit: "mm" },
+    });
+  });
+
+  it("a non-nominal thickness shows mm by default, decimal inches only when 'in' is explicit", () => {
+    renderPanel({ substrate: { kind: "acrylic", thickness: 4, color: "#cccccc" } });
+    expect(screen.getByRole("button", { name: "Panel thickness" })).toHaveTextContent("4 mm");
+    cleanup();
+    renderPanel({ substrate: { kind: "acrylic", thickness: 4, color: "#cccccc", thicknessUnit: "in" } });
+    expect(screen.getByRole("button", { name: "Panel thickness" })).toHaveTextContent("0.157 in");
   });
 });

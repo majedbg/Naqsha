@@ -337,3 +337,32 @@ describe("RowMenu (WI-4 — per-row overflow popper)", () => {
     expect(menu).not.toHaveClass("top-full");
   });
 });
+
+describe("RowMenu — Move to panel… (layer rows in grouped mode)", () => {
+  it("omits 'Move to panel…' when onMoveToPanel is not supplied", () => {
+    renderMenu();
+    expect(
+      screen.queryByRole("menuitem", { name: /move to panel/i })
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders 'Move to panel…' between Duplicate and Download when supplied", () => {
+    renderMenu({ onMoveToPanel: () => {} });
+    const items = within(screen.getByRole("menu")).getAllByRole("menuitem");
+    const labels = items.map((el) => el.textContent);
+    const dup = labels.findIndex((t) => /duplicate/i.test(t));
+    const move = labels.findIndex((t) => /move to panel/i.test(t));
+    const download = labels.findIndex((t) => /download/i.test(t));
+    expect(move).toBe(dup + 1);
+    expect(download).toBe(move + 1);
+  });
+
+  it("fires onMoveToPanel and closes on select", () => {
+    const onMoveToPanel = vi.fn();
+    const onClose = vi.fn();
+    renderMenu({ onMoveToPanel, onClose });
+    fireEvent.click(screen.getByRole("menuitem", { name: /move to panel/i }));
+    expect(onMoveToPanel).toHaveBeenCalledTimes(1);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});

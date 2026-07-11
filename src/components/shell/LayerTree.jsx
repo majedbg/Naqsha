@@ -209,11 +209,127 @@ function MoreIcon() {
   );
 }
 
+// MoveToPanelPicker — the "Move to panel…" popper, one level below the row's
+// ⋯ menu. Follows the OperationPicker precedent (inline, NOT portaled,
+// role="menu" with role="menuitem" entries) but owns its own dismiss the way
+// RowMenu does — its trigger is a menu item that unmounts the instant it is
+// chosen, so there is no overlay to punt to: Escape closes, mousedown outside
+// closes, ↑/↓ move focus, Enter activates. Panels list sorted by `order`; the
+// layer's CURRENT panel is marked aria-current and inert (moving a layer onto
+// its own panel is a no-op, so activating it just closes). Any other panel
+// fires onMove(panelId) and closes.
+function MoveToPanelPicker({
+  open = false,
+  anchorNearBottom = false,
+  panels = [],
+  currentPanelId,
+  onMove = () => {},
+  onClose = () => {},
+}) {
+  const menuRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    function onMouseDown(e) {
+      if (menuRef.current && !menuRef.current.contains(e.target)) onClose();
+    }
+    document.addEventListener("mousedown", onMouseDown);
+    return () => document.removeEventListener("mousedown", onMouseDown);
+  }, [open, onClose]);
+
+  // Focus the first item on open so arrows/Enter/Escape have a defined start.
+  useEffect(() => {
+    if (!open) return;
+    const first = menuRef.current?.querySelector('[role="menuitem"]');
+    first?.focus();
+  }, [open]);
+
+  if (!open) return null;
+
+  function moveFocus(delta) {
+    const items = Array.from(
+      menuRef.current?.querySelectorAll('[role="menuitem"]') ?? []
+    );
+    if (items.length === 0) return;
+    const current = items.indexOf(document.activeElement);
+    const next = (current + delta + items.length) % items.length;
+    items[next]?.focus();
+  }
+
+  function onKeyDown(e) {
+    if (e.key === "Escape") {
+      onClose();
+    } else if (e.key === "ArrowDown") {
+      e.preventDefault();
+      moveFocus(1);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      moveFocus(-1);
+    } else if (e.key === "Enter") {
+      // Same jsdom-parity route as RowMenu: Enter activates via .click().
+      e.preventDefault();
+      if (typeof document.activeElement?.click === "function") {
+        document.activeElement.click();
+      }
+    }
+  }
+
+  const flipClass = anchorNearBottom ? "bottom-full mb-1" : "top-full mt-1";
+
+  return (
+    <div
+      ref={menuRef}
+      role="menu"
+      aria-label="Move to panel"
+      data-testid="move-to-panel-picker"
+      onKeyDown={onKeyDown}
+      className={`absolute right-0 z-50 ${flipClass} min-w-[140px] rounded-sm border border-hairline bg-paper p-1 shadow-pop`}
+    >
+      {[...panels]
+        .sort((a, b) => a.order - b.order)
+        .map((panel) => {
+          const isCurrent = panel.id === currentPanelId;
+          return (
+            <div
+              key={panel.id}
+              role="menuitem"
+              tabIndex={-1}
+              aria-current={isCurrent ? "true" : undefined}
+              title={isCurrent ? "Already on this panel" : undefined}
+              onClick={() => {
+                if (isCurrent) onClose();
+                else onMove(panel.id);
+              }}
+              className={`flex w-full items-center gap-2 rounded-xs px-1.5 py-1 text-left text-[11px] transition-colors duration-fast ease-out-quart ${
+                isCurrent
+                  ? "bg-muted text-ink cursor-default"
+                  : "text-ink-soft hover:bg-paper-warm hover:text-ink"
+              }`}
+            >
+              {/* Substrate color swatch — same at-a-glance cue as the panel
+                  header chip, mirroring OperationPicker's swatch+name entry. */}
+              <span
+                className="inline-block h-3 w-3 shrink-0 rounded-[2px] border border-hairline"
+                style={{ backgroundColor: panel.substrate?.color }}
+              />
+              <span className="truncate">{panel.name}</span>
+            </div>
+          );
+        })}
+    </div>
+  );
+}
+
 function LayerRow({
   layer, index, total, selected, operations, compact,
   onSelect, onUpdateLayer, onReorderLayers, onAssignOperation,
   onDeleteLayer, onDuplicateLayer, onRandomizeLayerParams, onExportLayer,
   menuOpen, anchorNearBottom, onRequestMenu, onCloseMenu,
+  // "Move to panel…" (grouped tier only): the document's panels + the assign
+  // handler. Optional → the menu item is omitted in flat mode / single-panel
+  // documents (nowhere to move to).
+  panels = [],
+  onAssignLayerToPanel,
   // Drag-assign wiring (grouped tier only). Optional → undefined in flat mode so
   // React omits the attributes and the row stays byte-identical there.
   draggable, onDragStartRow,
@@ -261,6 +377,14 @@ function LayerRow({
   // select (RowMenu fires its callback then closes). `confirm` ∈ null | "delete"
   // | "randomize".
   const [confirm, setConfirm] = useState(null);
+
+  // "Move to panel…" picker open state — hoisted to the row for the same
+  // reason as `confirm`: RowMenu closes itself on select, so the picker it
+  // spawns must outlive it.
+  const [movePickerOpen, setMovePickerOpen] = useState(false);
+  // The item only appears when there is somewhere to move TO: an assign
+  // handler plus at least one OTHER panel.
+  const canMoveToPanel = !!onAssignLayerToPanel && panels.length > 1;
 
   // A per-row inline action button (dice). Stops propagation so it never selects
   // the row. Rendered only when its handler is supplied.
@@ -449,7 +573,13 @@ function LayerRow({
           // beat before this click's toggle reopened it — so clicking ⋯ again
           // never closed it. Click-away elsewhere is unaffected.
           onMouseDown={(e) => e.stopPropagation()}
-          onClick={(e) => { e.stopPropagation(); onRequestMenu(layer.id); }}
+          onClick={(e) => {
+            e.stopPropagation();
+            // Re-opening the ⋯ menu supersedes a lingering move picker (its
+            // click-away can't see this trigger — mousedown is stopped above).
+            setMovePickerOpen(false);
+            onRequestMenu(layer.id);
+          }}
           className="shrink-0 text-ink-soft hover:text-ink"
         >
           <MoreIcon />
@@ -460,8 +590,20 @@ function LayerRow({
           onClose={onCloseMenu}
           onRename={beginEdit}
           onDuplicate={onDuplicateLayer ? () => onDuplicateLayer(layer.id) : undefined}
+          onMoveToPanel={canMoveToPanel ? () => setMovePickerOpen(true) : undefined}
           onDownload={onExportLayer ? () => onExportLayer(layer.id) : undefined}
           onDelete={onDeleteLayer ? () => setConfirm("delete") : undefined}
+        />
+        <MoveToPanelPicker
+          open={movePickerOpen}
+          anchorNearBottom={anchorNearBottom}
+          panels={panels}
+          currentPanelId={layer.panelId}
+          onMove={(panelId) => {
+            setMovePickerOpen(false);
+            onAssignLayerToPanel?.(layer.id, panelId);
+          }}
+          onClose={() => setMovePickerOpen(false)}
         />
       </div>
 
@@ -652,6 +794,10 @@ export default function LayerTree({
     rowRef: registerRow(layer.id),
     outCount: graph.byGuide.get(layer.id)?.length ?? 0,
     inCount: graph.byTarget.get(layer.id)?.length ?? 0,
+    // "Move to panel…" (⋯ menu → picker popper). In flat mode `panels` is []
+    // so the row hides the item (nowhere to move to) — flat rows unchanged.
+    panels,
+    onAssignLayerToPanel,
   });
 
   return (

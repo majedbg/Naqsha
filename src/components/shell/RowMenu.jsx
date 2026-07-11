@@ -72,7 +72,9 @@ export default function RowMenu({
   onDuplicate = () => {},
   duplicateDisabled = false,
   duplicateTitle,
+  onMoveToPanel,
   onDownload,
+  onEditSubstrate,
   onClearLayers,
   clearLayersDisabled = false,
   clearLayersLabel = "Clear all layers",
@@ -165,8 +167,20 @@ export default function RowMenu({
         title={duplicateTitle}
         onActivate={duplicateDisabled ? undefined : select(onDuplicate)}
       />
+      {onMoveToPanel && (
+        /* Layer rows in grouped (panel) mode only: opens the move-to-panel
+           picker popper (anchored to the same ⋯ trigger) listing the document's
+           panels. The caller gates this on having somewhere to move TO (≥2
+           panels), so the item never dead-ends. */
+        <MenuItem label="Move to panel…" onActivate={select(onMoveToPanel)} />
+      )}
       {onDownload && (
         <MenuItem label="Download" onActivate={select(onDownload)} />
+      )}
+      {onEditSubstrate && (
+        /* Panel rows only: opens the substrate-details editor (kind / color /
+           label) now that material + thickness live directly on the row. */
+        <MenuItem label="Substrate details…" onActivate={select(onEditSubstrate)} />
       )}
       {onClearLayers && (
         <MenuItem

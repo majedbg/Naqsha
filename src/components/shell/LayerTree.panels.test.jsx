@@ -85,10 +85,11 @@ describe("LayerTree — grouped panel tier (WI-5, spec §6)", () => {
     const headers = screen.getAllByTestId("panel-header");
     expect(headers).toHaveLength(2);
 
-    // Header 1 — name + substrate summary (kind + thickness) + controls.
+    // Header 1 — name + material chip (Auto) + thickness chip (1/8 in) + controls.
     const h1 = headers[0];
     expect(within(h1).getByText("Panel 1")).toBeInTheDocument();
-    expect(within(h1).getByText(/acrylic/i)).toHaveTextContent("3");
+    expect(within(h1).getByRole("button", { name: "Panel material" })).toHaveTextContent("Auto");
+    expect(within(h1).getByRole("button", { name: "Panel thickness" })).toHaveTextContent("1/8 in");
     expect(
       within(h1).getByRole("button", { name: /collapse panel|expand panel/i })
     ).toBeInTheDocument();
@@ -252,11 +253,12 @@ describe("LayerTree — grouped panel tier (WI-5, spec §6)", () => {
     fireEvent.keyDown(nameInput, { key: "Enter" });
     expect(onUpdatePanel).toHaveBeenCalledWith("p1", { name: "Front" });
 
-    // Open the substrate editor.
-    fireEvent.click(within(h1).getByRole("button", { name: /acrylic/i }));
+    // Open the substrate-details editor via the ⋯ menu (material + thickness
+    // moved to their own row chips).
+    fireEvent.click(within(h1).getByRole("button", { name: "Panel options" }));
+    fireEvent.click(within(h1).getByRole("menuitem", { name: "Substrate details…" }));
     const kind = within(h1).getByRole("combobox", { name: "Substrate kind" });
     expect(kind).toBeInTheDocument();
-    expect(within(h1).getByLabelText("Substrate thickness")).toBeInTheDocument();
     expect(within(h1).getByLabelText("Substrate color")).toBeInTheDocument();
 
     // Selecting 'other' reveals the free-text label input.
@@ -283,10 +285,14 @@ describe("LayerTree — grouped panel tier (WI-5, spec §6)", () => {
     renderGrouped();
     const [h1, h2] = screen.getAllByTestId("panel-header");
 
-    fireEvent.click(within(h1).getByRole("button", { name: /acrylic/i }));
+    const openDetails = (h) => {
+      fireEvent.click(within(h).getByRole("button", { name: "Panel options" }));
+      fireEvent.click(within(h).getByRole("menuitem", { name: "Substrate details…" }));
+    };
+    openDetails(h1);
     expect(within(h1).getByRole("combobox", { name: "Substrate kind" })).toBeInTheDocument();
 
-    fireEvent.click(within(h2).getByRole("button", { name: /acrylic/i }));
+    openDetails(h2);
     expect(within(h2).getByRole("combobox", { name: "Substrate kind" })).toBeInTheDocument();
     expect(within(h1).queryByRole("combobox", { name: "Substrate kind" })).not.toBeInTheDocument();
   });
@@ -450,5 +456,103 @@ describe("LayerTree — grouped panel tier (WI-5, spec §6)", () => {
     );
     expect(screen.queryByTestId("panel-header")).not.toBeInTheDocument();
     expect(screen.getByTestId("layer-row")).toBeInTheDocument();
+  });
+});
+
+// "Move to panel…" — the ⋯ row-menu path for reassigning a layer's panel (the
+// menu-driven sibling of the drag-onto-header path above). Selecting the item
+// opens the MoveToPanelPicker popper (OperationPicker-style: role="menu",
+// swatch + panel name per entry); picking another panel fires
+// onAssignLayerToPanel(layerId, panelId).
+describe("LayerTree — Move to panel… (row ⋯ menu → picker popper)", () => {
+  // Open the ⋯ menu on the row whose layer-name matches `name`.
+  function openMenuFor(name) {
+    const row = screen
+      .getAllByTestId("layer-row")
+      .find((r) => within(r).queryByText(name));
+    fireEvent.click(within(row).getByRole("button", { name: "Row actions" }));
+    return { row, menu: within(row).getByTestId("row-menu") };
+  }
+
+  it("moves a layer to the chosen panel: ⋯ → Move to panel… → pick → onAssignLayerToPanel", () => {
+    const props = renderGrouped();
+    const { row, menu } = openMenuFor("Alpha"); // Alpha lives on p1
+    fireEvent.click(within(menu).getByRole("menuitem", { name: /move to panel/i }));
+
+    // The row menu closed and the picker popper opened in its place.
+    expect(within(row).queryByTestId("row-menu")).not.toBeInTheDocument();
+    const picker = within(row).getByTestId("move-to-panel-picker");
+
+    // One entry per panel, sorted by order; the CURRENT panel is marked.
+    const entries = within(picker).getAllByRole("menuitem");
+    expect(entries.map((e) => e.textContent)).toEqual(["Panel 1", "Panel 2"]);
+    expect(entries[0]).toHaveAttribute("aria-current", "true");
+
+    fireEvent.click(entries[1]);
+    expect(props.onAssignLayerToPanel).toHaveBeenCalledWith("l1", "p2");
+    expect(within(row).queryByTestId("move-to-panel-picker")).not.toBeInTheDocument();
+  });
+
+  it("picking the CURRENT panel just closes the picker without reassigning", () => {
+    const props = renderGrouped();
+    const { row, menu } = openMenuFor("Gamma"); // Gamma lives on p2
+    fireEvent.click(within(menu).getByRole("menuitem", { name: /move to panel/i }));
+    const picker = within(row).getByTestId("move-to-panel-picker");
+    const current = within(picker)
+      .getAllByRole("menuitem")
+      .find((e) => e.getAttribute("aria-current") === "true");
+    expect(current).toHaveTextContent("Panel 2");
+    fireEvent.click(current);
+    expect(props.onAssignLayerToPanel).not.toHaveBeenCalled();
+    expect(within(row).queryByTestId("move-to-panel-picker")).not.toBeInTheDocument();
+  });
+
+  it("closes the picker on Escape without reassigning", () => {
+    const props = renderGrouped();
+    const { row, menu } = openMenuFor("Alpha");
+    fireEvent.click(within(menu).getByRole("menuitem", { name: /move to panel/i }));
+    const picker = within(row).getByTestId("move-to-panel-picker");
+    fireEvent.keyDown(picker, { key: "Escape" });
+    expect(within(row).queryByTestId("move-to-panel-picker")).not.toBeInTheDocument();
+    expect(props.onAssignLayerToPanel).not.toHaveBeenCalled();
+  });
+
+  it("omits 'Move to panel…' when the document has a single panel (nowhere to move to)", () => {
+    renderGrouped({
+      layers: [makeLayer("l1", { name: "Alpha", panelId: "p1" })],
+      panels: [makePanel("p1", 0)],
+    });
+    const { menu } = openMenuFor("Alpha");
+    expect(
+      within(menu).queryByRole("menuitem", { name: /move to panel/i })
+    ).not.toBeInTheDocument();
+  });
+
+  it("omits 'Move to panel…' in flat mode (no panels)", () => {
+    renderGrouped({
+      layers: [makeLayer("l1", { name: "Alpha" })],
+      panels: [],
+    });
+    const { menu } = openMenuFor("Alpha");
+    expect(
+      within(menu).queryByRole("menuitem", { name: /move to panel/i })
+    ).not.toBeInTheDocument();
+  });
+
+  it("also works on a freshly duplicated layer (duplicate → move the copy)", () => {
+    // Duplicate is host-owned (onDuplicateLayer); simulate the host having
+    // appended the copy to the same panel, then move the COPY via its own menu.
+    const props = renderGrouped({
+      layers: [
+        makeLayer("l1", { name: "Alpha", panelId: "p1" }),
+        makeLayer("l1-copy", { name: "Alpha copy", panelId: "p1" }),
+        makeLayer("l3", { name: "Gamma", panelId: "p2" }),
+      ],
+    });
+    const { row, menu } = openMenuFor("Alpha copy");
+    fireEvent.click(within(menu).getByRole("menuitem", { name: /move to panel/i }));
+    const picker = within(row).getByTestId("move-to-panel-picker");
+    fireEvent.click(within(picker).getByRole("menuitem", { name: /panel 2/i }));
+    expect(props.onAssignLayerToPanel).toHaveBeenCalledWith("l1-copy", "p2");
   });
 });

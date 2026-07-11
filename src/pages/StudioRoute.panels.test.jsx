@@ -201,13 +201,10 @@ describe("StudioRoute — Naqsha Panels handler round-trips (WI-6 / spec §5)", 
     setProfile("laser");
 
     const header = within(objectTree()).getAllByTestId("panel-header")[0];
-    // Open the substrate editor. The summary button's accessible name is the
-    // substrate summary text itself (default "acrylic · 3mm"); its full intent
-    // lives in the `title` ("Edit substrate — …"). Match the kind text.
-    const summaryBtn = within(header).getByRole("button", {
-      name: /acrylic/i,
-    });
-    fireEvent.click(summaryBtn);
+    // Open the substrate-details editor via the ⋯ menu (material + thickness
+    // now live on their own row chips; kind/color/label behind the menu).
+    fireEvent.click(within(header).getByRole("button", { name: "Panel options" }));
+    fireEvent.click(within(header).getByRole("menuitem", { name: "Substrate details…" }));
 
     // Change the substrate kind acrylic → plywood.
     fireEvent.change(
@@ -215,11 +212,12 @@ describe("StudioRoute — Naqsha Panels handler round-trips (WI-6 / spec §5)", 
       { target: { value: "plywood" } }
     );
 
-    // The summary reflects the new kind (round-tripped through onUpdatePanel).
+    // The editor's select reflects the new kind (round-tripped through
+    // onUpdatePanel → panels state → prop).
     await waitFor(() => {
       expect(
-        within(objectTree()).getAllByTestId("panel-header")[0]
-      ).toHaveTextContent(/plywood/);
+        within(objectTree()).getByRole("combobox", { name: "Substrate kind" })
+      ).toHaveValue("plywood");
     });
     // …and it persists to sonoform-panels.
     await waitFor(
@@ -289,8 +287,16 @@ describe("StudioRoute — create panel from a material preset (P7 slice 1)", () 
     await waitFor(() =>
       expect(within(objectTree()).getAllByTestId("panel-header").length).toBe(2)
     );
-    // The new panel (order 1) carries the plywood substrate, not the default.
-    expect(panelAt(1).el).toHaveTextContent(/plywood/);
+    // The new panel (order 1) carries the plywood preset's 4mm thickness on its
+    // chip (kind now lives behind ⋯ → Substrate details) and persists plywood.
+    expect(
+      within(panelAt(1).el).getByRole("button", { name: "Panel thickness" })
+    ).toHaveTextContent("4 mm");
+    // …and its details editor carries the plywood kind.
+    const h2 = panelAt(1).el;
+    fireEvent.click(within(h2).getByRole("button", { name: "Panel options" }));
+    fireEvent.click(within(h2).getByRole("menuitem", { name: "Substrate details…" }));
+    expect(within(h2).getByRole("combobox", { name: "Substrate kind" })).toHaveValue("plywood");
   });
 });
 

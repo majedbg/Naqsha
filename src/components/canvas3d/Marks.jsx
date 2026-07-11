@@ -194,7 +194,7 @@ function useSvgTexture(svg) {
  *           glowDrive?:number, size:[number,number], z:number,
  *           onHoverProcess?:(p:string|null)=>void }} props
  */
-function MarkPlane({ svg, process, opacity, glow = 0, glowDrive = 1, size, z, onHoverProcess }) {
+function MarkPlane({ svg, process, opacity, glow = 0, glowDrive = 1, size, z, visible = true, onHoverProcess }) {
   const texture = useSvgTexture(svg);
   const [hovered, setHovered] = useState(false);
   // Bloom membership (ADR 0003 #5): hover annotation, OR a genuinely glowing
@@ -210,6 +210,7 @@ function MarkPlane({ svg, process, opacity, glow = 0, glowDrive = 1, size, z, on
     <mesh
       ref={hovered || glowing ? bloomRef : null}
       position={[0, 0, z]}
+      visible={visible}
       onPointerOver={(e) => {
         e.stopPropagation();
         setHovered(true);
@@ -267,7 +268,7 @@ function MarkPlane({ svg, process, opacity, glow = 0, glowDrive = 1, size, z, on
  *           fallback:React.ReactNode,
  *           onHoverProcess?:(p:string|null)=>void }} props
  */
-function RibbonMesh({ svg, tint, process, opacity, glow = 0, glowDrive = 1, size, z, fallback, onHoverProcess }) {
+function RibbonMesh({ svg, tint, process, opacity, glow = 0, glowDrive = 1, size, z, visible = true, fallback, onHoverProcess }) {
   const [w = 0, h = 0] = size || [];
   const geometry = useMemo(
     () => (svg && w && h ? buildRibbonGeometry(svg, { width: w, height: h }) : null),
@@ -293,6 +294,7 @@ function RibbonMesh({ svg, tint, process, opacity, glow = 0, glowDrive = 1, size
     <mesh
       ref={hovered || glowing ? bloomRef : null}
       position={[0, 0, z]}
+      visible={visible}
       geometry={geometry}
       onPointerOver={(e) => {
         e.stopPropagation();
@@ -347,12 +349,21 @@ function deviceProfile() {
  * (fluorescent groove glow) — the animation seam: drive it from any live signal
  * (mic volume, beat clock) and every glowing groove follows, uniform-only.
  *
+ * BACK-FACE TWIN: each mark renders twice — at the front face and, settled-only,
+ * as a twin just behind the BACK face. Three.js excludes `transparent` materials
+ * from the shared transmission buffer, so a settled MTM back face has no marks to
+ * refract — the twin is the directly-visible stand-in (its rear side reads as the
+ * mirrored groove, which is the physically correct back view). Hidden while
+ * `isMoving`: ghost mode is plain alpha blending, where the front plane's
+ * DoubleSide already shows through and a visible twin would double the image.
+ *
  * @param {{ specs?: import('../../lib/three3d/sheetSpecs.js').SheetSpec[],
  *           marksByPanel?: Record<string, Array<{process:string,tint:string,opacity:number,emissiveIntensity?:number,svg:string}>>,
  *           glowDrive?: number,
+ *           isMoving?: boolean,
  *           onHoverProcess?: (process: string|null) => void }} props
  */
-export default function Marks({ specs = [], marksByPanel = {}, glowDrive = 1, onHoverProcess = null }) {
+export default function Marks({ specs = [], marksByPanel = {}, glowDrive = 1, isMoving = false, onHoverProcess = null }) {
   const routes = useMemo(
     () => routePanelRenderModes(marksByPanel, deviceProfile()),
     [marksByPanel],
@@ -363,53 +374,64 @@ export default function Marks({ specs = [], marksByPanel = {}, glowDrive = 1, on
         const marks = marksByPanel[spec.panelId];
         if (!marks || marks.length === 0) return null;
         const front = spec.zOffset + spec.thickness / 2;
+        const back = spec.zOffset - spec.thickness / 2;
         const useRibbon = routes[spec.panelId] === 'ribbon';
         return marks
           .filter((m) => m.svg)
-          .map((m, i) => {
-            // Lift clear of the face (SURFACE_LIFT), then a tiny per-process step so
-            // stacked processes keep a stable front-to-back order (cut/engrave/score).
-            const z = front + SURFACE_LIFT + Z_EPSILON * i;
+          .flatMap((m, i) => {
             const glow = m.emissiveIntensity ?? 0;
-            const plane = (
-              <MarkPlane
-                svg={m.svg}
-                process={m.process}
-                opacity={m.opacity}
-                glow={glow}
-                glowDrive={glowDrive}
-                size={spec.size}
-                z={z}
-                onHoverProcess={onHoverProcess}
-              />
-            );
-            return useRibbon ? (
-              <RibbonMesh
-                key={`${spec.panelId}-${m.process}`}
-                svg={m.svg}
-                tint={m.tint}
-                process={m.process}
-                opacity={m.opacity}
-                glow={glow}
-                glowDrive={glowDrive}
-                size={spec.size}
-                z={z}
-                fallback={plane}
-                onHoverProcess={onHoverProcess}
-              />
-            ) : (
-              <MarkPlane
-                key={`${spec.panelId}-${m.process}`}
-                svg={m.svg}
-                process={m.process}
-                opacity={m.opacity}
-                glow={glow}
-                glowDrive={glowDrive}
-                size={spec.size}
-                z={z}
-                onHoverProcess={onHoverProcess}
-              />
-            );
+            // One mark surface at the given z (front face, or the settled-only
+            // back-face twin — see the component doc).
+            const markAt = (z, keySuffix, visible) => {
+              const plane = (
+                <MarkPlane
+                  svg={m.svg}
+                  process={m.process}
+                  opacity={m.opacity}
+                  glow={glow}
+                  glowDrive={glowDrive}
+                  size={spec.size}
+                  z={z}
+                  visible={visible}
+                  onHoverProcess={onHoverProcess}
+                />
+              );
+              return useRibbon ? (
+                <RibbonMesh
+                  key={`${spec.panelId}-${m.process}${keySuffix}`}
+                  svg={m.svg}
+                  tint={m.tint}
+                  process={m.process}
+                  opacity={m.opacity}
+                  glow={glow}
+                  glowDrive={glowDrive}
+                  size={spec.size}
+                  z={z}
+                  visible={visible}
+                  fallback={plane}
+                  onHoverProcess={onHoverProcess}
+                />
+              ) : (
+                <MarkPlane
+                  key={`${spec.panelId}-${m.process}${keySuffix}`}
+                  svg={m.svg}
+                  process={m.process}
+                  opacity={m.opacity}
+                  glow={glow}
+                  glowDrive={glowDrive}
+                  size={spec.size}
+                  z={z}
+                  visible={visible}
+                  onHoverProcess={onHoverProcess}
+                />
+              );
+            };
+            return [
+              // Lift clear of the face (SURFACE_LIFT), then a tiny per-process step
+              // so stacked processes keep a stable front-to-back order.
+              markAt(front + SURFACE_LIFT + Z_EPSILON * i, '', true),
+              markAt(back - SURFACE_LIFT - Z_EPSILON * i, '-back', !isMoving),
+            ];
           });
       })}
     </group>

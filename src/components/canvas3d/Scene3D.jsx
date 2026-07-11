@@ -406,6 +406,7 @@ export default function Scene3D({
               <Marks
                 specs={sheetSpecs}
                 marksByPanel={marksByPanel ?? {}}
+                isMoving={isInteracting}
                 onHoverProcess={setHoveredProcess}
               />
             </>

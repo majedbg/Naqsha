@@ -3,16 +3,26 @@
 // the two render targets can never diverge (the "build-time-geometry-before-
 // dual-emit" contract, docs/motif-adorn-arch-brief.md §1/§6).
 //
-// The pipeline per generate():
+// The pipeline per generate() (B1 — chain-consuming, MULTI-GLYPH):
 //   anchors  = sampleEdgeAnchors(hostPaths, edgeOpts)           (anchors.js)
-//   placements = placeMotifs(anchors, binding, {boundary,...})  (placementEngine.js)
+//   {survivors, sequence} = resolveSelection(binding, anchors)  (compileSelectionToChain.js)
+//     — runs binding.chain if present, else compiles binding.selection; the
+//       terminal Sequencer block rides out as `sequence` (null when unsequenced).
+//   placements = resolvePlacements(survivors, {...placement, sequence?}) (placementEngine.js)
+//     — a sequenced placement gains a per-slot `glyphRef` (present IFF sequenced)
+//       plus folded modifiers (size/rotation/flip already baked into the placement).
 //   for each placement:
-//     m = placementMatrix(placement, glyph.viewRadius)          (instancing.js)
+//     glyph = the per-placement glyph — the injected `glyphs` MAP entry for the
+//       slot's glyphRef, else the base glyph (unsequenced / back-compat).
+//     m = placementMatrix(placement, glyph.viewRadius, glyph.root)  (instancing.js)
+//       — the RESOLVED glyph's own viewRadius/root, so each slot scales correctly.
 //     ── canvas ── pre-transform every glyph point with applyMatrix(pt, m) and
 //        emit ABSOLUTE vertices (NO ctx.push/translate/rotate/scale — the whole
 //        divergence trap is a second transform path; there is exactly one, `m`).
 //     ── svg ──── push ONE <g transform="matrixToSVG(m)"> per instance wrapping
-//        the glyph's VERBATIM <path d> (curves survive), using the SAME `m`.
+//        THAT glyph's VERBATIM <path d> (curves survive), using the SAME `m`.
+//   The glyph varies per instance, but the single-matrix-feeds-both-emitters
+//   discipline is unchanged: SVG and canvas for each slot are byte-identical.
 //
 // Because generate() fully resolves geometry into `this.svgElements`, export
 // (svgExport.buildAllLayersSVG → toSVGGroup) NEVER re-runs placement. We
@@ -23,7 +33,8 @@ import { Pattern } from '../patterns/drawingContext';
 import { parsePathD } from '../plotter/pathOps';
 import { sampleEdgeAnchors } from './anchors.js';
 import { getSemanticAnchors } from './semanticAnchors.js';
-import { placeMotifs } from './placementEngine.js';
+import { resolveSelection } from './compileSelectionToChain.js';
+import { resolvePlacements } from './placementEngine.js';
 import { getGlyph } from './glyphs.js';
 import { placementMatrix, applyMatrix, matrixToSVG } from './instancing.js';
 
@@ -37,18 +48,24 @@ export default class MotifPattern extends Pattern {
     this.svgElements = [];
 
     const p = params || {};
-    // Glyph resolution (WI-3): prefer the glyph INJECTED by the render seam
-    // (useCanvas resolves glyphRef against the document custom-glyph store and
-    // injects the object here), keeping this class decoupled from that store.
-    // Fall back to the built-in library by glyphRef when nothing is injected —
-    // back-compat for existing built-in motifs and non-injecting callers.
-    const glyph = p.glyph ?? getGlyph(p.glyphRef);
+    // Glyph resolution (WI-3 + B1 multi-glyph). Two injected sources, both from
+    // the render seam (useCanvas), keeping this class decoupled from the store:
+    //   • `p.glyph` — the BASE single glyph (resolved from p.glyphRef). Used for
+    //     unsequenced placements and as the back-compat fallback.
+    //   • `p.glyphs` — a MAP `{ [glyphRef]: glyph }` over every glyph a slot might
+    //     stamp (base + each Sequencer slot's glyphRef, resolved over built-ins +
+    //     customGlyphs). A per-placement glyphRef (present IFF sequenced) is looked
+    //     up here; a ref absent from the map is a stripped/unresolvable glyph and
+    //     that instance is skipped (below).
+    const baseGlyph = p.glyph ?? getGlyph(p.glyphRef);
+    const glyphMap = p.glyphs && typeof p.glyphs === 'object' ? p.glyphs : null;
     const hostPaths = Array.isArray(p.hostPaths) ? p.hostPaths : [];
-    // No glyph ⇒ nothing to stamp. (hostPaths may be empty in SEMANTIC mode —
-    // a Grid/Spiral host has no polyline geometry, so the guard cannot require
-    // it here; the anchor step below yields [] for empty edge-mode input, which
-    // no-ops naturally.)
-    if (!glyph) return;
+    // Nothing resolvable at all ⇒ nothing to stamp. (Collapses to the old
+    // single-glyph `if (!glyph) return` whenever no map is injected — every
+    // existing caller/test.) hostPaths may be empty in SEMANTIC mode — a
+    // Grid/Spiral host has no polyline geometry, so the guard cannot require it
+    // here; the anchor step below yields [] for empty edge-mode input.
+    if (!baseGlyph && !glyphMap) return;
 
     const anchorMode = p.anchorMode ?? 'edge';
     let anchors;
@@ -79,23 +96,59 @@ export default class MotifPattern extends Pattern {
     }
 
     const boundary = { type: 'rect', width: canvasW, height: canvasH };
-    const { placements } = placeMotifs(anchors, p.binding || {}, {
-      boundary,
+
+    // Run the selection CHAIN (both binding shapes) → survivors + the terminal
+    // Sequencer block. `overrides` seam: legacy bindings store overrides in
+    // `binding.selection.overrides` and resolveSelection's compile path threads
+    // them for us; where CHAIN-mode overrides live on the binding is a C1
+    // decision, so B1 passes a TOP-LEVEL `binding.overrides` through if present
+    // (undefined otherwise) and does NOT invent a schema. For legacy bindings
+    // the compile path overwrites this with the compiled overrides anyway.
+    const binding = p.binding || {};
+    const { survivors, sequence } = resolveSelection(binding, anchors, {
       canvasW,
       canvasH,
+      overrides: binding.overrides,
     });
+
+    // Place the survivors WITH the sequence. Only SET `sequence` when the chain
+    // actually produced a Sequencer block — a falsy `sequence` (every legacy
+    // binding) must NOT clobber a legacy string-array `placement.sequence`
+    // (that would silently rewrite seqId). resolvePlacements reads only
+    // `boundary` from opts, so passing just `{boundary}` is byte-identical.
+    const placementConfig = { ...(binding.placement || {}) };
+    if (sequence) placementConfig.sequence = sequence;
+    const { placements } = resolvePlacements(survivors, placementConfig, { boundary });
 
     // Canvas style — mirror ImportedPath: one resolved color, alpha from opacity.
     const alpha = Math.round((Math.max(0, Math.min(100, opacity ?? 100)) / 100) * 255);
     const c = ctx.color(color || '#000000');
     if (c && typeof c.setAlpha === 'function') c.setAlpha(alpha);
 
-    // Optional motif ROOT (glyph-local): the point that coincides with the
-    // anchor + growth-direction angle. Built-in glyphs carry none ⇒ default
-    // no-op ⇒ byte-identical output to the pre-root pipeline (WI-2).
-    const root = glyph.root || { x: 0, y: 0, angle: 0 };
-
     for (const placement of placements) {
+      // ── PER-PLACEMENT glyph resolution (B1 multi-glyph) ─────────────────────
+      // `glyphRef` is present IFF this placement was sequenced (key off presence,
+      // not truthiness). A sequenced slot with an explicit glyphRef resolves via
+      // the injected map (authoritative when present); a ref that doesn't resolve
+      // (stripped custom glyph) is SKIPPED — a real gap, matching the single-glyph
+      // missing-glyph guard, never silently substituted. An unsequenced placement
+      // (no glyphRef) OR a modifier-only slot (glyphRef null/undefined) uses the
+      // base glyph. With NO map injected (non-injecting callers) a sequenced slot
+      // defensively falls back to the base / built-in lookup so it still stamps.
+      let glyph;
+      if ('glyphRef' in placement && placement.glyphRef != null) {
+        glyph = glyphMap ? glyphMap[placement.glyphRef] : (baseGlyph ?? getGlyph(placement.glyphRef));
+      } else {
+        glyph = baseGlyph;
+      }
+      if (!glyph) continue;
+
+      // Optional motif ROOT (glyph-local): the point that coincides with the
+      // anchor + growth-direction angle. Built-in glyphs carry none ⇒ default
+      // no-op ⇒ byte-identical output to the pre-root pipeline (WI-2). Read off
+      // the RESOLVED glyph so each slot uses its own root/viewRadius.
+      const root = glyph.root || { x: 0, y: 0, angle: 0 };
+
       // THE single matrix. Feeds BOTH emitters below — no second transform path.
       const m = placementMatrix(placement, glyph.viewRadius, root);
 

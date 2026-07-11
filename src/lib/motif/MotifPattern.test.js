@@ -17,6 +17,7 @@ import { placeMotifs } from './placementEngine.js';
 import * as glyphs from './glyphs.js';
 import { getGlyph } from './glyphs.js';
 import { parsePathD } from '../plotter/pathOps.js';
+import { placementMatrix, matrixToSVG } from './instancing.js';
 
 const W = 800;
 const H = 600;
@@ -504,5 +505,265 @@ describe('MotifPattern voronoi drawn-geometry (GEOMETRY-IN) semantic path', () =
       (t) => Math.abs(t.x - 200) < 1e-3 && Math.abs(t.y - 200) < 1e-3
     );
     expect(legacyJunctionHit).toBe(false);
+  });
+});
+
+// ===========================================================================
+// B1 — chain-consuming, MULTI-GLYPH dual-emit.
+//
+// MotifPattern now runs the selection CHAIN (resolveSelection → survivors +
+// terminal sequence block), places the survivors WITH the sequence
+// (resolvePlacements folds each Slot's glyph + modifiers), and resolves a
+// PER-PLACEMENT glyph from an injected `params.glyphs` map (keyed by slot
+// glyphRef). The single-matrix-feeds-both-emitters doctrine is unchanged — only
+// now the glyph varies per instance. These tests pin: back-compat byte-identity
+// for a legacy (no-sequence) binding, multi-glyph slot-order rendering, the
+// ADVERSARIAL per-slot dual-emit parity (independently-parsed matrix applied to
+// THAT slot's verbatim glyph d), rest gaps, and missing-slot-glyph skip.
+// ===========================================================================
+
+// Verbatim built-in glyph `d` strings (mirror glyphs.js) — asserting the RIGHT
+// glyph reached the RIGHT slot, which the canvas/SVG parity check alone cannot
+// catch (a wrong-glyph bug is identical on both emitters).
+const LEAF_D = 'M0,-10 L7,-4 L8,5 L2,10 L-6,6 L-7,-2 L-2,-8 Z';
+const DOT_D =
+  'M3,0 L2.1213,2.1213 L0,3 L-2.1213,2.1213 L-3,0 L-2.1213,-2.1213 L0,-3 L2.1213,-2.1213 Z';
+
+// A minimal chain carrying ONLY a sequencer block (no selection filters ⇒ all
+// anchors survive) — the smallest input that exercises the multi-glyph path.
+const seqChain = (slots, extra = {}) => ({
+  chain: [{ type: 'sequence', mode: 'cycle', slots, ...extra }],
+});
+
+describe('MotifPattern B1 — chain-consuming multi-glyph dual-emit', () => {
+  it('back-compat: legacy binding (no chain/sequence) is byte-identical to the placeMotifs seam', () => {
+    // A non-trivial legacy selection (skip mask drops the 2nd anchor) + placement
+    // jitter, rendered through the NEW resolveSelection→resolvePlacements path,
+    // must equal the geometry the OLD placeMotifs seam produces. Independently
+    // recompute the expected svgElements via placeMotifs + instancing (NOT the
+    // impl under test) so the swap is proven inert.
+    const legacy = baseParams({
+      glyphRef: 'leaf',
+      binding: {
+        selection: { skip: [false, true] },
+        placement: { jitter: { seed: 3, rotation: 0.5, rotationRange: 30 } },
+      },
+    });
+    const { inst, ctx } = run(legacy);
+
+    const glyph = getGlyph('leaf');
+    const anchors = sampleEdgeAnchors(legacy.hostPaths, legacy.edgeOpts);
+    const { placements } = placeMotifs(anchors, legacy.binding, {
+      boundary: { type: 'rect', width: W, height: H },
+      canvasW: W,
+      canvasH: H,
+    });
+    const root = glyph.root || { x: 0, y: 0, angle: 0 };
+    const expected = placements.map((pl) => {
+      const m = placementMatrix(pl, glyph.viewRadius, root);
+      const inner = glyph.paths.map((gp) => `<path d="${gp.d}" fill="none"/>`).join('');
+      return `<g transform="${matrixToSVG(m)}">${inner}</g>`;
+    });
+
+    expect(placements.length).toBe(1); // skip [false,true] over 2 anchors keeps one
+    expect(inst.svgElements).toEqual(expected);
+    // …and the CANVAS side matches the SVG side (dual-emit parity preserved).
+    const canvasPolys = canvasPolylines(ctx.calls);
+    const svgPolys = svgPolylines(inst.svgElements);
+    expect(canvasPolys.length).toBe(svgPolys.length);
+    expect(canvasPolys.length).toBeGreaterThan(0);
+    canvasPolys.forEach((cPoly, i) => {
+      // precision 2 — the SVG matrix is rounded to 6 decimals (matrixToSVG), so
+      // reconstructing points from it drifts from the full-precision canvas by a
+      // few micro-units; the exact svgElements deep-equal above is the byte pin.
+      cPoly.forEach(([cx, cy], k) => {
+        expect(cx).toBeCloseTo(svgPolys[i][k][0], 2);
+        expect(cy).toBeCloseTo(svgPolys[i][k][1], 2);
+      });
+    });
+  });
+
+  it('back-compat: legacy binding WITH overrides (include/exclude) is byte-identical to the placeMotifs seam', () => {
+    // Overrides is the one legacy selection feature wired DIFFERENTLY in the new
+    // seam: MotifPattern passes `overrides: binding.overrides` (undefined here) and
+    // relies on resolveSelection's compile path to pull `selection.overrides` and
+    // overwrite it. Pin byte-identity to placeMotifs so that wiring is proven, not
+    // just analytical. Exclude the 1st anchor by index-0 position, add nothing.
+    const anchors0 = sampleEdgeAnchors(DIAGONAL_HOST, { count: 2 });
+    const legacy = baseParams({
+      glyphRef: 'leaf',
+      binding: {
+        selection: { overrides: { exclude: [{ id: anchors0[0].id }] } },
+        placement: {},
+      },
+    });
+    const { inst } = run(legacy);
+    const glyph = getGlyph('leaf');
+    const { placements } = placeMotifs(anchors0, legacy.binding, {
+      boundary: { type: 'rect', width: W, height: H },
+      canvasW: W,
+      canvasH: H,
+    });
+    const root = glyph.root || { x: 0, y: 0, angle: 0 };
+    const expected = placements.map((pl) => {
+      const m = placementMatrix(pl, glyph.viewRadius, root);
+      const inner = glyph.paths.map((gp) => `<path d="${gp.d}" fill="none"/>`).join('');
+      return `<g transform="${matrixToSVG(m)}">${inner}</g>`;
+    });
+    expect(placements.length).toBe(1); // one anchor excluded
+    expect(inst.svgElements).toEqual(expected);
+  });
+
+  it('multi-glyph: a 2-slot sequence alternates glyphs in slot order (x-o)', () => {
+    const params = baseParams({
+      glyphRef: 'leaf',
+      binding: seqChain([{ glyphRef: 'leaf' }, { glyphRef: 'dot' }]),
+      glyphs: { leaf: getGlyph('leaf'), dot: getGlyph('dot') },
+    });
+    const { inst } = run(params);
+    expect(inst.svgElements.length).toBe(2);
+    // Slot 0 → leaf, slot 1 → dot, IN ORDER (x-o). Assert both the presence AND
+    // the position — a "base glyph in every slot" bug would fail the DOT check.
+    expect(inst.svgElements[0]).toContain(LEAF_D);
+    expect(inst.svgElements[0]).not.toContain(DOT_D);
+    expect(inst.svgElements[1]).toContain(DOT_D);
+    expect(inst.svgElements[1]).not.toContain(LEAF_D);
+  });
+
+  it('ADVERSARIAL per-slot dual-emit parity: each slot glyph independently-transformed equals its canvas vertices', () => {
+    // Slot 0 = the ASYMMETRIC leaf, FLIPPED, on the DIAGONAL host (rotated) → a
+    // genuinely mirrored+rotational matrix. Slot 1 = dot (different vertex count).
+    // Parse each instance's matrix + its OWN verbatim d, apply with the TEST-LOCAL
+    // affine, and compare to the canvas polylines emitted for THAT instance.
+    const params = baseParams({
+      glyphRef: 'leaf',
+      binding: seqChain([{ glyphRef: 'leaf', flip: true }, { glyphRef: 'dot' }]),
+      glyphs: { leaf: getGlyph('leaf'), dot: getGlyph('dot') },
+    });
+    const { inst, ctx } = run(params);
+    expect(inst.svgElements.length).toBe(2);
+
+    const insts = svgInstances(inst.svgElements);
+    const det = (m) => m[0] * m[3] - m[1] * m[2];
+    // Slot 0 flipped ⇒ mirror (negative determinant); slot 1 unflipped.
+    expect(det(insts[0].matrix)).toBeLessThan(0);
+    expect(det(insts[1].matrix)).toBeGreaterThan(0);
+    // The rotation genuinely manifested (off-axis), so parity has teeth.
+    expect(Math.abs(insts[0].matrix[1])).toBeGreaterThan(1e-6);
+    // The two instances use DIFFERENT glyphs — leaf has 7 vertices, dot has 8.
+    expect(insts[0].paths[0].points.length).toBe(7);
+    expect(insts[1].paths[0].points.length).toBe(8);
+
+    const canvasPolys = canvasPolylines(ctx.calls);
+    const svgPolys = svgPolylines(inst.svgElements);
+    expect(canvasPolys.length).toBe(2);
+    expect(svgPolys.length).toBe(2);
+    canvasPolys.forEach((cPoly, i) => {
+      const sPoly = svgPolys[i];
+      expect(cPoly.length).toBe(sPoly.length);
+      expect(cPoly.length).toBeGreaterThan(0);
+      cPoly.forEach(([cx, cy], k) => {
+        expect(cx).toBeCloseTo(sPoly[k][0], 2);
+        expect(cy).toBeCloseTo(sPoly[k][1], 2);
+      });
+    });
+  });
+
+  it('per-slot glyph uses the RESOLVED glyph viewRadius (not the base) — dot scale differs from leaf scale', () => {
+    // leaf viewRadius 10.2, dot viewRadius 3. For the SAME placement radius the
+    // matrix scale = radius/viewRadius differs, so if the impl reused the base
+    // glyph's viewRadius for the dot slot the dot matrix would be wrong. Compare
+    // the dot instance's matrix scale against an independent recompute.
+    const params = baseParams({
+      glyphRef: 'leaf',
+      binding: seqChain([{ glyphRef: 'leaf' }, { glyphRef: 'dot' }]),
+      glyphs: { leaf: getGlyph('leaf'), dot: getGlyph('dot') },
+    });
+    const { inst } = run(params);
+    const insts = svgInstances(inst.svgElements);
+    // Independent scale magnitude for each instance = |placement.radius|/viewRadius.
+    const scaleOf = (m) => Math.hypot(m[0], m[1]); // sqrt(a^2+b^2) = |scale|
+    const leafScale = scaleOf(insts[0].matrix);
+    const dotScale = scaleOf(insts[1].matrix);
+    // Same placement footprint radius but /3 vs /10.2 ⇒ dot scale strictly larger.
+    expect(dotScale).toBeGreaterThan(leafScale);
+  });
+
+  it('rest slot emits NO instance (a real gap)', () => {
+    const params = baseParams({
+      glyphRef: 'leaf',
+      binding: seqChain([{ glyphRef: 'leaf' }, { rest: true }]),
+      glyphs: { leaf: getGlyph('leaf') },
+    });
+    const { inst } = run(params);
+    // 2 anchors → slot 0 leaf (placed), slot 1 rest (gap) ⇒ exactly ONE instance.
+    expect(inst.svgElements.length).toBe(1);
+    expect(inst.svgElements[0]).toContain(LEAF_D);
+  });
+
+  it('missing slot glyph is SKIPPED; sibling slots still render (stripped-custom-glyph failure mode)', () => {
+    const params = baseParams({
+      glyphRef: 'leaf',
+      binding: seqChain([{ glyphRef: 'leaf' }, { glyphRef: 'ghost' }]),
+      glyphs: { leaf: getGlyph('leaf') }, // 'ghost' absent from the map
+    });
+    const { inst, ctx } = run(params);
+    // slot 0 leaf resolves & renders; slot 1 'ghost' unresolved ⇒ skipped, no crash.
+    expect(inst.svgElements.length).toBe(1);
+    expect(inst.svgElements[0]).toContain(LEAF_D);
+    // The skipped instance drew NOTHING to canvas (7 leaf vertices, no more).
+    expect(ctx.calls.filter((c) => c.op === 'vertex').length).toBe(7);
+  });
+
+  it('modifier-only slot (no glyphRef) falls back to the base glyph', () => {
+    // A slot with modifiers but no glyph override reuses the layer base glyph —
+    // a conscious choice (vs skip): the slot means "same glyph, different size".
+    const params = baseParams({
+      glyphRef: 'leaf',
+      binding: seqChain([{ glyphRef: 'leaf' }, { sizeScale: 1.5 }]),
+      glyphs: { leaf: getGlyph('leaf') },
+    });
+    const { inst } = run(params);
+    // Both instances render the leaf (slot 1 has no glyphRef → base leaf).
+    expect(inst.svgElements.length).toBe(2);
+    expect(inst.svgElements.every((el) => el.includes(LEAF_D))).toBe(true);
+  });
+
+  it('deterministic: RANDOM-mode sequence, DIFFERENT ctx seeds ⇒ identical svgElements', () => {
+    const params = baseParams({
+      glyphRef: 'leaf',
+      binding: { chain: [{ type: 'sequence', mode: 'random', seed: 5, slots: [{ glyphRef: 'leaf' }, { glyphRef: 'dot' }] }] },
+      glyphs: { leaf: getGlyph('leaf'), dot: getGlyph('dot') },
+    });
+    const a = run(params, 1).inst;
+    const b = run(params, 2).inst;
+    expect(a.svgElements).toEqual(b.svgElements);
+    expect(a.svgElements.length).toBe(2);
+  });
+
+  it('does NOT clobber a legacy string-array placement.sequence when the chain has no sequencer', () => {
+    // A legacy binding whose placement carries the string-array cycle. The new
+    // pipeline resolves NO sequence block, so it must LEAVE placement.sequence
+    // intact (conditional set, not `{...placement, sequence:null}`). Proven by
+    // byte-identity to the direct placeMotifs seam that reads that array.
+    const legacy = baseParams({
+      glyphRef: 'leaf',
+      binding: { selection: {}, placement: { sequence: ['A', 'B'] } },
+    });
+    const { inst } = run(legacy);
+    const glyph = getGlyph('leaf');
+    const anchors = sampleEdgeAnchors(legacy.hostPaths, legacy.edgeOpts);
+    const { placements } = placeMotifs(anchors, legacy.binding, {
+      boundary: { type: 'rect', width: W, height: H },
+      canvasW: W,
+      canvasH: H,
+    });
+    const root = glyph.root || { x: 0, y: 0, angle: 0 };
+    const expected = placements.map((pl) => {
+      const m = placementMatrix(pl, glyph.viewRadius, root);
+      const inner = glyph.paths.map((gp) => `<path d="${gp.d}" fill="none"/>`).join('');
+      return `<g transform="${matrixToSVG(m)}">${inner}</g>`;
+    });
+    expect(inst.svgElements).toEqual(expected);
   });
 });

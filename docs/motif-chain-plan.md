@@ -53,9 +53,13 @@ Sequencer, Slot, Rest, Route) are in `CONTEXT.md`; architecture decisions in
   on the user's first block edit, as one undo entry. No migration pass, no
   version stamp beyond presence check.
 - **D10 — Deal modes.** Sequencer ships Cycle + weighted Random. Per-slot
-  weights are revealed only in Random mode. Random uses D6 hashing; the
-  restart/continuous toggle scopes the hash namespace per path. No
-  ping-pong/mirror orders in v1 (palindromes are authorable in the strip).
+  weights are revealed only in Random mode. Random uses D6 hashing keyed by
+  `anchor.id` (which already encodes `pathIndex`), so the deal is inherently
+  per-path-distinct and the restart/continuous toggle is a **no-op in Random
+  mode** — it is a Cycle-mode control (resolved in the runbook's "Cycle vs
+  Random" section + A4 review, superseding the earlier "scopes the hash
+  namespace" phrasing). No ping-pong/mirror orders in v1 (palindromes are
+  authorable in the strip).
 - **D11 — Presets.** 4–6 curated starter chips on the Motif device (e.g.
   Alternate x‑o, Vine 🌸‑🌿‑🌿, Sparse scatter, Border march), each pure chain
   JSON using built-in glyphs. User-saved chain presets deferred (glyph-ref

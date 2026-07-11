@@ -251,3 +251,19 @@ doc + #79.
   **For A4/C1:** consume `{chain, overrides}` (overrides NOT in the chain array); compiled
   density stays `'sequential'` on C1 rewrite, only NEW UI density blocks default `'hash'`.
   `resolveSelection` returns `{survivors, orphans, sequence}` (sequence by-reference for A4).
+- 2026-07-11 — **A4 sequencer + modifiers DONE** — **PHASE A COMPLETE** (`<pending commit>`,
+  82 tests, motif suite 454 green, build green). New `sequencer.js` `dealSlots(survivors,
+  sequence) → Assignment[]`; `resolvePlacements` consumes it. Sequence block
+  `{type,mode:'cycle'|'random',continuous?,seed?,slots[]}`; Slot `{glyphRef, sizeScale?,
+  rotationOffset?, flip?, rotationRandom?:{range,spread:'flat'|'bell'}, weight?}` or
+  `{rest:true,weight?}`. sizeScale multiplies target radius BEFORE acceptance (no-overlap
+  invariant preserved: only naturalTarget scaled, never the margin*R cap). Rest draws its 4
+  jitter values then early-returns before `placed.push` (reserves no footprint; `rejected`
+  reason `'rest'`). Cycle=positional/per-path-restart; Random=hashRng per-anchor-stable,
+  continuous is a no-op there. **Independent opus review: SOUND** (byte-identity vs
+  reconstructed pre-A4 engine over 900 fuzz cases; no-overlap over 500 layouts; bell/flat
+  bounded). **For B1/B3:** the sequence block MUST be set on `placement.sequence` (object
+  form) or the sequencer stays dormant & silently single-glyph. `glyphRef` present IFF
+  sequenced — key per-instance resolution off `'glyphRef' in p`, not truthiness. Modifiers
+  already folded into radius/rotation/flip — B1 renders the resolved glyphRef at the matrix,
+  no re-applying. `seqId` is a number on sequenced placements; `rejected` may carry `'rest'`.

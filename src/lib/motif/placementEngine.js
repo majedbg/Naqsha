@@ -25,6 +25,7 @@
 import { mulberry32 } from '../patterns/rng.js';
 import { largestEmptyCircleRadius, fitsAt } from './emptyCircle.js';
 import { applyOverrides } from './overrides.js';
+import { dealSlots, isSequenceBlock } from './sequencer.js';
 
 /**
  * @typedef {import('./anchors.js')} Anchors
@@ -167,16 +168,32 @@ export function selectAnchors(anchors, rules = {}, opts = {}) {
 //     scaleFactor === radius/size), so the renderer always scales a canonical
 //     motif of radius `size` up to the accepted `radius`.
 //
+// SEQUENCER (A4 — activates the dormant `seqId` hook). When `config.sequence` is
+// the new object-form Block `{type:'sequence', mode, continuous, seed, slots}`
+// (vs the legacy string array, which stays byte-identical), `dealSlots` runs
+// FIRST — before the placement loop — so each survivor's Slot (glyph + modifiers,
+// or a Rest) is known when the engine SIZES it. Slot modifiers fold into the base
+// placement: `sizeScale` multiplies the target radius BEFORE the empty-circle
+// acceptance test (a bigger slot claims a bigger footprint, so greedy packing
+// pushes neighbors away rather than overlapping); `rotationOffset` + the hash-
+// driven `rotationRandom` add to rotation; slot `flip`, WHEN SPECIFIED, REPLACES
+// the legacy 2-cycle (slot-level is the more specific intent). A Rest draws its 4
+// jitter values (keystone below) then early-returns BEFORE the acceptance loop,
+// reserving NO footprint — a real gap that leaves neighbors' space untouched.
+// The sequencer draws ONLY from hashRng (channels 'slot'/'rot'), NEVER the jitter
+// stream, so a document with no sequence stays byte-identical (ADR-0005). Each
+// sequenced placement gains a `glyphRef` (present IFF sequenced); B1 renders it.
+//
 // NOTE: proportional sizing requires a BOUNDED region. With a null boundary
 // and no obstacles, largestEmptyCircleRadius is Infinity, so radius would be
 // margin * Infinity = Infinity. Pass opts.boundary for proportional layouts.
 //
-// See docs/motif-adorn-arch-brief.md §8/§9.
+// See docs/motif-adorn-arch-brief.md §8/§9, docs/motif-chain-plan.md, adr/0005.
 // ---------------------------------------------------------------------------
 
 /**
- * @typedef {{anchorId:string, role:string, index:number, x:number, y:number, rotation:number, scale:number, radius:number, seqId:string, flip:boolean}} Placement
- * @typedef {{anchorId:string, reason:'junction-skip'|'below-floor'|'no-fit'}} Rejection
+ * @typedef {{anchorId:string, role:string, index:number, x:number, y:number, rotation:number, scale:number, radius:number, seqId:string|number, flip:boolean, glyphRef?:string}} Placement
+ * @typedef {{anchorId:string, reason:'junction-skip'|'below-floor'|'no-fit'|'rest'}} Rejection
  */
 
 const PLACEMENT_DEFAULTS = {
@@ -226,7 +243,7 @@ function resolveOrientation(base, role) {
  *
  * @param {Anchor[]} survivors  SELECTION survivors, in input order.
  * @param {{
- *   sequence?: string[],
+ *   sequence?: string[] | {type:'sequence', mode?:'cycle'|'random', continuous?:boolean, seed?:number, slots:object[]},
  *   flip?: boolean,
  *   orientation?: {policy?:'path'|'page', useNormal?:boolean, offset?:number, perRole?:object},
  *   jitter?: {seed?:number, lateral?:number, along?:number, rotation?:number, scale?:number,
@@ -245,6 +262,11 @@ export function resolvePlacements(survivors, config = {}, opts = {}) {
     Array.isArray(cfg.sequence) && cfg.sequence.length > 0
       ? cfg.sequence
       : PLACEMENT_DEFAULTS.sequence;
+  // New object-form Sequencer block? Deal Slots FIRST (pure, hashRng-only) so
+  // each survivor's sizeScale is known BEFORE the acceptance loop sizes it. Null
+  // ⇒ no sequence ⇒ the legacy string-array path below stays byte-identical.
+  const seqBlock = isSequenceBlock(cfg.sequence) ? cfg.sequence : null;
+  const assignments = seqBlock ? dealSlots(list, seqBlock) : null;
   const flipEnabled = !!cfg.flip;
   const orientation = cfg.orientation || PLACEMENT_DEFAULTS.orientation;
   const j = { ...PLACEMENT_DEFAULTS.jitter, ...(cfg.jitter || {}) };
@@ -273,9 +295,34 @@ export function resolvePlacements(survivors, config = {}, opts = {}) {
       return;
     }
 
-    // 2. Sequence + flip (independent counters).
-    const seqId = sequence[i % sequence.length];
-    const flip = flipEnabled && i % 2 === 1;
+    // 1b. Sequencer Rest — a real gap. The 4 jitter draws above already ran (so
+    //     the stream is independent of which slots are rests), but a Rest emits
+    //     NO placement and reserves NO footprint (never pushed to `placed`), so
+    //     it leaves neighbors' space untouched instead of shoving them around.
+    const assignment = assignments ? assignments[i] : null;
+    if (assignment && assignment.rest) {
+      rejected.push({ anchorId: anchor.id, reason: 'rest' });
+      return;
+    }
+
+    // 2. Sequence + flip. Sequenced: seqId/glyphRef/modifiers come from the dealt
+    //    Slot; slot flip (when SPECIFIED) REPLACES the legacy 2-cycle, else falls
+    //    back to it. Legacy: the string-array cycle + 2-cycle flip, byte-identical.
+    let seqId;
+    let flip;
+    let glyphRef;
+    let sizeScale = 1;
+    let slotRotation = 0;
+    if (assignment) {
+      seqId = assignment.seqId;
+      glyphRef = assignment.glyphRef;
+      sizeScale = assignment.sizeScale;
+      slotRotation = assignment.rotationOffset + assignment.rotationRandomDelta;
+      flip = assignment.flipSpecified ? assignment.flip : flipEnabled && i % 2 === 1;
+    } else {
+      seqId = sequence[i % sequence.length];
+      flip = flipEnabled && i % 2 === 1;
+    }
 
     // 3. Orientation. `flip` is intentionally NOT folded into rotation.
     const eff = resolveOrientation(orientation, anchor.role);
@@ -293,6 +340,9 @@ export function resolvePlacements(survivors, config = {}, opts = {}) {
     const lateralDisp = sLat * j.lateral * j.lateralRange;
     const alongDisp = sAlong * j.along * j.alongRange;
     rotation += sRot * j.rotation * j.rotationRange;
+    // Slot rotation (static offset + hash-driven rotationRandom) is additive on
+    // top of the jittered rotation; 0 when unsequenced.
+    rotation += slotRotation;
     let scaleFactor = 1 + sScale * j.scale * j.scaleRange;
     if (scaleFactor < MIN_SCALE_FACTOR) scaleFactor = MIN_SCALE_FACTOR;
 
@@ -309,7 +359,9 @@ export function resolvePlacements(survivors, config = {}, opts = {}) {
     let radius;
 
     if (sizing.mode === 'fixed') {
-      radius = size * scaleFactor;
+      // sizeScale (slot modifier, default 1) grows the footprint BEFORE the
+      // acceptance test so a bigger slot claims more space.
+      radius = size * scaleFactor * sizeScale;
       if (R <= 0 || !fitsAt(center, radius, placed, boundary)) {
         rejected.push({ anchorId: anchor.id, reason: 'no-fit' });
         return;
@@ -330,7 +382,9 @@ export function resolvePlacements(survivors, config = {}, opts = {}) {
         return;
       }
       const margin = Math.min(1, Math.max(0, sizing.margin));
-      const naturalTarget = size * scaleFactor;
+      // sizeScale grows only the NATURAL target, never the margin*R cap, so
+      // radius <= R still holds and the no-overlap invariant is preserved.
+      const naturalTarget = size * scaleFactor * sizeScale;
       radius = Math.min(naturalTarget, margin * R);
       if (radius < min) {
         rejected.push({ anchorId: anchor.id, reason: 'below-floor' });
@@ -340,7 +394,7 @@ export function resolvePlacements(survivors, config = {}, opts = {}) {
 
     const scale = radius / size;
     placed.push({ x, y, r: radius });
-    placements.push({
+    const placement = {
       anchorId: anchor.id,
       role: anchor.role,
       index: i,
@@ -351,7 +405,13 @@ export function resolvePlacements(survivors, config = {}, opts = {}) {
       radius,
       seqId,
       flip,
-    });
+    };
+    // `glyphRef` is present IFF this placement was sequenced. The legacy path
+    // MUST NOT emit the key at all (not even `undefined`) so unsequenced output
+    // stays byte-identical in shape — B1 keys per-instance glyph resolution off
+    // its presence.
+    if (assignment) placement.glyphRef = glyphRef;
+    placements.push(placement);
   });
 
   return { placements, rejected };

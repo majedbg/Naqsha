@@ -240,3 +240,14 @@ doc + #79.
   (b) **C4 Route card must NOT offer `closed`/`picked` on semantic-anchor hosts**
   (crossing/tip/cell lack `meta.closed`/`meta.pathIndex` ⇒ those scopes empty the selection);
   `open`/`all` are safe. Returned `sequence` is by-reference, at-most-one (first wins).
+- 2026-07-11 — **A3 legacy compile DONE** (`007622c`, 24 tests, motif suite 424 green, build
+  green). `compileSelectionToChain(legacy) => {chain, overrides}` (canonical route→everyN→
+  skip→density→field, `continuous:true` cycling, `rngMode:'sequential'`+`seed` density);
+  `resolveSelection(binding, anchors, opts)` = the both-shapes render seam (runs
+  `binding.chain` if present else compiles `binding.selection`, threads overrides via opts).
+  600-case byte-identity fuzz vs real selectAnchors. **Independent opus review: SOUND** (3000
+  more fuzz cases zero divergence, mutation-verified the fuzz bites; null-coercion edge proven
+  unreachable — fix site if ever reachable is the writer or selectAnchors, NOT compile).
+  **For A4/C1:** consume `{chain, overrides}` (overrides NOT in the chain array); compiled
+  density stays `'sequential'` on C1 rewrite, only NEW UI density blocks default `'hash'`.
+  `resolveSelection` returns `{survivors, orphans, sequence}` (sequence by-reference for A4).

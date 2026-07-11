@@ -221,4 +221,9 @@ doc + #79.
 ## Slice log (append after EVERY slice: status · commit · test count · decisions · open issues)
 - 2026-07-11 — Setup: grill complete; ADR-0004/0005, plan, CONTEXT glossary, this runbook
   written; issue #79 created; baseline captured (4318 green + 1 known admin flake, build
-  green). Branch `feat/motif-chain` to be cut. Execution starting at A1.
+  green). Branch `feat/motif-chain` cut (`c61f0e7` docs, `3dffa9b` runbook refinement).
+- 2026-07-11 — **A1 hashRng DONE** (`65f4b50`, 12 tests). `hashRng(seed, anchorId, channel)`
+  = FNV-1a→mulberry32; pure per-anchor, order-independent. Motif suite 357 green, build green.
+  Sonnet-built, orchestrator-verified (no separate review — small foundational slice). Note
+  for A2: arg order is `(seed, anchorId, channel)`; hold one generator if drawing multiple
+  times per anchor; channel strings are unvalidated namespace tags (keep to 'slot'/'rot').

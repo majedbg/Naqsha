@@ -210,6 +210,16 @@ export function routePanelRenderModes(marksByPanel, { isMobile = false, dpr = 2 
   const entries = marksByPanel && typeof marksByPanel === 'object' ? marksByPanel : {};
   for (const panelId of Object.keys(entries)) {
     const layers = Array.isArray(entries[panelId]) ? entries[panelId] : [];
+    // GLOWING panels (fluorescent grooves) are forced to TEXTURE: the zoom-stable
+    // mm-scale glow halo is BAKED into the raster (withBakedGlowHalo) — ribbon
+    // geometry has no halo, so a glowing ribbon panel would lose its glow the
+    // moment the camera moves close (screen-space bloom does not zoom with the
+    // sheet). Costs fluorescent panels the per-stroke hover precision; keeps the
+    // glow honest at every distance.
+    if (layers.some((m) => m && m.emissiveIntensity > 0)) {
+      out[panelId] = 'texture';
+      continue;
+    }
     const pathCount = layers.reduce((n, m) => n + countSvgPaths(m && m.svg), 0);
     const pointCount = layers.reduce((n, m) => n + countSvgPoints(m && m.svg), 0);
     out[panelId] = shouldUseTextureMode({ pathCount, pointCount, isMobile, dpr })
@@ -217,6 +227,38 @@ export function routePanelRenderModes(marksByPanel, { isMobile = false, dpr = 2 
       : 'ribbon';
   }
   return out;
+}
+
+// Baked halo geometry (mm, SVG user units): how far the TIR-escape glow bleeds
+// past the groove on real fluorescent stock, and how strong the bleed starts.
+const GLOW_HALO_STDDEV_MM = 0.9;
+const GLOW_HALO_OPACITY = 0.85;
+
+/**
+ * Bake a zoom-stable glow halo into a mark SVG: a Gaussian-blurred duplicate of
+ * the artwork UNDER the crisp original. The blur radius is in SVG user units
+ * (= mm here), so the halo scales WITH the sheet when the camera closes in —
+ * unlike the screen-space bloom pass, whose halo is a constant fraction of the
+ * viewport and visually vanishes at close range. The two compose: baked halo
+ * carries the physical mm-scale bleed, bloom adds the distant sparkle.
+ * Pure string transform; returns the input unchanged if it is not an <svg>.
+ * @param {string} svg
+ * @returns {string}
+ */
+export function withBakedGlowHalo(svg) {
+  if (typeof svg !== 'string') return svg;
+  const open = svg.match(/<svg\b[^>]*>/);
+  if (!open) return svg;
+  const head = open[0];
+  const inner = svg.slice(head.length, svg.lastIndexOf('</svg>'));
+  return (
+    head +
+    `<defs><filter id="nq-glow-halo" x="-30%" y="-30%" width="160%" height="160%">` +
+    `<feGaussianBlur stdDeviation="${GLOW_HALO_STDDEV_MM}"/></filter></defs>` +
+    `<g filter="url(#nq-glow-halo)" opacity="${GLOW_HALO_OPACITY}">${inner}</g>` +
+    inner +
+    '</svg>'
+  );
 }
 
 /**
@@ -281,9 +323,11 @@ export function buildPanelMarkSVGs({
       // Stroke every layer in this group with the substrate-aware reaction tint;
       // neutralize any layer background so it can't bake a solid block (D12).
       const tinted = groupLayers.map((l) => ({ ...l, color: tint, bgOpacity: 0 }));
-      const svg = toTransparentBg(
+      const bare = toTransparentBg(
         buildAllLayersSVG(tinted, instances, canvasW, canvasH, false, svgOpts),
       );
+      // Glowing grooves carry their mm-scale halo IN the raster (zoom-stable).
+      const svg = emissiveIntensity > 0 ? withBakedGlowHalo(bare) : bare;
       return { process, tint, opacity, emissiveIntensity, svg };
     });
   }

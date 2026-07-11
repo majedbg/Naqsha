@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   shouldUseTextureMode,
   reactionForProcess,
+  withBakedGlowHalo,
   buildPanelMarkSVGs,
   countSvgPaths,
   countSvgPoints,
@@ -174,6 +175,38 @@ describe('reactionForProcess — fluorescent groove glow (markGlow → emissiveI
     const at1 = reactionForProcess('engrave', SUB, { markGlow: 1 }).emissiveIntensity;
     const at2 = reactionForProcess('engrave', SUB, { markGlow: 2 }).emissiveIntensity;
     expect(at2).toBeCloseTo(at1 * 2, 5);
+  });
+});
+
+describe('withBakedGlowHalo — zoom-stable mm-scale halo baked into the mark SVG', () => {
+  const SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 210 148"><g><path d="M0 0 L10 10"/></g></svg>';
+
+  it('duplicates the artwork: one Gaussian-blurred halo pass UNDER the crisp original', () => {
+    const out = withBakedGlowHalo(SVG);
+    expect(out).toContain('feGaussianBlur');
+    expect(out.match(/<path d="M0 0 L10 10"\/>/g)).toHaveLength(2);
+    // Halo group comes BEFORE the crisp copy (renders underneath).
+    expect(out.indexOf('nq-glow-halo')).toBeLessThan(out.lastIndexOf('<path'));
+  });
+
+  it('passes through non-SVG input untouched', () => {
+    expect(withBakedGlowHalo(null)).toBe(null);
+    expect(withBakedGlowHalo('not svg')).toBe('not svg');
+  });
+});
+
+describe('routePanelRenderModes — glowing panels force TEXTURE (baked halo needs the raster)', () => {
+  it('routes a sparse GLOWING panel to texture, a sparse non-glowing one to ribbon', () => {
+    const sparse = '<svg><path d="M0 0 L10 10" stroke="#ee0"/></svg>';
+    const routes = routePanelRenderModes(
+      {
+        glowing: [{ svg: sparse, emissiveIntensity: 2.5 }],
+        plain: [{ svg: sparse, emissiveIntensity: 0 }],
+      },
+      { isMobile: false, dpr: 2 },
+    );
+    expect(routes.glowing).toBe('texture');
+    expect(routes.plain).toBe('ribbon');
   });
 });
 

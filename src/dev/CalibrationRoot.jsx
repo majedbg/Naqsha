@@ -19,7 +19,7 @@
 import { useMemo } from 'react';
 import Canvas3DHost from '../components/canvas3d/Canvas3DHost.jsx';
 import { DEFAULT_PREVIEW_MATERIALS } from '../lib/materialPreview.js';
-import { reactionForProcess } from '../lib/three3d/markTexture.js';
+import { reactionForProcess, withBakedGlowHalo } from '../lib/three3d/markTexture.js';
 import { resolveAppearance } from '../lib/three3d/resolveAppearance.js';
 import { PREVIEW3D_STORAGE_KEY } from '../lib/three3d/preview3dPersistence.js';
 import { isEnvironmentId, DEFAULT_ENVIRONMENT_ID } from '../lib/three3d/hdriEnvironments.js';
@@ -100,12 +100,14 @@ function substrateFor(material) {
 function buildSpecimenMarks(substrate, appearance) {
   return SPECIMEN_PROCESSES.map((process) => {
     const { tint, opacity, emissiveIntensity } = reactionForProcess(process, substrate, appearance);
+    const bare = specimenSvg(tint, SHAPES_BY_PROCESS[process]);
     return {
       process,
       tint,
       opacity,
       emissiveIntensity,
-      svg: specimenSvg(tint, SHAPES_BY_PROCESS[process]),
+      // Same zoom-stable baked halo the app path gets (markTexture).
+      svg: emissiveIntensity > 0 ? withBakedGlowHalo(bare) : bare,
     };
   });
 }

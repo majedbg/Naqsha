@@ -122,6 +122,27 @@ export function resolveCanvasColor(layer, { operations, outputMode, colorView, p
   return stroke;
 }
 
+// ── Off-sheet dimming (Material lens, per-panel materials) ───────────────────
+// The 2D canvas superimposes EVERY panel's layers on ONE background — the
+// document-lens sheet. With per-panel materials, a layer whose own sheet
+// differs from that background draws in ANOTHER sheet's reaction colors (e.g.
+// an orange-fluorescent panel's #FF4500 score lines over a yellow background),
+// which reads as the background sheet carrying the wrong marks. Dim those
+// off-sheet marks so full-strength marks always belong to the sheet on screen.
+export const OFF_SHEET_DIM = 0.25;
+
+// The opacity factor for one layer under the current lens: OFF_SHEET_DIM when
+// the layer's OWN panel material is known AND differs from the lens (background)
+// material, else 1. Outside the Material lens — or when either sheet is
+// unresolved (no doc-lens material picked, or the layer's panel has no material
+// of its own) — always 1, so every existing view is byte-identical.
+export function offSheetDimFactor(layer, { colorView, panels, materials } = {}) {
+  if (!colorView || colorView.mode !== 'material' || !colorView.material) return 1;
+  const own = panelMaterialForLayer(layer, panels, materials);
+  if (!own) return 1;
+  return own.id === colorView.material.id ? 1 : OFF_SHEET_DIM;
+}
+
 // The background the canvas should paint: the sheet hex in material mode, else
 // the document's own background.
 export function sheetBackground(colorView, fallbackBg) {

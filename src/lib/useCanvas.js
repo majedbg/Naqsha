@@ -15,7 +15,7 @@ import { drawTextNode } from './text/drawTextNode';
 import { isTextLayer, textNodeFromLayer } from './text/textLayer';
 import { importLayerPivot } from './scene/placement';
 import { buildSelectables } from './scene/selectables';
-import { resolveCanvasColor, sheetBackground } from './materialPreview';
+import { resolveCanvasColor, sheetBackground, offSheetDimFactor } from './materialPreview';
 import { effectiveVisible } from './panels';
 
 // Pivoted node transform shared by render + selection chrome. Matches the SVG
@@ -153,6 +153,13 @@ export default function useCanvas(
     for (const layer of renderOrder) {
       // Effective visibility = layer.visible AND its panel.visible (if any).
       const vis = effectiveVisible(layer, panelById.get(layer.panelId));
+      // Material lens: a layer whose OWN panel material differs from the lens
+      // (background) sheet draws dimmed — its reaction colors belong to another
+      // sheet than the one on screen. Applied ONLY to the visible draw calls;
+      // the no-draw export-cache path keeps the layer's true opacity. 1
+      // everywhere outside the Material lens (byte-identical baseline).
+      const drawOpacity =
+        layer.opacity * offSheetDimFactor(layer, { colorView, panels });
       // Imported-path artwork (issue #12) has no generative PatternClass — it's a
       // synthetic instance wrapping parsed SVG path data. Build it from layer
       // data so it both draws on canvas and exports via buildAllLayersSVG.
@@ -173,7 +180,7 @@ export default function useCanvas(
           applyNodeTransform(p, nodeTransforms[layer.id], piv.x, piv.y);
         }
         instance.generateWithContext(
-          drawCtx, layer.seed, layer.params, canvasW, canvasH, resolveCanvasColor(layer, { operations, outputMode, colorView, panels }), layer.opacity
+          drawCtx, layer.seed, layer.params, canvasW, canvasH, resolveCanvasColor(layer, { operations, outputMode, colorView, panels }), drawOpacity
         );
         p.pop();
         continue;
@@ -291,7 +298,7 @@ export default function useCanvas(
         p.rect(0, 0, canvasW, canvasH);
       }
 
-      instance.generateWithContext(drawCtx, layer.seed, renderParams, canvasW, canvasH, resolveCanvasColor(layer, { operations, outputMode, colorView, panels }), layer.opacity);
+      instance.generateWithContext(drawCtx, layer.seed, renderParams, canvasW, canvasH, resolveCanvasColor(layer, { operations, outputMode, colorView, panels }), drawOpacity);
       p.pop();
     }
 

@@ -7,6 +7,8 @@ import {
   resolveCanvasColor,
   applyMarkVisibility,
   sheetBackground,
+  offSheetDimFactor,
+  OFF_SHEET_DIM,
   luminance,
 } from './materialPreview.js';
 import { resolveExportColor } from './fabrication.js';
@@ -297,5 +299,58 @@ describe('applyMarkVisibility + markContrast — cut/score bias (preview-only)',
       operations, colorView: { mode: 'operation', material: green, markContrast: -1 },
     });
     expect(got).toBe(resolveExportColor(layer('op-cut'), { operations }));
+  });
+});
+
+// ── Off-sheet dimming — Material lens + per-panel materials ──────────────────
+// The 2D canvas superimposes every panel's layers over ONE background (the
+// document-lens sheet). A layer whose OWN panel material differs from that
+// background draws another sheet's reaction colors (e.g. orange-fluorescent
+// #FF4500 score lines over a yellow Green-Fluorescent background) — dim those
+// to OFF_SHEET_DIM so full-strength marks always belong to the sheet on screen.
+describe('offSheetDimFactor — dims marks from panels on a DIFFERENT sheet', () => {
+  const green = DEFAULT_PREVIEW_MATERIALS.find((m) => m.id === 'green-fluorescent');
+  const orange = DEFAULT_PREVIEW_MATERIALS.find((m) => m.id === 'orange-fluorescent');
+  const panels = [
+    { id: 'p-orange', materialId: 'orange-fluorescent', visible: true, order: 0 },
+    { id: 'p-green', materialId: 'green-fluorescent', visible: true, order: 1 },
+    { id: 'p-auto', materialId: null, visible: true, order: 2 },
+  ];
+  const layerOn = (panelId) => ({ id: 'L', operationId: 'op-score', panelId });
+  const lens = (material) => ({ mode: 'material', material });
+
+  it('dims a layer whose panel material differs from the lens material', () => {
+    expect(
+      offSheetDimFactor(layerOn('p-orange'), { colorView: lens(green), panels }),
+    ).toBe(OFF_SHEET_DIM);
+    expect(OFF_SHEET_DIM).toBeLessThan(1);
+  });
+
+  it('keeps full strength when the panel material MATCHES the lens material', () => {
+    expect(
+      offSheetDimFactor(layerOn('p-green'), { colorView: lens(green), panels }),
+    ).toBe(1);
+  });
+
+  it('keeps full strength for panels without their own material (they render on the lens sheet)', () => {
+    expect(
+      offSheetDimFactor(layerOn('p-auto'), { colorView: lens(green), panels }),
+    ).toBe(1);
+  });
+
+  it('is 1 outside the Material lens and when no lens material is picked (byte-identical baseline)', () => {
+    expect(
+      offSheetDimFactor(layerOn('p-orange'), { colorView: { mode: 'operation', material: green }, panels }),
+    ).toBe(1);
+    expect(
+      offSheetDimFactor(layerOn('p-orange'), { colorView: lens(null), panels }),
+    ).toBe(1);
+    expect(offSheetDimFactor(layerOn('p-orange'), { colorView: null, panels })).toBe(1);
+    expect(offSheetDimFactor(layerOn('p-orange'), {})).toBe(1);
+  });
+
+  it('is 1 when the layer has no panel / panels are absent', () => {
+    expect(offSheetDimFactor(layerOn('nope'), { colorView: lens(orange), panels })).toBe(1);
+    expect(offSheetDimFactor(layerOn('p-orange'), { colorView: lens(orange), panels: [] })).toBe(1);
   });
 });

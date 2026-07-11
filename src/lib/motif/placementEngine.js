@@ -24,6 +24,7 @@
 
 import { mulberry32 } from '../patterns/rng.js';
 import { largestEmptyCircleRadius, fitsAt } from './emptyCircle.js';
+import { applyOverrides } from './overrides.js';
 
 /**
  * @typedef {import('./anchors.js')} Anchors
@@ -42,63 +43,11 @@ const DEFAULTS = {
   fieldInvert: false,
 };
 
-const DEFAULT_TOLERANCE = 8;
-
 /**
- * Resolve an override ref to a concrete anchor from the FULL input list.
+ * Override resolution (`resolveRef`) and the include/exclude post-chain step
+ * (`applyOverrides`) live in `./overrides.js`, shared verbatim with the new
+ * `runSelectionChain` executor so the semantics exist in exactly one place.
  *
- * Resolution order:
- *   1. exact `id` match (ignores role) — the ref's `id` string, or `ref.id`.
- *   1b. legacy base-copy fallback: `${id}:0`. Before the grid-geometry-core
- *      refactor a symmetry>1 grid host emitted only the BASE COPY, keyed by an
- *      un-suffixed id (e.g. `crossing:1:1`); the core now suffixes the copy
- *      index, so that copy is `crossing:1:1:0`. Binding a legacy ref to copy 0
- *      keeps overrides saved before the refactor working. Only fires on an exact
- *      miss, so sym=1 (un-suffixed) ids still match at step 1; and only grid
- *      sym>1 anchors ever carry a `:k` suffix, so `${id}:0` matches nothing in
- *      recursive/spiral/voronoi sets (no false rebind).
- *   2. else spatial re-bind to the NEAREST anchor (euclidean) within
- *      `tolerance`. If the ref specifies a `role`, only anchors of that role
- *      are candidates. Ties broken by input order (strict `<`, first wins).
- *   3. else null (caller treats an unresolved INCLUDE ref as an orphan).
- *
- * @param {OverrideRef} ref
- * @param {Anchor[]} anchors  full input list (NOT the survivor set)
- * @param {Map<string, Anchor>} byId
- * @param {number} tolerance
- * @returns {Anchor|null}
- */
-function resolveRef(ref, anchors, byId, tolerance) {
-  const id = typeof ref === 'string' ? ref : ref && ref.id;
-  if (id != null) {
-    const hit = byId.get(id);
-    if (hit) return hit;
-    // Legacy base-copy fallback (see step 1b above): bind a pre-refactor
-    // un-suffixed grid override to the symmetry copy 0 anchor.
-    const base = byId.get(`${id}:0`);
-    if (base) return base;
-  }
-
-  // Spatial re-bind requires coordinates.
-  if (ref == null || typeof ref === 'string') return null;
-  if (ref.x == null || ref.y == null) return null;
-
-  const role = ref.role;
-  let best = null;
-  let bestDist = Infinity;
-  for (const anchor of anchors) {
-    if (role != null && anchor.role !== role) continue;
-    const dist = Math.hypot(anchor.x - ref.x, anchor.y - ref.y);
-    if (dist < bestDist) {
-      bestDist = dist;
-      best = anchor;
-    }
-  }
-  if (best && bestDist <= tolerance) return best;
-  return null;
-}
-
-/**
  * Anchor SELECTION stage of the motif placement engine.
  *
  * @param {Anchor[]} anchors
@@ -184,26 +133,10 @@ export function selectAnchors(anchors, rules = {}, opts = {}) {
   const survivorIds = new Set(stage.map((a) => a.id));
 
   // 6. Overrides — these OVERRIDE the rule result. Resolve refs against the
-  //    FULL input list (so include can add back a rule-dropped anchor).
-  const orphans = [];
-  if (overrides) {
-    const tolerance = overrides.tolerance != null ? overrides.tolerance : DEFAULT_TOLERANCE;
-    const include = Array.isArray(overrides.include) ? overrides.include : [];
-    const exclude = Array.isArray(overrides.exclude) ? overrides.exclude : [];
-
-    // Include first: add back resolved anchors; collect verbatim orphans.
-    for (const ref of include) {
-      const anchor = resolveRef(ref, list, byId, tolerance);
-      if (anchor) survivorIds.add(anchor.id);
-      else orphans.push(ref);
-    }
-
-    // Exclude second so it WINS on conflict. Misses are silently ignored.
-    for (const ref of exclude) {
-      const anchor = resolveRef(ref, list, byId, tolerance);
-      if (anchor) survivorIds.delete(anchor.id);
-    }
-  }
+  //    FULL input list (so include can add back a rule-dropped anchor). The
+  //    include-then-exclude / exclude-wins / orphan semantics live in
+  //    overrides.js, shared with runSelectionChain.
+  const orphans = applyOverrides(survivorIds, list, byId, overrides);
 
   // 7. Return survivors in ORIGINAL input order.
   const survivors = list.filter((a) => survivorIds.has(a.id));

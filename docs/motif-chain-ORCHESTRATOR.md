@@ -227,3 +227,16 @@ doc + #79.
   Sonnet-built, orchestrator-verified (no separate review — small foundational slice). Note
   for A2: arg order is `(seed, anchorId, channel)`; hold one generator if drawing multiple
   times per anchor; channel strings are unvalidated namespace tags (keep to 'slot'/'rot').
+- 2026-07-11 — **A2 chain selection executor DONE** (`5663574`, 43 tests, motif suite 400
+  green, build green). `runSelectionChain → {survivors, orphans, sequence}`; blocks
+  route/everyN/skip/density/field; per-path restart via true positional per-pathIndex counter
+  + `continuous` toggle; sequence partitioned out (terminal, by-reference). `resolveRef`/
+  override logic extracted to new `overrides.js`, shared with placementEngine (its tests
+  unchanged+green). density `rngMode:'sequential'` byte-identical to selectAnchors.
+  **Independent opus review: SOUND** (1600 fuzz cases, zero divergence incl. orphans).
+  **Forward-notes:** (a) **A3 compile MUST emit `continuous:true` + `seed` on cycling
+  blocks** or multi-path density stream diverges; canonical order route→everyN→skip→density→
+  field; new UI density defaults `rngMode:'hash'`, compiled density is `'sequential'`.
+  (b) **C4 Route card must NOT offer `closed`/`picked` on semantic-anchor hosts**
+  (crossing/tip/cell lack `meta.closed`/`meta.pathIndex` ⇒ those scopes empty the selection);
+  `open`/`all` are safe. Returned `sequence` is by-reference, at-most-one (first wins).

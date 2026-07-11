@@ -20,6 +20,7 @@
 import { useState, useEffect, useRef } from "react";
 import { PATTERN_TYPES } from "../../constants";
 import { resolveOperation } from "../../lib/operations";
+import { setProcessAnnotation } from "../../lib/three3d/processAnnotation";
 import { PROFILE_IDS, getProfile } from "../../lib/machineProfiles";
 import OperationPicker from "./OperationPicker";
 import RowMenu from "./RowMenu";
@@ -279,6 +280,17 @@ function LayerRow({
       draggable={draggable}
       onDragStart={onDragStartRow ? (e) => onDragStartRow(e, layer.id) : undefined}
       onClick={() => onSelect(layer.id)}
+      // Hover-annotation SOURCE (ADR 0003 #4, inverted): hovering a layer row
+      // publishes its panel+process to the processAnnotation channel; the 3D
+      // preview (Marks badge/tint) subscribes. The 3D artwork itself is no
+      // longer hover-sensitive — annotation flows left panel → preview only.
+      onMouseEnter={() =>
+        setProcessAnnotation({
+          panelId: layer.panelId ?? null,
+          process: resolveOperation(operations, layer.operationId)?.process ?? null,
+        })
+      }
+      onMouseLeave={() => setProcessAnnotation(null)}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();

@@ -7,6 +7,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { routePanelRenderModes, PROCESS_ANNOTATION_HEX } from '../../lib/three3d/markTexture.js';
+import { useProcessAnnotation } from '../../lib/three3d/processAnnotation.js';
 import { clampAnisotropy, chooseRasterScale } from '../../lib/three3d/textureFiltering.js';
 import { buildRibbonGeometry } from './ribbonGeometry.js';
 import { useBloomRef } from './bloomSelection.js';
@@ -186,41 +187,27 @@ function useSvgTexture(svg) {
 /**
  * One physical mark plane (the Reaction surface) for a single process of one sheet.
  * Matte lit diffuse — the texture carries the reaction tint, `opacity` its presence.
- * Hover = the process-color annotation (emissive highlight + bloom membership).
- * NOTE: the raycast hit area is the full plane rectangle (the texture's transparent
- * field is not alpha-tested) — acceptable for an inspection affordance; ribbons
- * give the precise per-stroke hit where the D6 route allows them.
+ * `annotated` (driven by the left panel's layer-row hover via processAnnotation)
+ * tints toward the process-color annotation + joins bloom; the plane itself is
+ * NOT pointer-sensitive (ADR 0003 #4, direction inverted — the render never
+ * changes under the cursor).
  * @param {{ svg:string, process:string, opacity:number, glow?:number,
  *           glowDrive?:number, size:[number,number], z:number,
- *           onHoverProcess?:(p:string|null)=>void }} props
+ *           annotated?:boolean, visible?:boolean }} props
  */
-function MarkPlane({ svg, process, opacity, glow = 0, glowDrive = 1, size, z, visible = true, onHoverProcess }) {
+function MarkPlane({ svg, process, opacity, glow = 0, glowDrive = 1, size, z, visible = true, annotated = false }) {
   const texture = useSvgTexture(svg);
-  const [hovered, setHovered] = useState(false);
-  // Bloom membership (ADR 0003 #5): hover annotation, OR a genuinely glowing
-  // fluorescent groove (reaction emissiveIntensity > 0 — the TIR-escape glow).
-  // Attaching/detaching the stable ref callback registers/unregisters this mesh,
-  // which is what mounts/unmounts the on-demand composer.
+  // Bloom membership (ADR 0003 #5): the left-panel annotation highlight, OR a
+  // genuinely glowing fluorescent groove (reaction emissiveIntensity > 0 — the
+  // TIR-escape glow). Attaching/detaching the stable ref callback registers/
+  // unregisters this mesh, which is what mounts/unmounts the on-demand composer.
   const bloomRef = useBloomRef();
   const glowing = glow > 0;
   const [w = 0, h = 0] = size || [];
   if (!texture || !w || !h) return null;
   const annotation = PROCESS_ANNOTATION_HEX[process] || '#ffffff';
   return (
-    <mesh
-      ref={hovered || glowing ? bloomRef : null}
-      position={[0, 0, z]}
-      visible={visible}
-      onPointerOver={(e) => {
-        e.stopPropagation();
-        setHovered(true);
-        onHoverProcess?.(process);
-      }}
-      onPointerOut={() => {
-        setHovered(false);
-        onHoverProcess?.(null);
-      }}
-    >
+    <mesh ref={annotated || glowing ? bloomRef : null} position={[0, 0, z]} visible={visible}>
       <planeGeometry args={[w, h]} />
         {/* Lit diffuse decal: `map` carries the reaction tint + alpha (transparent
             field); white base so the texture reads as-is; roughness 1 = matte
@@ -232,10 +219,11 @@ function MarkPlane({ svg, process, opacity, glow = 0, glowDrive = 1, size, z, vi
           // Idle glow (fluorescent grooves only): white emissive × the tinted
           // emissiveMap = the dye color at `glow × glowDrive`. glowDrive is the
           // runtime animation seam (mic-volume sync etc.) — a live uniform,
-          // per-frame updatable with zero recompile. Hover annotation overrides.
-          emissive={hovered ? annotation : glowing ? '#ffffff' : NO_EMISSIVE}
+          // per-frame updatable with zero recompile. The left-panel annotation
+          // highlight overrides while a layer row is hovered.
+          emissive={annotated ? annotation : glowing ? '#ffffff' : NO_EMISSIVE}
           emissiveMap={texture}
-          emissiveIntensity={hovered ? HOVER_EMISSIVE : glowing ? glow * glowDrive : 0}
+          emissiveIntensity={annotated ? HOVER_EMISSIVE : glowing ? glow * glowDrive : 0}
           transparent
           opacity={opacity ?? 1}
           depthWrite={false}
@@ -260,21 +248,21 @@ function MarkPlane({ svg, process, opacity, glow = 0, glowDrive = 1, size, z, vi
  * One physical RIBBON (the Reaction surface as true vector geometry, S10): the
  * per-process mark SVG stroked into geometry, baked into the sheet's centered plane
  * frame (size) so it overlays the texture-mode marks exactly. Matte lit diffuse in
- * the reaction tint with the presence `opacity` (same axes as MarkPlane); hover =
- * the process-color annotation. If the geometry is null (degenerate SVG), render
- * `fallback` (the texture plane) so marks never vanish.
+ * the reaction tint with the presence `opacity` (same axes as MarkPlane);
+ * `annotated` (left-panel layer-row hover) = the process-color annotation. If the
+ * geometry is null (degenerate SVG), render `fallback` (the texture plane) so
+ * marks never vanish.
  * @param {{ svg:string, tint:string, process:string, opacity:number,
  *           glow?:number, glowDrive?:number, size:[number,number], z:number,
- *           fallback:React.ReactNode,
- *           onHoverProcess?:(p:string|null)=>void }} props
+ *           annotated?:boolean, visible?:boolean,
+ *           fallback:React.ReactNode }} props
  */
-function RibbonMesh({ svg, tint, process, opacity, glow = 0, glowDrive = 1, size, z, visible = true, fallback, onHoverProcess }) {
+function RibbonMesh({ svg, tint, process, opacity, glow = 0, glowDrive = 1, size, z, visible = true, annotated = false, fallback }) {
   const [w = 0, h = 0] = size || [];
   const geometry = useMemo(
     () => (svg && w && h ? buildRibbonGeometry(svg, { width: w, height: h }) : null),
     [svg, w, h],
   );
-  const [hovered, setHovered] = useState(false);
   // Crop the ribbon to the sheet rectangle — ribbon geometry, unlike the
   // viewBox-cropped texture raster, carries any path points that spill past the
   // canvas (e.g. spirograph loops larger than the sheet).
@@ -292,24 +280,15 @@ function RibbonMesh({ svg, tint, process, opacity, glow = 0, glowDrive = 1, size
        mapping (ADR 0003). DoubleSide because the SVG→world Y-flip reverses
        winding. */
     <mesh
-      ref={hovered || glowing ? bloomRef : null}
+      ref={annotated || glowing ? bloomRef : null}
       position={[0, 0, z]}
       visible={visible}
       geometry={geometry}
-      onPointerOver={(e) => {
-        e.stopPropagation();
-        setHovered(true);
-        onHoverProcess?.(process);
-      }}
-      onPointerOut={() => {
-        setHovered(false);
-        onHoverProcess?.(null);
-      }}
     >
         <meshStandardMaterial
           color={tint || '#ffffff'}
-          emissive={hovered ? annotation : glowing ? tint || '#ffffff' : NO_EMISSIVE}
-          emissiveIntensity={hovered ? HOVER_EMISSIVE : glowing ? glow * glowDrive : 0}
+          emissive={annotated ? annotation : glowing ? tint || '#ffffff' : NO_EMISSIVE}
+          emissiveIntensity={annotated ? HOVER_EMISSIVE : glowing ? glow * glowDrive : 0}
           transparent
           opacity={opacity ?? 1}
           side={THREE.DoubleSide}
@@ -357,17 +336,23 @@ function deviceProfile() {
  * `isMoving`: ghost mode is plain alpha blending, where the front plane's
  * DoubleSide already shows through and a visible twin would double the image.
  *
+ * ANNOTATION (ADR 0003 #4, direction inverted): marks are NOT pointer-sensitive.
+ * The left panel's layer-row hover publishes {panelId, process} on the
+ * processAnnotation channel; the matching mark(s) here tint toward the process
+ * annotation color. Null panelId annotates that process on every sheet.
+ *
  * @param {{ specs?: import('../../lib/three3d/sheetSpecs.js').SheetSpec[],
  *           marksByPanel?: Record<string, Array<{process:string,tint:string,opacity:number,emissiveIntensity?:number,svg:string}>>,
  *           glowDrive?: number,
- *           isMoving?: boolean,
- *           onHoverProcess?: (process: string|null) => void }} props
+ *           isMoving?: boolean }} props
  */
-export default function Marks({ specs = [], marksByPanel = {}, glowDrive = 1, isMoving = false, onHoverProcess = null }) {
+export default function Marks({ specs = [], marksByPanel = {}, glowDrive = 1, isMoving = false }) {
   const routes = useMemo(
     () => routePanelRenderModes(marksByPanel, deviceProfile()),
     [marksByPanel],
   );
+  // Left-panel hover → {panelId, process}|null (re-renders only on real change).
+  const annotation = useProcessAnnotation();
   return (
     <group data-testid="mark-stack">
       {specs.map((spec) => {
@@ -380,6 +365,10 @@ export default function Marks({ specs = [], marksByPanel = {}, glowDrive = 1, is
           .filter((m) => m.svg)
           .flatMap((m, i) => {
             const glow = m.emissiveIntensity ?? 0;
+            const annotated =
+              !!annotation &&
+              annotation.process === m.process &&
+              (annotation.panelId == null || annotation.panelId === spec.panelId);
             // One mark surface at the given z (front face, or the settled-only
             // back-face twin — see the component doc).
             const markAt = (z, keySuffix, visible) => {
@@ -393,7 +382,7 @@ export default function Marks({ specs = [], marksByPanel = {}, glowDrive = 1, is
                   size={spec.size}
                   z={z}
                   visible={visible}
-                  onHoverProcess={onHoverProcess}
+                  annotated={annotated}
                 />
               );
               return useRibbon ? (
@@ -408,8 +397,8 @@ export default function Marks({ specs = [], marksByPanel = {}, glowDrive = 1, is
                   size={spec.size}
                   z={z}
                   visible={visible}
+                  annotated={annotated}
                   fallback={plane}
-                  onHoverProcess={onHoverProcess}
                 />
               ) : (
                 <MarkPlane
@@ -422,7 +411,7 @@ export default function Marks({ specs = [], marksByPanel = {}, glowDrive = 1, is
                   size={spec.size}
                   z={z}
                   visible={visible}
-                  onHoverProcess={onHoverProcess}
+                  annotated={annotated}
                 />
               );
             };

@@ -17,13 +17,23 @@ import { DEFAULT_PREVIEW_MATERIALS } from "../materialPreview";
 
 export const COLOR_VIEW_STORAGE_KEY = "sonoform-colorview";
 
+// Clamp a persisted/raw mark-visibility bias into [-1, 1]; anything non-finite
+// (absent, corrupt) → 0 = accurate.
+function clampMarkContrast(v) {
+  return Number.isFinite(v) ? Math.max(-1, Math.min(1, v)) : 0;
+}
+
 export function loadColorViewState() {
   try {
     const raw = localStorage.getItem(COLOR_VIEW_STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (parsed && (parsed.mode === "operation" || parsed.mode === "material")) {
-      return { mode: parsed.mode, materialId: parsed.materialId ?? null };
+      return {
+        mode: parsed.mode,
+        materialId: parsed.materialId ?? null,
+        markContrast: clampMarkContrast(parsed.markContrast),
+      };
     }
   } catch {
     /* fall through to defaults */
@@ -35,17 +45,23 @@ export default function useColorView({ materials = DEFAULT_PREVIEW_MATERIALS } =
   const saved = useMemo(() => loadColorViewState(), []);
   const [mode, setMode] = useState(saved?.mode ?? "operation");
   const [materialId, setMaterialId] = useState(saved?.materialId ?? null);
+  // Cut/score visibility bias (materialPreview.applyMarkVisibility), [-1, 1],
+  // 0 = accurate. Preview-only view state like the rest of the lens; the control
+  // shows its "Not an accurate representation" warning whenever ≠ 0, so a
+  // persisted bias can't silently masquerade as the honest render.
+  const [markContrast, setMarkContrastRaw] = useState(saved?.markContrast ?? 0);
+  const setMarkContrast = useCallback((v) => setMarkContrastRaw(clampMarkContrast(v)), []);
 
   useEffect(() => {
     try {
       localStorage.setItem(
         COLOR_VIEW_STORAGE_KEY,
-        JSON.stringify({ mode, materialId }),
+        JSON.stringify({ mode, materialId, markContrast }),
       );
     } catch {
       /* ignore quota / disabled storage */
     }
-  }, [mode, materialId]);
+  }, [mode, materialId, markContrast]);
 
   // Resolve the persisted id against the live material list (null if absent).
   const material = useMemo(
@@ -56,7 +72,11 @@ export default function useColorView({ materials = DEFAULT_PREVIEW_MATERIALS } =
   // The object the canvas consumes. In material mode WITHOUT a resolved material
   // it stays mode:'material' but material:null — resolveCanvasColor treats that
   // as operation (no recolor) so the canvas never blanks while the user picks.
-  const colorView = useMemo(() => ({ mode, material }), [mode, material]);
+  // (Per-panel materials can still shade their own layers in that state.)
+  const colorView = useMemo(
+    () => ({ mode, material, markContrast }),
+    [mode, material, markContrast],
+  );
 
   // Switching to Material with nothing valid chosen → signal the control to
   // auto-open its picker (the "what material should we preview?" moment).
@@ -75,6 +95,8 @@ export default function useColorView({ materials = DEFAULT_PREVIEW_MATERIALS } =
     selectMaterial,
     material,
     materials,
+    markContrast,
+    setMarkContrast,
     colorView,
     needsMaterialChoice,
   };

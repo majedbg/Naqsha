@@ -13,7 +13,7 @@ describe("useColorView — defaults", () => {
     const { result } = renderHook(() => useColorView());
     expect(result.current.mode).toBe("operation");
     expect(result.current.material).toBeNull();
-    expect(result.current.colorView).toEqual({ mode: "operation", material: null });
+    expect(result.current.colorView).toEqual({ mode: "operation", material: null, markContrast: 0 });
   });
 
   it("defaults the material list to DEFAULT_PREVIEW_MATERIALS", () => {
@@ -51,7 +51,7 @@ describe("useColorView — persistence", () => {
     const { result } = renderHook(() => useColorView());
     act(() => result.current.selectMaterial("clear"));
     const saved = JSON.parse(localStorage.getItem(COLOR_VIEW_STORAGE_KEY));
-    expect(saved).toEqual({ mode: "material", materialId: "clear" });
+    expect(saved).toEqual({ mode: "material", materialId: "clear", markContrast: 0 });
   });
 
   it("restores the persisted choice on remount", () => {
@@ -68,5 +68,41 @@ describe("useColorView — persistence", () => {
     localStorage.setItem(COLOR_VIEW_STORAGE_KEY, "{not json");
     const { result } = renderHook(() => useColorView());
     expect(result.current.mode).toBe("operation");
+  });
+});
+
+describe("useColorView — cut/score visibility bias (markContrast)", () => {
+  it("defaults to 0 (accurate) and rides the colorView object", () => {
+    const { result } = renderHook(() => useColorView());
+    expect(result.current.markContrast).toBe(0);
+    expect(result.current.colorView.markContrast).toBe(0);
+  });
+
+  it("setMarkContrast clamps into [-1, 1] and rejects non-finite values", () => {
+    const { result } = renderHook(() => useColorView());
+    act(() => result.current.setMarkContrast(0.4));
+    expect(result.current.markContrast).toBe(0.4);
+    act(() => result.current.setMarkContrast(5));
+    expect(result.current.markContrast).toBe(1);
+    act(() => result.current.setMarkContrast(-5));
+    expect(result.current.markContrast).toBe(-1);
+    act(() => result.current.setMarkContrast(NaN));
+    expect(result.current.markContrast).toBe(0);
+  });
+
+  it("persists with the lens and restores on a fresh mount", () => {
+    const first = renderHook(() => useColorView());
+    act(() => first.result.current.setMarkContrast(-0.35));
+    first.unmount();
+    const saved = JSON.parse(localStorage.getItem(COLOR_VIEW_STORAGE_KEY));
+    expect(saved.markContrast).toBe(-0.35);
+    const second = renderHook(() => useColorView());
+    expect(second.result.current.markContrast).toBe(-0.35);
+  });
+
+  it("a corrupt persisted markContrast degrades to 0", () => {
+    localStorage.setItem(COLOR_VIEW_STORAGE_KEY, JSON.stringify({ mode: "material", materialId: null, markContrast: "boom" }));
+    const { result } = renderHook(() => useColorView());
+    expect(result.current.markContrast).toBe(0);
   });
 });

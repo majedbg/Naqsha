@@ -1876,6 +1876,9 @@ export default function Studio({ submitOrg = null } = {}) {
           // while in 3D exits 3D first (D14), then switches the underlying lens.
           onSetMode={lensEntry.selectLens}
           onSelectMaterial={colorView.selectMaterial}
+          // Cut/score visibility bias — Material lens only; 0 = accurate.
+          markContrast={colorView.markContrast}
+          onSetMarkContrast={colorView.setMarkContrast}
           // 3D lens peer (S3, PRD D1/D2/D14).
           threeDActive={lensEntry.activeLens === "3d"}
           onEnter3D={lensEntry.enter3D}

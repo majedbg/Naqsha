@@ -30,6 +30,7 @@ import {
   materialSheetHex,
   luminance,
   reactionStrokeColor,
+  mix,
 } from './materialReaction.js';
 
 export { materialCategory, materialSheetHex, luminance };
@@ -68,18 +69,57 @@ export function materialStrokeColor(sheetHex, category, process, opColor) {
   return reactionStrokeColor(sheetHex, category, process, opColor);
 }
 
+// The layer's OWN sheet: its panel's catalog material (panel.materialId, the
+// per-panel choice) when one is set, else null → callers fall back to the
+// document-level lens material. Inlined lookup (not three3d/panelAppearance's
+// materialById) to keep this module import-cycle-free — panelAppearance imports
+// DEFAULT_PREVIEW_MATERIALS from here.
+function panelMaterialForLayer(layer, panels, materials) {
+  if (!layer || !Array.isArray(panels) || panels.length === 0) return null;
+  const panel = panels.find((p) => p && p.id === layer.panelId);
+  const id = panel?.materialId;
+  if (!id) return null;
+  const catalog = Array.isArray(materials) ? materials : DEFAULT_PREVIEW_MATERIALS;
+  return catalog.find((m) => m && m.id === id) || null;
+}
+
+// ── Cut/score visibility bias (preview-only, NOT accurate) ───────────────────
+// An honest reaction render can leave a faint score (or a kerf on a dark sheet)
+// near-invisible. `bias` ∈ [-1, 1] (0 = accurate) pushes ONLY cut + score marks
+// darker (negative) or lighter (positive). Capped below a full mix so a biased
+// mark never collapses to pure black/white. The control shows a "Not an
+// accurate representation" warning whenever bias ≠ 0.
+const MARK_VISIBILITY_MAX_MIX = 0.8;
+export function applyMarkVisibility(hex, bias) {
+  const b = Number.isFinite(bias) ? Math.max(-1, Math.min(1, bias)) : 0;
+  if (b === 0) return hex;
+  return mix(hex, b < 0 ? '#000000' : '#ffffff', Math.abs(b) * MARK_VISIBILITY_MAX_MIX);
+}
+
 // ── The single canvas entry point ────────────────────────────────────────────
 // operation mode → delegates BYTE-IDENTICALLY to resolveExportColor (the canvas
-// looks exactly as it does today). material mode → the shading rules above.
-export function resolveCanvasColor(layer, { operations, outputMode, colorView } = {}) {
-  if (!colorView || colorView.mode !== 'material' || !colorView.material) {
+// looks exactly as it does today). material mode → the shading rules above,
+// against the layer's OWN sheet: its panel's material first (per-panel choice),
+// else the document-level lens material, else (nothing chosen anywhere) the
+// operation color so the canvas never blanks. `colorView.markContrast` biases
+// cut/score visibility (applyMarkVisibility); engrave/pen stay accurate.
+export function resolveCanvasColor(layer, { operations, outputMode, colorView, panels, materials } = {}) {
+  if (!colorView || colorView.mode !== 'material') {
     return resolveExportColor(layer, { operations, outputMode });
   }
-  const sheetHex = materialSheetHex(colorView.material);
-  const category = materialCategory(colorView.material);
+  const sheet = panelMaterialForLayer(layer, panels, materials) || colorView.material;
+  if (!sheet) {
+    return resolveExportColor(layer, { operations, outputMode });
+  }
+  const sheetHex = materialSheetHex(sheet);
+  const category = materialCategory(sheet);
   const process = resolveLayerProcess(layer, operations) || 'cut';
   const opColor = resolveExportColor(layer, { operations, outputMode });
-  return materialStrokeColor(sheetHex, category, process, opColor);
+  const stroke = materialStrokeColor(sheetHex, category, process, opColor);
+  if (process === 'cut' || process === 'score') {
+    return applyMarkVisibility(stroke, colorView.markContrast ?? 0);
+  }
+  return stroke;
 }
 
 // The background the canvas should paint: the sheet hex in material mode, else

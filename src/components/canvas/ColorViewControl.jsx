@@ -168,6 +168,11 @@ export default function ColorViewControl({
   onEnter3D = () => {},
   onExit3D = () => {},
   onRebuild = () => {},
+  // Cut/score visibility bias ([-1, 1], 0 = accurate — useColorView.markContrast).
+  // The slider renders ONLY while the Material lens is active; any non-zero value
+  // shows the "Not an accurate representation" warning.
+  markContrast = 0,
+  onSetMarkContrast = () => {},
 }) {
   const [pickerOpen, setPickerOpen] = useState(false);
 
@@ -255,6 +260,40 @@ export default function ColorViewControl({
           </button>
         )}
       </div>
+
+      {/* Cut/score visibility bias — Material lens ONLY. Darker ◀ 0 ▶ lighter;
+          center = the honest reaction render. Whenever the value leaves 0 the
+          canvas is deliberately exaggerated, so the warning states it plainly. */}
+      {materialActive && (
+        <div
+          data-testid="mark-visibility-control"
+          className="mt-1 flex items-center gap-2 rounded-md border border-hairline bg-paper/95 px-2 py-1 shadow-pop backdrop-blur-[2px]"
+        >
+          <span className="whitespace-nowrap text-[10px] text-ink-soft">Cut/score visibility</span>
+          <input
+            type="range"
+            aria-label="Cut and score visibility"
+            min={-100}
+            max={100}
+            step={5}
+            value={Math.round(markContrast * 100)}
+            onChange={(e) => onSetMarkContrast(Number(e.target.value) / 100)}
+            className="h-1 w-24 accent-violet"
+            title="Darker ◀ accurate ▶ lighter (double-click label to reset)"
+          />
+          {markContrast !== 0 && (
+            <button
+              type="button"
+              aria-label="Reset to accurate"
+              title="Reset to accurate"
+              onClick={() => onSetMarkContrast(0)}
+              className="whitespace-nowrap text-[10px] font-medium text-tone-strong underline decoration-dotted underline-offset-2"
+            >
+              Not an accurate representation
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

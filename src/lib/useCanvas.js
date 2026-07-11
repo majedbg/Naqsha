@@ -133,7 +133,7 @@ export default function useCanvas(
         host.params,
         canvasW,
         canvasH,
-        resolveCanvasColor(host, { operations, outputMode, colorView }),
+        resolveCanvasColor(host, { operations, outputMode, colorView, panels }),
         host.opacity
       );
       p.pop();
@@ -161,7 +161,7 @@ export default function useCanvas(
         newInstances[layer.id] = instance;
         if (!vis) {
           instance.generateWithContext(
-            noDrawCtx, layer.seed, layer.params, canvasW, canvasH, resolveCanvasColor(layer, { operations, outputMode, colorView }), layer.opacity
+            noDrawCtx, layer.seed, layer.params, canvasW, canvasH, resolveCanvasColor(layer, { operations, outputMode, colorView, panels }), layer.opacity
           );
           continue;
         }
@@ -173,7 +173,7 @@ export default function useCanvas(
           applyNodeTransform(p, nodeTransforms[layer.id], piv.x, piv.y);
         }
         instance.generateWithContext(
-          drawCtx, layer.seed, layer.params, canvasW, canvasH, resolveCanvasColor(layer, { operations, outputMode, colorView }), layer.opacity
+          drawCtx, layer.seed, layer.params, canvasW, canvasH, resolveCanvasColor(layer, { operations, outputMode, colorView, panels }), layer.opacity
         );
         p.pop();
         continue;
@@ -270,7 +270,7 @@ export default function useCanvas(
           renderParams,
           canvasW,
           canvasH,
-          resolveCanvasColor(layer, { operations, outputMode, colorView }),
+          resolveCanvasColor(layer, { operations, outputMode, colorView, panels }),
           layer.opacity
         );
         continue;
@@ -291,7 +291,7 @@ export default function useCanvas(
         p.rect(0, 0, canvasW, canvasH);
       }
 
-      instance.generateWithContext(drawCtx, layer.seed, renderParams, canvasW, canvasH, resolveCanvasColor(layer, { operations, outputMode, colorView }), layer.opacity);
+      instance.generateWithContext(drawCtx, layer.seed, renderParams, canvasW, canvasH, resolveCanvasColor(layer, { operations, outputMode, colorView, panels }), layer.opacity);
       p.pop();
     }
 

@@ -5,6 +5,7 @@ import {
   materialSheetHex,
   materialStrokeColor,
   resolveCanvasColor,
+  applyMarkVisibility,
   sheetBackground,
   luminance,
 } from './materialPreview.js';
@@ -198,5 +199,103 @@ describe('sheetBackground', () => {
   it('returns the document bg otherwise', () => {
     expect(sheetBackground({ mode: 'operation' }, '#ffffff')).toBe('#ffffff');
     expect(sheetBackground(null, '#eeeeee')).toBe('#eeeeee');
+  });
+});
+
+describe('resolveCanvasColor — PER-PANEL material (panel.materialId)', () => {
+  const operations = [
+    { id: 'op-cut', name: 'Cut', color: '#FF0000', process: 'cut' },
+    { id: 'op-engrave', name: 'Engrave', color: '#000000', process: 'engrave' },
+  ];
+  const green = DEFAULT_PREVIEW_MATERIALS.find((m) => m.id === 'green-fluorescent');
+  const pink = DEFAULT_PREVIEW_MATERIALS.find((m) => m.id === 'pink-fluorescent');
+  const panels = [
+    { id: 'p-pink', visible: true, order: 0, materialId: 'pink-fluorescent' },
+    { id: 'p-auto', visible: true, order: 1, materialId: null },
+  ];
+  const layerOn = (panelId) => ({ id: 'L', operationId: 'op-engrave', color: '#123456', panelId });
+
+  it("a layer on a panel WITH a material shades against THAT panel's sheet", () => {
+    const got = resolveCanvasColor(layerOn('p-pink'), {
+      operations, colorView: { mode: 'material', material: green }, panels,
+    });
+    expect(got).toBe(materialStrokeColor(materialSheetHex(pink), 'lighten', 'engrave', '#000000'));
+  });
+
+  it('a layer on an Auto panel keeps the document-level lens material', () => {
+    const got = resolveCanvasColor(layerOn('p-auto'), {
+      operations, colorView: { mode: 'material', material: green }, panels,
+    });
+    expect(got).toBe(materialStrokeColor(materialSheetHex(green), 'lighten', 'engrave', '#000000'));
+  });
+
+  it('material mode + NO lens material still shades a panel-material layer (Auto layers stay operation-colored)', () => {
+    const shaded = resolveCanvasColor(layerOn('p-pink'), {
+      operations, colorView: { mode: 'material', material: null }, panels,
+    });
+    expect(shaded).toBe(materialStrokeColor(materialSheetHex(pink), 'lighten', 'engrave', '#000000'));
+    const plain = resolveCanvasColor(layerOn('p-auto'), {
+      operations, colorView: { mode: 'material', material: null }, panels,
+    });
+    expect(plain).toBe(resolveExportColor(layerOn('p-auto'), { operations })); // operation path
+  });
+
+  it('a dangling/unknown panelId or stale materialId degrades to the lens material', () => {
+    const stale = [{ id: 'p-stale', visible: true, order: 0, materialId: 'deleted-org-material' }];
+    expect(
+      resolveCanvasColor(layerOn('p-stale'), {
+        operations, colorView: { mode: 'material', material: green }, panels: stale,
+      }),
+    ).toBe(materialStrokeColor(materialSheetHex(green), 'lighten', 'engrave', '#000000'));
+    expect(
+      resolveCanvasColor(layerOn('p-gone'), {
+        operations, colorView: { mode: 'material', material: green }, panels,
+      }),
+    ).toBe(materialStrokeColor(materialSheetHex(green), 'lighten', 'engrave', '#000000'));
+  });
+});
+
+describe('applyMarkVisibility + markContrast — cut/score bias (preview-only)', () => {
+  const operations = [
+    { id: 'op-cut', name: 'Cut', color: '#FF0000', process: 'cut' },
+    { id: 'op-score', name: 'Score', color: '#0000FF', process: 'score' },
+    { id: 'op-engrave', name: 'Engrave', color: '#000000', process: 'engrave' },
+  ];
+  const green = DEFAULT_PREVIEW_MATERIALS.find((m) => m.id === 'green-fluorescent');
+  const layer = (op) => ({ id: 'L', operationId: op, color: '#123456' });
+  const view = (markContrast) => ({ mode: 'material', material: green, markContrast });
+
+  it('bias 0 (and non-finite) returns the accurate color unchanged', () => {
+    expect(applyMarkVisibility('#808080', 0)).toBe('#808080');
+    expect(applyMarkVisibility('#808080', NaN)).toBe('#808080');
+    expect(resolveCanvasColor(layer('op-cut'), { operations, colorView: view(0) }))
+      .toBe(resolveCanvasColor(layer('op-cut'), { operations, colorView: view(undefined) }));
+  });
+
+  it('negative bias darkens, positive lightens, clamped at ±1', () => {
+    expect(luminance(applyMarkVisibility('#808080', -0.5))).toBeLessThan(luminance('#808080'));
+    expect(luminance(applyMarkVisibility('#808080', 0.5))).toBeGreaterThan(luminance('#808080'));
+    expect(applyMarkVisibility('#808080', 5)).toBe(applyMarkVisibility('#808080', 1));
+    // capped below a full mix — never collapses to pure white/black
+    expect(applyMarkVisibility('#808080', 1)).not.toBe('#ffffff');
+    expect(applyMarkVisibility('#808080', -1)).not.toBe('#000000');
+  });
+
+  it('biases CUT and SCORE strokes only — engrave stays accurate', () => {
+    for (const op of ['op-cut', 'op-score']) {
+      const accurate = resolveCanvasColor(layer(op), { operations, colorView: view(0) });
+      const biased = resolveCanvasColor(layer(op), { operations, colorView: view(-0.6) });
+      expect(biased).toBe(applyMarkVisibility(accurate, -0.6));
+      expect(biased).not.toBe(accurate);
+    }
+    const engraveAccurate = resolveCanvasColor(layer('op-engrave'), { operations, colorView: view(0) });
+    expect(resolveCanvasColor(layer('op-engrave'), { operations, colorView: view(-0.6) })).toBe(engraveAccurate);
+  });
+
+  it('never touches operation mode', () => {
+    const got = resolveCanvasColor(layer('op-cut'), {
+      operations, colorView: { mode: 'operation', material: green, markContrast: -1 },
+    });
+    expect(got).toBe(resolveExportColor(layer('op-cut'), { operations }));
   });
 });

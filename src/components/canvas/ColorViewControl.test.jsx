@@ -156,3 +156,38 @@ describe("ColorViewControl — material picker", () => {
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
   });
 });
+
+describe("ColorViewControl — cut/score visibility slider (Material lens only)", () => {
+  const SLIDER = "Cut and score visibility";
+  const WARNING = "Not an accurate representation";
+
+  it("hidden in Operation mode and while the 3D lens is active", () => {
+    setup({ mode: "operation", markContrast: 0.5 });
+    expect(screen.queryByLabelText(SLIDER)).not.toBeInTheDocument();
+    expect(screen.queryByText(WARNING)).not.toBeInTheDocument();
+  });
+
+  it("hidden in 3D even when the underlying mode is material", () => {
+    setup({ mode: "material", material: MATERIALS[0], threeDActive: true, markContrast: 0.5 });
+    expect(screen.queryByLabelText(SLIDER)).not.toBeInTheDocument();
+  });
+
+  it("visible in Material mode, seeded from markContrast, commits through onSetMarkContrast", () => {
+    const onSetMarkContrast = vi.fn();
+    setup({ mode: "material", material: MATERIALS[0], markContrast: -0.4, onSetMarkContrast });
+    const slider = screen.getByLabelText(SLIDER);
+    expect(slider.value).toBe("-40");
+    fireEvent.change(slider, { target: { value: "60" } });
+    expect(onSetMarkContrast).toHaveBeenCalledWith(0.6);
+  });
+
+  it("shows the warning ONLY when biased, and the warning click resets to accurate", () => {
+    const onSetMarkContrast = vi.fn();
+    setup({ mode: "material", material: MATERIALS[0], markContrast: 0, onSetMarkContrast });
+    expect(screen.queryByText(WARNING)).not.toBeInTheDocument();
+    setup({ mode: "material", material: MATERIALS[0], markContrast: 0.2, onSetMarkContrast });
+    const warning = screen.getByText(WARNING);
+    fireEvent.click(warning);
+    expect(onSetMarkContrast).toHaveBeenCalledWith(0);
+  });
+});

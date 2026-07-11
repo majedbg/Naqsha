@@ -79,3 +79,34 @@ describe('resolveEdgeFace — fluorescent exception (real fluorescence)', () => 
     expect(desc.emissiveIntensity).toBe(0);
   });
 });
+
+describe('resolveEdgeFace — Stokes-shifted emission override (emissiveHex)', () => {
+  const FLUOR_BASE = {
+    archetype: 'fluorescent-acrylic',
+    tintHex: '#ff5fa2',
+    transmission: 0.9,
+    edgeGain: 2.0,
+  };
+
+  it('a fluorescent appearance with emissiveHex emits THAT hue, not the face tint', () => {
+    const edge = resolveEdgeFace({ appearance: { ...FLUOR_BASE, emissiveHex: '#ff2d78' } });
+    expect(edge.emissive).toBe('#ff2d78');
+    expect(edge.emissiveIntensity).toBe(2.0);
+  });
+
+  it('without emissiveHex the face tint stands in (green-calibrated behavior)', () => {
+    const edge = resolveEdgeFace({ appearance: FLUOR_BASE });
+    expect(edge.emissive).toBe('#ff5fa2');
+  });
+
+  it('emissiveHex on a NON-fluorescent archetype never lights the edges', () => {
+    const edge = resolveEdgeFace({
+      appearance: {
+        archetype: 'clear-acrylic', tintHex: '#e7e7e7', transmission: 0.95,
+        emissiveHex: '#ff2d78',
+      },
+    });
+    expect(edge.emissive).toBeNull();
+    expect(edge.emissiveIntensity).toBe(0);
+  });
+});

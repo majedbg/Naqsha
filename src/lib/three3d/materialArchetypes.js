@@ -44,6 +44,13 @@
 //                   (e.g. mic-volume sync). Fluorescent is the ONLY entry > 0.
 //   texturePath   — null | '/textures/...' (reserved; only wood may set it later, L6)
 //   clearcoat     — 0..1 (pearlescent's reserved nacre term; 0 elsewhere)
+//   emissiveHex   — OPTIONAL per-material override (never set by an archetype;
+//                   arrives via material.appearance through resolveAppearance):
+//                   the dye's Stokes-shifted EMISSION hue. Fluorescence re-emits
+//                   red-shifted from what the face transmits, so edges/grooves/
+//                   face-glow (edgeFace, markTexture, sheetMaterial) emit this
+//                   when present and fall back to tintHex when absent — the
+//                   pre-override behavior the green stock is calibrated on.
 //
 // (rimGain — the full-slab additive Fresnel shell term — was REMOVED with the
 // shell itself, ADR 0003: an additive glow over the whole surface is a stylized

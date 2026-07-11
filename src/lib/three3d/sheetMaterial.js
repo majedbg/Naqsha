@@ -94,6 +94,9 @@ export function resolveSheetMaterial({ appearance = null, descriptor = {} } = {}
       ior,
       clearcoat: 0,
       faceGlow: appearance.faceGlow ?? 0,
+      // The dye's Stokes-shifted emission hue for the faint face re-emission —
+      // same override the edge/groove emission honors; face tint when absent.
+      faceGlowHex: appearance.emissiveHex || color,
     };
   }
 

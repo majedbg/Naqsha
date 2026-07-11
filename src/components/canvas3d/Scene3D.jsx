@@ -165,6 +165,11 @@ export default function Scene3D({
   // null in the Operation lens / when no material is resolved → Sheets falls back
   // to the substrate's intrinsic descriptor (today's behavior).
   selectedMaterial = null,
+  // Per-panel material choices (panelId → materialId), threaded LIVE from the
+  // panels state (like selectedMaterial — NOT snapshot-frozen) so editing a
+  // panel's material in the left panel re-tints an open preview without a
+  // Rebuild. A panel with an entry here overrides the document-level material.
+  panelMaterials = null,
   designName = 'untitled',
   // Close the 3D preview overlay. Wired Studio → RightPanel → Canvas3DHost; routes
   // through lensEntry.exit3D so it cleanly closes BOTH Surface A (panel-stack) and
@@ -404,7 +409,12 @@ export default function Scene3D({
             /* Surface A — stacked substrate slabs (S4) + texture-mode emissive
                marks floated in front of each sheet (S5). Ribbon marks land in S10. */
             <>
-              <Sheets specs={sheetSpecs} appearance={appearance} isMoving={isInteracting} />
+              <Sheets
+                specs={sheetSpecs}
+                appearance={appearance}
+                panelMaterials={panelMaterials}
+                isMoving={isInteracting}
+              />
               <Marks
                 specs={sheetSpecs}
                 marksByPanel={marksByPanel ?? {}}

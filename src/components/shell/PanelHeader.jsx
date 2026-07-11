@@ -14,6 +14,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { SUBSTRATE_KINDS } from "../../lib/panels";
+import { DEFAULT_PREVIEW_MATERIALS } from "../../lib/materialPreview";
 import ConfirmDialog from "../ui/ConfirmDialog";
 import RowMenu from "./RowMenu";
 
@@ -88,6 +89,10 @@ export default function PanelHeader({
   onDuplicatePanel,
   onClearPanelLayers,
   onAssignLayerToPanel,
+  // The preview-material catalog the per-panel Material select offers. Defaults
+  // to the built-in set (no org context in Studio yet — same default as
+  // useColorView); org materials can drop in later via this prop.
+  materials = DEFAULT_PREVIEW_MATERIALS,
 }) {
   // The ⋯ options menu is self-owned (P5 locked decision): PanelHeader holds the
   // open/close state and renders <RowMenu /> itself, anchored in a relative
@@ -143,6 +148,12 @@ export default function PanelHeader({
 
 
   const substrate = panel.substrate || {};
+
+  // The panel's own catalog material, if chosen (null = Auto → follow the
+  // canvas-level Material lens). Drives the summary chip label + swatch and the
+  // editor's Material select below.
+  const panelMaterial =
+    (panel.materialId && (materials || []).find((m) => m && m.id === panel.materialId)) || null;
 
   // The editor's `kind` is tracked locally so the 'other' → label-input reveal is
   // immediate, independent of whether the parent re-renders the panel prop (it
@@ -211,15 +222,27 @@ export default function PanelHeader({
           </span>
         )}
 
-        {/* Substrate summary — click toggles the substrate editor. */}
+        {/* Substrate summary — click toggles the substrate editor. When the panel
+            has its own material, the chip leads with a swatch dot + the material
+            name so the per-panel stock reads at a glance. */}
         <button
           type="button"
           aria-expanded={editorOpen}
-          title={`Edit substrate — ${substrateSummary(substrate)}`}
+          title={`Edit substrate — ${panelMaterial ? panelMaterial.name : substrateSummary(substrate)}`}
           onClick={() => onToggleEditor?.(panel.id)}
-          className="shrink-0 rounded-xs border border-hairline bg-paper px-1 py-0.5 text-[10px] text-ink-soft hover:text-ink"
+          className="flex shrink-0 items-center gap-1 rounded-xs border border-hairline bg-paper px-1 py-0.5 text-[10px] text-ink-soft hover:text-ink"
         >
-          {substrateSummary(substrate)}
+          {panelMaterial && (
+            <span
+              data-testid="panel-material-swatch"
+              aria-hidden="true"
+              className="h-2 w-2 shrink-0 rounded-full border border-hairline"
+              style={{ backgroundColor: panelMaterial.hex }}
+            />
+          )}
+          {panelMaterial
+            ? `${panelMaterial.name}${substrate.thickness != null ? ` · ${substrate.thickness}mm` : ""}`
+            : substrateSummary(substrate)}
         </button>
 
         {/* Visibility toggle */}
@@ -270,6 +293,28 @@ export default function PanelHeader({
       {/* Substrate editor (single-open, owned by LayerTree via editorOpen). */}
       {editorOpen && (
         <div className="flex flex-wrap items-center gap-2 border-t border-hairline px-2 py-1.5">
+          {/* Per-panel material — the panel's OWN stock for the 3D preview.
+              "Auto" (null) follows the canvas-level Material lens, the
+              pre-per-panel behavior; a concrete choice overrides it for this
+              panel only. Commits through onUpdatePanel like every panel edit,
+              so it persists + undoes with the rest of the panel. */}
+          <label className="flex w-full items-center gap-1 text-[10px] text-ink-soft">
+            Material
+            <select
+              aria-label="Panel material"
+              value={panel.materialId || ""}
+              onChange={(e) => onUpdatePanel?.(panel.id, { materialId: e.target.value || null })}
+              className="min-w-0 flex-1 rounded-xs border border-hairline bg-paper px-1 py-0.5 text-xs text-ink outline-none"
+            >
+              <option value="">Auto (canvas material)</option>
+              {(materials || []).map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name}
+                </option>
+              ))}
+            </select>
+          </label>
+
           <label className="flex items-center gap-1 text-[10px] text-ink-soft">
             Kind
             <select

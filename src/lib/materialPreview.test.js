@@ -16,9 +16,9 @@ const layerWith = (operationId, color = '#123456') => ({ id: 'L', operationId, c
 
 // ── Default set ──────────────────────────────────────────────────────────────
 describe('DEFAULT_PREVIEW_MATERIALS', () => {
-  it('is 5 acrylic + 2 plywood, each with a hex and a category', () => {
-    expect(DEFAULT_PREVIEW_MATERIALS).toHaveLength(7);
-    expect(DEFAULT_PREVIEW_MATERIALS.filter((m) => m.type === 'acrylic')).toHaveLength(5);
+  it('is 7 acrylic + 2 plywood, each with a hex and a category', () => {
+    expect(DEFAULT_PREVIEW_MATERIALS).toHaveLength(9);
+    expect(DEFAULT_PREVIEW_MATERIALS.filter((m) => m.type === 'acrylic')).toHaveLength(7);
     expect(DEFAULT_PREVIEW_MATERIALS.filter((m) => m.type === 'plywood')).toHaveLength(2);
     for (const m of DEFAULT_PREVIEW_MATERIALS) {
       expect(m.hex).toMatch(/^#[0-9a-fA-F]{6}$/);

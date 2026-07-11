@@ -52,6 +52,10 @@ export function createPanel(order = 0, overrides = {}) {
     id: `panel-${order + 1}-${rand()}`,
     name: `Panel ${order + 1}`,
     substrate: { kind: 'acrylic', thickness: 3, color: DEFAULT_SUBSTRATE_COLOR },
+    // Optional catalog material (materialPreview DEFAULT_PREVIEW_MATERIALS id):
+    // the panel's own stock for the 3D preview. null = "Auto" — follow the
+    // canvas-level Material lens selection (the pre-per-panel behavior).
+    materialId: null,
     visible: true,
     order,
     ...overrides,

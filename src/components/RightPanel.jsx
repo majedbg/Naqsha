@@ -30,6 +30,9 @@ import Canvas3DHost from "./canvas3d/Canvas3DHost";
 // panels), so referencing it here keeps three.js out of the 2D bundle.
 import { buildPanelMarkSVGs } from "../lib/three3d/markTexture";
 import { resolveAppearance } from "../lib/three3d/resolveAppearance";
+// Three-free pure map builder: LIVE panelId → materialId for the per-panel
+// material choices, threaded to the scene like selectedMaterial (not frozen).
+import { panelMaterialIds } from "../lib/three3d/panelAppearance";
 // Three-free pure resolver (S9): the guide's ACTIVE modulation-target descriptors
 // for the Surface-B drape. Imports only 2D-side field libs, so it keeps three.js
 // out of the 2D bundle.
@@ -268,6 +271,12 @@ export default function RightPanel({
   // groove live rather than staying strictly frozen (D14) — an acceptable, honest
   // deviation since the geometry/sheet structure stays pinned and "↻ Rebuild"
   // remains the explicit resync.
+  // LIVE per-panel material map (panelId → materialId), from the LIVE panels —
+  // not the pinned snapshot — so choosing a panel's material in the left panel
+  // re-tints an open 3D preview (sheets AND mark glow) without a Rebuild, the
+  // same live-prop path the document-level Material lens rides (D14).
+  const livePanelMaterials = useMemo(() => panelMaterialIds(panels), [panels]);
+
   const threeDMarks = useMemo(() => {
     if (!threeDSnapshot) return null;
     return buildPanelMarkSVGs({
@@ -281,8 +290,10 @@ export default function RightPanel({
       // Material-lens appearance: lets the reaction layer light fluorescent
       // grooves (markGlow → emissiveIntensity); null lens → no glow anywhere.
       appearance: selectedMaterial ? resolveAppearance(selectedMaterial) : null,
+      // Per-panel material choices override the document-level appearance.
+      panelMaterials: livePanelMaterials,
     });
-  }, [threeDSnapshot, patternInstances, canvasW, canvasH, textFont, selectedMaterial]);
+  }, [threeDSnapshot, patternInstances, canvasW, canvasH, textFont, selectedMaterial, livePanelMaterials]);
 
   // Surface B (S8): the relief source field. Resolved 2D-side from the focus
   // guide layer via fieldForLayer (three-free; LRU-cached internally so this is
@@ -918,6 +929,7 @@ export default function RightPanel({
             reliefField={reliefField}
             drapeTargets={drapeTargets}
             selectedMaterial={selectedMaterial}
+            panelMaterials={livePanelMaterials}
             onClose={onClose3D}
             onEvaluationCapture={onEvaluationCapture}
           />

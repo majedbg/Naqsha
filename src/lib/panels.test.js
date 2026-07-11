@@ -518,3 +518,26 @@ describe('panels — loadPanels / savePanels', () => {
     expect(loadPanels()).toBe(null);
   });
 });
+
+describe('panel.materialId — per-panel material choice', () => {
+  it('createPanel defaults materialId to null (Auto) and overrides win', () => {
+    expect(createPanel(0).materialId).toBe(null);
+    expect(createPanel(0, { materialId: 'green-fluorescent' }).materialId).toBe('green-fluorescent');
+  });
+
+  it('duplicatePanel copies the source materialId onto the clone', () => {
+    const src = createPanel(0, { materialId: 'green-fluorescent' });
+    const { panels } = duplicatePanel([src], [], src.id);
+    expect(panels).toHaveLength(2);
+    expect(panels[1].materialId).toBe('green-fluorescent');
+  });
+
+  it('normalizePanels passes materialId through untouched (and tolerates its absence)', () => {
+    const withMat = createPanel(0, { materialId: 'walnut-plywood' });
+    const legacy = { ...createPanel(1) };
+    delete legacy.materialId; // a pre-feature persisted panel
+    const { panels } = normalizePanels([withMat, legacy], []);
+    expect(panels[0].materialId).toBe('walnut-plywood');
+    expect(panels[1].materialId).toBeUndefined();
+  });
+});

@@ -22,7 +22,7 @@
  * @typedef {{ type:'transmissive'|'standard', kind:string, color:string }} MaterialDescriptor
  * @typedef {{ panelId:string, order:number, zOffset:number, size:[number,number],
  *             thickness:number, materialDescriptor:MaterialDescriptor,
- *             layerIds:string[] }} SheetSpec
+ *             materialId:string|null, layerIds:string[] }} SheetSpec
  */
 import { effectiveVisible } from '../panels.js';
 
@@ -123,6 +123,10 @@ export function buildSheetSpecs({ panels, layers, spacing, bounds } = {}) {
       size: [width, height],
       thickness,
       materialDescriptor: materialDescriptorForSubstrate(substrate),
+      // The panel's OWN catalog-material choice (panels.js), or null = Auto.
+      // Resolution to an appearance happens scene-side (panelAppearance.js) so
+      // specs stay snapshot-derived while material stays a live prop.
+      materialId: panel.materialId ?? null,
       layerIds,
     };
   });

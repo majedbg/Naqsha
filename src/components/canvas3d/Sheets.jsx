@@ -6,6 +6,7 @@
 import { MeshTransmissionMaterial } from '@react-three/drei';
 import { resolveSheetMaterial } from '../../lib/three3d/sheetMaterial.js';
 import { resolveEdgeFace } from '../../lib/three3d/edgeFace.js';
+import { appearanceForPanelMaterial } from '../../lib/three3d/panelAppearance.js';
 import { useBloomRef } from './bloomSelection.js';
 import WoodGrain from './WoodGrain.jsx';
 
@@ -51,6 +52,7 @@ import WoodGrain from './WoodGrain.jsx';
  *
  * @param {{ specs?: import('../../lib/three3d/sheetSpecs.js').SheetSpec[],
  *           appearance?: import('../../lib/three3d/resolveAppearance.js').AppearanceParams|null,
+ *           panelMaterials?: Record<string,string>|null,
  *           isMoving?: boolean }} props
  */
 
@@ -106,9 +108,11 @@ function TransmissiveSlab({ spec, mat, edge, isMoving }) {
             roughness={mat.roughness}
             thickness={spec.thickness}
             transmission={mat.transmission}
-            // Fluorescent body re-emission (faceGlow, LSC model): faint, tinted,
-            // NON-bloomed — the face mesh never joins the bloom selection.
-            emissive={mat.faceGlow > 0 ? mat.color : NO_EMISSIVE}
+            // Fluorescent body re-emission (faceGlow, LSC model): faint, in the
+            // dye's emission hue (faceGlowHex — Stokes-shifted when the material
+            // declares one), NON-bloomed — the face mesh never joins the bloom
+            // selection.
+            emissive={mat.faceGlow > 0 ? mat.faceGlowHex || mat.color : NO_EMISSIVE}
             emissiveIntensity={mat.faceGlow ?? 0}
             samples={8}
             // The settled-glass tuning (see git history for the full derivation):
@@ -163,16 +167,23 @@ function TransmissiveSlab({ spec, mat, edge, isMoving }) {
   );
 }
 
-export default function Sheets({ specs = [], appearance = null, isMoving = false }) {
+export default function Sheets({ specs = [], appearance = null, panelMaterials = null, isMoving = false }) {
   return (
     <group data-testid="sheet-stack">
       {specs.map((spec) => {
         const [w = 0, h = 0] = spec.size || [];
         const m = spec.materialDescriptor || {};
+        // PER-PANEL appearance (panelAppearance.js): the panel's own material
+        // choice wins; else the document-level lens `appearance`; else null →
+        // substrate optics. `panelMaterials` is the LIVE panelId→materialId map
+        // (RightPanel) so a left-panel material edit re-tints without a Rebuild;
+        // spec.materialId is the snapshot-pinned fallback.
+        const materialId = panelMaterials?.[spec.panelId] ?? spec.materialId;
+        const sheetAppearance = appearanceForPanelMaterial(materialId, appearance);
         // Pure decisions (S4 + ADR 0003): which three material the faces get, and
         // whether/how the side faces differ.
-        const mat = resolveSheetMaterial({ appearance, descriptor: m });
-        const edge = resolveEdgeFace({ appearance, descriptor: m });
+        const mat = resolveSheetMaterial({ appearance: sheetAppearance, descriptor: m });
+        const edge = resolveEdgeFace({ appearance: sheetAppearance, descriptor: m });
         if (mat.mode === 'transmission' && edge.distinct) {
           return (
             <TransmissiveSlab
@@ -200,18 +211,18 @@ export default function Sheets({ specs = [], appearance = null, isMoving = false
                 clearcoat={mat.clearcoat}
                 clearcoatRoughness={0.1}
               />
-            ) : appearance?.archetype === 'wood' ? (
+            ) : sheetAppearance?.archetype === 'wood' ? (
               /* Procedural wood grain (S6, §3.2/L6). ONLY on the wood archetype
                  when a material lens is active — the no-material substrate fallback
-                 (appearance === null) stays a plain standard material. The grain
-                 math is the unit-tested woodGrain.js; this material mirrors it in
-                 GLSL. No texture loaded (texturePath reserved). */
+                 (sheetAppearance === null) stays a plain standard material. The
+                 grain math is the unit-tested woodGrain.js; this material mirrors
+                 it in GLSL. No texture loaded (texturePath reserved). */
               <WoodGrain
                 color={mat.color}
                 roughness={mat.roughness}
                 width={w}
                 height={h}
-                appearance={appearance}
+                appearance={sheetAppearance}
               />
             ) : (
               <meshStandardMaterial

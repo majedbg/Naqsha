@@ -35,6 +35,7 @@
 import { resolveLayerProcess } from '../operations.js';
 import { buildAllLayersSVG } from '../svgExport.js';
 import { effectiveVisibleLayers, layersForPanel } from '../panels.js';
+import { materialById, appearanceForPanelMaterial } from './panelAppearance.js';
 import {
   materialCategory,
   materialSheetHex,
@@ -131,12 +132,13 @@ export function reactionForProcess(process, substrate, appearance = null) {
   const markGlow = appearance?.markGlow ?? 0;
   if (markGlow > 0) {
     // Fluorescent groove: what escapes is the DYE's emission — the saturated
-    // sheet hue (same color the edges emit), not the whitened frost a plain
-    // acrylic groove shows. Falls back to the frost tint if the appearance
-    // carries no tint (defensive; resolved appearances always do).
+    // Stokes-shifted emission hue (same color the edges emit: emissiveHex when
+    // the material declares one, else the sheet hue), not the whitened frost a
+    // plain acrylic groove shows. Falls back to the frost tint if the
+    // appearance carries no tint (defensive; resolved appearances always do).
     return {
       process: p,
-      tint: appearance.tintHex || tint,
+      tint: appearance.emissiveHex || appearance.tintHex || tint,
       opacity,
       emissiveIntensity: markGlow * GROOVE_ESCAPE[p],
     };
@@ -291,6 +293,10 @@ export function buildPanelMarkSVGs({
   canvasH,
   svgOpts = {},
   appearance = null,
+  // LIVE per-panel material overrides (panelId → materialId) — same live-prop
+  // contract as the scene's panelMaterials; falls back to each panel's own
+  // (snapshot-pinned) materialId, then to the document-level `appearance`.
+  panelMaterials = null,
 } = {}) {
   const instances = patternInstances || {};
   const visibleLayers = effectiveVisibleLayers(layers, panels);
@@ -302,6 +308,16 @@ export function buildPanelMarkSVGs({
   const out = {};
   for (const p of visiblePanels) {
     const panelLayers = layersForPanel(visibleLayers, p.id);
+
+    // PER-PANEL stock (panelAppearance.js): a panel with its own materialId
+    // reacts as THAT material — its appearance drives the fluorescent groove
+    // glow AND the catalog material stands in for the substrate identity, so
+    // frost/char/tint derive from the chosen sheet, not the bare substrate.
+    // Panels without one keep the document-level appearance + their substrate.
+    const panelMaterialId = panelMaterials?.[p.id] ?? p.materialId;
+    const panelMaterial = materialById(panelMaterialId);
+    const panelAppearance = panelMaterial ? appearanceForPanelMaterial(panelMaterialId, null) : appearance;
+    const stock = panelMaterial || p.substrate;
 
     // Group this panel's layers by their resolved process (each unknown/absent
     // process collapses to the cut fallback, matching reactionForProcess). The
@@ -319,7 +335,7 @@ export function buildPanelMarkSVGs({
       // One substrate-aware call: tint (frost/kerf/char), opacity (presence) and
       // emissiveIntensity (fluorescent groove glow, 0 elsewhere) stay consistent
       // for this panel's stock (L3, ADR 0003).
-      const { tint, opacity, emissiveIntensity } = reactionForProcess(process, p.substrate, appearance);
+      const { tint, opacity, emissiveIntensity } = reactionForProcess(process, stock, panelAppearance);
       // Stroke every layer in this group with the substrate-aware reaction tint;
       // neutralize any layer background so it can't bake a solid block (D12).
       const tinted = groupLayers.map((l) => ({ ...l, color: tint, bgOpacity: 0 }));

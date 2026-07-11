@@ -64,9 +64,11 @@ function buildSeedCorpus() {
 
 const SEED_CORPUS = buildSeedCorpus();
 
-// The 7 in-code DEFAULT_PREVIEW_MATERIALS, with their expected archetypes.
+// The 9 in-code DEFAULT_PREVIEW_MATERIALS, with their expected archetypes.
 const DEFAULT_EXPECTED = {
   'green-fluorescent': 'fluorescent-acrylic',
+  'pink-fluorescent': 'fluorescent-acrylic',
+  'orange-fluorescent': 'fluorescent-acrylic',
   clear: 'clear-acrylic',
   'turquoise-opaque': 'opaque-acrylic',
   'blue-translucent': 'translucent-acrylic',
@@ -79,8 +81,23 @@ describe('resolveAppearance — corpus shape sanity', () => {
   it('the seed fixture is exactly 46 rows', () => {
     expect(SEED_CORPUS).toHaveLength(46);
   });
-  it('DEFAULT_PREVIEW_MATERIALS is the 7 in-code rows', () => {
-    expect(DEFAULT_PREVIEW_MATERIALS).toHaveLength(7);
+  it('DEFAULT_PREVIEW_MATERIALS is the 9 in-code rows', () => {
+    expect(DEFAULT_PREVIEW_MATERIALS).toHaveLength(9);
+  });
+
+  it('the pink/orange fluorescent stock carries its Stokes-shifted emissiveHex override', () => {
+    for (const id of ['pink-fluorescent', 'orange-fluorescent']) {
+      const m = DEFAULT_PREVIEW_MATERIALS.find((x) => x.id === id);
+      const a = resolveAppearance(m);
+      expect(a.archetype).toBe('fluorescent-acrylic');
+      expect(a.emissiveHex).toMatch(HEX_RE);
+      expect(a.emissiveHex.toLowerCase()).not.toBe(a.tintHex.toLowerCase());
+    }
+    // green stays calibration-stable: NO override, emission falls back to tintHex
+    const green = resolveAppearance(
+      DEFAULT_PREVIEW_MATERIALS.find((x) => x.id === 'green-fluorescent'),
+    );
+    expect(green.emissiveHex).toBeUndefined();
   });
 });
 

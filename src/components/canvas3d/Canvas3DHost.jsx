@@ -23,12 +23,13 @@ const Scene3D = lazy(() => import('./Scene3D.jsx'));
  *
  * `selectedMaterial` (S3, spec §3.5) is the LIVE Material-lens selection, passed
  * straight through to Scene3D (not snapshot-frozen). null → Operation-lens / no
- * material fallback.
+ * material fallback. `panelMaterials` (panelId → materialId) is the LIVE
+ * per-panel material map — same live-prop contract, per panel.
  *
  * @param {{ mode?: string, focusFieldLayerId?: string|null, snapshot?: object|null,
  *           boundsMm?: {width:number,height:number}, marksByPanel?: object|null,
  *           reliefField?: object|null, drapeTargets?: object[],
- *           selectedMaterial?: object|null }} props
+ *           selectedMaterial?: object|null, panelMaterials?: object|null }} props
  */
 export default function Canvas3DHost({
   mode,
@@ -39,6 +40,7 @@ export default function Canvas3DHost({
   reliefField = null,
   drapeTargets = [],
   selectedMaterial = null,
+  panelMaterials = null,
   // Close the overlay (Studio → RightPanel → here → Scene3D's "✕"). Optional.
   onClose = null,
   // Material evaluation capture (slice 1): Studio's handler for a render frame
@@ -71,6 +73,7 @@ export default function Canvas3DHost({
         reliefField={reliefField}
         drapeTargets={drapeTargets}
         selectedMaterial={selectedMaterial}
+        panelMaterials={panelMaterials}
         onClose={onClose}
         onEvaluationCapture={onEvaluationCapture}
       />

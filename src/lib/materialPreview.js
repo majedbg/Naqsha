@@ -40,6 +40,16 @@ export { materialCategory, materialSheetHex, luminance };
 // 'lighten' (acrylic/plastic frosts) | 'burn' (wood darkens). ──────────────────
 export const DEFAULT_PREVIEW_MATERIALS = [
   { id: 'green-fluorescent', name: 'Green Fluorescent', type: 'acrylic', hex: '#E6E954', category: 'lighten' },
+  // Fluorescent pink (industry 9095) + orange (9096) stock. No swatch photos yet
+  // — the control's PHOTO_BY_ID lookup falls back to the hex. Face hexes follow
+  // the green calibration (the sheet as it reads under ambient light: a lifted,
+  // slightly washed shade of the dye — cf. fluorescent-pink references
+  // #FF69B4/#FF5AAC and neon/safety orange #FF5F1F–#FF6700). `appearance.
+  // emissiveHex` is the DYE's Stokes-shifted emission (what edges/grooves glow):
+  // 9095 emits a deeper magenta-red, 9096 an orange-red — fluorescent dyes
+  // re-emit red-shifted from what the face transmits (LSC model, ADR 0003).
+  { id: 'pink-fluorescent', name: 'Pink Fluorescent', type: 'acrylic', hex: '#FF5FA2', category: 'lighten', appearance: { emissiveHex: '#FF2D78' } },
+  { id: 'orange-fluorescent', name: 'Orange Fluorescent', type: 'acrylic', hex: '#FF6A1D', category: 'lighten', appearance: { emissiveHex: '#FF4500' } },
   { id: 'clear', name: 'Clear', type: 'acrylic', hex: '#E7E7E7', category: 'lighten' },
   { id: 'turquoise-opaque', name: 'Turquoise Opaque', type: 'acrylic', hex: '#61DBC2', category: 'lighten' },
   { id: 'blue-translucent', name: 'Blue Translucent', type: 'acrylic', hex: '#0082CD', category: 'lighten' },

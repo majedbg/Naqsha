@@ -95,7 +95,12 @@ export function resolveEdgeFace({ appearance = null, descriptor = {} } = {}) {
     color,
     roughness: EDGE_ROUGHNESS,
     metalness: 0,
-    emissive: fluorescent ? appearance.tintHex : null,
+    // The DYE's emission hue, not the face tint: fluorescence is Stokes-shifted
+    // (the dye re-emits deeper/red-shifted vs what the face transmits), so a
+    // material may carry an explicit `emissiveHex` override (per-material
+    // appearance, resolveAppearance). Without one the face tint stands in —
+    // the pre-override behavior, still what the green stock is calibrated on.
+    emissive: fluorescent ? (appearance.emissiveHex || appearance.tintHex) : null,
     emissiveIntensity: fluorescent ? (appearance.edgeGain ?? 0) : 0,
   };
 }

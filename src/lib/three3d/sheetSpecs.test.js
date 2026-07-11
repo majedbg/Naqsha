@@ -221,3 +221,18 @@ describe('boundsForSheetSpecs', () => {
     expect(box.max[1]).toBeCloseTo(75, 5);
   });
 });
+
+describe('buildSheetSpecs — per-panel materialId carriage', () => {
+  it("carries each panel's materialId onto its spec (null when absent)", () => {
+    const specs = buildSheetSpecs({
+      panels: [
+        panel(0, { materialId: 'green-fluorescent' }),
+        panel(1), // no materialId at all (pre-feature panel)
+        panel(2, { materialId: null }),
+      ],
+      layers: [],
+      bounds: BOUNDS,
+    });
+    expect(specs.map((s) => s.materialId)).toEqual(['green-fluorescent', null, null]);
+  });
+});

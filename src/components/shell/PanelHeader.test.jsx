@@ -282,3 +282,57 @@ describe("PanelHeader (P5 — ⋯ options menu, trash removed)", () => {
     expect(onAssignLayerToPanel).toHaveBeenCalledWith("layer-xyz", panel.id);
   });
 });
+
+describe("PanelHeader — per-panel material (materialId)", () => {
+  function renderWithEditor(panelOverrides = {}, props = {}) {
+    const onUpdatePanel = vi.fn();
+    render(
+      <PanelHeader
+        panel={makePanel(panelOverrides)}
+        editorOpen
+        onUpdatePanel={onUpdatePanel}
+        {...props}
+      />
+    );
+    return onUpdatePanel;
+  }
+
+  it("offers a Material select with Auto first plus the preview catalog", () => {
+    renderWithEditor();
+    const select = screen.getByLabelText("Panel material");
+    const options = within(select).getAllByRole("option");
+    expect(options[0]).toHaveTextContent("Auto (canvas material)");
+    expect(options.map((o) => o.textContent)).toContain("Green Fluorescent");
+    expect(select.value).toBe(""); // no materialId → Auto
+  });
+
+  it("choosing a material commits { materialId } through onUpdatePanel", () => {
+    const onUpdatePanel = renderWithEditor();
+    fireEvent.change(screen.getByLabelText("Panel material"), {
+      target: { value: "green-fluorescent" },
+    });
+    expect(onUpdatePanel).toHaveBeenCalledWith("panel-1-abc123", {
+      materialId: "green-fluorescent",
+    });
+  });
+
+  it("switching back to Auto commits { materialId: null }", () => {
+    const onUpdatePanel = renderWithEditor({ materialId: "green-fluorescent" });
+    const select = screen.getByLabelText("Panel material");
+    expect(select.value).toBe("green-fluorescent");
+    fireEvent.change(select, { target: { value: "" } });
+    expect(onUpdatePanel).toHaveBeenCalledWith("panel-1-abc123", { materialId: null });
+  });
+
+  it("the summary chip leads with the material name + swatch when one is chosen", () => {
+    renderWithEditor({ materialId: "green-fluorescent" });
+    const chip = screen.getByRole("button", { name: /Green Fluorescent · 3mm/ });
+    expect(within(chip).getByTestId("panel-material-swatch")).toBeInTheDocument();
+  });
+
+  it("without a materialId the chip keeps the plain substrate summary", () => {
+    render(<PanelHeader panel={makePanel()} />);
+    expect(screen.getByRole("button", { name: /acrylic · 3mm/ })).toBeInTheDocument();
+    expect(screen.queryByTestId("panel-material-swatch")).not.toBeInTheDocument();
+  });
+});

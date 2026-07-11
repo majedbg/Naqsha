@@ -498,3 +498,111 @@ describe('buildPanelMarkSVGs — per-panel, per-process mark layers', () => {
     ).not.toThrow();
   });
 });
+
+describe('buildPanelMarkSVGs — PER-PANEL material choice (panel.materialId / panelMaterials)', () => {
+  const W = 200;
+  const H = 150;
+  const CUT_LAYER = { id: 'l-cut', panelId: 'panel-0', visible: true, operationId: 'op-cut', opacity: 100 };
+  const CUT_LAYER_P1 = { id: 'l-cut2', panelId: 'panel-1', visible: true, operationId: 'op-cut', opacity: 100 };
+  const INSTANCES = { 'l-cut': fakeInstance(), 'l-cut2': fakeInstance() };
+
+  function build(panels, extra = {}) {
+    return buildPanelMarkSVGs({
+      panels,
+      layers: [CUT_LAYER, CUT_LAYER_P1],
+      operations: OPERATIONS,
+      patternInstances: INSTANCES,
+      canvasW: W, canvasH: H,
+      ...extra,
+    });
+  }
+
+  it("a panel's own fluorescent material lights ITS grooves — its neighbor stays dark", () => {
+    const out = build([
+      panel(0, { materialId: 'green-fluorescent', substrate: { kind: 'acrylic', color: '#cccccc' } }),
+      panel(1, { substrate: { kind: 'acrylic', color: '#cccccc' } }),
+    ]);
+    const glowing = out['panel-0'][0];
+    const plain = out['panel-1'][0];
+    expect(glowing.emissiveIntensity).toBeGreaterThan(0);
+    // the escaping light is the DYE's own hue (green-fluorescent sheet hex)
+    expect(glowing.tint.toLowerCase()).toBe('#e6e954');
+    expect(plain.emissiveIntensity).toBe(0);
+  });
+
+  it('two panels with DIFFERENT materials each react as their own stock', () => {
+    const out = build([
+      panel(0, { materialId: 'green-fluorescent', substrate: { kind: 'acrylic', color: '#cccccc' } }),
+      panel(1, { materialId: 'walnut-plywood', substrate: { kind: 'acrylic', color: '#cccccc' } }),
+    ]);
+    // panel-0: fluorescent groove glow in the dye hue
+    expect(out['panel-0'][0].emissiveIntensity).toBeGreaterThan(0);
+    // panel-1: the walnut material stands in for the substrate — a cut CHARS
+    // dark from the walnut sheet, not the acrylic kerf on grey
+    const char = reactionSurface(materialSheetHex({ hex: '#6B4A2B' }), 'burn', 'cut').tint;
+    expect(out['panel-1'][0].tint.toLowerCase()).toBe(char.toLowerCase());
+    expect(out['panel-1'][0].emissiveIntensity).toBe(0);
+  });
+
+  it('a per-panel material WINS over the document-level appearance; Auto panels keep it', () => {
+    const walnutAppearance = { archetype: 'wood', tintHex: '#6b4a2b', markGlow: 0 };
+    const out = build(
+      [
+        panel(0, { materialId: 'green-fluorescent', substrate: { kind: 'acrylic', color: '#cccccc' } }),
+        panel(1, { substrate: { kind: 'acrylic', color: '#cccccc' } }),
+      ],
+      { appearance: walnutAppearance },
+    );
+    // explicit panel material overrides the lens appearance → still glows green
+    expect(out['panel-0'][0].emissiveIntensity).toBeGreaterThan(0);
+    expect(out['panel-0'][0].tint.toLowerCase()).toBe('#e6e954');
+    // the Auto panel keeps the document-level appearance (no glow, substrate reaction)
+    expect(out['panel-1'][0].emissiveIntensity).toBe(0);
+  });
+
+  it('the LIVE panelMaterials override beats the snapshot-pinned materialId', () => {
+    const out = build(
+      [panel(0, { materialId: null, substrate: { kind: 'acrylic', color: '#cccccc' } }), panel(1)],
+      { panelMaterials: { 'panel-0': 'green-fluorescent' } },
+    );
+    expect(out['panel-0'][0].emissiveIntensity).toBeGreaterThan(0);
+  });
+
+  it('a stale/unknown materialId degrades to the substrate reaction, never throws', () => {
+    const sub = { kind: 'acrylic', color: '#cccccc' };
+    const out = build([panel(0, { materialId: 'deleted-org-material', substrate: sub }), panel(1)]);
+    expect(out['panel-0'][0].tint).toBe(KERF_TARGET); // plain acrylic cut = kerf seam
+    expect(out['panel-0'][0].emissiveIntensity).toBe(0);
+  });
+});
+
+describe('reactionForProcess — Stokes-shifted groove emission (emissiveHex)', () => {
+  const SUB = { kind: 'acrylic', color: '#cccccc' };
+
+  it('a fluorescent appearance with emissiveHex glows grooves in the EMISSION hue', () => {
+    const r = reactionForProcess('engrave', SUB, {
+      markGlow: 3, tintHex: '#ff5fa2', emissiveHex: '#ff2d78',
+    });
+    expect(r.tint).toBe('#ff2d78');
+    expect(r.emissiveIntensity).toBeGreaterThan(0);
+  });
+
+  it('without emissiveHex the sheet hue stands in (green-calibrated behavior)', () => {
+    const r = reactionForProcess('engrave', SUB, { markGlow: 3, tintHex: '#e6e954' });
+    expect(r.tint).toBe('#e6e954');
+  });
+
+  it('a per-panel pink-fluorescent panel bakes the emission hue into its mark SVGs', () => {
+    const out = buildPanelMarkSVGs({
+      panels: [{ id: 'p0', visible: true, order: 0, materialId: 'pink-fluorescent', substrate: SUB }],
+      layers: [{ id: 'l-cut', panelId: 'p0', visible: true, operationId: 'op-cut', opacity: 100 }],
+      operations: OPERATIONS,
+      patternInstances: { 'l-cut': fakeInstance() },
+      canvasW: 200, canvasH: 150,
+    });
+    const mark = out.p0[0];
+    expect(mark.emissiveIntensity).toBeGreaterThan(0);
+    expect(mark.tint.toLowerCase()).toBe('#ff2d78');
+    expect(mark.svg.toLowerCase()).toContain('#ff2d78');
+  });
+});

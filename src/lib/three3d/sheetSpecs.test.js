@@ -145,6 +145,50 @@ describe('buildSheetSpecs — visibility', () => {
   });
 });
 
+describe('buildSheetSpecs — LIVE visibility overrides (liveVisibility, D14 refinement)', () => {
+  it('panelVisibility HIDES a snapshot-visible panel and restacks the survivors', () => {
+    const panels = [panel(0), panel(1), panel(2)];
+    const specs = buildSheetSpecs({
+      panels, layers: [], spacing: 10, bounds: BOUNDS,
+      panelVisibility: { 'panel-1': false },
+    });
+    expect(specs.map((s) => s.panelId)).toEqual(['panel-0', 'panel-2']);
+    // panel-2 stacks directly after panel-0 (one gap), not at its snapshot slot.
+    expect(specs[1].zOffset).toBe(3 + 10 + 1.5);
+  });
+
+  it('panelVisibility UNHIDES a panel hidden at snapshot time', () => {
+    const panels = [panel(0), panel(1, { visible: false })];
+    const specs = buildSheetSpecs({
+      panels, layers: [], spacing: 0, bounds: BOUNDS,
+      panelVisibility: { 'panel-1': true },
+    });
+    expect(specs.map((s) => s.panelId)).toEqual(['panel-0', 'panel-1']);
+  });
+
+  it('panels without an entry (e.g. deleted live) keep their snapshot flag', () => {
+    const panels = [panel(0), panel(1, { visible: false })];
+    const specs = buildSheetSpecs({
+      panels, layers: [], spacing: 0, bounds: BOUNDS,
+      panelVisibility: { 'panel-0': true },
+    });
+    expect(specs.map((s) => s.panelId)).toEqual(['panel-0']);
+  });
+
+  it('layerVisibility overrides layer flags in layerIds (hide AND unhide)', () => {
+    const panels = [panel(0)];
+    const layers = [
+      { id: 'l1', panelId: 'panel-0', visible: true },
+      { id: 'l2', panelId: 'panel-0', visible: false },
+    ];
+    const specs = buildSheetSpecs({
+      panels, layers, spacing: 0, bounds: BOUNDS,
+      layerVisibility: { l1: false, l2: true },
+    });
+    expect(specs[0].layerIds).toEqual(['l2']);
+  });
+});
+
 describe('buildSheetSpecs — degenerate & frozen inputs', () => {
   it('returns [] for null / empty / all-hidden inputs', () => {
     expect(buildSheetSpecs({ panels: null, layers: null, bounds: BOUNDS })).toEqual([]);

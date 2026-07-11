@@ -25,11 +25,16 @@ const Scene3D = lazy(() => import('./Scene3D.jsx'));
  * straight through to Scene3D (not snapshot-frozen). null → Operation-lens / no
  * material fallback. `panelMaterials` (panelId → materialId) is the LIVE
  * per-panel material map — same live-prop contract, per panel.
+ * `panelVisibility` (panelId → visible) is the LIVE panel-visibility map — same
+ * contract again: left-panel panel hide/unhide restacks the open preview
+ * without a Rebuild. (Layer visibility needs no prop here: it reaches the scene
+ * pre-applied inside `marksByPanel`.)
  *
  * @param {{ mode?: string, focusFieldLayerId?: string|null, snapshot?: object|null,
  *           boundsMm?: {width:number,height:number}, marksByPanel?: object|null,
  *           reliefField?: object|null, drapeTargets?: object[],
- *           selectedMaterial?: object|null, panelMaterials?: object|null }} props
+ *           selectedMaterial?: object|null, panelMaterials?: object|null,
+ *           panelVisibility?: object|null }} props
  */
 export default function Canvas3DHost({
   mode,
@@ -41,6 +46,7 @@ export default function Canvas3DHost({
   drapeTargets = [],
   selectedMaterial = null,
   panelMaterials = null,
+  panelVisibility = null,
   // Close the overlay (Studio → RightPanel → here → Scene3D's "✕"). Optional.
   onClose = null,
   // Material evaluation capture (slice 1): Studio's handler for a render frame
@@ -74,6 +80,7 @@ export default function Canvas3DHost({
         drapeTargets={drapeTargets}
         selectedMaterial={selectedMaterial}
         panelMaterials={panelMaterials}
+        panelVisibility={panelVisibility}
         onClose={onClose}
         onEvaluationCapture={onEvaluationCapture}
       />

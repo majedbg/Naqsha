@@ -25,6 +25,7 @@
  *             materialId:string|null, layerIds:string[] }} SheetSpec
  */
 import { effectiveVisible } from '../panels.js';
+import { withVisibilityOverride } from './liveVisibility.js';
 
 /** Mirrors panels.js createPanel defaults so a partial/absent substrate still builds. */
 export const DEFAULT_SUBSTRATE = { kind: 'acrylic', thickness: 3, color: '#cccccc' };
@@ -88,17 +89,32 @@ export function materialDescriptorForSubstrate(substrate = {}) {
  * The input `panels` array may be DEEP-FROZEN (designSnapshot deep-freezes it),
  * so we sort a COPY — never the input.
  *
+ * LIVE visibility (liveVisibility.js, D14 refinement): `panelVisibility` /
+ * `layerVisibility` (id → visible, derived from the LIVE arrays) override the
+ * snapshot's own flags, so hiding/unhiding a panel or layer in the left panel
+ * restacks an open preview without a Rebuild. Entities without an entry keep
+ * their snapshot flag; structural edits still require Rebuild.
+ *
  * @param {{ panels?:object[], layers?:object[], spacing?:number,
- *           bounds?:{width:number,height:number} }} [input]
+ *           bounds?:{width:number,height:number},
+ *           panelVisibility?:Record<string,boolean>|null,
+ *           layerVisibility?:Record<string,boolean>|null }} [input]
  * @returns {SheetSpec[]}
  */
-export function buildSheetSpecs({ panels, layers, spacing, bounds } = {}) {
+export function buildSheetSpecs({
+  panels,
+  layers,
+  spacing,
+  bounds,
+  panelVisibility = null,
+  layerVisibility = null,
+} = {}) {
   const width = bounds?.width;
   const height = bounds?.height;
-  const safeLayers = Array.isArray(layers) ? layers : [];
+  const safeLayers = withVisibilityOverride(Array.isArray(layers) ? layers : [], layerVisibility);
   const gap = Number.isFinite(spacing) && spacing > 0 ? spacing : 0;
 
-  const visiblePanels = [...(Array.isArray(panels) ? panels : [])]
+  const visiblePanels = [...withVisibilityOverride(Array.isArray(panels) ? panels : [], panelVisibility)]
     .filter((p) => p && p.visible)
     .sort((a, b) => a.order - b.order);
 

@@ -170,6 +170,13 @@ export default function Scene3D({
   // panel's material in the left panel re-tints an open preview without a
   // Rebuild. A panel with an entry here overrides the document-level material.
   panelMaterials = null,
+  // LIVE panel-visibility map (panelId → visible, liveVisibility.js) — same
+  // live-prop contract: hiding/unhiding a panel in the left panel restacks an
+  // open preview without a Rebuild (D14 refinement). LAYER visibility is NOT
+  // threaded here on purpose: it only affects marks, which arrive pre-filtered
+  // in `marksByPanel` — feeding it into the sheet specs would churn fitBox and
+  // snap the camera on every layer toggle.
+  panelVisibility = null,
   designName = 'untitled',
   // Close the 3D preview overlay. Wired Studio → RightPanel → Canvas3DHost; routes
   // through lensEntry.exit3D so it cleanly closes BOTH Surface A (panel-stack) and
@@ -327,8 +334,12 @@ export default function Scene3D({
       layers: snapshot.layers,
       spacing: spacingMm,
       bounds: { width: boundsW, height: boundsH },
+      // LIVE panel hide/unhide restacks the open preview without a Rebuild
+      // (display toggle, not a design edit). Identity-stable map (RightPanel
+      // useStableVisibility) so unrelated edits never re-run this memo.
+      panelVisibility,
     });
-  }, [isPanelStack, snapshot, spacingMm, boundsW, boundsH]);
+  }, [isPanelStack, snapshot, spacingMm, boundsW, boundsH, panelVisibility]);
 
   // Camera-fit box: Surface A from the stacked sheets; Surface B (height-surface)
   // a conservative relief box (width/depth plane × ±exaggeration) so the relief

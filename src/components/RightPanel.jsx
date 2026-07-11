@@ -33,6 +33,24 @@ import { resolveAppearance } from "../lib/three3d/resolveAppearance";
 // Three-free pure map builder: LIVE panelId → materialId for the per-panel
 // material choices, threaded to the scene like selectedMaterial (not frozen).
 import { panelMaterialIds } from "../lib/three3d/panelAppearance";
+import { visibilityById, sameVisibilityMap } from "../lib/three3d/liveVisibility";
+
+// STABLE live-visibility map (id → visible) for the 3D preview. The live
+// panels/layers arrays are recreated on every edit (param tweak, rename), but
+// the map must keep its identity until a `visible` flag actually flips —
+// otherwise the threeDMarks memo below would rebuild every mark SVG + texture
+// on each unrelated edit while the preview is open. Derive-during-render with
+// a conditional setState (React's sanctioned derived-state pattern): equal
+// content → the previous map's identity survives.
+function useStableVisibility(items) {
+  const next = visibilityById(items);
+  const [stable, setStable] = useState(next);
+  if (!sameVisibilityMap(stable, next)) {
+    setStable(next);
+    return next;
+  }
+  return stable;
+}
 // Three-free pure resolver (S9): the guide's ACTIVE modulation-target descriptors
 // for the Surface-B drape. Imports only 2D-side field libs, so it keeps three.js
 // out of the 2D bundle.
@@ -276,6 +294,14 @@ export default function RightPanel({
   // re-tints an open 3D preview (sheets AND mark glow) without a Rebuild, the
   // same live-prop path the document-level Material lens rides (D14).
   const livePanelMaterials = useMemo(() => panelMaterialIds(panels), [panels]);
+  // LIVE visibility maps (id → visible), same live-prop contract as the material
+  // map above: hiding/unhiding a panel or layer in the left panel updates an
+  // open 3D preview (sheets AND marks) without a Rebuild — a display toggle,
+  // not a design edit (D14 refinement). Structural edits still need Rebuild.
+  // Identity-stable across unrelated edits (useStableVisibility) so the
+  // threeDMarks memo below never re-rasterizes textures for a param tweak.
+  const livePanelVisibility = useStableVisibility(panels);
+  const liveLayerVisibility = useStableVisibility(layers);
 
   const threeDMarks = useMemo(() => {
     if (!threeDSnapshot) return null;
@@ -292,8 +318,11 @@ export default function RightPanel({
       appearance: selectedMaterial ? resolveAppearance(selectedMaterial) : null,
       // Per-panel material choices override the document-level appearance.
       panelMaterials: livePanelMaterials,
+      // Live hide/unhide of panels and layers reflects in the mark set.
+      panelVisibility: livePanelVisibility,
+      layerVisibility: liveLayerVisibility,
     });
-  }, [threeDSnapshot, patternInstances, canvasW, canvasH, textFont, selectedMaterial, livePanelMaterials]);
+  }, [threeDSnapshot, patternInstances, canvasW, canvasH, textFont, selectedMaterial, livePanelMaterials, livePanelVisibility, liveLayerVisibility]);
 
   // Surface B (S8): the relief source field. Resolved 2D-side from the focus
   // guide layer via fieldForLayer (three-free; LRU-cached internally so this is
@@ -930,6 +959,7 @@ export default function RightPanel({
             drapeTargets={drapeTargets}
             selectedMaterial={selectedMaterial}
             panelMaterials={livePanelMaterials}
+            panelVisibility={livePanelVisibility}
             onClose={onClose3D}
             onEvaluationCapture={onEvaluationCapture}
           />

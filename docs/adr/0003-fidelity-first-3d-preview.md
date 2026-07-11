@@ -7,7 +7,9 @@ of substrate to process (frosted engraving on acrylic, char on plywood, kerf-thi
 cut seam), never as emissive annotations; the previous glow treatment (emissive
 marks × `toneMapped=false` × SelectiveBloom, plus a full-slab additive Fresnel
 shell) is removed, which is why clear acrylic no longer "glows". Process colors
-(red cut / blue score) survive only as an on-hover annotation in 3D.
+(red cut / blue score) survive only as an on-hover annotation in 3D — driven by
+hovering a LAYER ROW in the left panel (the processAnnotation channel), never by
+mousing over the 3D artwork itself: the render must not change under the cursor.
 
 Rendering stack decisions that follow from the same stance:
 

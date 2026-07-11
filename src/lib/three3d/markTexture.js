@@ -234,7 +234,7 @@ export function routePanelRenderModes(marksByPanel, { isMobile = false, dpr = 2 
 // Baked halo geometry (mm, SVG user units): how far the TIR-escape glow bleeds
 // past the groove on real fluorescent stock, and how strong the bleed starts.
 const GLOW_HALO_STDDEV_MM = 0.9;
-const GLOW_HALO_OPACITY = 0.85;
+const GLOW_HALO_OPACITY = 0.55;
 
 /**
  * Bake a zoom-stable glow halo into a mark SVG: a Gaussian-blurred duplicate of

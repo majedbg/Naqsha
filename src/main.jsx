@@ -14,10 +14,12 @@ const calibrationId = import.meta.env.DEV
   : null
 
 if (calibrationId) {
-  const sceneId = new URLSearchParams(window.location.search).get('scene') || 'studio'
+  const params = new URLSearchParams(window.location.search)
+  const sceneId = params.get('scene') || 'studio'
+  const panelCount = Number(params.get('panels')) || 1
   import('./dev/CalibrationRoot.jsx').then((mod) => {
     createRoot(document.getElementById('root')).render(
-      createElement(mod.default, { materialId: calibrationId, sceneId })
+      createElement(mod.default, { materialId: calibrationId, sceneId, panelCount })
     )
   })
 } else {

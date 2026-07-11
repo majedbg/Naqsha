@@ -415,11 +415,7 @@ export default function Scene3D({
                 panelMaterials={panelMaterials}
                 isMoving={isInteracting}
               />
-              <Marks
-                specs={sheetSpecs}
-                marksByPanel={marksByPanel ?? {}}
-                isMoving={isInteracting}
-              />
+              <Marks specs={sheetSpecs} marksByPanel={marksByPanel ?? {}} />
             </>
           ) : (
             /* Surface B — modulation height-surface relief (S8, D5/D10): the

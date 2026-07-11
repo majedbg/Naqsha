@@ -137,7 +137,7 @@ const HIDE_CHROME_CSS = `
   [data-testid="canvas3d-process-annotation"] { display: none !important; }
 `;
 
-export default function CalibrationRoot({ materialId, sceneId }) {
+export default function CalibrationRoot({ materialId, sceneId, panelCount = 1 }) {
   const material = DEFAULT_PREVIEW_MATERIALS.find((m) => m.id === materialId) || null;
   const environmentId = isEnvironmentId(sceneId) ? sceneId : DEFAULT_ENVIRONMENT_ID;
 
@@ -147,15 +147,23 @@ export default function CalibrationRoot({ materialId, sceneId }) {
   const { snapshot, boundsMm, marksByPanel } = useMemo(() => {
     if (!material) return { snapshot: null, boundsMm: null, marksByPanel: null };
     const substrate = substrateFor(material);
+    // panelCount=2 (dev diagnosis): a second identical sheet stacked behind —
+    // exercises slab-through-slab transmission + rear-mark visibility.
+    const ids = Array.from({ length: Math.max(1, panelCount) }, (_, i) =>
+      i === 0 ? PANEL_ID : `${PANEL_ID}-${i + 1}`,
+    );
+    const appearance = resolveAppearance(material);
     return {
       snapshot: {
-        panels: [{ id: PANEL_ID, visible: true, order: 0, substrate }],
+        panels: ids.map((id, i) => ({ id, visible: true, order: i, substrate })),
         layers: [],
       },
       boundsMm: { width: SPECIMEN_W, height: SPECIMEN_H },
-      marksByPanel: { [PANEL_ID]: buildSpecimenMarks(substrate, resolveAppearance(material)) },
+      marksByPanel: Object.fromEntries(
+        ids.map((id) => [id, buildSpecimenMarks(substrate, appearance)]),
+      ),
     };
-  }, [material]);
+  }, [material, panelCount]);
 
   // Belt-and-braces: this component is only reachable in DEV (main.jsx guard).
   if (!import.meta.env.DEV) return null;

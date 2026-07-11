@@ -224,9 +224,9 @@ function MarkPlane({ svg, process, opacity, glow = 0, glowDrive = 1, size, z, vi
           emissive={annotated ? annotation : glowing ? '#ffffff' : NO_EMISSIVE}
           emissiveMap={texture}
           emissiveIntensity={annotated ? HOVER_EMISSIVE : glowing ? glow * glowDrive : 0}
-          transparent
+          alphaToCoverage
+          alphaTest={0.15}
           opacity={opacity ?? 1}
-          depthWrite={false}
           // DoubleSide so the mark shows from BEHIND the sheet too — through a
           // transmissive slab you see the groove mirrored (the back of this same
           // plane IS that mirrored view; ribbons are already DoubleSide). Opaque
@@ -289,10 +289,10 @@ function RibbonMesh({ svg, tint, process, opacity, glow = 0, glowDrive = 1, size
           color={tint || '#ffffff'}
           emissive={annotated ? annotation : glowing ? tint || '#ffffff' : NO_EMISSIVE}
           emissiveIntensity={annotated ? HOVER_EMISSIVE : glowing ? glow * glowDrive : 0}
-          transparent
+          alphaToCoverage
+          alphaTest={0.15}
           opacity={opacity ?? 1}
           side={THREE.DoubleSide}
-          depthWrite={false}
           clippingPlanes={clippingPlanes}
           // Same decal depth-bias as the texture marks (see MarkPlane): keep the
           // ribbon off the acrylic face in the depth test at any camera distance.
@@ -328,13 +328,14 @@ function deviceProfile() {
  * (fluorescent groove glow) — the animation seam: drive it from any live signal
  * (mic volume, beat clock) and every glowing groove follows, uniform-only.
  *
- * BACK-FACE TWIN: each mark renders twice — at the front face and, settled-only,
- * as a twin just behind the BACK face. Three.js excludes `transparent` materials
- * from the shared transmission buffer, so a settled MTM back face has no marks to
- * refract — the twin is the directly-visible stand-in (its rear side reads as the
- * mirrored groove, which is the physically correct back view). Hidden while
- * `isMoving`: ghost mode is plain alpha blending, where the front plane's
- * DoubleSide already shows through and a visible twin would double the image.
+ * TRANSMISSION-BUFFER MEMBERSHIP: mark materials use alpha-to-coverage (MSAA
+ * dithered alpha, OPAQUE render list) instead of alpha blending — three.js
+ * excludes `transparent` materials from the shared transmission buffer, which
+ * made marks invisible through any settled transmissive sheet (rear panels lost
+ * their light entirely) and invisible in a sheet's own settled back face. In the
+ * opaque list they are refracted like every other object: through front sheets,
+ * and mirrored in the back face. The 8x MSAA composer pass turns the baked halo
+ * gradient into smooth coverage steps (alphaHash's per-pixel noise was rejected).
  *
  * ANNOTATION (ADR 0003 #4, direction inverted): marks are NOT pointer-sensitive.
  * The left panel's layer-row hover publishes {panelId, process} on the
@@ -343,10 +344,10 @@ function deviceProfile() {
  *
  * @param {{ specs?: import('../../lib/three3d/sheetSpecs.js').SheetSpec[],
  *           marksByPanel?: Record<string, Array<{process:string,tint:string,opacity:number,emissiveIntensity?:number,svg:string}>>,
- *           glowDrive?: number,
- *           isMoving?: boolean }} props
+ * 
+ *           glowDrive?: number }} props
  */
-export default function Marks({ specs = [], marksByPanel = {}, glowDrive = 1, isMoving = false }) {
+export default function Marks({ specs = [], marksByPanel = {}, glowDrive = 1 }) {
   const routes = useMemo(
     () => routePanelRenderModes(marksByPanel, deviceProfile()),
     [marksByPanel],
@@ -359,7 +360,6 @@ export default function Marks({ specs = [], marksByPanel = {}, glowDrive = 1, is
         const marks = marksByPanel[spec.panelId];
         if (!marks || marks.length === 0) return null;
         const front = spec.zOffset + spec.thickness / 2;
-        const back = spec.zOffset - spec.thickness / 2;
         const useRibbon = routes[spec.panelId] === 'ribbon';
         return marks
           .filter((m) => m.svg)
@@ -415,12 +415,13 @@ export default function Marks({ specs = [], marksByPanel = {}, glowDrive = 1, is
                 />
               );
             };
-            return [
-              // Lift clear of the face (SURFACE_LIFT), then a tiny per-process step
-              // so stacked processes keep a stable front-to-back order.
-              markAt(front + SURFACE_LIFT + Z_EPSILON * i, '', true),
-              markAt(back - SURFACE_LIFT - Z_EPSILON * i, '-back', !isMoving),
-            ];
+            // Lift clear of the face (SURFACE_LIFT), then a tiny per-process step
+            // so stacked processes keep a stable front-to-back order. ONE surface
+            // per mark: alpha-to-coverage marks live in the OPAQUE render list, so
+            // the shared transmission buffer contains them — a settled back face
+            // (and any sheet in front) refracts the real marks. (This replaced the
+            // back-face twin, which would now double-image with the refraction.)
+            return [markAt(front + SURFACE_LIFT + Z_EPSILON * i, '', true)];
           });
       })}
     </group>

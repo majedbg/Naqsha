@@ -38,6 +38,44 @@
 7. Blocked on a human decision → record in "Deferred", skip, continue.
 8. Every Bash git/npm runs from `generative-art-studio/` (shell cwd does not persist).
 
+## Review independence (hard rule)
+
+"Build → adversarial review → commit" means the reviewer is a **separate opus subagent with
+fresh context**, NOT the builder reviewing itself. Flow per reviewed slice: builder
+(build+test) → **independent** opus reviewer whose sole job is to PROVE it broken/dishonest →
+orchestrator applies & validates fixes → commit → gate. A self-review folds nothing. (The
+prior build's value — "caught 3 real green-but-broken bugs" — came from independent eyes.)
+
+## The Sequencer's place in the pipeline (PIN — resolves a doc conflict; read before A2)
+
+The `chain` array holds **selection filter blocks** (route/everyN/skip/density/field) AND the
+single **`sequence`** block, but `sequence` is **terminal and not a filter**:
+- **A2 `runSelectionChain` partitions the array:** run the selection filters (in stored
+  order) + the post-chain override step; **pass the `sequence` block through untouched**
+  (opaque/terminal). A2 never treats `sequence` as an anchor filter. Return
+  `{survivors, orphans, sequence}`.
+- **`sequence` is at-most-one and last.** The UI forbids a second sequencer and forbids any
+  selection block *after* it (otherwise "repeatable blocks" makes an incoherent design). This
+  is the answer to "can a block follow the sequencer / can there be two" — no.
+- **A4 executes `sequence` in the placement stage** (the fixed tail, per ADR-0004),
+  recomputing each survivor's per-path cycle index from `meta.pathIndex` (already present —
+  no threading needed).
+- **Rests drop BEFORE the acceptance/obstacle loop** so a rest leaves a real gap. A rest must
+  NOT reserve footprint in `placed` — otherwise it silently shoves neighbors around, the
+  opposite of an intended silence. Write a golden that pins this.
+
+## Cycle vs Random are DIFFERENT invariants (read before A4)
+
+- **Cycle mode is POSITIONAL:** slot = `slots[cycleIndex]`. Editing Every-N 2→3 shifts every
+  downstream anchor's slot *by design* (the x‑o‑x‑o rhythm re-flowing). Cycle-mode tests
+  assert positional behavior + that the per-path/continuous toggle changes the deal.
+- **Random mode is PER-ANCHOR-ID-STABLE** (ADR-0005 survivor-stability): slot =
+  weighted-draw(`hashRng(seed, anchorId, 'slot')`). Editing an upstream filter must NOT
+  re-roll anchors that survive both before and after.
+- **The per-path/continuous toggle is a CYCLE-mode control.** Because `anchorId` already
+  encodes `pathIndex`, `hashRng(seed, anchorId, 'slot')` is already per-path-distinct — the
+  toggle is a no-op in random mode. Do NOT invent contrived meaning for it there.
+
 ## Two correctness traps every review MUST target (carried from the prior build)
 
 1. **Determinism contract:** assert *identical* output from same seed+inputs across two runs
@@ -70,19 +108,21 @@ Contract: pure, deterministic, well-distributed, order-independent. Tests: same 
 value; different channel/anchorId ⇒ decorrelated; reordering anchors doesn't change any
 anchor's value. Reuse `mulberry32` from `patterns/rng.js`.
 
-### A2 — chain selection executor (opus, adversarial review)
+### A2 — chain selection executor (opus, INDEPENDENT adversarial review)
 New `src/lib/motif/chain.js`. Block param schemas + `runSelectionChain(anchors, chain, opts)
-→ {survivors, orphans}`. Selection block types: `route` (roles + path scope
-all|closed|open|picked[pathIndex refs]), `everyN` ({n,offset}), `skip` ({mask[]}), `density`
-({density,seed,rngMode}), `field` ({field,threshold,invert}). Execute blocks in stored order;
-skip bypassed blocks; a block type MAY repeat. **Per-path restart (D4):** cycling blocks
-(everyN, skip) restart their counter at each `meta.pathIndex` group unless
-`block.continuous`. **Overrides stay OUTSIDE the chain** — a fixed post-chain include/exclude
-step (extract & reuse `resolveRef`/override logic from `placementEngine.selectAnchors`;
-exclude wins; unresolved include → orphan). Tests: per-block unit tests; order-matters
-(rate→skip vs skip→rate differ); repeated block; per-path restart vs continuous goldens;
-picked-path routing; determinism. **Review target:** the pipeline-order contract and the
-per-path grouping must not corrupt input order or leak RNG across paths.
+→ {survivors, orphans, sequence}` (see "The Sequencer's place" PIN above — partition out the
+opaque terminal `sequence` block; it is passed through, never filtered). Selection block
+types: `route` (roles + path scope all|closed|open|picked[pathIndex refs]), `everyN`
+({n,offset}), `skip` ({mask[]}), `density` ({density,seed,rngMode}), `field`
+({field,threshold,invert}). Execute filters in stored order; skip bypassed blocks; a filter
+type MAY repeat. **Per-path restart (D4):** cycling filters (everyN, skip) restart their
+counter at each `meta.pathIndex` group unless `block.continuous`. **Overrides stay OUTSIDE
+the chain** — a fixed post-chain include/exclude step (extract & reuse `resolveRef`/override
+logic from `placementEngine.selectAnchors`; exclude wins; unresolved include → orphan). Tests:
+per-block unit tests; order-matters (rate→skip vs skip→rate differ); repeated block; per-path
+restart vs continuous goldens; picked-path routing; determinism; sequence passthrough intact.
+**Review target:** the pipeline-order contract and the per-path grouping must not corrupt
+input order or leak RNG across paths.
 
 ### A3 — legacy compile (opus, adversarial review)
 New `src/lib/motif/compileSelectionToChain.js`. `compileSelectionToChain(legacySelection) →

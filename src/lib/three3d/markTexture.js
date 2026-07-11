@@ -35,6 +35,7 @@
 import { resolveLayerProcess } from '../operations.js';
 import { buildAllLayersSVG } from '../svgExport.js';
 import { effectiveVisibleLayers, layersForPanel } from '../panels.js';
+import { withVisibilityOverride } from './liveVisibility.js';
 import { materialById, appearanceForPanelMaterial } from './panelAppearance.js';
 import {
   materialCategory,
@@ -155,6 +156,33 @@ const GROOVE_ESCAPE = Object.freeze({ cut: 1, engrave: 0.85, score: 0.5 });
 // has a TRANSPARENT field — the mark plane then shows/blooms only marks (D12).
 function toTransparentBg(svg) {
   return typeof svg === 'string' ? svg.replace(WHITE_BG_RECT, '') : svg;
+}
+
+/**
+ * Force every PAINTED stroke/fill in a mark SVG to the reaction tint. Most
+ * pattern generators bake the 2D display color (under a laser machine: the
+ * OPERATION color — cut red / score blue / engrave black) into their cached
+ * svgElements at generate() time and ignore the color toSVGGroup receives, so
+ * the `color: tint` override on the tinted layer copies is silently dropped
+ * for those patterns and the operation color leaks into the 3D mark surface.
+ * Operation/annotation colors are HOVER-ONLY in 3D (ADR 0003 #4); rewriting
+ * the paint attributes after the build guarantees the reaction tint no matter
+ * how a generator emits its markup. Paint-preserving: `none`/`transparent`
+ * and url(#…) references keep their meaning, and hyphenated attributes
+ * (fill-rule, stroke-width) never match. Pure string transform.
+ * MUST run AFTER toTransparentBg — tinting first would repaint the white
+ * background rect so the strip no longer matches (a solid block, D12).
+ * @param {string} svg
+ * @param {string} tint
+ * @returns {string}
+ */
+export function tintSvgMarks(svg, tint) {
+  if (typeof svg !== 'string' || !tint) return svg;
+  return svg.replace(/(^|[\s"'])(stroke|fill)="([^"]*)"/g, (m, pre, attr, value) => {
+    const v = value.trim().toLowerCase();
+    if (v === 'none' || v === 'transparent' || v.startsWith('url(')) return m;
+    return `${pre}${attr}="${tint}"`;
+  });
 }
 
 /**
@@ -297,10 +325,18 @@ export function buildPanelMarkSVGs({
   // contract as the scene's panelMaterials; falls back to each panel's own
   // (snapshot-pinned) materialId, then to the document-level `appearance`.
   panelMaterials = null,
+  // LIVE visibility overrides (liveVisibility.js): panelId/layerId → visible.
+  // Hiding/unhiding in the left panel is a display toggle, not a design edit,
+  // so it updates an open preview without a Rebuild (D14 refinement). Entities
+  // without an entry keep their snapshot flag.
+  panelVisibility = null,
+  layerVisibility = null,
 } = {}) {
   const instances = patternInstances || {};
-  const visibleLayers = effectiveVisibleLayers(layers, panels);
-  const visiblePanels = (Array.isArray(panels) ? panels : [])
+  const livePanels = withVisibilityOverride(Array.isArray(panels) ? panels : [], panelVisibility);
+  const liveLayers = withVisibilityOverride(Array.isArray(layers) ? layers : [], layerVisibility);
+  const visibleLayers = effectiveVisibleLayers(liveLayers, livePanels);
+  const visiblePanels = livePanels
     .filter((p) => p && p.visible)
     .slice()
     .sort((a, b) => a.order - b.order);
@@ -339,8 +375,12 @@ export function buildPanelMarkSVGs({
       // Stroke every layer in this group with the substrate-aware reaction tint;
       // neutralize any layer background so it can't bake a solid block (D12).
       const tinted = groupLayers.map((l) => ({ ...l, color: tint, bgOpacity: 0 }));
-      const bare = toTransparentBg(
-        buildAllLayersSVG(tinted, instances, canvasW, canvasH, false, svgOpts),
+      // The color override above only reaches generators that honor toSVGGroup's
+      // color argument — most bake the 2D display (operation) color instead, so
+      // repaint the built markup in the reaction tint (tintSvgMarks).
+      const bare = tintSvgMarks(
+        toTransparentBg(buildAllLayersSVG(tinted, instances, canvasW, canvasH, false, svgOpts)),
+        tint,
       );
       // Glowing grooves carry their mm-scale halo IN the raster (zoom-stable).
       const svg = emissiveIntensity > 0 ? withBakedGlowHalo(bare) : bare;

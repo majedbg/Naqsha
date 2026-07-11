@@ -6,6 +6,7 @@ import {
   buildPanelMarkSVGs,
   countSvgPaths,
   countSvgPoints,
+  tintSvgMarks,
   routePanelRenderModes,
   PATH_CAP,
   POINT_CAP,
@@ -322,6 +323,32 @@ describe('routePanelRenderModes — D6 per-panel ribbon/texture routing (S10)', 
   });
 });
 
+describe('tintSvgMarks — repaint baked generator colors to the reaction tint', () => {
+  it('repaints painted stroke AND fill values', () => {
+    const svg = '<path d="M0 0" stroke="#FF0000"/><rect fill="#0000FF"/>';
+    const out = tintSvgMarks(svg, '#abc123');
+    expect(out).toBe('<path d="M0 0" stroke="#abc123"/><rect fill="#abc123"/>');
+  });
+
+  it('preserves paint-disabling values and url() references', () => {
+    const svg = '<path fill="none" stroke="url(#grad)"/><g fill="transparent"/>';
+    expect(tintSvgMarks(svg, '#abc123')).toBe(svg);
+  });
+
+  it('never touches hyphenated attributes (fill-rule, stroke-width) or data attrs', () => {
+    const svg = '<path fill-rule="evenodd" stroke-width="1" data-role="cut" stroke="#000"/>';
+    expect(tintSvgMarks(svg, '#abc123')).toBe(
+      '<path fill-rule="evenodd" stroke-width="1" data-role="cut" stroke="#abc123"/>',
+    );
+  });
+
+  it('is a safe no-op on non-strings and missing tint', () => {
+    expect(tintSvgMarks(null, '#abc123')).toBe(null);
+    const svg = '<path stroke="#000"/>';
+    expect(tintSvgMarks(svg, '')).toBe(svg);
+  });
+});
+
 describe('buildPanelMarkSVGs — per-panel, per-process mark layers', () => {
   const W = 200;
   const H = 150;
@@ -380,6 +407,49 @@ describe('buildPanelMarkSVGs — per-panel, per-process mark layers', () => {
     expect(cutLayer.svg.toLowerCase()).toContain(reactionForProcess('cut').tint.toLowerCase());
     expect(cutLayer.svg.toLowerCase()).not.toContain('#ff0000'); // raw op-cut color gone
     expect(cutLayer.svg.toLowerCase()).not.toContain(PROCESS_ANNOTATION_HEX.cut); // no annotation red
+  });
+
+  it('LIVE panelVisibility override drops a snapshot-visible panel and can unhide\n      a snapshot-hidden one (D14 refinement)', () => {
+    // panel-0 visible in the snapshot but hidden LIVE; a third, snapshot-hidden
+    // panel unhidden LIVE — the mark set follows the live flags, no Rebuild.
+    const panels = [panel(0), panel(1), panel(2, { visible: false })];
+    const layers = [
+      { id: 'l-cut', panelId: 'panel-0', visible: true, operationId: 'op-cut', opacity: 100 },
+      { id: 'l-score', panelId: 'panel-1', visible: true, operationId: 'op-score', opacity: 100 },
+      { id: 'l-late', panelId: 'panel-2', visible: true, operationId: 'op-cut', opacity: 100 },
+    ];
+    const out = buildPanelMarkSVGs({
+      panels, layers, operations: OPERATIONS,
+      patternInstances: { 'l-cut': fakeInstance(), 'l-score': fakeInstance(), 'l-late': fakeInstance() },
+      canvasW: W, canvasH: H,
+      panelVisibility: { 'panel-0': false, 'panel-2': true },
+    });
+    expect(Object.keys(out).sort()).toEqual(['panel-1', 'panel-2']);
+  });
+
+  it('LIVE layerVisibility override drops a hidden layer from its process group\n      and admits an unhidden one', () => {
+    const out = setup({ layerVisibility: { 'l-cut': false, 'l-hidden': true } });
+    // l-cut (snapshot-visible) hidden live; l-hidden (snapshot-hidden, cut) shown live.
+    const processes = out['panel-0'].map((m) => m.process);
+    expect(processes).toEqual(['cut', 'engrave']);
+    const cutLayer = out['panel-0'].find((m) => m.process === 'cut');
+    expect(cutLayer.svg).not.toContain('id="l-cut"');
+    expect(cutLayer.svg).toContain('id="l-hidden"');
+  });
+
+  it('repaints generators that BAKE their 2D display color and ignore the color\n      argument (most patterns, e.g. TopographicContours) into the reaction tint', () => {
+    // Mirrors the real generator contract: svgElements were baked at canvas
+    // generate() time with the layer's display color — the OPERATION color on a
+    // laser machine — and toSVGGroup ignores the color it receives.
+    const bakedInstance = {
+      toSVGGroup: (id) =>
+        `<g id="${id}"><polyline points="0,0 10,10" fill="none" stroke="#FF0000" stroke-width="1"/></g>`,
+    };
+    const out = setup({ patternInstances: { 'l-cut': bakedInstance } });
+    const cutLayer = out['panel-0'].find((m) => m.process === 'cut');
+    expect(cutLayer.svg.toLowerCase()).not.toContain('#ff0000'); // baked op color repainted
+    expect(cutLayer.svg.toLowerCase()).toContain(reactionForProcess('cut').tint.toLowerCase());
+    expect(cutLayer.svg).toContain('fill="none"'); // paint-disabling values kept
   });
 
   it('has a TRANSPARENT background (the white bg rect is stripped — D12)', () => {

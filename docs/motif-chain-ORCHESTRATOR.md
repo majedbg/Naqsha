@@ -251,7 +251,7 @@ doc + #79.
   **For A4/C1:** consume `{chain, overrides}` (overrides NOT in the chain array); compiled
   density stays `'sequential'` on C1 rewrite, only NEW UI density blocks default `'hash'`.
   `resolveSelection` returns `{survivors, orphans, sequence}` (sequence by-reference for A4).
-- 2026-07-11 — **A4 sequencer + modifiers DONE** — **PHASE A COMPLETE** (`<pending commit>`,
+- 2026-07-11 — **A4 sequencer + modifiers DONE** — **PHASE A COMPLETE** (`a70e968`,
   82 tests, motif suite 454 green, build green). New `sequencer.js` `dealSlots(survivors,
   sequence) → Assignment[]`; `resolvePlacements` consumes it. Sequence block
   `{type,mode:'cycle'|'random',continuous?,seed?,slots[]}`; Slot `{glyphRef, sizeScale?,
@@ -433,3 +433,43 @@ doc + #79.
   **D1 (pre-flagged, NOT touched):** AnchorGhostOverlay's legacy per-anchor include/exclude override
   reads/writes `selection.overrides` + uses legacy `placeMotifs` → misbehaves on chain-form motifs
   (semantic hosts too); left intact for D1 to redirect onto the chain overrides seam.
+- 2026-07-12 — **C5 starter chips DONE** — **PHASE C COMPLETE** (`a0e59e4`, +39 tests: new starterChips 35,
+  Inspector.motifChips 4; src/components/shell+src/lib/motif 986 green (was 947), full suite 4613
+  passed 0 failed, build green). New pure **`starterChips.js`**: `STARTER_CHIPS` (4 chips —
+  alternate-xo/vine/sparse-scatter/border-march) each `{id, label, build(hostIsSemantic) =>
+  {glyphRef, anchorMode, binding:{chain, placement}}}`, already CHAIN-FORM (no legacy compile,
+  no first-edit rewrite needed — a chip-created motif is chain-form from birth). Shared
+  `hostAwareRoute(hostIsSemantic, edgeScope)` mirrors Inspector's `addMotif` host-aware logic:
+  semantic → roles `['crossing']`, scope downgraded to `'all'`/`'open'` only (never
+  closed/picked, A2); edge → roles `['edge']`, scope used as-is. **Advisor caught a real bug
+  before build:** border-march's edge scope was drafted as `'closed'`, but the named
+  browser-verify edge host (flowfield) emits OPEN streamlines (`meta.closed` stays false), so
+  `'closed'` would have silently placed ZERO glyphs there — changed to `'open'` (the everyN
+  rhythm earns the "march" name, not the scope). Chip UI: new "Quick start" row in
+  `MotifDevice` (Inspector.jsx, above the motif list), one tappable chip per entry with a tiny
+  built-in-glyph SVG preview; tap → `onAddMotif(layer.id, chip.build(hostIsSemantic))` — the
+  SAME seam `+ Add Motif` uses, so C1's `createMotifParams`/`normalizeBinding` round-trip and
+  the rack render Blocks immediately with no extra wiring. **Correctness proven in
+  `starterChips.test.js`:** every chip's chain runs through `runSelectionChain` without
+  throwing on both semantic- and edge-flavored anchor fixtures; any `sequence` block is
+  terminal + at-most-one (`chainEditor.hasSequence`/`sequenceIndex`); every glyphRef (base +
+  slots) resolves via `getGlyph` with NO customGlyphs arg (built-in-only); both host branches
+  assert anchorMode/roles/scope; `createMotifParams` round-trip keeps `.chain`. **Sonnet-built,
+  ORCHESTRATOR-verified** (small curated-data slice, no separate adversarial review — matches
+  A1/C1 precedent). **Browser-verified** (dev server on :5174, a concurrent session already
+  held :5173 — left untouched until an accidental `pkill -f vite` late in the session killed
+  BOTH dev servers, see Deferred/note below): Vine on a semantic Grid host (rosette/leaf/leaf
+  cycle visibly alternating at grid crossings, host layers hidden to isolate); Alternate x‑o,
+  Border march, and Sparse scatter all on the edge Flow Field host (diamonds with visible rest
+  gaps; sparser every-N‑3 diamonds confirming the `'open'` fix actually places glyphs; scattered
+  dots at density 0.25). Rack cards inspected in the a11y tree for each (Route roles/scope,
+  Sequencer slots/Every N/Density) matched the chip's authored chain exactly. Verified no
+  horizontal overflow / all four chips reachable at 390px (mobile sheet, chips wrap to 2 rows)
+  and 768px (iPad, one row). No new console errors (3 pre-existing unrelated: nested-button
+  hydration warning, LayerRow key-spread warning, unauthenticated supabase 400). **Seam for
+  D1:** a chip-created motif is a completely ordinary chain-form motif (no chip provenance
+  tagged on the layer) — export/persist/undo already exercised by C1/C2/D1's own goldens
+  apply unchanged; no chip-specific gap identified. **Incident (own accountability, not
+  concurrency-file-touching):** while stopping my own dev server I ran `pkill -f vite`, which
+  is unscoped and also killed the OTHER session's dev server on :5173 — no files/git touched,
+  but that session's `npm run dev` needs a restart if it relied on that process still running.

@@ -333,3 +333,23 @@ doc + #79.
   boundary; B1 `useCanvas.motif.test.jsx` = `binding.chain`→`params.glyphs` injection; browser demo
   = real multi-path capture). No single headless test spans useCanvas `capturePolylines` → multi-path
   boundary; D2 may add one (needs jsdom+p5, like useCanvas.motif.test.jsx).
+- 2026-07-12 — **C1 chain data plumbing DONE** — PHASE C begun (`34058ec`, +19 tests, motif+
+  useCanvas 521 green (was 502), build green, full suite 4496 passed 0 failed). Pure layer/
+  authoring-side primitives in `motifLayer.js` (render seam untouched — it already lazy-compiles
+  from B3). **`normalizeBinding` now PRESERVES chain-form** (the B3-flagged bug): chain binding
+  round-trips `{chain, overrides?, placement}`; legacy stays `{selection, placement}` byte-
+  identical; shapes never coexist (D9 — presence check, no version stamp). **`readChain(binding)`**
+  = lazy-compile-on-READ (chain if present else `compileSelectionToChain(selection).chain`) so the
+  rack renders Blocks uniformly; tolerates empty/undefined. **`ensureChainForm(binding)`** = first-
+  edit rewrite primitive, idempotent when already chain-form (same ref), else new chain-form via
+  compile with **`selection` DROPPED** (genuine transition, not overlay — a stale selection would
+  silently re-diverge + confuse the presence check). Never mutates. **`deepMergeBinding`** confirmed
+  correct for chain edits (array replaces wholesale). **Sonnet-built, ORCHESTRATOR-verified** (no
+  adversarial-review annotation, like A1; compiled-chain byte-identity is A3's reviewed job; undo/
+  persistence gated end-to-end at D1) — read the diff + runtime-checked undefined/idempotent/no-
+  mutation invariants. **HANDOFF TRAP for C2 (mutual-exclusivity):** on a first block edit, C2 MUST
+  `ensureChainForm(old)` BEFORE `deepMergeBinding(base, patch)` — deepMergeBinding never deletes
+  keys, so merging onto the RAW legacy binding RESURRECTS the dropped `selection`. Flow:
+  `base = ensureChainForm(old); next = deepMergeBinding(base, patch); updateLayer(id, {params:{...
+  layer.params, binding: next}})` → one coalescing undo entry. Per-block authoring mutators
+  (add/remove/reorder/bypass, slot edit) are C2/C3, built on these primitives.

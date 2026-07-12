@@ -381,3 +381,32 @@ doc + #79.
   (Note: `rm -rf .playwright-mcp` mid-slice briefly deleted tracked verification screenshots from
   earlier P-slices — restored via `git checkout`; browser-verify scratch `.yml` are untracked, just
   don't stage them.)
+- 2026-07-12 — **C3 Sequencer card DONE** (`a9372db`, +29 tests; shell+motif 929 green, hooks+
+  components 1170+ green, full suite 4549 passed 0 failed, build green). Fleshed C2's minimal
+  sequence shell into the full authoring UI over the A4 sequence block; all edits ride C2's one-undo
+  editChain path. **Slot strip** (SortableSlotChips: glyph thumb / dashed REST chip, grip, remove;
+  +Glyph/+Rest), **Cycle|Random toggle** (Continuous shown only in Cycle — no-op in Random per PIN),
+  **per-slot weight sliders ONLY in Random** (Rests included), **per-slot angle-randomization**
+  progressive disclosure (±° range + flat/bell spread → rotationRandom). New pure chainEditor slot
+  helpers (addSlot/removeSlot/reorderSlots/setSlot/setSlotGlyphRef, same-ref-on-no-op, rebuild via
+  setBlock). **Nested dnd** isolated (slot strip = own DndContext+sensors, `slot-${i}` namespace,
+  grip-only listeners — dragging a slot never moves its block). **Tap-slot → Motif Edit Session with
+  SLOT context** (advisor-scoped narrow): `open(layerId, glyphRef, {slotIndex})`; custom slot edits
+  in place (no rebind), built-in slot forks → Save rebinds THAT slot via new
+  `useGlyphCommits.commitNewGlyphToSlot` — glyph-add + slot-rebind in ONE recordBatch, seqIndex fresh
+  at commit, aborts before any write if layer/seq/slot gone (no orphan). Base Edit byte-identical
+  when slotIndex absent (additive); also fixed `saveAsCopy` (previously always forked the base).
+  Verified A4 random deal already guards zero-sum/all-Rest (returns slot 0); no spurious weight-freeze
+  (weight edits ≠ ADR-0005 concern). **Independent opus review: SOUND** (fork-rebind + one-recordBatch
+  + fresh-seqIndex + abort-before-write; base-rebind & `from===to` mutations each red then reverted;
+  additive back-compat via caller grep). **Browser-verified** on rinceaux flowfield: add glyph/rest,
+  slot reorder via real mouse-drag with parent block unmoved, Cycle↔Random reveals weights, angle
+  disclosure, tap-slot opens THAT slot's glyph, fork+Save rebinds only that slot, one ⌘Z reverts the
+  whole fork. Nit (non-blocking): angle-OFF writes `rotationRandom:undefined` (key present but inert —
+  engine guards range>0, JSON drops on persist), not a key deletion. **For D1:** export goldens should
+  cover a modifier-only slot (no glyphRef → base) + per-slot rotationRandom.
+  **⚠️ CONCURRENCY (2026-07-12):** a SEPARATE session is building a "Raster Etch" subsystem in this
+  same checkout — it has modified `CONTEXT.md` (Etch/Etch Stack/Stage glossary) and added
+  `docs/adr/0006`+`0007` (untracked). These are NOT motif work; every motif commit stages EXPLICIT
+  paths only and leaves the Etch files untouched. Watch for collisions if both sessions touch a shared
+  file (none so far — Etch is raster/pixels, motif is anchors/vector).

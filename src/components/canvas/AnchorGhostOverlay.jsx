@@ -27,10 +27,11 @@
 // and still render nothing. Pure UI + wiring — the motif core is only CONSUMED, never edited.
 
 import { useMemo } from 'react';
-import { isMotifLayer, motifHostId, deepMergeBinding } from '../../lib/motif/motifLayer';
+import { isMotifLayer, motifHostId, deepMergeBinding, readChain } from '../../lib/motif/motifLayer';
 import { getSemanticAnchors } from '../../lib/motif/semanticAnchors';
+import { sampleEdgeAnchors } from '../../lib/motif/anchors';
 import { placeMotifs } from '../../lib/motif/placementEngine';
-import { SEMANTIC_MOTIF_HOSTS } from '../../lib/motif/hostKinds';
+import { SEMANTIC_MOTIF_HOSTS, isEdgeHost } from '../../lib/motif/hostKinds';
 
 // This overlay previews SEMANTIC anchors only (grid/recursive/spiral are FORMULA
 // hosts — anchors from params alone; voronoi is GEOMETRY-IN via the drawn host's
@@ -57,15 +58,32 @@ export default function AnchorGhostOverlay({
   canvasH,
   onUpdateLayer = () => {},
   patternInstances = {},
+  // Canvas path-picker (C4, #79). `motifPick = {layerId, blockIndex} | null` is
+  // the ephemeral Route-card arm target (Studio state). When it names the
+  // selected EDGE-host motif, this overlay renders the edge-anchor ghost as a
+  // clickable path picker; `onTogglePickedPath(pathIndex)` toggles that path in
+  // the armed route block's `pickedPaths` (a ROUTE-BLOCK edit — NEVER the legacy
+  // selection.overrides path below, which stays semantic-only). Both optional.
+  motifPick = null,
+  onTogglePickedPath = () => {},
 }) {
   // ── HOOKS FIRST ──────────────────────────────────────────────────────────
   // Every hook runs on every render (guards live INSIDE the memos, the single
   // early return is at the end). Mounting this overlay unconditionally means a
   // selection change must not change the hook count — Rules of Hooks.
-  const motif = useMemo(
-    () => (layers || []).find((l) => l.id === selectedLayerId && isMotifLayer(l)) || null,
-    [layers, selectedLayerId]
-  );
+  const motif = useMemo(() => {
+    const list = layers || [];
+    // PICK MODE takes precedence: the Route card's "Pick on canvas" arm lives in
+    // the HOST's inspector, so the HOST (not the motif) is the selected layer
+    // while picking. When a pick target is armed, the ARMED motif drives the
+    // overlay regardless of selection; otherwise the selected motif does (the
+    // semantic override overlay's original behavior).
+    if (motifPick && motifPick.layerId) {
+      const armed = list.find((l) => l.id === motifPick.layerId && isMotifLayer(l));
+      if (armed) return armed;
+    }
+    return list.find((l) => l.id === selectedLayerId && isMotifLayer(l)) || null;
+  }, [layers, selectedLayerId, motifPick]);
 
   const host = useMemo(
     () => (motif ? (layers || []).find((l) => l.id === motifHostId(motif)) || null : null),
@@ -86,35 +104,116 @@ export default function AnchorGhostOverlay({
   // (first frame before p5 draws, or a hidden host) ⇒ null ⇒ overlay renders
   // nothing (graceful).
   const anchors = useMemo(() => {
-    if (!host || !MOTIF_HOSTS.has(host.patternType)) return null;
-    if (host.patternType === 'voronoi') {
-      const geo = patternInstances[host.id]?.motifHostGeometry;
-      if (!geo) return null;
-      // geo IS the opts object — it carries drawnEdges + sites.
-      return getSemanticAnchors('voronoi', host.params, canvasW, canvasH, geo);
+    if (!host) return null;
+    if (MOTIF_HOSTS.has(host.patternType)) {
+      if (host.patternType === 'voronoi') {
+        const geo = patternInstances[host.id]?.motifHostGeometry;
+        if (!geo) return null;
+        // geo IS the opts object — it carries drawnEdges + sites.
+        return getSemanticAnchors('voronoi', host.params, canvasW, canvasH, geo);
+      }
+      // Thread the host layer seed so grid anchors sit on the LIVE-p5
+      // jittered/symmetry lattice — matching MotifPattern's real render, so
+      // ghost previews land exactly where the motifs actually place.
+      return getSemanticAnchors(host.patternType, host.params, canvasW, canvasH, {
+        hostSeed: host.seed,
+      });
     }
-    // Thread the host layer seed so grid anchors sit on the LIVE-p5
-    // jittered/symmetry lattice — matching MotifPattern's real render, so
-    // ghost previews land exactly where the motifs actually place.
-    return getSemanticAnchors(host.patternType, host.params, canvasW, canvasH, {
-      hostSeed: host.seed,
-    });
-  }, [host, canvasW, canvasH, patternInstances]);
+    // C4 — EDGE host (flowfield/wave/…): the dots come from the SAME polyline
+    // capture the render uses (hostPaths, surfaced on the drawn instance by
+    // useCanvas), resampled with the motif's OWN edgeOpts so the ghost dots land
+    // where the glyphs would. Each edge anchor carries meta.pathIndex (the pick
+    // key). Absent capture (host not yet probed / hidden) → null → no ghost.
+    if (isEdgeHost(host.patternType)) {
+      const hostPaths = patternInstances[host.id]?.motifHostGeometry?.hostPaths;
+      if (!hostPaths || !hostPaths.length) return null;
+      const edgeOpts = motif?.params?.edgeOpts || { spacing: 24 };
+      return sampleEdgeAnchors(hostPaths, edgeOpts);
+    }
+    return null;
+  }, [host, canvasW, canvasH, patternInstances, motif]);
 
   // Placements — run the SAME engine the real render uses, so PLACED state here
   // matches what actually draws (overrides already folded in by placeMotifs).
   const placements = useMemo(() => {
     if (!anchors || !motif) return [];
+    // C4 landmine guard: placeMotifs is the LEGACY engine reading
+    // binding.selection. An edge host is chain-form (selection dropped), so
+    // running it here would produce garbage placedIds. The edge branch is
+    // pick-oriented (colored by pickedPaths), never placed/candidate, so it needs
+    // no placements at all — skip entirely for edge hosts.
+    if (host && isEdgeHost(host.patternType)) return [];
     const { placements: p } = placeMotifs(anchors, motif.params.binding || {}, {
       boundary: { type: 'rect', width: canvasW, height: canvasH },
       canvasW,
       canvasH,
     });
     return p;
-  }, [anchors, motif, canvasW, canvasH]);
+  }, [anchors, motif, canvasW, canvasH, host]);
 
   // ── SINGLE RENDER GATE ───────────────────────────────────────────────────
   if (!motif || !host || !anchors) return null;
+
+  // ── EDGE-HOST PATH PICKER (C4) ─────────────────────────────────────────────
+  // A wholly separate render path from the semantic override overlay below: it
+  // reads/writes ONLY the route block's pickedPaths (via onTogglePickedPath),
+  // never binding.selection.* (chain-form drops it — that's the D1 misbehavior we
+  // do NOT touch). Renders ONLY when THIS motif's Route card is armed
+  // ("Pick on canvas"), so it's an intentional affordance, not clutter on every
+  // edge-host selection (a dense flowfield can emit hundreds of anchors).
+  if (isEdgeHost(host.patternType)) {
+    const armed = !!motifPick && motifPick.layerId === motif.id;
+    if (!armed) return null;
+    // Color dots by membership in the ARMED route block's pickedPaths. readChain
+    // tolerates both binding shapes (by the time you can arm, scope='picked' has
+    // already migrated the binding to chain-form).
+    const chain = readChain(motif.params?.binding);
+    const routeBlock = chain[motifPick.blockIndex];
+    const pickedSet = new Set(
+      routeBlock && Array.isArray(routeBlock.pickedPaths) ? routeBlock.pickedPaths : []
+    );
+    const rE = Math.max(3, Math.min(canvasW, canvasH) * 0.006);
+    const strokeWE = Math.max(1, rE * 0.35);
+    return (
+      <svg
+        data-testid="anchor-ghost-overlay"
+        data-mode="pick"
+        className="pointer-events-none absolute inset-0"
+        width={canvasW}
+        height={canvasH}
+        viewBox={`0 0 ${canvasW} ${canvasH}`}
+        aria-label="Motif path picker"
+      >
+        {anchors.map((a) => {
+          const pathIndex = a.meta.pathIndex;
+          const isPicked = pickedSet.has(pathIndex);
+          return (
+            <circle
+              key={a.id}
+              data-anchor-id={a.id}
+              data-path-index={pathIndex}
+              data-picked={isPicked ? 'true' : 'false'}
+              cx={a.x}
+              cy={a.y}
+              r={rE}
+              fill={isPicked ? ACCENT : 'none'}
+              fillOpacity={isPicked ? 0.85 : 0}
+              stroke={ACCENT}
+              strokeOpacity={isPicked ? 0.95 : 0.35}
+              strokeWidth={strokeWE}
+              // 'all' so a hollow (unpicked) dot's whole area is clickable — see
+              // the semantic overlay's note on visiblePainted vs all.
+              style={{ pointerEvents: 'all', cursor: 'pointer' }}
+              onPointerDown={(e) => {
+                e.stopPropagation();
+                onTogglePickedPath(pathIndex);
+              }}
+            />
+          );
+        })}
+      </svg>
+    );
+  }
 
   const placedIds = new Set(placements.map((p) => p.anchorId));
   const ov = motif.params.binding?.selection?.overrides || {};

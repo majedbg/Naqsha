@@ -10,6 +10,7 @@
 // derivation time (tolerate-dangling precedent, same as modulator.maps).
 
 import { compileSelectionToChain } from './compileSelectionToChain.js';
+import { togglePickedPath } from './chainEditor.js';
 
 export const MOTIF_TYPE = 'motif';
 
@@ -172,6 +173,30 @@ export function deepMergeBinding(base, patch) {
     out[key] = isPlain(bv) && isPlain(pv) ? deepMergeBinding(bv, pv) : pv;
   }
   return out;
+}
+
+/**
+ * Canvas-pick composite (C4): toggle `pathIndex` in the ROUTE block at
+ * `blockIndex`'s `pickedPaths`, migrating a legacy binding to chain-form in the
+ * SAME step (so the whole pick is ONE undo entry via a single updateLayer, and
+ * the legacy `selection` is DROPPED — mutual-exclusivity intact, no
+ * resurrection). Mirrors the rack's `editChain` flow (ensureChainForm →
+ * chainEditor op → deepMergeBinding) but for a click that originates on the
+ * canvas overlay rather than a route-card control.
+ *
+ * Returns the ORIGINAL `binding` reference UNCHANGED when the toggle is a no-op
+ * (a stale / non-route `blockIndex`), so the caller skips the write and never
+ * migrates a legacy binding on a misdirected click. Never mutates the input.
+ * @param {object} binding
+ * @param {number} blockIndex  index (in readChain/ensureChainForm order) of the route block
+ * @param {number} pathIndex
+ * @returns {object} the new (chain-form) binding, or the input binding on no-op.
+ */
+export function applyPickedPathToggle(binding, blockIndex, pathIndex) {
+  const base = ensureChainForm(binding);
+  const nextChain = togglePickedPath(base.chain, blockIndex, pathIndex);
+  if (nextChain === base.chain) return binding; // no-op → original ref, no migration
+  return deepMergeBinding(base, { chain: nextChain });
 }
 
 /**

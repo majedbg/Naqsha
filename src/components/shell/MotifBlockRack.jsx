@@ -75,9 +75,40 @@ const ROLE_OPTIONS_SEMANTIC = [
   { key: "cell", label: "Cells" },
 ];
 
+// Path-scope options (D5). GATED by host type (A2 forward-note): semantic-anchor
+// hosts (grid/recursive/spiral/voronoi) lack `meta.closed` AND `meta.pathIndex`,
+// so `closed`/`picked` would EMPTY the selection there — offer only {all, open}
+// (open ≡ all on semantic since those anchors carry no `closed`, so it's a safe,
+// harmless superset). Edge hosts (flowfield/wave/…) carry both, so offer all four.
+const SCOPE_OPTIONS_SEMANTIC = [
+  { key: "all", label: "All" },
+  { key: "open", label: "Open" },
+];
+const SCOPE_OPTIONS_EDGE = [
+  { key: "all", label: "All" },
+  { key: "closed", label: "Closed" },
+  { key: "open", label: "Open" },
+  { key: "picked", label: "Picked" },
+];
+
 // ── per-type card bodies ─────────────────────────────────────────────────────
 
-function RouteCardBody({ block, roleOptions, onPatch }) {
+// The Route card (C4): anchor roles + host path scope. `picked` paths are chosen
+// by CLICKING an edge-ghost dot on the canvas — the "Pick on canvas" arm toggle
+// hands THIS route block's index to the Studio-level pick target (ephemeral, not
+// persisted); a click then toggles that dot's `meta.pathIndex` in `pickedPaths`
+// via the SAME editChain path the scope write uses (route-block edit, never
+// `selection.overrides` — C1 mutual-exclusivity). Path indices are opaque to a
+// designer, so clicking the visible tendril is the whole mechanism; the "N
+// picked · Clear" line is a complement, not a substitute.
+function RouteCardBody({
+  block,
+  roleOptions,
+  hostIsSemantic = true,
+  armed = false,
+  onSetArmed,
+  onPatch,
+}) {
   const roles = Array.isArray(block.roles) ? block.roles : [];
   const toggleRole = (key) => {
     const next = roles.includes(key)
@@ -87,6 +118,18 @@ function RouteCardBody({ block, roleOptions, onPatch }) {
     // the array shape while any role is on.
     onPatch({ roles: next.length ? next : null });
   };
+
+  const scope = block.pathScope || "all";
+  const scopeOptions = hostIsSemantic ? SCOPE_OPTIONS_SEMANTIC : SCOPE_OPTIONS_EDGE;
+  const picked = Array.isArray(block.pickedPaths) ? block.pickedPaths : [];
+  const setScope = (next) => {
+    if (next === scope) return;
+    // Leaving 'picked' disarms any active canvas-pick (the runbook's disarm-on-
+    // scope-change-away — the arm state is ephemeral and must not linger).
+    if (next !== "picked" && armed) onSetArmed?.(false);
+    onPatch({ pathScope: next });
+  };
+
   return (
     <div className="space-y-1.5">
       <div className="flex flex-wrap gap-x-3 gap-y-1">
@@ -106,7 +149,77 @@ function RouteCardBody({ block, roleOptions, onPatch }) {
           </label>
         ))}
       </div>
-      <p className="text-[10px] text-ink-soft/60">Path scope · configured in C4</p>
+
+      {/* Path scope — gated by host type. */}
+      <div
+        className="flex flex-wrap items-center gap-1"
+        data-testid="motif-route-scope"
+      >
+        {scopeOptions.map((o) => {
+          const active = scope === o.key;
+          return (
+            <button
+              key={o.key}
+              type="button"
+              data-testid={`motif-route-scope-${o.key}`}
+              aria-pressed={active}
+              onClick={() => setScope(o.key)}
+              className={`rounded-xs border px-2 py-0.5 text-[10px] font-medium transition-colors ${
+                active
+                  ? "border-violet bg-violet/15 text-ink"
+                  : "border-hairline bg-paper text-ink-soft hover:border-violet"
+              }`}
+            >
+              {o.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Picked-scope canvas-pick (edge hosts only — semantic anchors carry no
+          meta.pathIndex, so there is nothing to click there). */}
+      {scope === "picked" && !hostIsSemantic && (
+        <div
+          className="flex flex-wrap items-center gap-2"
+          data-testid="motif-route-pick"
+        >
+          {/* The arm renders only where canvas-pick is actually wired
+              (onSetArmed present) — no dead button in unwired hosts (e.g. mobile,
+              standalone). */}
+          {typeof onSetArmed === "function" && (
+            <button
+              type="button"
+              data-testid="motif-route-pick-arm"
+              aria-pressed={armed}
+              aria-label="Pick paths on canvas"
+              onClick={() => onSetArmed(!armed)}
+              className={`rounded-xs border px-2 py-0.5 text-[10px] font-medium transition-colors ${
+                armed
+                  ? "border-violet bg-violet/15 text-ink"
+                  : "border-hairline bg-paper text-ink-soft hover:border-violet"
+              }`}
+            >
+              {armed ? "Picking…" : "Pick on canvas"}
+            </button>
+          )}
+          <span
+            data-testid="motif-route-picked-summary"
+            className="text-[10px] tabular-nums text-ink-soft num"
+          >
+            {picked.length} picked
+          </span>
+          {picked.length > 0 && (
+            <button
+              type="button"
+              data-testid="motif-route-picked-clear"
+              onClick={() => onPatch({ pickedPaths: [] })}
+              className="text-[10px] text-ink-soft underline hover:text-ink"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -637,6 +750,9 @@ function BlockCardBody({
   block,
   index,
   roleOptions,
+  hostIsSemantic,
+  armed,
+  onSetArmed,
   onPatch,
   onEditChain,
   customGlyphs,
@@ -645,7 +761,16 @@ function BlockCardBody({
 }) {
   switch (block.type) {
     case "route":
-      return <RouteCardBody block={block} roleOptions={roleOptions} onPatch={onPatch} />;
+      return (
+        <RouteCardBody
+          block={block}
+          roleOptions={roleOptions}
+          hostIsSemantic={hostIsSemantic}
+          armed={armed}
+          onSetArmed={onSetArmed}
+          onPatch={onPatch}
+        />
+      );
     case "everyN":
       return <EveryNCardBody block={block} onPatch={onPatch} />;
     case "skip":
@@ -682,6 +807,9 @@ function SortableBlockCard({
   block,
   index,
   roleOptions,
+  hostIsSemantic,
+  armed,
+  onSetArmed,
   onPatch,
   onBypass,
   onRemove,
@@ -749,6 +877,9 @@ function SortableBlockCard({
         block={block}
         index={index}
         roleOptions={roleOptions}
+        hostIsSemantic={hostIsSemantic}
+        armed={armed}
+        onSetArmed={onSetArmed}
         onPatch={onPatch}
         onEditChain={onEditChain}
         customGlyphs={customGlyphs}
@@ -765,6 +896,12 @@ export default function MotifBlockRack({
   chain,
   onEditChain,
   hostIsSemantic = true,
+  // Canvas-pick arm state (C4): the block index (in this chain) whose route card
+  // is armed as the active pick target, or null. Ephemeral (Studio component
+  // state, never persisted). `onArmRoute(indexOrNull)` sets/clears it — passing
+  // null disarms. One route may be armed at a time across the whole document.
+  armedRouteIndex = null,
+  onArmRoute,
   customGlyphs,
   baseGlyphRef,
   onEditSlotGlyph,
@@ -837,6 +974,11 @@ export default function MotifBlockRack({
                 block={block}
                 index={i}
                 roleOptions={roleOptions}
+                hostIsSemantic={hostIsSemantic}
+                armed={armedRouteIndex === i}
+                onSetArmed={
+                  onArmRoute ? (next) => onArmRoute(next ? i : null) : undefined
+                }
                 onPatch={(patch) => onEditChain((c) => setBlock(c, i, patch))}
                 onBypass={() => onEditChain((c) => toggleBypass(c, i))}
                 onRemove={() => onEditChain((c) => removeBlock(c, i))}

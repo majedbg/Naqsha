@@ -8,6 +8,7 @@ import {
   deepMergeBinding,
   readChain,
   ensureChainForm,
+  applyPickedPathToggle,
 } from './motifLayer';
 import { compileSelectionToChain, resolveSelection } from './compileSelectionToChain';
 
@@ -344,5 +345,51 @@ describe('deepMergeBinding — chain edits (C1)', () => {
     const snapshot = JSON.parse(JSON.stringify(base));
     deepMergeBinding(base, { chain: [{ type: 'route', bypass: true }] });
     expect(base).toEqual(snapshot);
+  });
+});
+
+describe('applyPickedPathToggle (C4) — canvas-pick composite', () => {
+  it('migrates a LEGACY binding to chain-form on first pick, DROPPING selection (one undo)', () => {
+    const binding = { selection: { roles: ['edge'] }, placement: { flip: true } };
+    const out = applyPickedPathToggle(binding, 0, 2); // route is index 0
+    expect(out).not.toBe(binding);
+    // Mutual-exclusivity: chain-form, no `selection` key resurrected.
+    expect(Array.isArray(out.chain)).toBe(true);
+    expect('selection' in out).toBe(false);
+    const route = out.chain.find((b) => b.type === 'route');
+    expect(route.pickedPaths).toEqual([2]);
+    // Placement preserved through the merge.
+    expect(out.placement.flip).toBe(true);
+  });
+
+  it('toggles pickedPaths on an already chain-form binding (add then remove)', () => {
+    const binding = {
+      chain: [{ type: 'route', pathScope: 'picked', pickedPaths: [1] }],
+      placement: {},
+    };
+    const added = applyPickedPathToggle(binding, 0, 5);
+    expect(added.chain[0].pickedPaths).toEqual([1, 5]);
+    expect('selection' in added).toBe(false);
+    const removed = applyPickedPathToggle(added, 0, 5);
+    expect(removed.chain[0].pickedPaths).toEqual([1]);
+  });
+
+  it('a stale / non-route blockIndex returns the ORIGINAL binding ref (no migration)', () => {
+    const legacy = { selection: { roles: ['edge'] }, placement: {} };
+    // blockIndex 9 is out of range → no-op → original legacy binding, NOT migrated.
+    expect(applyPickedPathToggle(legacy, 9, 0)).toBe(legacy);
+    const chainForm = {
+      chain: [{ type: 'everyN', n: 2 }, { type: 'route', pathScope: 'picked' }],
+      placement: {},
+    };
+    // blockIndex 0 is everyN, not route → no-op → same ref.
+    expect(applyPickedPathToggle(chainForm, 0, 1)).toBe(chainForm);
+  });
+
+  it('never mutates the input binding', () => {
+    const binding = { chain: [{ type: 'route', pickedPaths: [] }], placement: {} };
+    const snapshot = JSON.parse(JSON.stringify(binding));
+    applyPickedPathToggle(binding, 0, 7);
+    expect(binding).toEqual(snapshot);
   });
 });

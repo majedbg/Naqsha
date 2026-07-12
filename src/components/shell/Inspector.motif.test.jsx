@@ -956,3 +956,190 @@ describe("Sequencer card (C3)", () => {
     expect(opts).toEqual({ slotIndex: 0 });
   });
 });
+
+// ── C4: Route card path scope + canvas-pick (issue #79) ───────────────────────
+describe("Route card path scope + canvas-pick (C4)", () => {
+  function chainMotif(id, hostId, chain) {
+    return {
+      id,
+      name: id,
+      type: MOTIF_TYPE,
+      patternType: MOTIF_TYPE,
+      params: createMotifParams({
+        hostLayerId: hostId,
+        glyphRef: "leaf",
+        binding: { chain, placement: defaultBinding.placement },
+      }),
+      randomizeKeys: [],
+      paramsCache: {},
+    };
+  }
+
+  function expand(ui) {
+    const r = render(ui);
+    fireEvent.click(screen.getByTestId("motif-toggle"));
+    return r;
+  }
+
+  it("GATING: an EDGE host offers all four scopes (all/closed/open/picked)", () => {
+    const motif = chainMotif("m1", "fh", [
+      { type: "route", roles: ["edge"], pathScope: "all" },
+    ]);
+    expand(
+      <Inspector
+        layers={[hostLayer("fh", "flowfield"), motif]}
+        selectedLayerId="fh"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    expect(screen.getByTestId("motif-route-scope-all")).toBeInTheDocument();
+    expect(screen.getByTestId("motif-route-scope-closed")).toBeInTheDocument();
+    expect(screen.getByTestId("motif-route-scope-open")).toBeInTheDocument();
+    expect(screen.getByTestId("motif-route-scope-picked")).toBeInTheDocument();
+  });
+
+  it("GATING: a SEMANTIC host HIDES closed/picked (offers only all/open)", () => {
+    const motif = chainMotif("m1", "host1", [
+      { type: "route", roles: ["crossing"], pathScope: "all" },
+    ]);
+    expand(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    expect(screen.getByTestId("motif-route-scope-all")).toBeInTheDocument();
+    expect(screen.getByTestId("motif-route-scope-open")).toBeInTheDocument();
+    expect(screen.queryByTestId("motif-route-scope-closed")).toBeNull();
+    expect(screen.queryByTestId("motif-route-scope-picked")).toBeNull();
+  });
+
+  it("selecting a scope writes chain-form pathScope (one undo, no selection resurrection)", () => {
+    const onUpdateLayer = vi.fn();
+    // Legacy binding → the write must migrate to chain-form and drop selection.
+    const motif = motifLayer("m1", "fh", {
+      selection: { roles: ["edge"], rate: { n: 1 } },
+      placement: defaultBinding.placement,
+    });
+    expand(
+      <Inspector
+        layers={[hostLayer("fh", "flowfield"), motif]}
+        selectedLayerId="fh"
+        onUpdateLayer={onUpdateLayer}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    fireEvent.click(screen.getByTestId("motif-route-scope-closed"));
+    expect(onUpdateLayer).toHaveBeenCalledTimes(1);
+    const [, patch] = onUpdateLayer.mock.calls[0];
+    expect(patch.params.binding.selection).toBeUndefined();
+    const route = patch.params.binding.chain.find((b) => b.type === "route");
+    expect(route.pathScope).toBe("closed");
+  });
+
+  it("picked scope reveals a 'Pick on canvas' arm; clicking arms THIS route block", () => {
+    const onMotifPick = vi.fn();
+    const motif = chainMotif("m1", "fh", [
+      { type: "route", roles: ["edge"], pathScope: "picked", pickedPaths: [] },
+    ]);
+    expand(
+      <Inspector
+        layers={[hostLayer("fh", "flowfield"), motif]}
+        selectedLayerId="fh"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+        motifPick={null}
+        onMotifPick={onMotifPick}
+      />
+    );
+    const arm = screen.getByTestId("motif-route-pick-arm");
+    expect(arm).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(arm);
+    // Route block is the only block → index 0.
+    expect(onMotifPick).toHaveBeenCalledWith({ layerId: "m1", blockIndex: 0 });
+  });
+
+  it("the arm reads pressed + disarms (onMotifPick null) when THIS block is the pick target", () => {
+    const onMotifPick = vi.fn();
+    const motif = chainMotif("m1", "fh", [
+      { type: "route", roles: ["edge"], pathScope: "picked", pickedPaths: [2] },
+    ]);
+    expand(
+      <Inspector
+        layers={[hostLayer("fh", "flowfield"), motif]}
+        selectedLayerId="fh"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+        motifPick={{ layerId: "m1", blockIndex: 0 }}
+        onMotifPick={onMotifPick}
+      />
+    );
+    const arm = screen.getByTestId("motif-route-pick-arm");
+    expect(arm).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(arm); // toggle off
+    expect(onMotifPick).toHaveBeenCalledWith(null);
+  });
+
+  it("the 'N picked · Clear' summary reflects pickedPaths; Clear empties it", () => {
+    const onUpdateLayer = vi.fn();
+    const motif = chainMotif("m1", "fh", [
+      { type: "route", roles: ["edge"], pathScope: "picked", pickedPaths: [1, 3] },
+    ]);
+    expand(
+      <Inspector
+        layers={[hostLayer("fh", "flowfield"), motif]}
+        selectedLayerId="fh"
+        onUpdateLayer={onUpdateLayer}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    expect(screen.getByTestId("motif-route-picked-summary")).toHaveTextContent("2 picked");
+    fireEvent.click(screen.getByTestId("motif-route-picked-clear"));
+    const [, patch] = onUpdateLayer.mock.calls[0];
+    const route = patch.params.binding.chain.find((b) => b.type === "route");
+    expect(route.pickedPaths).toEqual([]);
+  });
+
+  it("collapsing the Motif device while armed disarms (onMotifPick null)", () => {
+    const onMotifPick = vi.fn();
+    const motif = chainMotif("m1", "fh", [
+      { type: "route", roles: ["edge"], pathScope: "picked", pickedPaths: [0] },
+    ]);
+    render(
+      <Inspector
+        layers={[hostLayer("fh", "flowfield"), motif]}
+        selectedLayerId="fh"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+        motifPick={{ layerId: "m1", blockIndex: 0 }}
+        onMotifPick={onMotifPick}
+      />
+    );
+    // Device starts collapsed; open it, then collapse it while armed.
+    fireEvent.click(screen.getByTestId("motif-toggle")); // open
+    fireEvent.click(screen.getByTestId("motif-toggle")); // collapse
+    expect(onMotifPick).toHaveBeenLastCalledWith(null);
+  });
+
+  it("switching scope AWAY from picked while armed disarms (onMotifPick null)", () => {
+    const onMotifPick = vi.fn();
+    const motif = chainMotif("m1", "fh", [
+      { type: "route", roles: ["edge"], pathScope: "picked", pickedPaths: [0] },
+    ]);
+    expand(
+      <Inspector
+        layers={[hostLayer("fh", "flowfield"), motif]}
+        selectedLayerId="fh"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+        motifPick={{ layerId: "m1", blockIndex: 0 }}
+        onMotifPick={onMotifPick}
+      />
+    );
+    fireEvent.click(screen.getByTestId("motif-route-scope-all"));
+    expect(onMotifPick).toHaveBeenCalledWith(null);
+  });
+});

@@ -186,6 +186,43 @@ export function setSlotGlyphRef(chain, seqIndex, slotIndex, glyphRef) {
   return setSlot(chain, seqIndex, slotIndex, { glyphRef });
 }
 
+// ── Route pickedPaths op (C4) ────────────────────────────────────────────────
+//
+// The Route card's `picked` path scope filters anchors by `meta.pathIndex`
+// (engine chain.js applyRoute). A designer selects paths by CLICKING an
+// edge-ghost dot on the canvas — each dot carries its path's `meta.pathIndex`,
+// and a click TOGGLES that index in the route block's `pickedPaths` number[].
+// This is the pure op behind that click (the canvas wiring composes it with
+// ensureChainForm/deepMergeBinding in motifLayer.applyPickedPathToggle).
+//
+// tolerate-dangling (D5 / runbook): a pickedPaths index the host no longer has
+// simply drops at render (engine filters `picked.has(pathIndex)`), so no cleanup
+// is needed here — a positional pathIndex is NOT spatially rebindable, so we
+// tolerate, never re-match.
+
+/**
+ * Toggle `pathIndex` in the `pickedPaths` array of the ROUTE block at
+ * `routeIndex`. Adds it when absent, removes it when present. A non-route or
+ * out-of-range target returns the INPUT ARRAY UNCHANGED (same ref) so the
+ * one-undo edit wrapper skips a stale/misdirected write. A toggle is never a
+ * no-op on a valid route (it always adds or removes), so an accepted toggle
+ * always produces a new chain. `pickedPaths` stays a plain number[].
+ * @param {Array<object>} chain
+ * @param {number} routeIndex
+ * @param {number} pathIndex
+ * @returns {Array<object>}
+ */
+export function togglePickedPath(chain, routeIndex, pathIndex) {
+  const list = chain || [];
+  const block = list[routeIndex];
+  if (!block || block.type !== 'route') return list;
+  const current = Array.isArray(block.pickedPaths) ? block.pickedPaths : [];
+  const next = current.includes(pathIndex)
+    ? current.filter((p) => p !== pathIndex)
+    : [...current, pathIndex];
+  return setBlock(list, routeIndex, { pickedPaths: next });
+}
+
 // Pure array move (inlined so this module has no dnd-kit dependency — the same
 // splice @dnd-kit/sortable's arrayMove does).
 function arrayMove(list, from, to) {

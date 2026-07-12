@@ -569,7 +569,7 @@ function ModulatorDevice({
 // placement binding. Every write re-spreads the whole params.binding via
 // deepMergeBinding so a partial patch never clobbers another branch — same
 // re-spread invariant as ModulatorDevice, extended to a nested schema.
-function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, customGlyphs, onEditGlyph, onNewMotif, onImportFile, libraryMotifs, onCopyLibraryGlyph, onUseLibraryGlyph }) {
+function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, customGlyphs, onEditGlyph, onNewMotif, onImportFile, libraryMotifs, onCopyLibraryGlyph, onUseLibraryGlyph, motifPick, onMotifPick }) {
   // Collapsed by default (mobile discoverability: the device sits at the TOP of
   // the Inspector for a host layer but stays folded until the user opens it).
   // Declared BEFORE the self-hide early return — the component renders
@@ -713,7 +713,17 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, 
         type="button"
         data-testid="motif-toggle"
         aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => {
+          const next = !open;
+          setOpen(next);
+          // Disarm canvas-pick on card COLLAPSE (C4 disarm event): the arm button
+          // lives inside {open && …}, so collapsing would otherwise strand the
+          // ephemeral motifPick with the overlay still armed and no visible
+          // off-switch. Only clear when THIS device owns the armed motif.
+          if (!next && motifPick && motifs.some((m) => m.id === motifPick.layerId)) {
+            onMotifPick?.(null);
+          }
+        }}
         className="flex w-full items-center gap-1.5 text-left text-xs font-semibold text-ink-soft uppercase tracking-wider outline-none hover:text-ink focus:text-ink"
       >
         <span aria-hidden="true" className="text-[10px] leading-none">
@@ -890,6 +900,17 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, 
               chain={chain}
               hostIsSemantic={hostIsSemantic}
               onEditChain={(mutate) => editChain(m, mutate)}
+              // Canvas-pick arm state (C4): this row is armed only when the
+              // Studio-level pick target names THIS motif; onArmRoute reports the
+              // route block index back up (ephemeral, one armed at a time).
+              armedRouteIndex={
+                motifPick?.layerId === m.id ? motifPick.blockIndex : null
+              }
+              onArmRoute={(idx) =>
+                onMotifPick?.(
+                  idx == null ? null : { layerId: m.id, blockIndex: idx }
+                )
+              }
               customGlyphs={customGlyphs}
               baseGlyphRef={glyphRef}
               onEditSlotGlyph={(seqIndex, slotIndex, slotGlyphRef) =>
@@ -953,7 +974,7 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, 
 // The param-editing body for one selected layer. Split into its own component so
 // usePatternCache (a hook) is only called when a layer is actually selected —
 // hooks can't be called conditionally inside Inspector itself.
-function SelectedLayerInspector({ layer, layers, unit, profileId, onUpdateLayer, onChangeLayerPattern, onVariableWeightChange, onPreviewField, onClosePreview, threeDSubMode, threeDFocusLayerId, onAddMotif, onRemoveLayer, customGlyphs, onEditGlyph, onNewMotif, onImportFile, libraryMotifs, onCopyLibraryGlyph, onUseLibraryGlyph }) {
+function SelectedLayerInspector({ layer, layers, unit, profileId, onUpdateLayer, onChangeLayerPattern, onVariableWeightChange, onPreviewField, onClosePreview, threeDSubMode, threeDFocusLayerId, onAddMotif, onRemoveLayer, customGlyphs, onEditGlyph, onNewMotif, onImportFile, libraryMotifs, onCopyLibraryGlyph, onUseLibraryGlyph, motifPick, onMotifPick }) {
   // Pattern swap: route through the same cache machine LayerCard uses, applied via
   // the pair-aware onChangeLayerPattern when present (falls back to a plain param
   // update so the component works standalone / in tests without a router).
@@ -1004,6 +1025,8 @@ function SelectedLayerInspector({ layer, layers, unit, profileId, onUpdateLayer,
         libraryMotifs={libraryMotifs}
         onCopyLibraryGlyph={onCopyLibraryGlyph}
         onUseLibraryGlyph={onUseLibraryGlyph}
+        motifPick={motifPick}
+        onMotifPick={onMotifPick}
       />
 
       {/* Collapsible, grouped param controls (Structure / Scale / Variation /
@@ -1121,6 +1144,12 @@ export default function Inspector({
   canvasH,
   bedSize,
   onApplySheetSize,
+  // Canvas-pick (C4, #79): the ephemeral pick target `{layerId, blockIndex}` (or
+  // null) shared with the canvas AnchorGhostOverlay, and the setter. Both
+  // optional — a standalone Inspector renders the Route card without the
+  // "Pick on canvas" affordance doing anything.
+  motifPick,
+  onMotifPick,
 }) {
   // Resolved font for the text-properties readouts (cap-height / engrave
   // warnings). May be null on first paint before useFont resolves — the panel's
@@ -1213,6 +1242,8 @@ export default function Inspector({
       libraryMotifs={libraryMotifs}
       onCopyLibraryGlyph={onCopyLibraryGlyph}
       onUseLibraryGlyph={onUseLibraryGlyph}
+      motifPick={motifPick}
+      onMotifPick={onMotifPick}
     />
   );
 }

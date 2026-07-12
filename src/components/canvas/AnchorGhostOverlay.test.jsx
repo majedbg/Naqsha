@@ -238,3 +238,155 @@ describe('AnchorGhostOverlay', () => {
     expect(patch.params.binding.selection.overrides.exclude).not.toContain('crossing:0:0');
   });
 });
+
+// ── C4: edge-host path picker (issue #79) ─────────────────────────────────────
+// An EDGE host (flowfield/wave/…) has no semantic extractor, so its ghost dots
+// come from the SAME hostPaths capture the render uses — surfaced by useCanvas on
+// the drawn instance as motifHostGeometry.hostPaths. The overlay resamples them
+// with the motif's edgeOpts and renders a CLICKABLE path picker, but ONLY when
+// THIS motif's Route card is armed (motifPick names it).
+describe('AnchorGhostOverlay — edge-host path picker (C4)', () => {
+  function flowHost(id = 'fh') {
+    return { id, name: id, patternType: 'flowfield', params: {} };
+  }
+
+  // Two straight horizontal paths → sampleEdgeAnchors({spacing:24}) yields
+  // several anchors per path, each carrying meta.pathIndex 0 or 1.
+  const hostPaths = [
+    { points: [{ x: 0, y: 100 }, { x: 200, y: 100 }], closed: false },
+    { points: [{ x: 0, y: 300 }, { x: 200, y: 300 }], closed: false },
+  ];
+
+  function pickMotif(id, hostId, pickedPaths = []) {
+    return motif(id, hostId, {
+      chain: [{ type: 'route', roles: ['edge'], pathScope: 'picked', pickedPaths }],
+      placement: {},
+    });
+  }
+
+  function renderPick({ layers, selectedLayerId, motifPick, onTogglePickedPath = () => {}, patternInstances }) {
+    return render(
+      <AnchorGhostOverlay
+        layers={layers}
+        selectedLayerId={selectedLayerId}
+        canvasW={CANVAS_W}
+        canvasH={CANVAS_H}
+        onUpdateLayer={() => {}}
+        patternInstances={patternInstances}
+        motifPick={motifPick}
+        onTogglePickedPath={onTogglePickedPath}
+      />
+    );
+  }
+
+  const instancesWithPaths = (hostId) => ({
+    [hostId]: { motifHostGeometry: { hostPaths } },
+  });
+
+  it('renders NOTHING when not armed (motifPick is null), even on an edge host', () => {
+    const host = flowHost();
+    const m = pickMotif('m1', host.id);
+    const { container } = renderPick({
+      layers: [host, m],
+      selectedLayerId: m.id,
+      motifPick: null,
+      patternInstances: instancesWithPaths(host.id),
+    });
+    expect(container.querySelector('[data-testid="anchor-ghost-overlay"]')).toBeNull();
+  });
+
+  it('when armed, renders edge-ghost dots that CARRY meta.pathIndex', () => {
+    const host = flowHost();
+    const m = pickMotif('m1', host.id);
+    const { container } = renderPick({
+      layers: [host, m],
+      selectedLayerId: m.id,
+      motifPick: { layerId: m.id, blockIndex: 0 },
+      patternInstances: instancesWithPaths(host.id),
+    });
+    const svg = container.querySelector('[data-testid="anchor-ghost-overlay"]');
+    expect(svg).not.toBeNull();
+    expect(svg.getAttribute('data-mode')).toBe('pick');
+    const dots = container.querySelectorAll('circle[data-path-index]');
+    expect(dots.length).toBeGreaterThan(0);
+    // Both paths represented.
+    const pis = new Set([...dots].map((d) => d.getAttribute('data-path-index')));
+    expect(pis.has('0')).toBe(true);
+    expect(pis.has('1')).toBe(true);
+  });
+
+  it('clicking a dot toggles THAT dot\'s pathIndex (never touches selection.overrides)', () => {
+    const host = flowHost();
+    const m = pickMotif('m1', host.id);
+    const onTogglePickedPath = vi.fn();
+    const { container } = renderPick({
+      layers: [host, m],
+      selectedLayerId: m.id,
+      motifPick: { layerId: m.id, blockIndex: 0 },
+      onTogglePickedPath,
+      patternInstances: instancesWithPaths(host.id),
+    });
+    const dotOnPath1 = container.querySelector('circle[data-path-index="1"]');
+    fireEvent.pointerDown(dotOnPath1);
+    expect(onTogglePickedPath).toHaveBeenCalledWith(1);
+  });
+
+  it('dots on a picked path render highlighted (data-picked=true)', () => {
+    const host = flowHost();
+    const m = pickMotif('m1', host.id, [0]); // path 0 already picked
+    const { container } = renderPick({
+      layers: [host, m],
+      selectedLayerId: m.id,
+      motifPick: { layerId: m.id, blockIndex: 0 },
+      patternInstances: instancesWithPaths(host.id),
+    });
+    const path0 = container.querySelectorAll('circle[data-path-index="0"]');
+    const path1 = container.querySelectorAll('circle[data-path-index="1"]');
+    expect([...path0].every((d) => d.getAttribute('data-picked') === 'true')).toBe(true);
+    expect([...path1].every((d) => d.getAttribute('data-picked') === 'false')).toBe(true);
+  });
+
+  it('renders nothing when armed but hostPaths have not been captured yet (graceful)', () => {
+    const host = flowHost();
+    const m = pickMotif('m1', host.id);
+    const { container } = renderPick({
+      layers: [host, m],
+      selectedLayerId: m.id,
+      motifPick: { layerId: m.id, blockIndex: 0 },
+      patternInstances: {}, // no capture
+    });
+    expect(container.querySelector('[data-testid="anchor-ghost-overlay"]')).toBeNull();
+  });
+
+  it('pick mode works when the HOST is selected (the Route card lives in the host inspector)', () => {
+    const host = flowHost();
+    const m = pickMotif('m1', host.id);
+    const { container } = renderPick({
+      layers: [host, m],
+      // The HOST is selected (arming happens from the host's Motif device), NOT
+      // the motif — the armed motifPick must still drive the picker.
+      selectedLayerId: host.id,
+      motifPick: { layerId: m.id, blockIndex: 0 },
+      patternInstances: instancesWithPaths(host.id),
+    });
+    const svg = container.querySelector('[data-testid="anchor-ghost-overlay"]');
+    expect(svg).not.toBeNull();
+    expect(svg.getAttribute('data-mode')).toBe('pick');
+    expect(container.querySelectorAll('circle[data-path-index]').length).toBeGreaterThan(0);
+  });
+
+  it('a semantic host ignores motifPick (still renders the override overlay, no pick mode)', () => {
+    const host = gridHost();
+    const m = motif('m1', host.id, crossingBinding);
+    const { container } = renderPick({
+      layers: [host, m],
+      selectedLayerId: m.id,
+      // A stray pick target must not switch a semantic host into pick mode.
+      motifPick: { layerId: m.id, blockIndex: 0 },
+      patternInstances: {},
+    });
+    const svg = container.querySelector('[data-testid="anchor-ghost-overlay"]');
+    expect(svg).not.toBeNull();
+    expect(svg.getAttribute('data-mode')).not.toBe('pick');
+  });
+});

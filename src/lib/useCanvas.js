@@ -313,6 +313,16 @@ export default function useCanvas(
       const instance = new PatternClass();
       newInstances[layer.id] = instance;
 
+      // C4 — edge-ghost seam: surface the prepass-captured hostPaths on the DRAWN
+      // instance so the AnchorGhostOverlay can sample edge anchors for the canvas
+      // path-picker (parallels voronoi's self-stashed motifHostGeometry; edge
+      // hosts don't set it themselves). Absent capture → no attach → the overlay
+      // renders no edge ghost (graceful). Guarded to edge hosts so it never
+      // clobbers a semantic host's own motifHostGeometry.
+      if (isEdgeHost(layer.patternType) && hostGeometry[layer.id]?.hostPaths) {
+        instance.motifHostGeometry = { hostPaths: hostGeometry[layer.id].hostPaths };
+      }
+
       if (!vis) {
         // Still generate for SVG export, but don't draw to canvas
         instance.generateWithContext(

@@ -20,6 +20,7 @@ import {
   reorderSlots,
   setSlot,
   setSlotGlyphRef,
+  togglePickedPath,
 } from './chainEditor.js';
 
 const route = () => ({ type: 'route', roles: null, pathScope: 'all' });
@@ -211,5 +212,52 @@ describe('chainEditor — slot ops (C3)', () => {
     expect(out[1].slots[0].glyphRef).toBe('custom-uuid-1');
     expect(out[1].slots[1]).toEqual({ rest: true }); // rest untouched
     expect(out[0]).toBe(input[0]); // route identity preserved
+  });
+});
+
+// ── togglePickedPath (C4) ─────────────────────────────────────────────────────
+describe('togglePickedPath', () => {
+  it('adds a pathIndex to an absent/empty pickedPaths', () => {
+    const chain = [{ type: 'route', roles: null, pathScope: 'picked' }];
+    const out = togglePickedPath(chain, 0, 3);
+    expect(out).not.toBe(chain);
+    expect(out[0].pickedPaths).toEqual([3]);
+    // pathScope untouched — togglePickedPath only edits pickedPaths.
+    expect(out[0].pathScope).toBe('picked');
+  });
+
+  it('round-trips: adding then removing the same index clears it', () => {
+    const chain = [{ type: 'route', pathScope: 'picked', pickedPaths: [1] }];
+    const added = togglePickedPath(chain, 0, 4);
+    expect(added[0].pickedPaths).toEqual([1, 4]);
+    const removed = togglePickedPath(added, 0, 4);
+    expect(removed[0].pickedPaths).toEqual([1]);
+  });
+
+  it('a valid toggle always returns a NEW chain (never a no-op on a route)', () => {
+    const chain = [{ type: 'route', pathScope: 'picked', pickedPaths: [2] }];
+    expect(togglePickedPath(chain, 0, 2)).not.toBe(chain); // remove
+    expect(togglePickedPath(chain, 0, 9)).not.toBe(chain); // add
+  });
+
+  it('a NON-route target returns the same ref (no accidental write)', () => {
+    const chain = [{ type: 'everyN', n: 2 }, { type: 'route', pathScope: 'picked' }];
+    expect(togglePickedPath(chain, 0, 1)).toBe(chain); // index 0 is everyN
+  });
+
+  it('an out-of-range index returns the same ref', () => {
+    const chain = [{ type: 'route', pathScope: 'picked' }];
+    expect(togglePickedPath(chain, 5, 1)).toBe(chain);
+    expect(togglePickedPath(chain, -1, 1)).toBe(chain);
+  });
+
+  it('siblings keep identity across a toggle', () => {
+    const chain = [
+      { type: 'everyN', n: 2 },
+      { type: 'route', pathScope: 'picked', pickedPaths: [] },
+    ];
+    const out = togglePickedPath(chain, 1, 0);
+    expect(out[0]).toBe(chain[0]); // everyN untouched
+    expect(out[1].pickedPaths).toEqual([0]);
   });
 });

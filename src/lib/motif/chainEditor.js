@@ -111,6 +111,81 @@ export function toggleBypass(chain, index) {
   return list.map((b, i) => (i === index ? { ...b, bypass: !b.bypass } : b));
 }
 
+// ── Sequencer slot ops (C3) ──────────────────────────────────────────────────
+//
+// The Sequencer card authors the terminal `sequence` block's `slots` array. These
+// helpers mutate ONE sequence block (identified by `seqIndex`) immutably, honoring
+// the SAME no-op / rejection contract as the block ops above: an out-of-range
+// index, a non-sequence target, or a true no-op returns the INPUT ARRAY UNCHANGED
+// (same reference), so the rack's edit wrapper skips onUpdateLayer (no phantom undo
+// entry, no accidental legacy→chain migration). Every accepted edit produces a new
+// sequence block object (siblings keep identity) via setBlock, so the render seam
+// and one-undo path behave exactly as they do for selection-block edits.
+
+// Resolve the sequence block at `seqIndex`, or null if it isn't a sequence.
+function seqBlockAt(list, seqIndex) {
+  const b = list[seqIndex];
+  return b && b.type === 'sequence' ? b : null;
+}
+
+/** Append a slot to the sequence block at `seqIndex`. */
+export function addSlot(chain, seqIndex, slot) {
+  const list = chain || [];
+  const seq = seqBlockAt(list, seqIndex);
+  if (!seq) return list;
+  const slots = Array.isArray(seq.slots) ? seq.slots : [];
+  return setBlock(list, seqIndex, { slots: [...slots, slot] });
+}
+
+/** Remove the slot at `slotIndex`; out-of-range returns the same ref. */
+export function removeSlot(chain, seqIndex, slotIndex) {
+  const list = chain || [];
+  const seq = seqBlockAt(list, seqIndex);
+  if (!seq) return list;
+  const slots = Array.isArray(seq.slots) ? seq.slots : [];
+  if (slotIndex < 0 || slotIndex >= slots.length) return list;
+  const next = slots.slice();
+  next.splice(slotIndex, 1);
+  return setBlock(list, seqIndex, { slots: next });
+}
+
+/** Move the slot at `from` to `to`; degenerate/out-of-range returns the same ref. */
+export function reorderSlots(chain, seqIndex, from, to) {
+  const list = chain || [];
+  const seq = seqBlockAt(list, seqIndex);
+  if (!seq) return list;
+  const slots = Array.isArray(seq.slots) ? seq.slots : [];
+  if (
+    from < 0 ||
+    from >= slots.length ||
+    to < 0 ||
+    to >= slots.length ||
+    from === to
+  ) {
+    return list;
+  }
+  return setBlock(list, seqIndex, { slots: arrayMove(slots, from, to) });
+}
+
+/** Shallow-merge `patch` into the slot at `slotIndex`; other slots keep identity. */
+export function setSlot(chain, seqIndex, slotIndex, patch) {
+  const list = chain || [];
+  const seq = seqBlockAt(list, seqIndex);
+  if (!seq) return list;
+  const slots = Array.isArray(seq.slots) ? seq.slots : [];
+  if (slotIndex < 0 || slotIndex >= slots.length) return list;
+  const next = slots.map((s, i) => (i === slotIndex ? { ...s, ...patch } : s));
+  return setBlock(list, seqIndex, { slots: next });
+}
+
+/**
+ * Point the slot at `slotIndex` at `glyphRef` (the commit-back rebind for a
+ * forked built-in/unresolved slot glyph). Same contract as setSlot.
+ */
+export function setSlotGlyphRef(chain, seqIndex, slotIndex, glyphRef) {
+  return setSlot(chain, seqIndex, slotIndex, { glyphRef });
+}
+
 // Pure array move (inlined so this module has no dnd-kit dependency — the same
 // splice @dnd-kit/sortable's arrayMove does).
 function arrayMove(list, from, to) {

@@ -289,4 +289,91 @@ describe("useGlyphCommits", () => {
     expect(firstLayer(result).params?.glyphRef).toBeUndefined();
     expect(result.current.history.canUndo).toBe(false);
   });
+
+  // ── C3: commitNewGlyphToSlot — fork a glyph + rebind ONE sequencer slot ────
+  const chainWithSeqParams = (slots) => ({
+    glyphRef: "leaf",
+    binding: {
+      chain: [
+        { type: "route", roles: ["crossing"], pathScope: "all" },
+        { type: "sequence", mode: "cycle", slots },
+      ],
+      placement: {},
+    },
+  });
+
+  it("commitNewGlyphToSlot forks a glyph + rebinds ONLY that slot's glyphRef as ONE undo entry (base + siblings untouched)", () => {
+    const { result } = renderHook(() => useWired());
+    const layerId = firstLayer(result).id;
+    act(() =>
+      result.current.layersApi.updateLayer(layerId, {
+        params: chainWithSeqParams([{ glyphRef: "leaf" }, { glyphRef: "flower" }]),
+      })
+    );
+    act(() => vi.advanceTimersByTime(500)); // idle-close the param burst
+    act(() => result.current.history.clear()); // fresh baseline for the ONE-entry assertion
+
+    let newId;
+    act(() => {
+      newId = result.current.glyphCommits.commitNewGlyphToSlot(
+        testGlyph(),
+        layerId,
+        0
+      );
+    });
+
+    expect(typeof newId).toBe("string");
+    const seq = firstLayer(result).params.binding.chain[1];
+    expect(seq.slots[0].glyphRef).toBe(newId); // slot 0 rebound to the fork
+    expect(seq.slots[1].glyphRef).toBe("flower"); // sibling slot untouched
+    expect(firstLayer(result).params.glyphRef).toBe("leaf"); // BASE untouched
+    expect(result.current.layersApi.customGlyphs[newId]?.name).toBe("Test Glyph");
+    expect(result.current.history.canUndo).toBe(true);
+
+    // ONE ⌘Z reverts BOTH the glyph add AND the slot rebind. (A split into two
+    // entries would leave the glyph present after a single undo — this is the
+    // atomicity proof: the fork is glyph-ADD + slot-REBIND in one recordBatch.)
+    act(() => result.current.history.undo());
+    expect(result.current.layersApi.customGlyphs[newId]).toBeUndefined();
+    expect(
+      firstLayer(result).params.binding.chain[1].slots[0].glyphRef
+    ).toBe("leaf");
+  });
+
+  it("commitNewGlyphToSlot aborts (no glyph write, no history) with no chain-form sequence or an out-of-range slot", () => {
+    const { result } = renderHook(() => useWired());
+    const layerId = firstLayer(result).id;
+    // Legacy binding (no chain) → nothing to rebind.
+    act(() =>
+      result.current.layersApi.updateLayer(layerId, {
+        params: { glyphRef: "leaf", binding: { selection: {}, placement: {} } },
+      })
+    );
+    act(() => vi.advanceTimersByTime(500));
+    act(() => result.current.history.clear());
+    const before = result.current.layersApi.customGlyphs;
+
+    let r1;
+    act(() => {
+      r1 = result.current.glyphCommits.commitNewGlyphToSlot(testGlyph(), layerId, 0);
+    });
+    expect(r1).toBeUndefined();
+    expect(result.current.layersApi.customGlyphs).toEqual(before); // no glyph write
+
+    // Chain-form WITH a sequence, but slotIndex out of range → still aborts.
+    act(() =>
+      result.current.layersApi.updateLayer(layerId, {
+        params: chainWithSeqParams([{ glyphRef: "leaf" }]),
+      })
+    );
+    act(() => vi.advanceTimersByTime(500));
+    const before2 = result.current.layersApi.customGlyphs;
+
+    let r2;
+    act(() => {
+      r2 = result.current.glyphCommits.commitNewGlyphToSlot(testGlyph(), layerId, 9);
+    });
+    expect(r2).toBeUndefined();
+    expect(result.current.layersApi.customGlyphs).toEqual(before2); // no glyph write
+  });
 });

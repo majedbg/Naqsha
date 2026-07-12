@@ -15,6 +15,11 @@ import {
   setBlock,
   toggleBypass,
   reorderChain,
+  addSlot,
+  removeSlot,
+  reorderSlots,
+  setSlot,
+  setSlotGlyphRef,
 } from './chainEditor.js';
 
 const route = () => ({ type: 'route', roles: null, pathScope: 'all' });
@@ -138,5 +143,73 @@ describe('chainEditor — removeBlock / setBlock / toggleBypass', () => {
     expect(out1[1].bypass).toBe(true);
     const out2 = toggleBypass(out1, 1);
     expect(out2[1].bypass).toBe(false);
+  });
+});
+
+// ── C3: Sequencer slot ops ─────────────────────────────────────────────────
+describe('chainEditor — slot ops (C3)', () => {
+  const glyphSlot = (ref) => ({ glyphRef: ref });
+  const restSlot = () => ({ rest: true });
+  // A chain whose terminal sequence sits at index 1 with two slots.
+  const withSeq = (slots) => [route(), { type: 'sequence', mode: 'cycle', slots }];
+
+  it('addSlot appends to the sequence block; siblings + other blocks keep identity', () => {
+    const input = withSeq([glyphSlot('flower')]);
+    const out = addSlot(input, 1, restSlot());
+    expect(out[1].slots).toEqual([{ glyphRef: 'flower' }, { rest: true }]);
+    expect(out[0]).toBe(input[0]); // route block identity preserved
+    expect(out).not.toBe(input);
+  });
+
+  it('addSlot on a non-sequence index returns the same ref (no churn)', () => {
+    const input = withSeq([glyphSlot('flower')]);
+    expect(addSlot(input, 0, restSlot())).toBe(input); // index 0 is route
+    expect(addSlot(input, 9, restSlot())).toBe(input); // out of range
+  });
+
+  it('removeSlot drops the slot at index; out-of-range returns the same ref', () => {
+    const input = withSeq([glyphSlot('a'), glyphSlot('b'), glyphSlot('c')]);
+    const out = removeSlot(input, 1, 1);
+    expect(out[1].slots).toEqual([{ glyphRef: 'a' }, { glyphRef: 'c' }]);
+    expect(removeSlot(input, 1, 9)).toBe(input);
+    expect(removeSlot(input, 1, -1)).toBe(input);
+  });
+
+  it('reorderSlots moves a slot; degenerate/out-of-range returns the same ref', () => {
+    const input = withSeq([glyphSlot('a'), glyphSlot('b'), glyphSlot('c')]);
+    const out = reorderSlots(input, 1, 0, 2);
+    expect(out[1].slots.map((s) => s.glyphRef)).toEqual(['b', 'c', 'a']);
+    expect(reorderSlots(input, 1, 1, 1)).toBe(input); // from === to
+    expect(reorderSlots(input, 1, 0, 9)).toBe(input); // out of range
+  });
+
+  it('setSlot shallow-merges a patch into one slot; other slots keep identity', () => {
+    const input = withSeq([glyphSlot('a'), glyphSlot('b')]);
+    const out = setSlot(input, 1, 0, { weight: 3 });
+    expect(out[1].slots[0]).toEqual({ glyphRef: 'a', weight: 3 });
+    expect(out[1].slots[1]).toBe(input[1].slots[1]); // sibling slot identity
+  });
+
+  it('setSlot can add and remove rotationRandom (progressive disclosure round-trip)', () => {
+    const input = withSeq([glyphSlot('a')]);
+    const on = setSlot(input, 1, 0, { rotationRandom: { range: 30, spread: 'flat' } });
+    expect(on[1].slots[0].rotationRandom).toEqual({ range: 30, spread: 'flat' });
+    const off = setSlot(on, 1, 0, { rotationRandom: undefined });
+    expect('rotationRandom' in off[1].slots[0]).toBe(true);
+    expect(off[1].slots[0].rotationRandom).toBeUndefined();
+  });
+
+  it('setSlot out-of-range / non-sequence returns the same ref', () => {
+    const input = withSeq([glyphSlot('a')]);
+    expect(setSlot(input, 1, 9, { weight: 2 })).toBe(input);
+    expect(setSlot(input, 0, 0, { weight: 2 })).toBe(input); // route, not sequence
+  });
+
+  it('setSlotGlyphRef rebinds one slot glyphRef (the fork commit-back rebind)', () => {
+    const input = withSeq([glyphSlot('leaf'), restSlot()]);
+    const out = setSlotGlyphRef(input, 1, 0, 'custom-uuid-1');
+    expect(out[1].slots[0].glyphRef).toBe('custom-uuid-1');
+    expect(out[1].slots[1]).toEqual({ rest: true }); // rest untouched
+    expect(out[0]).toBe(input[0]); // route identity preserved
   });
 });

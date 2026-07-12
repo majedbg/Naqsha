@@ -79,18 +79,38 @@ export default function useMotifEditorSession({
   // document's customGlyphs) opens in place. A BUILT-IN id or an unresolved ref
   // is read-only, so we fork its geometry into a Draft Glyph and open the editor
   // on that draft instead — the built-in is never written to.
+  // C3 (issue #79): `open` carries an optional SLOT LOCATOR (`opts.slotIndex`) so
+  // tapping a Sequencer slot edits THAT slot's glyph. The locator is stored on the
+  // session for EVERY slot open — custom AND built-in — because it governs both
+  // save paths that FORK a new glyph:
+  //   • a built-in/unresolved slot's draft-Save forks → must rebind the SLOT, not
+  //     the layer's base glyphRef (commitNewGlyphToSlot);
+  //   • "Save as copy" ALWAYS forks (even from a custom slot) → must also rebind
+  //     the slot, never the base.
+  // A custom slot's in-place Save (`updateGlyph`) ignores slotIndex — the shared
+  // glyph id already flows to the base + this slot + sibling refs, so no rebind is
+  // needed there. When `slotIndex` is absent (the base Edit button, New, import),
+  // both save paths fall through to the today's BASE rebind, byte-identical.
   const open = useCallback(
-    (layerId, glyphRef) => {
+    (layerId, glyphRef, opts = {}) => {
+      const slotIndex = opts && opts.slotIndex != null ? opts.slotIndex : null;
       const isCustom =
         glyphRef && !MOTIF_GLYPHS[glyphRef] && !!customGlyphs?.[glyphRef];
       if (isCustom) {
-        setSession({ glyphId: glyphRef, layerId, initialTool: null, draftGlyph: null });
+        setSession({
+          glyphId: glyphRef,
+          layerId,
+          slotIndex,
+          initialTool: null,
+          draftGlyph: null,
+        });
         return;
       }
       const builtIn = getGlyph(glyphRef, customGlyphs) || MOTIF_GLYPHS.leaf;
       setSession({
         glyphId: null,
         layerId,
+        slotIndex,
         initialTool: null,
         draftGlyph: {
           name: builtIn.name,
@@ -158,7 +178,13 @@ export default function useMotifEditorSession({
     (glyph) => {
       if (!session) return;
       if (session.draftGlyph) {
-        glyphCommits.commitNewGlyph(glyph, session.layerId);
+        // Fork: rebind the SLOT (C3) when a slot locator is present, else the
+        // layer's base glyphRef (unchanged base Edit path).
+        if (session.slotIndex != null) {
+          glyphCommits.commitNewGlyphToSlot(glyph, session.layerId, session.slotIndex);
+        } else {
+          glyphCommits.commitNewGlyph(glyph, session.layerId);
+        }
       } else {
         glyphCommits.updateGlyph(session.glyphId, glyph);
       }
@@ -168,11 +194,16 @@ export default function useMotifEditorSession({
   );
 
   // Save as copy: ALWAYS forks a new glyph (even when editing an existing
-  // custom in place) and points only this session's layer — one undo entry.
+  // custom in place) and points only this session's target — one undo entry. A
+  // slot session rebinds the SLOT (C3); the base Edit session rebinds the base.
   const saveAsCopy = useCallback(
     (glyph) => {
       if (!session) return;
-      glyphCommits.commitNewGlyph(glyph, session.layerId);
+      if (session.slotIndex != null) {
+        glyphCommits.commitNewGlyphToSlot(glyph, session.layerId, session.slotIndex);
+      } else {
+        glyphCommits.commitNewGlyph(glyph, session.layerId);
+      }
       close();
     },
     [session, glyphCommits, close]

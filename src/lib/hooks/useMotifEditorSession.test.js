@@ -339,6 +339,120 @@ describe("useMotifEditorSession — saveAsCopy()", () => {
   });
 });
 
+// ── C3 (issue #79): slot-context commit-back ──────────────────────────────────
+// Tapping a Sequencer slot opens the session with a slot locator; the FORK save
+// paths (draft-Save on a built-in slot, and saveAsCopy from any slot) must rebind
+// THAT slot's glyphRef — never the layer's base glyphRef (the silent-wrong-target
+// bug). Editing a CUSTOM slot in place needs no rebind (shared glyph id).
+describe("useMotifEditorSession — slot commit-back (C3)", () => {
+  const seqParams = (slots, base = "leaf") => ({
+    glyphRef: base,
+    binding: {
+      chain: [
+        { type: "route", roles: ["crossing"], pathScope: "all" },
+        { type: "sequence", mode: "cycle", slots },
+      ],
+      placement: {},
+    },
+  });
+  const lastSeq = (result) => {
+    const chain = firstLayer(result).params.binding.chain;
+    return chain[chain.length - 1];
+  };
+
+  it("save() on a forked BUILT-IN slot rebinds ONLY that slot's glyphRef; base + siblings untouched; one undo reverts both", () => {
+    const { result } = renderHook(() => useWired());
+    const layerId = firstLayer(result).id;
+    act(() =>
+      result.current.layersApi.updateLayer(layerId, {
+        params: seqParams([{ glyphRef: "leaf" }, { glyphRef: "flower" }]),
+      })
+    );
+    act(() => vi.advanceTimersByTime(500));
+    act(() => result.current.history.clear());
+
+    // Tap slot 0 (built-in 'leaf') → fork a Draft Glyph.
+    act(() => result.current.session.open(layerId, "leaf", { slotIndex: 0 }));
+    expect(result.current.session.modalProps.glyphId).toBe(MOTIF_DRAFT_ID);
+    act(() => result.current.session.save(testGlyph({ name: "Forked Leaf" })));
+
+    const ids = Object.keys(result.current.layersApi.customGlyphs);
+    expect(ids).toHaveLength(1);
+    const newId = ids[0];
+    expect(lastSeq(result).slots[0].glyphRef).toBe(newId); // slot 0 rebound
+    expect(lastSeq(result).slots[1].glyphRef).toBe("flower"); // sibling untouched
+    expect(firstLayer(result).params.glyphRef).toBe("leaf"); // BASE untouched
+    expect(result.current.history.canUndo).toBe(true);
+
+    // ONE undo reverts BOTH the glyph add and the slot rebind (a split would
+    // leave the glyph present after a single undo).
+    act(() => result.current.history.undo());
+    expect(result.current.layersApi.customGlyphs[newId]).toBeUndefined();
+    expect(lastSeq(result).slots[0].glyphRef).toBe("leaf");
+  });
+
+  it("save() on a CUSTOM slot glyph edits IN PLACE — no new id, no rebind, slot keeps the shared id (base picks it up too)", () => {
+    const { result } = renderHook(() => useWired());
+    const layerId = firstLayer(result).id;
+    let customId;
+    act(() => {
+      customId = result.current.layersApi.addCustomGlyph(testGlyph({ name: "Vine" }));
+      result.current.layersApi.updateLayer(layerId, {
+        params: seqParams([{ glyphRef: customId }], customId),
+      });
+    });
+    act(() => vi.advanceTimersByTime(500));
+    act(() => result.current.history.clear());
+
+    act(() => result.current.session.open(layerId, customId, { slotIndex: 0 }));
+    // Custom → edit in place (glyphId set, not the draft sentinel).
+    expect(result.current.session.modalProps.glyphId).toBe(customId);
+    act(() => result.current.session.save(testGlyph({ name: "Vine Edited" })));
+
+    // No fork: the single shared glyph is updated; the slot keeps its id.
+    expect(Object.keys(result.current.layersApi.customGlyphs)).toEqual([customId]);
+    expect(result.current.layersApi.customGlyphs[customId].name).toBe("Vine Edited");
+    expect(lastSeq(result).slots[0].glyphRef).toBe(customId);
+    // Base points at the SAME id, so it renders the edit with no rebind needed.
+    expect(firstLayer(result).params.glyphRef).toBe(customId);
+  });
+
+  it("saveAsCopy() from a slot session forks + rebinds the SLOT, NEVER the base (the wrong-target guard the review hammers)", () => {
+    const { result } = renderHook(() => useWired());
+    const layerId = firstLayer(result).id;
+    act(() =>
+      result.current.layersApi.updateLayer(layerId, {
+        params: seqParams([{ glyphRef: "leaf" }, { glyphRef: "flower" }]),
+      })
+    );
+    act(() => vi.advanceTimersByTime(500));
+    act(() => result.current.history.clear());
+
+    // Tap slot 1 (built-in 'flower'); Save-as-copy ALWAYS forks.
+    act(() => result.current.session.open(layerId, "flower", { slotIndex: 1 }));
+    act(() => result.current.session.saveAsCopy(testGlyph({ name: "Copied Flower" })));
+
+    const ids = Object.keys(result.current.layersApi.customGlyphs);
+    expect(ids).toHaveLength(1);
+    const copyId = ids[0];
+    expect(lastSeq(result).slots[1].glyphRef).toBe(copyId); // slot 1 → the copy
+    expect(lastSeq(result).slots[0].glyphRef).toBe("leaf"); // sibling untouched
+    expect(firstLayer(result).params.glyphRef).toBe("leaf"); // BASE NOT rebound
+  });
+
+  it("additive back-compat: open() with NO slot locator still rebinds the BASE glyphRef (byte-identical base Edit path)", () => {
+    const { result } = renderHook(() => useWired());
+    const layerId = firstLayer(result).id;
+    // No opts → session.slotIndex null → the fork rebinds the base, unchanged.
+    act(() => result.current.session.open(layerId, "leaf"));
+    act(() => result.current.session.save(testGlyph({ name: "Base Fork" })));
+
+    const ids = Object.keys(result.current.layersApi.customGlyphs);
+    expect(ids).toHaveLength(1);
+    expect(firstLayer(result).params.glyphRef).toBe(ids[0]); // BASE rebound
+  });
+});
+
 describe("useMotifEditorSession — importFromFile()", () => {
   it("an unreadable file calls onError with the exact current message and commits NOTHING", async () => {
     const onError = vi.fn();

@@ -48,7 +48,12 @@ import {
   setBlock,
   toggleBypass,
   reorderChain,
+  addSlot,
+  removeSlot,
+  reorderSlots,
+  setSlot,
 } from "../../lib/motif/chainEditor";
+import { getGlyph, MOTIF_GLYPHS } from "../../lib/motif/glyphs.js";
 
 // Human labels for each block type (add-menu + card header).
 const BLOCK_LABELS = {
@@ -309,19 +314,335 @@ function FieldCardBody({ block, onPatch }) {
   );
 }
 
-function SequenceCardBody({ block }) {
-  const slotCount = Array.isArray(block.slots) ? block.slots.length : 0;
+// ── Sequencer card (C3) ──────────────────────────────────────────────────────
+//
+// The terminal `sequence` block authored as a horizontal slot strip. Each Slot is
+// a glyph thumbnail (tap → open its glyph in the Motif Edit Session with SLOT
+// CONTEXT) or a Rest chip. Slots add / remove / reorder via a NESTED dnd (its own
+// DndContext, isolated from the block-rack's outer sortable — dragging a slot must
+// not drag its block). A Cycle | Random mode toggle switches the deal; per-slot
+// weight sliders show ONLY in Random mode (a Rest carries a weight too). An
+// "angle randomization" checkbox per glyph slot progressively reveals range +
+// spread (flat | bell) → writes slot.rotationRandom; unchecking removes it.
+
+const SPREAD_OPTIONS = [
+  { value: "flat", label: "Flat" },
+  { value: "bell", label: "Bell" },
+];
+
+// One sortable Slot chip. Drag rides ONLY the grip (like the block card), so the
+// chip's inputs (weight slider, angle controls) keep normal pointer behavior and
+// tapping the glyph opens the editor rather than starting a drag.
+function SortableSlotChip({
+  id,
+  slot,
+  index,
+  isRandom,
+  customGlyphs,
+  baseGlyphRef,
+  onEditGlyph,
+  onPatch,
+  onRemove,
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
+    useSortable({ id });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    ...(isDragging ? { zIndex: 10, opacity: 0.85 } : null),
+  };
+  const isRest = slot?.rest === true;
+  const effectiveRef = slot?.glyphRef ?? baseGlyphRef;
+  const glyph = isRest ? null : getGlyph(effectiveRef, customGlyphs);
+  const rr = slot?.rotationRandom;
+  const angleOn = !!rr;
+  const weight = slot?.weight != null ? slot.weight : 1;
+
   return (
-    <div className="space-y-1">
-      <p className="text-[11px] text-ink-soft">
-        {slotCount} slot{slotCount === 1 ? "" : "s"} · {block.mode || "cycle"}
-      </p>
-      <p className="text-[10px] text-ink-soft/60">Slot strip · configured in C3</p>
+    <div
+      ref={setNodeRef}
+      style={style}
+      data-testid="motif-slot"
+      data-slot-index={index}
+      data-slot-rest={isRest ? "true" : "false"}
+      className="flex w-[92px] shrink-0 flex-col gap-1 rounded-cell border border-hairline bg-paper p-1.5"
+    >
+      <div className="flex items-center gap-1">
+        <button
+          type="button"
+          data-testid="motif-slot-grip"
+          aria-label="Drag to reorder slot"
+          className="cursor-grab touch-none text-[10px] text-ink-soft/60 hover:text-ink"
+          {...attributes}
+          {...listeners}
+        >
+          <span aria-hidden="true">⠿</span>
+        </button>
+        <span className="flex-1" />
+        <button
+          type="button"
+          data-testid="motif-slot-remove"
+          aria-label="Remove slot"
+          onClick={onRemove}
+          className="shrink-0 text-xs text-ink-soft hover:text-ink"
+        >
+          ×
+        </button>
+      </div>
+
+      {isRest ? (
+        <div
+          data-testid="motif-slot-rest"
+          className="flex h-10 items-center justify-center rounded-xs border border-dashed border-hairline text-[10px] font-medium uppercase tracking-wider text-ink-soft/70"
+        >
+          Rest
+        </div>
+      ) : (
+        <button
+          type="button"
+          data-testid="motif-slot-edit"
+          aria-label="Edit slot glyph"
+          title="Edit this slot's glyph"
+          onClick={() => onEditGlyph(index, effectiveRef)}
+          className="flex h-10 items-center justify-center rounded-xs border border-hairline bg-paper-warm text-ink-soft hover:border-violet hover:text-ink"
+        >
+          <svg width="24" height="24" viewBox="-12 -12 24 24" aria-hidden="true">
+            {glyph?.paths?.[0]?.d ? (
+              <path d={glyph.paths[0].d} fill="none" stroke="currentColor" strokeWidth="1.5" />
+            ) : (
+              <circle r="6" fill="none" stroke="currentColor" strokeWidth="1" strokeDasharray="2 2" />
+            )}
+          </svg>
+        </button>
+      )}
+
+      {/* Weight — Random mode only (positional in Cycle). Rests carry a weight too. */}
+      {isRandom && (
+        <label className="flex items-center gap-1 text-[9px] text-ink-soft">
+          <span className="shrink-0">wt</span>
+          <input
+            type="range"
+            data-testid="motif-slot-weight"
+            aria-label="Weight"
+            min={0}
+            max={5}
+            step={0.5}
+            value={weight}
+            onChange={(e) => onPatch({ weight: Number(e.target.value) })}
+            className="min-w-0 flex-1 accent-violet"
+          />
+          <span className="w-5 shrink-0 text-right tabular-nums num">
+            {Number(weight).toFixed(1)}
+          </span>
+        </label>
+      )}
+
+      {/* Angle randomization — glyph slots only (a Rest has no rotation). */}
+      {!isRest && (
+        <label className="flex items-center gap-1 text-[9px] text-ink-soft">
+          <input
+            type="checkbox"
+            data-testid="motif-slot-anglerand"
+            aria-label="Angle randomization"
+            checked={angleOn}
+            onChange={(e) =>
+              onPatch({
+                rotationRandom: e.target.checked
+                  ? { range: 30, spread: "flat" }
+                  : undefined,
+              })
+            }
+          />
+          <span>Angle rnd</span>
+        </label>
+      )}
+      {!isRest && angleOn && (
+        <div className="space-y-1">
+          <label className="flex items-center gap-1 text-[9px] text-ink-soft">
+            <span className="shrink-0">±°</span>
+            <input
+              type="range"
+              data-testid="motif-slot-range"
+              aria-label="Angle range"
+              min={0}
+              max={180}
+              step={5}
+              value={rr.range ?? 0}
+              onChange={(e) =>
+                onPatch({
+                  rotationRandom: { ...rr, range: Number(e.target.value) },
+                })
+              }
+              className="min-w-0 flex-1 accent-violet"
+            />
+            <span className="w-5 shrink-0 text-right tabular-nums num">
+              {Math.round(rr.range ?? 0)}
+            </span>
+          </label>
+          <select
+            data-testid="motif-slot-spread"
+            aria-label="Spread"
+            value={rr.spread === "bell" ? "bell" : "flat"}
+            onChange={(e) =>
+              onPatch({ rotationRandom: { ...rr, spread: e.target.value } })
+            }
+            className="w-full rounded-xs border border-hairline bg-paper px-1 py-0.5 text-[9px] text-ink outline-none focus:border-violet"
+          >
+            {SPREAD_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
     </div>
   );
 }
 
-function BlockCardBody({ block, roleOptions, onPatch }) {
+function SequenceCardBody({
+  block,
+  seqIndex,
+  onEditChain,
+  customGlyphs,
+  baseGlyphRef,
+  onEditSlotGlyph,
+}) {
+  const slots = Array.isArray(block.slots) ? block.slots : [];
+  const isRandom = block.mode === "random";
+
+  // Positional slot ids for the NESTED sortable (stable within a drag — a drag
+  // never adds/removes a slot). Separate sensors + DndContext from the block rack
+  // so a slot drag is fully isolated from its parent block's drag.
+  const slotIds = slots.map((_, i) => `slot-${i}`);
+  const slotSensors = useSensors(
+    useSensor(MouseSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
+  const handleSlotDragEnd = (event) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const from = slotIds.indexOf(active.id);
+    const to = slotIds.indexOf(over.id);
+    if (from === -1 || to === -1) return;
+    onEditChain((c) => reorderSlots(c, seqIndex, from, to));
+  };
+
+  const setMode = (mode) => onEditChain((c) => setBlock(c, seqIndex, { mode }));
+
+  return (
+    <div className="space-y-2">
+      {/* Cycle | Random deal mode. */}
+      <div className="flex items-center gap-1" data-testid="motif-seq-mode">
+        {["cycle", "random"].map((m) => {
+          const active = (block.mode || "cycle") === m;
+          return (
+            <button
+              key={m}
+              type="button"
+              data-testid={`motif-seq-mode-${m}`}
+              aria-pressed={active}
+              onClick={() => setMode(m)}
+              className={`rounded-xs border px-2 py-0.5 text-[10px] font-medium capitalize transition-colors ${
+                active
+                  ? "border-violet bg-violet/15 text-ink"
+                  : "border-hairline bg-paper text-ink-soft hover:border-violet"
+              }`}
+            >
+              {m}
+            </button>
+          );
+        })}
+        {/* Continuous — a CYCLE-mode control (documented no-op in Random, D10). */}
+        {!isRandom && (
+          <label className="ml-1 flex items-center gap-1 text-[10px] text-ink-soft">
+            <input
+              type="checkbox"
+              data-testid="motif-seq-continuous"
+              aria-label="Continuous across paths"
+              checked={!!block.continuous}
+              onChange={(e) =>
+                onEditChain((c) => setBlock(c, seqIndex, { continuous: e.target.checked }))
+              }
+            />
+            <span>Continuous</span>
+          </label>
+        )}
+      </div>
+
+      {/* Horizontal slot strip (nested, isolated dnd). */}
+      <DndContext
+        sensors={slotSensors}
+        collisionDetection={closestCenter}
+        onDragEnd={handleSlotDragEnd}
+      >
+        <SortableContext items={slotIds} strategy={horizontalListSortingStrategy}>
+          <div
+            data-testid="motif-slot-strip"
+            className="flex flex-nowrap items-start gap-1.5 overflow-x-auto pb-1"
+          >
+            {slots.length === 0 && (
+              <p className="py-2 text-[10px] text-ink-soft/60">
+                No slots — add a glyph or a rest.
+              </p>
+            )}
+            {slots.map((slot, i) => (
+              <SortableSlotChip
+                key={slotIds[i]}
+                id={slotIds[i]}
+                slot={slot}
+                index={i}
+                isRandom={isRandom}
+                customGlyphs={customGlyphs}
+                baseGlyphRef={baseGlyphRef}
+                onEditGlyph={(slotIndex, glyphRef) =>
+                  onEditSlotGlyph(seqIndex, slotIndex, glyphRef)
+                }
+                onPatch={(patch) => onEditChain((c) => setSlot(c, seqIndex, i, patch))}
+                onRemove={() => onEditChain((c) => removeSlot(c, seqIndex, i))}
+              />
+            ))}
+          </div>
+        </SortableContext>
+      </DndContext>
+
+      <div className="flex items-center gap-1.5">
+        <button
+          type="button"
+          data-testid="motif-slot-add"
+          aria-label="Add glyph slot"
+          onClick={() =>
+            onEditChain((c) => addSlot(c, seqIndex, { glyphRef: baseGlyphRef }))
+          }
+          className="rounded-xs border border-hairline bg-paper px-2 py-0.5 text-[10px] text-ink-soft hover:border-violet hover:text-ink"
+        >
+          + Glyph
+        </button>
+        <button
+          type="button"
+          data-testid="motif-slot-add-rest"
+          aria-label="Add rest"
+          onClick={() => onEditChain((c) => addSlot(c, seqIndex, { rest: true }))}
+          className="rounded-xs border border-hairline bg-paper px-2 py-0.5 text-[10px] text-ink-soft hover:border-violet hover:text-ink"
+        >
+          + Rest
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function BlockCardBody({
+  block,
+  index,
+  roleOptions,
+  onPatch,
+  onEditChain,
+  customGlyphs,
+  baseGlyphRef,
+  onEditSlotGlyph,
+}) {
   switch (block.type) {
     case "route":
       return <RouteCardBody block={block} roleOptions={roleOptions} onPatch={onPatch} />;
@@ -334,7 +655,16 @@ function BlockCardBody({ block, roleOptions, onPatch }) {
     case "field":
       return <FieldCardBody block={block} onPatch={onPatch} />;
     case "sequence":
-      return <SequenceCardBody block={block} />;
+      return (
+        <SequenceCardBody
+          block={block}
+          seqIndex={index}
+          onEditChain={onEditChain}
+          customGlyphs={customGlyphs}
+          baseGlyphRef={baseGlyphRef}
+          onEditSlotGlyph={onEditSlotGlyph}
+        />
+      );
     default:
       return null;
   }
@@ -347,7 +677,19 @@ function BlockCardBody({ block, roleOptions, onPatch }) {
 // behavior. A stable per-block id (index-based) keys the sortable — the chain is a
 // positional array with no block ids, and the SortableContext id set stays stable
 // for a drag because a drag never adds/removes a block.
-function SortableBlockCard({ id, block, index, roleOptions, onPatch, onBypass, onRemove }) {
+function SortableBlockCard({
+  id,
+  block,
+  index,
+  roleOptions,
+  onPatch,
+  onBypass,
+  onRemove,
+  onEditChain,
+  customGlyphs,
+  baseGlyphRef,
+  onEditSlotGlyph,
+}) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id });
   const style = {
@@ -403,14 +745,30 @@ function SortableBlockCard({ id, block, index, roleOptions, onPatch, onBypass, o
           ×
         </button>
       </div>
-      <BlockCardBody block={block} roleOptions={roleOptions} onPatch={onPatch} />
+      <BlockCardBody
+        block={block}
+        index={index}
+        roleOptions={roleOptions}
+        onPatch={onPatch}
+        onEditChain={onEditChain}
+        customGlyphs={customGlyphs}
+        baseGlyphRef={baseGlyphRef}
+        onEditSlotGlyph={onEditSlotGlyph}
+      />
     </div>
   );
 }
 
 // ── the rack ─────────────────────────────────────────────────────────────────
 
-export default function MotifBlockRack({ chain, onEditChain, hostIsSemantic = true }) {
+export default function MotifBlockRack({
+  chain,
+  onEditChain,
+  hostIsSemantic = true,
+  customGlyphs,
+  baseGlyphRef,
+  onEditSlotGlyph,
+}) {
   const dock = useInspectorDockContext();
   const orientation = dock?.dockPosition === "bottom" ? "horizontal" : "vertical";
 
@@ -482,6 +840,10 @@ export default function MotifBlockRack({ chain, onEditChain, hostIsSemantic = tr
                 onPatch={(patch) => onEditChain((c) => setBlock(c, i, patch))}
                 onBypass={() => onEditChain((c) => toggleBypass(c, i))}
                 onRemove={() => onEditChain((c) => removeBlock(c, i))}
+                onEditChain={onEditChain}
+                customGlyphs={customGlyphs}
+                baseGlyphRef={baseGlyphRef}
+                onEditSlotGlyph={onEditSlotGlyph}
               />
             ))}
           </div>

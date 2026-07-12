@@ -705,3 +705,254 @@ describe("MotifBlockRack (C2)", () => {
     expect(nextChain).toBe(base.chain); // same ref → editChain returns early
   });
 });
+
+// ── C3: the Sequencer card (slot strip, deal mode, weights, angle disclosure,
+//    tap-to-edit) rendered inside the terminal sequence Block ────────────────
+describe("Sequencer card (C3)", () => {
+  // A chain-form motif with a terminal sequence at index 1 (seqIndex=1).
+  function seqMotif(id, hostId, { mode = "cycle", slots = [] } = {}) {
+    return {
+      id,
+      name: id,
+      type: MOTIF_TYPE,
+      patternType: MOTIF_TYPE,
+      params: createMotifParams({
+        hostLayerId: hostId,
+        glyphRef: "leaf",
+        binding: {
+          chain: [
+            { type: "route", roles: ["crossing"], pathScope: "all" },
+            { type: "sequence", mode, slots },
+          ],
+          placement: defaultBinding.placement,
+        },
+      }),
+      randomizeKeys: [],
+      paramsCache: {},
+    };
+  }
+
+  function expandSeq(ui) {
+    const r = render(ui);
+    fireEvent.click(screen.getByTestId("motif-toggle"));
+    return r;
+  }
+
+  const seqOf = (patch) => {
+    const chain = patch.params.binding.chain;
+    return chain.find((b) => b.type === "sequence");
+  };
+
+  it("renders a glyph thumbnail per glyph slot + a Rest chip for a rest slot", () => {
+    const motif = seqMotif("m1", "host1", {
+      slots: [{ glyphRef: "leaf" }, { rest: true }, { glyphRef: "flower" }],
+    });
+    expandSeq(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    const chips = screen.getAllByTestId("motif-slot");
+    expect(chips).toHaveLength(3);
+    // Two glyph slots (tap-to-edit buttons) + one rest chip.
+    expect(screen.getAllByTestId("motif-slot-edit")).toHaveLength(2);
+    expect(screen.getByTestId("motif-slot-rest")).toBeInTheDocument();
+  });
+
+  it("Cycle | Random toggle writes block.mode as chain-form (one undo entry)", () => {
+    const onUpdateLayer = vi.fn();
+    const motif = seqMotif("m1", "host1", { mode: "cycle", slots: [{ glyphRef: "leaf" }] });
+    expandSeq(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={onUpdateLayer}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    fireEvent.click(screen.getByTestId("motif-seq-mode-random"));
+    expect(onUpdateLayer).toHaveBeenCalledTimes(1);
+    const [, patch] = onUpdateLayer.mock.calls[0];
+    expect(seqOf(patch).mode).toBe("random");
+    expect(patch.params.binding.selection).toBeUndefined();
+  });
+
+  it("per-slot weight sliders appear ONLY in Random mode (positional in Cycle)", () => {
+    const slots = [{ glyphRef: "leaf" }, { rest: true }];
+    // Cycle → no weight sliders.
+    const { unmount } = expandSeq(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), seqMotif("m1", "host1", { mode: "cycle", slots })]}
+        selectedLayerId="host1"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    expect(screen.queryByTestId("motif-slot-weight")).toBeNull();
+    unmount();
+    // Random → a weight slider per slot, INCLUDING the rest.
+    expandSeq(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), seqMotif("m2", "host1", { mode: "random", slots })]}
+        selectedLayerId="host1"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    expect(screen.getAllByTestId("motif-slot-weight")).toHaveLength(2);
+  });
+
+  it("setting a weight (Random mode) writes slot.weight", () => {
+    const onUpdateLayer = vi.fn();
+    const motif = seqMotif("m1", "host1", {
+      mode: "random",
+      slots: [{ glyphRef: "leaf" }, { glyphRef: "flower" }],
+    });
+    expandSeq(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={onUpdateLayer}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    fireEvent.change(screen.getAllByTestId("motif-slot-weight")[1], {
+      target: { value: "3" },
+    });
+    const [, patch] = onUpdateLayer.mock.calls[0];
+    expect(seqOf(patch).slots[1].weight).toBe(3);
+    expect(seqOf(patch).slots[0].weight).toBeUndefined();
+  });
+
+  it("angle-randomization checkbox reveals range + spread and writes slot.rotationRandom", () => {
+    const onUpdateLayer = vi.fn();
+    const motif = seqMotif("m1", "host1", { slots: [{ glyphRef: "leaf" }] });
+    expandSeq(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={onUpdateLayer}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    // Disclosure closed initially — no range/spread controls.
+    expect(screen.queryByTestId("motif-slot-range")).toBeNull();
+    expect(screen.queryByTestId("motif-slot-spread")).toBeNull();
+    // Enabling writes a rotationRandom spec.
+    fireEvent.click(screen.getByTestId("motif-slot-anglerand"));
+    const [, patch] = onUpdateLayer.mock.calls[0];
+    expect(seqOf(patch).slots[0].rotationRandom).toEqual({ range: 30, spread: "flat" });
+  });
+
+  it("an enabled slot shows range + spread; unchecking removes rotationRandom", () => {
+    const onUpdateLayer = vi.fn();
+    const motif = seqMotif("m1", "host1", {
+      slots: [{ glyphRef: "leaf", rotationRandom: { range: 45, spread: "bell" } }],
+    });
+    expandSeq(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={onUpdateLayer}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    // Revealed because the slot already carries rotationRandom.
+    expect(screen.getByTestId("motif-slot-range")).toBeInTheDocument();
+    expect(screen.getByTestId("motif-slot-spread")).toHaveValue("bell");
+    // Unchecking removes the spec.
+    fireEvent.click(screen.getByTestId("motif-slot-anglerand"));
+    const [, patch] = onUpdateLayer.mock.calls[0];
+    expect("rotationRandom" in seqOf(patch).slots[0]).toBe(true);
+    expect(seqOf(patch).slots[0].rotationRandom).toBeUndefined();
+  });
+
+  it("Add Glyph / Add Rest append a slot (chain-form, terminal sequence stays last)", () => {
+    const onUpdateLayer = vi.fn();
+    const motif = seqMotif("m1", "host1", { slots: [{ glyphRef: "leaf" }] });
+    const { rerender } = expandSeq(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={onUpdateLayer}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    fireEvent.click(screen.getByTestId("motif-slot-add"));
+    let [, patch] = onUpdateLayer.mock.calls[0];
+    expect(seqOf(patch).slots).toHaveLength(2);
+    // New glyph slot defaults to the base glyphRef.
+    expect(seqOf(patch).slots[1]).toEqual({ glyphRef: "leaf" });
+    // Sequence remains the terminal block.
+    const types = patch.params.binding.chain.map((b) => b.type);
+    expect(types[types.length - 1]).toBe("sequence");
+
+    onUpdateLayer.mockClear();
+    fireEvent.click(screen.getByTestId("motif-slot-add-rest"));
+    [, patch] = onUpdateLayer.mock.calls[0];
+    expect(seqOf(patch).slots[1]).toEqual({ rest: true });
+  });
+
+  it("removing a slot writes the shortened slots array", () => {
+    const onUpdateLayer = vi.fn();
+    const motif = seqMotif("m1", "host1", {
+      slots: [{ glyphRef: "leaf" }, { glyphRef: "flower" }, { rest: true }],
+    });
+    expandSeq(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={onUpdateLayer}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    fireEvent.click(screen.getAllByTestId("motif-slot-remove")[1]); // drop 'flower'
+    const [, patch] = onUpdateLayer.mock.calls[0];
+    expect(seqOf(patch).slots).toEqual([{ glyphRef: "leaf" }, { rest: true }]);
+  });
+
+  it("tapping a slot glyph opens the editor with SLOT CONTEXT (layer id, slot glyphRef, slotIndex)", () => {
+    const onEditGlyph = vi.fn();
+    const motif = seqMotif("m1", "host1", {
+      slots: [{ glyphRef: "leaf" }, { glyphRef: "flower" }],
+    });
+    expandSeq(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+        onEditGlyph={onEditGlyph}
+      />
+    );
+    fireEvent.click(screen.getAllByTestId("motif-slot-edit")[1]); // tap slot 1 (flower)
+    expect(onEditGlyph).toHaveBeenCalledTimes(1);
+    const [layerId, glyphRef, opts] = onEditGlyph.mock.calls[0];
+    expect(layerId).toBe("m1");
+    expect(glyphRef).toBe("flower");
+    expect(opts).toEqual({ slotIndex: 1 });
+  });
+
+  it("tapping a modifier-only slot (no glyphRef) opens the editor on the BASE glyph", () => {
+    const onEditGlyph = vi.fn();
+    // slot 0 has no glyphRef → renders + forks from the base ('leaf').
+    const motif = seqMotif("m1", "host1", { slots: [{ sizeScale: 2 }] });
+    expandSeq(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+        onEditGlyph={onEditGlyph}
+      />
+    );
+    fireEvent.click(screen.getByTestId("motif-slot-edit"));
+    const [layerId, glyphRef, opts] = onEditGlyph.mock.calls[0];
+    expect(layerId).toBe("m1");
+    expect(glyphRef).toBe("leaf"); // base fallback
+    expect(opts).toEqual({ slotIndex: 0 });
+  });
+});

@@ -653,6 +653,17 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, 
     onEditGlyph?.(m.id, m.params?.glyphRef);
   };
 
+  // Tap a Sequencer SLOT → open that slot's glyph in the Motif Edit Session with
+  // SLOT CONTEXT (C3, #79). The session's fork/Save-as-copy paths rebind THIS
+  // slot (binding.chain[seq].slots[slotIndex].glyphRef) instead of the layer's
+  // base glyphRef; editing a custom slot in place needs no rebind (shared id).
+  // `glyphRef` is the slot's effective ref (slot.glyphRef ?? base) resolved in
+  // the card. seqIndex is unused by `open` (it derives the at-most-one sequence
+  // from the binding) but kept in the signature for locality.
+  const openSlotEditorFor = (m, seqIndex, slotIndex, glyphRef) => {
+    onEditGlyph?.(m.id, glyphRef, { slotIndex });
+  };
+
   // File-input mechanics only (Wave 3, #77): the read → parse → error → commit
   // flow that used to live here now lives in the session's `importFromFile`
   // (CONTEXT.md "Motifs" — grilled decision 4), including error reporting
@@ -879,6 +890,11 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, 
               chain={chain}
               hostIsSemantic={hostIsSemantic}
               onEditChain={(mutate) => editChain(m, mutate)}
+              customGlyphs={customGlyphs}
+              baseGlyphRef={glyphRef}
+              onEditSlotGlyph={(seqIndex, slotIndex, slotGlyphRef) =>
+                openSlotEditorFor(m, seqIndex, slotIndex, slotGlyphRef)
+              }
             />
 
             {/* Placement (fixed tail, ADR-0004 — NOT a chain block): Size + Flip.

@@ -154,6 +154,34 @@ describe('dealSlots — random mode (per-anchor-id stable, weighted)', () => {
     const b = dealSlots(survivors, seqBlock({ mode: 'random', seed: 2, slots }));
     expect(a.map((x) => x.glyphRef)).not.toEqual(b.map((x) => x.glyphRef));
   });
+
+  // C3 zero-sum weight guard (correctness target #4): all-zero weights (or an
+  // all-Rest strip) must not divide-by-zero or pick nothing. The A4 engine
+  // already guards this by falling back to slot 0 (deterministic, no throw) — a
+  // Rest winning the draw is a legitimate silence. Pinned here so the UI can
+  // expose weight sliders that reach 0 without an engine crash.
+  it('all-zero weights do not throw and yield one valid assignment per survivor (fallback to slot 0)', () => {
+    const survivors = row(6);
+    const slots = [{ glyphRef: 'A', weight: 0 }, { glyphRef: 'B', weight: 0 }];
+    let assigns;
+    expect(() => {
+      assigns = dealSlots(survivors, seqBlock({ mode: 'random', seed: 4, slots }));
+    }).not.toThrow();
+    expect(assigns).toHaveLength(6);
+    // Deterministic fallback: every survivor lands on slot 0 (glyph 'A').
+    expect(assigns.every((a) => a.slotIndex === 0 && a.glyphRef === 'A')).toBe(true);
+  });
+
+  it('an all-Rest strip with zero weights does not throw (every survivor rests)', () => {
+    const survivors = row(5);
+    const slots = [{ rest: true, weight: 0 }, { rest: true, weight: 0 }];
+    let assigns;
+    expect(() => {
+      assigns = dealSlots(survivors, seqBlock({ mode: 'random', seed: 8, slots }));
+    }).not.toThrow();
+    expect(assigns).toHaveLength(5);
+    expect(assigns.every((a) => a.rest === true)).toBe(true);
+  });
 });
 
 describe('dealSlots — modifier passthrough + defaults', () => {

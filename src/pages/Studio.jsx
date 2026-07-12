@@ -2241,6 +2241,11 @@ export default function Studio({ submitOrg = null } = {}) {
           ) : (
           <Inspector
             layers={layers}
+            // Panels (WI-4) — the Highlight Hold control (Raster Etch S4, #83)
+            // reads the selected Etch's EFFECTIVE material (panel material OR the
+            // Material-lens material) to resolve its material-aware default.
+            panels={panels}
+            colorView={colorView.colorView}
             // For a Moiré role-B selection this is the partner-A id, so edits
             // redirect to A (B reads A) — matching legacy LayersSection behavior.
             selectedLayerId={inspectorTargetId}

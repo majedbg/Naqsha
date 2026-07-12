@@ -15,12 +15,13 @@ import { drawTextNode } from './text/drawTextNode';
 import { isTextLayer, textNodeFromLayer } from './text/textLayer';
 import { importLayerPivot } from './scene/placement';
 import { buildSelectables } from './scene/selectables';
-import { resolveCanvasColor, sheetBackground, offSheetDimFactor } from './materialPreview';
+import { resolveCanvasColor, sheetBackground, offSheetDimFactor, effectiveMaterialId } from './materialPreview';
 import { effectiveVisible } from './panels';
 import { isEtchLayer } from './etch/etchLayer';
 import { makeEtchInstance } from './etch/etchInstance';
 import { bitmapToRGBA } from './etch/etchBitmap';
 import { resolveEtchBitmap, etchCacheNeedsResolve } from './etch/etchSource';
+import { resolveHold } from './etch/etchHold';
 
 // Pivoted node transform shared by render + selection chrome. Matches the SVG
 // `translate(x y) translate(cx cy) rotate scale translate(-cx -cy)` form emitted
@@ -221,6 +222,30 @@ export default function useCanvas(
         applyNodeTransform(p, nodeTransforms[layer.id], canvasW / 2, canvasH / 2);
         p.noSmooth(); // pixelated — each dot maps to physical size (WYSIWYG)
         p.image(img, 0, 0, canvasW, canvasH);
+        // Highlight Hold preview shading (S4, #83): tint the held highlight band
+        // so the user SEES the guaranteed-safe region. This is a PREVIEW-ONLY
+        // overlay drawn ON TOP of the etch — it reads bitmap.held (the mask the
+        // clamp produced), never touches bitmap.bits, so it cannot change the
+        // exported bytes. Empty/absent held (Hold off, or an older worker) → no
+        // overlay. Rebuilt per render like the bitmap RGBA above.
+        if (bitmap.held) {
+          const ov = new Uint8ClampedArray(bitmap.width * bitmap.height * 4);
+          let any = false;
+          for (let j = 0; j < bitmap.held.length; j++) {
+            if (bitmap.held[j]) {
+              const i = j * 4;
+              ov[i] = 124; ov[i + 1] = 92; ov[i + 2] = 246; ov[i + 3] = 72; // soft violet wash
+              any = true;
+            }
+          }
+          if (any) {
+            const ovImg = p.createImage(bitmap.width, bitmap.height);
+            ovImg.loadPixels();
+            ovImg.pixels.set(ov);
+            ovImg.updatePixels();
+            p.image(ovImg, 0, 0, canvasW, canvasH);
+          }
+        }
         p.pop();
         continue;
       }
@@ -437,13 +462,22 @@ export default function useCanvas(
     for (const layer of layers) {
       if (!isEtchLayer(layer)) continue;
       const { source, dpi, stack } = layer.params || {};
-      // Include the Etch Stack in the signature so editing a Stage (add /
-      // reorder / bypass / any Tone/Dither control — mode & size live in each
-      // Stage's params, which JSON.stringify captures) re-resolves the
+      // Highlight Hold (S4, #83): resolve the material-aware default HERE, where
+      // panels + the Material lens live. The EFFECTIVE material (panel material
+      // first, else the lens material — the SAME precedence the canvas shades
+      // with, review FIX A) plus the layer's own Hold params resolve to the
+      // concrete { enabled, cutoff } the worker runs — AUTO follows the material
+      // (mirror → on), an explicit user toggle overrides. Resolving in the effect
+      // (not at layer creation) is what makes it correct across panel-assignment
+      // timing: a fresh Etch's panel — hence material — is only known once assigned.
+      const materialId = effectiveMaterialId(layer, { panels, materials: colorView?.materials, colorView });
+      const hold = resolveHold(layer.params?.hold, materialId);
+      // Include the Etch Stack AND the resolved Hold in the signature so editing a
+      // Stage (add / reorder / bypass / any Tone/Dither control) OR toggling the
+      // Hold / moving its cutoff / changing the panel material re-resolves the
       // single-source bitmap live. threshold/invert are intentionally OMITTED:
-      // they are not Etch-layer params yet (resolveEtchBitmap passes only
-      // { stack }), so there is nothing to key on until they become controls.
-      const sig = `${dpi}|${canvasW}|${canvasH}|${source || ''}|${JSON.stringify(stack || [])}`;
+      // they are not Etch-layer params yet.
+      const sig = `${dpi}|${canvasW}|${canvasH}|${source || ''}|${JSON.stringify(stack || [])}|${hold.enabled ? 1 : 0}:${hold.cutoff}`;
       live.add(layer.id);
       const cached = cache.get(layer.id);
       if (!etchCacheNeedsResolve(cached, sig)) continue;
@@ -451,7 +485,7 @@ export default function useCanvas(
       // entry resolving so a concurrent effect run doesn't double-launch.
       const carried = cached && cached.sig === sig ? cached.bitmap : null;
       cache.set(layer.id, { sig, bitmap: carried, resolving: true });
-      resolveEtchBitmap(layer, canvasW, canvasH)
+      resolveEtchBitmap(layer, canvasW, canvasH, {}, hold)
         .then((bitmap) => {
           const cur = cache.get(layer.id);
           if (!cur || cur.sig !== sig) return; // superseded by a newer signature
@@ -473,7 +507,12 @@ export default function useCanvas(
     for (const id of [...cache.keys()]) {
       if (!live.has(id)) cache.delete(id);
     }
-  }, [layers, canvasW, canvasH]);
+    // `panels` AND `colorView` are deps because the resolved Highlight Hold
+    // default reads the EFFECTIVE material — the layer's panel material OR the
+    // Material-lens material. Changing this panel's material (touches only
+    // `panels`) or switching the lens to a mirror (touches only `colorView`) must
+    // re-resolve the held band + bits, even when `layers` is unchanged.
+  }, [layers, canvasW, canvasH, panels, colorView]);
 
   // Initialize p5 instance
   useEffect(() => {

@@ -60,6 +60,9 @@ describe('createEtchParams', () => {
       sourceHeight: 600,
       dpi: 254,
       stack: [],
+      // Highlight Hold (S4, #83): AUTO by default so the material-aware default
+      // resolves at use-time (mirror → on) — not baked at creation.
+      hold: { enabled: null, cutoff: 235 },
     });
   });
 

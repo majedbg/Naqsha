@@ -55,7 +55,14 @@ export function computeEtchBitmap(image, options = {}, opts = {}) {
       if (msg.id !== id) return;
       if (msg.type === 'result') {
         worker.terminate();
-        resolve({ bits: new Uint8Array(msg.bits.buffer || msg.bits), width: msg.width, height: msg.height });
+        resolve({
+          bits: new Uint8Array(msg.bits.buffer || msg.bits),
+          // held is the preview-only Highlight Hold shading mask (S4 #83); it may
+          // be absent from an older worker build — null then, no overlay.
+          held: msg.held ? new Uint8Array(msg.held.buffer || msg.held) : null,
+          width: msg.width,
+          height: msg.height,
+        });
       } else if (msg.type === 'error') {
         worker.terminate();
         reject(new Error(msg.message));

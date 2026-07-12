@@ -74,3 +74,41 @@ captured and must be confirmed live.
       still won't persist when over quota. **Real fix = source compression + signed-in
       private-bucket storage (S7 / #86).** Until then, a large multi-Etch document may
       not fully survive a guest reload.
+
+## Raster Etch S4 (#83) — Highlight Hold
+
+### ⚠️ SAFETY — the mirror AUTO-default does NOT engage through the shipping UI
+
+- [ ] **The Highlight Hold mirror auto-default currently NEVER fires through the UI —
+      Highlight Hold must be enabled MANUALLY for every mirror-acrylic job.**
+      The guarantee itself is solid: when Highlight Hold is ON, no dot etches above the
+      cutoff in any dither mode/size/invert (proven test-first + browser-verified through
+      the real Worker). The *automatic* material-aware default is what's unreachable. The
+      only mirror id in `MIRROR_MATERIAL_IDS` (`src/lib/etch/etchHold.js`) is
+      `gold-mirror`, and a whole-repo check confirms `gold-mirror` is **not** in
+      `DEFAULT_PREVIEW_MATERIALS` (`src/lib/materialPreview.js`) — the catalog the panel
+      material and Material-lens selectors offer. It exists only as a swatch photo
+      (`materialSwatches.js`), the id in `MIRROR_MATERIAL_IDS`, and test fixtures. So
+      `isMirrorMaterial` never sees a `gold-mirror` id from any real selection, and the
+      effective-material resolution (`effectiveMaterialId` = panel material OR lens
+      material) can never resolve to a mirror. **Net effect: Highlight Hold defaults OFF
+      on every panel, mirror included. Until this is resolved, do NOT rely on the
+      automatic default — turn Highlight Hold on by hand for any mirror-acrylic run.**
+      Resolution options (maintainer's aesthetic-domain call — deliberately NOT fixed in
+      this slice, since adding stock to the shared catalog has optics / Material Archetype
+      implications):
+        (a) add a mirror stock to the selectable material catalog WITH its calibrated
+            Material Archetype (then it becomes selectable as a panel/lens material and the
+            auto-default engages), OR
+        (b) add a per-panel "mirror" boolean flag independent of preview optics, and have
+            `isMirrorMaterial` / the Hold default read that flag.
+      `MIRROR_MATERIAL_IDS` is a `Set` — trivially extensible with the real id once a
+      mirror material is actually wired into the catalog.
+
+- [ ] **MobileStudio does not thread panels / the Material lens to the Inspector, so the
+      Highlight Hold default would resolve OFF there if Etch editing is ever added.**
+      As of this slice an Etch is NOT creatable or editable in `src/pages/MobileStudio.jsx`
+      (no import-as-Etch, no lens) — the mobile shell has no Etch surface at all, so this
+      is latent, not a live bug. If Etch editing is later added to mobile, thread `panels`
+      and `colorView` into its `<Inspector>` the way `src/pages/Studio.jsx` does, or the
+      Hold control will always show/resolve the OFF default regardless of material.

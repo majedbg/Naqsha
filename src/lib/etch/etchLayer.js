@@ -17,6 +17,7 @@
 // under vitest identically (matching the extraction suites' discipline).
 
 import { MM_PER_IN } from '../plotter/constants.js';
+import { createHoldParams } from './etchHold.js';
 
 /** Layer `type` discriminator for an Etch — parallels 'import' / 'text' / 'motif'. */
 export const ETCH_TYPE = 'etch';
@@ -59,13 +60,19 @@ export function etchPixelDims(physicalMm, dpi = DEFAULT_ETCH_DPI) {
  * the luma field flows through before screening. It is DOCUMENT state persisted
  * on the layer (order round-trips through save/load). Defaults to empty — a new
  * Etch screens at the plain S1 threshold until a Stage is added.
+ *
+ * `hold` is the Highlight Hold (S4, #83): the fixed terminal clamp's params
+ * `{ enabled, cutoff }`, NOT a Stage (it lives here, never in `stack`). Defaults
+ * to AUTO (`enabled: null`) so the material-aware default resolves at use-time
+ * once the Etch's panel — hence its material — is known (mirror → on, else off).
  */
-export function createEtchParams({ source, sourceWidth = 0, sourceHeight = 0, dpi = DEFAULT_ETCH_DPI, stack } = {}) {
+export function createEtchParams({ source, sourceWidth = 0, sourceHeight = 0, dpi = DEFAULT_ETCH_DPI, stack, hold } = {}) {
   return {
     source: source || null,
     sourceWidth,
     sourceHeight,
     dpi: dpi > 0 ? dpi : DEFAULT_ETCH_DPI,
     stack: Array.isArray(stack) ? stack : [],
+    hold: hold && typeof hold === 'object' ? hold : createHoldParams(),
   };
 }

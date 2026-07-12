@@ -82,20 +82,27 @@ function resampleToImageData(img, w, h) {
  * Resolve an Etch layer's stored source into its single-source 1-bit bitmap.
  * Returns null when the layer has no source (nothing to render/export yet).
  *
- * @param {object} layer the etch layer (reads params.source, params.dpi)
+ * `hold` is the RESOLVED concrete Highlight Hold `{ enabled, cutoff }` (S4, #83):
+ * the material-aware default is resolved by the caller (useCanvas, where panels/
+ * materials live) via resolveHold, so the worker only ever sees concrete values.
+ * Absent → no clamp (back-compat with callers that don't pass it).
+ *
+ * @param {object} layer the etch layer (reads params.source, params.dpi, params.stack)
  * @param {number} canvasW document width in px
  * @param {number} canvasH document height in px
  * @param {{ workerFactory?: (() => Worker|null) | null }} [bridgeOpts]
- * @returns {Promise<{bits: Uint8Array, width: number, height: number}|null>}
+ * @param {{enabled:boolean, cutoff:number}} [hold] resolved Highlight Hold
+ * @returns {Promise<{bits: Uint8Array, held: Uint8Array|null, width: number, height: number}|null>}
  */
-export async function resolveEtchBitmap(layer, canvasW, canvasH, bridgeOpts = {}) {
+export async function resolveEtchBitmap(layer, canvasW, canvasH, bridgeOpts = {}, hold) {
   const { source, dpi, stack } = layer?.params || {};
   if (!source) return null;
   const { width, height } = etchExportDims(canvasW, canvasH, dpi);
   const img = await loadImage(source);
   const imageData = resampleToImageData(img, width, height);
-  // The Etch Stack config is plain data; it travels to the worker where the
-  // heavy per-pixel Stage work runs, then globalMask cuts the shaped field. The
-  // resulting `bits` stays the ONE buffer both canvas and export read.
-  return computeEtchBitmap(imageData, { stack }, bridgeOpts);
+  // The Etch Stack config and the resolved Hold are plain data; they travel to
+  // the worker where the heavy per-pixel Stage work runs, then screening cuts the
+  // shaped field and the Hold clamps the highlights. `bits` stays the ONE buffer
+  // both canvas and export read; `held` rides alongside for the preview overlay.
+  return computeEtchBitmap(imageData, { stack, hold }, bridgeOpts);
 }

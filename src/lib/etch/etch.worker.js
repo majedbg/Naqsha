@@ -6,7 +6,7 @@
 // just applies etchSourceToBitmap and transfers the resulting bits back.
 //
 //   in : { type: 'etch', id, image: {data,width,height}, options }
-//   out: { type: 'result', id, bits: Uint8Array, width, height }
+//   out: { type: 'result', id, bits: Uint8Array, held: Uint8Array, width, height }
 //        { type: 'error',  id, message }
 
 import { etchSourceToBitmap } from './etchProcess.js';
@@ -15,9 +15,10 @@ self.onmessage = (e) => {
   const { type, id, image, options } = e.data || {};
   if (type !== 'etch') return;
   try {
-    const { bits, width, height } = etchSourceToBitmap(image, options || {});
-    // Transfer the bits buffer back zero-copy — it is the single-source buffer.
-    self.postMessage({ type: 'result', id, bits, width, height }, [bits.buffer]);
+    const { bits, held, width, height } = etchSourceToBitmap(image, options || {});
+    // Transfer bits (the single-source buffer) AND held (the preview-only shading
+    // mask, S4 #83) back zero-copy. held rides alongside; export ignores it.
+    self.postMessage({ type: 'result', id, bits, held, width, height }, [bits.buffer, held.buffer]);
   } catch (err) {
     self.postMessage({ type: 'error', id, message: err?.message || String(err) });
   }

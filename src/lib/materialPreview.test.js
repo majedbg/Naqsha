@@ -10,7 +10,9 @@ import {
   offSheetDimFactor,
   OFF_SHEET_DIM,
   luminance,
+  effectiveMaterialId,
 } from './materialPreview.js';
+import { resolveHold, createHoldParams } from './etch/etchHold.js';
 import { resolveExportColor } from './fabrication.js';
 import { seedOperations } from './operations.js';
 
@@ -352,5 +354,52 @@ describe('offSheetDimFactor — dims marks from panels on a DIFFERENT sheet', ()
   it('is 1 when the layer has no panel / panels are absent', () => {
     expect(offSheetDimFactor(layerOn('nope'), { colorView: lens(orange), panels })).toBe(1);
     expect(offSheetDimFactor(layerOn('p-orange'), { colorView: lens(orange), panels: [] })).toBe(1);
+  });
+});
+
+// The EFFECTIVE material a layer previews on — the SAME precedence
+// resolveCanvasColor shades with (panel material first, else the Material-lens
+// material), surfaced as an id. This is the one resolution the Highlight Hold
+// material-aware default reads, so the displayed default can never drift from
+// what is shaded on canvas (Raster Etch S4, #83; review FIX A).
+describe('effectiveMaterialId — panel material else Material-lens material', () => {
+  const green = DEFAULT_PREVIEW_MATERIALS.find((m) => m.id === 'green-fluorescent');
+  const panels = [
+    { id: 'p-green', visible: true, order: 0, materialId: 'green-fluorescent' },
+    { id: 'p-auto', visible: true, order: 1, materialId: null },
+  ];
+  const layerOn = (panelId) => ({ id: 'L', panelId });
+  // A SYNTHETIC mirror lens material. gold-mirror is NOT in the shipping catalog
+  // (see NEEDS-HUMAN safety gap), so we mint it directly rather than imply it is
+  // selectable through the real UI.
+  const mirrorLens = { mode: 'material', material: { id: 'gold-mirror' } };
+
+  it("returns the panel's OWN material id when the panel has one", () => {
+    expect(effectiveMaterialId(layerOn('p-green'), { panels, colorView: mirrorLens })).toBe('green-fluorescent');
+  });
+
+  it('an AUTO panel (materialId null) falls back to the Material-lens material', () => {
+    expect(effectiveMaterialId(layerOn('p-auto'), { panels, colorView: mirrorLens })).toBe('gold-mirror');
+    expect(effectiveMaterialId(layerOn('p-auto'), { panels, colorView: { mode: 'material', material: green } })).toBe('green-fluorescent');
+  });
+
+  it('outside the Material lens, an AUTO panel resolves to null (lens is preview-only)', () => {
+    expect(effectiveMaterialId(layerOn('p-auto'), { panels, colorView: { mode: 'operation', material: { id: 'gold-mirror' } } })).toBeNull();
+    expect(effectiveMaterialId(layerOn('p-auto'), { panels, colorView: null })).toBeNull();
+  });
+
+  it('no panel / no lens → null (unknown material)', () => {
+    expect(effectiveMaterialId(layerOn('nope'), { panels, colorView: null })).toBeNull();
+    expect(effectiveMaterialId(layerOn('p-auto'), {})).toBeNull();
+  });
+
+  it('SAFETY (FIX A): an AUTO panel previewed under a mirror LENS defaults the Hold ON', () => {
+    // The unsafe-direction bug the review caught: panel-only resolution left this
+    // OFF while the user looked at a mirror. Effective-material resolution fixes it.
+    const materialId = effectiveMaterialId(layerOn('p-auto'), { panels, colorView: mirrorLens });
+    expect(resolveHold(createHoldParams(), materialId).enabled).toBe(true);
+    // Forgiving stock under its own lens stays OFF.
+    const clearId = effectiveMaterialId(layerOn('p-auto'), { panels, colorView: { mode: 'material', material: green } });
+    expect(resolveHold(createHoldParams(), clearId).enabled).toBe(false);
   });
 });

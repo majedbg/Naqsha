@@ -19,13 +19,21 @@
 // invariant tests stay green. Whichever branch runs, `bits` is materialized
 // exactly ONCE here — the single source of truth both the canvas render and the
 // SVG export read (grilled decision 4, WYSIWYG), now holding WITH dithering too.
-// Highlight Hold (a fixed terminal clamp, never a Stage) is still future.
+//
+// Highlight Hold (S4, #83) is the FIXED TERMINAL CLAMP applied AFTER screening —
+// never a Stage. We capture the SOURCE luma (toGrayField) BEFORE field Stages
+// transform it, then, once `bits` is produced, force every pixel whose source
+// luma is at or above the cutoff to paper (applyHighlightHold). Because it runs
+// here, inside the one buffer's construction (hence in the worker too), preview
+// == export holds automatically and no error-diffusion can leave a dot in a held
+// highlight. It returns a `held` mask too, for the preview-only shading overlay.
 //
 // Pure typed-array math, no DOM / no canvas, so it runs identically on the main
 // thread, in a Web Worker (etch.worker), and headless under vitest.
 
 import { toGrayField, globalMask } from '../extraction/preprocess.js';
 import { applyFieldStages, activeScreeningStage, screenStage } from './etchStage.js';
+import { applyHighlightHold } from './etchHold.js';
 
 /**
  * The plain global cut screening applies at the TAIL. Luma < ETCH_THRESHOLD
@@ -53,10 +61,14 @@ export const ETCH_THRESHOLD = 128;
  * Web Worker where the heavy pixel work runs.
  *
  * @param {{data: Uint8ClampedArray, width: number, height: number}} imageData
- * @param {{ threshold?: number, invert?: boolean, stack?: Array }} [opts]
- * @returns {EtchBitmap}
+ * @param {{ threshold?: number, invert?: boolean, stack?: Array, hold?: {enabled?:boolean, cutoff?:number} }} [opts]
+ * @returns {EtchBitmap & { held: Uint8Array }}
  */
-export function etchSourceToBitmap(imageData, { threshold = ETCH_THRESHOLD, invert = false, stack } = {}) {
+export function etchSourceToBitmap(imageData, { threshold = ETCH_THRESHOLD, invert = false, stack, hold } = {}) {
+  // Capture the SOURCE luma up front — Highlight Hold clamps on THIS, not the
+  // field the Stages shape. applyFieldStages / applyToneField / globalMask never
+  // mutate this array in place (Tone returns new fields; globalMask reads only),
+  // so it survives intact to the terminal clamp below.
   const gray = toGrayField(imageData);
   const field = applyFieldStages(gray, stack);
   // One-screen rule: an active screening Stage produces the bits; else the plain
@@ -65,5 +77,9 @@ export function etchSourceToBitmap(imageData, { threshold = ETCH_THRESHOLD, inve
   const bits = screen
     ? screenStage(field, screen, { threshold, invert })
     : globalMask(field, threshold, invert);
-  return { bits, width: field.width, height: field.height };
+  // Highlight Hold — the fixed terminal clamp (never a Stage), applied AFTER
+  // screening on the SOURCE luma. Returns the held mask for the preview overlay;
+  // export reads only `bits`, so the mask is preview-only.
+  const { held } = applyHighlightHold(bits, gray, hold || {});
+  return { bits, held, width: field.width, height: field.height };
 }

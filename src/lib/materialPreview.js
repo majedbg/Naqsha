@@ -83,6 +83,22 @@ function panelMaterialForLayer(layer, panels, materials) {
   return catalog.find((m) => m && m.id === id) || null;
 }
 
+// The EFFECTIVE catalog-material id a layer previews on: its panel's OWN material
+// (panel.materialId) when set, else — in the Material lens — the document lens
+// material, else null (unknown). This is the SAME precedence resolveCanvasColor
+// shades with (`panelMaterialForLayer(...) || colorView.material`), surfaced as an
+// id so the Highlight Hold material-aware default (Raster Etch S4, #83) reads the
+// EFFECTIVE material, not panel-only — an Auto panel previewed under a mirror lens
+// then resolves as mirror (the safe direction), and the displayed default can
+// never drift from what is shaded on canvas. The lens material is preview-only, so
+// it only contributes in Material-lens mode.
+export function effectiveMaterialId(layer, { panels, materials, colorView } = {}) {
+  const own = panelMaterialForLayer(layer, panels, materials);
+  if (own && own.id) return own.id;
+  const lens = colorView && colorView.mode === 'material' ? colorView.material : null;
+  return lens && lens.id ? lens.id : null;
+}
+
 // ── Cut/score visibility bias (preview-only, NOT accurate) ───────────────────
 // An honest reaction render can leave a faint score (or a kerf on a dark sheet)
 // near-invisible. `bias` ∈ [-1, 1] (0 = accurate) pushes ONLY cut + score marks

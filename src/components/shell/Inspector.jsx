@@ -55,6 +55,7 @@ import { ANCHOR_POS, ANCHOR_MID, ANCHOR_NEG } from "../../lib/fields/colormap";
 import { isMotifLayer, motifHostId, deepMergeBinding } from "../../lib/motif/motifLayer";
 import { MOTIF_GLYPHS, getGlyph } from "../../lib/motif/glyphs";
 import EtchStackRack from "./EtchStackRack";
+import EtchHighlightHold from "./EtchHighlightHold";
 
 // Modulation-scoped param control: the Grid's `warpNodes` slider (2–24). Reuses
 // the file's `accent-violet` range styling. Rendered INSIDE a <ModulationParamBox>
@@ -937,7 +938,7 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, 
 // The param-editing body for one selected layer. Split into its own component so
 // usePatternCache (a hook) is only called when a layer is actually selected —
 // hooks can't be called conditionally inside Inspector itself.
-function SelectedLayerInspector({ layer, layers, unit, profileId, onUpdateLayer, onChangeLayerPattern, onVariableWeightChange, onPreviewField, onClosePreview, threeDSubMode, threeDFocusLayerId, onAddMotif, onRemoveLayer, customGlyphs, onEditGlyph, onNewMotif, onImportFile, libraryMotifs, onCopyLibraryGlyph, onUseLibraryGlyph }) {
+function SelectedLayerInspector({ layer, layers, panels, colorView, unit, profileId, onUpdateLayer, onChangeLayerPattern, onVariableWeightChange, onPreviewField, onClosePreview, threeDSubMode, threeDFocusLayerId, onAddMotif, onRemoveLayer, customGlyphs, onEditGlyph, onNewMotif, onImportFile, libraryMotifs, onCopyLibraryGlyph, onUseLibraryGlyph }) {
   // Pattern swap: route through the same cache machine LayerCard uses, applied via
   // the pair-aware onChangeLayerPattern when present (falls back to a plain param
   // update so the component works standalone / in tests without a router).
@@ -996,6 +997,13 @@ function SelectedLayerInspector({ layer, layers, unit, profileId, onUpdateLayer,
           layers, so it costs nothing for vector layers. */}
       <EtchStackRack layer={layer} onUpdateLayer={onUpdateLayer} />
 
+      {/* Highlight Hold (Raster Etch S4, #83) — the FIXED TERMINAL clamp that
+          guarantees no dot etches above the cutoff, rendered as its OWN control
+          BELOW the Stack (never a Stage: it can't be dragged into the Stack,
+          reordered, or bypassed). Material-aware default (mirror → on) resolved
+          from the layer's panel material. Self-hides for non-Etch layers. */}
+      <EtchHighlightHold layer={layer} panels={panels} colorView={colorView} onUpdateLayer={onUpdateLayer} />
+
       {/* Collapsible, grouped param controls (Structure / Scale / Variation /
           Stroke / Transform — the existing PARAM_GROUPS). */}
       {layerParamsValue && (
@@ -1048,6 +1056,15 @@ function SelectedLayerInspector({ layer, layers, unit, profileId, onUpdateLayer,
 
 export default function Inspector({
   layers = [],
+  // WI-4 Naqsha Panels: the panel array. The Highlight Hold control (Raster Etch
+  // S4, #83) reads the selected Etch's panel material (via layer.panelId) to
+  // resolve the material-aware default. Optional — defaults to [] so standalone /
+  // legacy callers keep rendering (Hold then reads as "no panel" → off).
+  panels = [],
+  // The Material-lens state (mode + selected material). The Highlight Hold control
+  // (Raster Etch S4, #83) reads the EFFECTIVE material — panel material OR this
+  // lens material — to resolve its material-aware default (review FIX A). Optional.
+  colorView = null,
   selectedLayerId,
   // Active document unit ('mm' | 'in' | 'px') from Studio. Threaded into the
   // param context so length-tagged params display/convert in it (#13). Undefined
@@ -1185,6 +1202,8 @@ export default function Inspector({
       key={layer.id}
       layer={layer}
       layers={layers}
+      panels={panels}
+      colorView={colorView}
       unit={unit}
       profileId={profileId}
       onUpdateLayer={onUpdateLayer}

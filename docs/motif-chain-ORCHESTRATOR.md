@@ -278,3 +278,31 @@ doc + #79.
   C1:** chain-mode overrides read from top-level `binding.overrides` (B1's choice; C1 owns the
   final schema). Nit (non-blocking): fully-stripped-base-glyph runs the pipeline before skipping
   (zero observable divergence).
+- 2026-07-12 — **B2 arbitrary-edge host capture DONE** — folds in #67 (`68e2924`, +33 tests:
+  new capturePolylines 10 / hostCapture 13 / hostKinds 5, +drawingContext 3 / resolveMotifHost 4;
+  motif+useCanvas 488 green (was 467), full suite 4470 passed 0 failed, build green). B1 built
+  the CONSUMER (edge-mode `p.hostPaths`); B2 is the PRODUCER. **P5Adapter record mode**
+  (`{draw:false, record:true}`): records line + beginShape/vertex/endShape + push/pop/translate/
+  rotate/scale into `this.calls` (transforms record EVEN under draw:false — the fix) while RNG/
+  noise/color still delegate to live p5 (no-divergence, same guarantee as the voronoi probe). New
+  pure **`capturePolylines.js`** folds the recorded calls through a 2D-affine CTM stack →
+  `[{points,closed}]` absolute coords (single home for the matrix math; closed iff `endShape(CLOSE)`).
+  useCanvas prepass probes edge hosts via the existing order-independent `collectMotifHostGeometry`;
+  `resolveMotifHostParams` forwards `{anchorMode:'edge', hostPaths}`, injected once at generate-time
+  (canvas/SVG parity automatic). New **`hostKinds.js`** centralizes SEMANTIC_/EDGE_/MOTIF_HOSTS;
+  Inspector uses the union (edge hosts selectable, roles→`['edge']`), **AnchorGhostOverlay stays
+  semantic-only** (getSemanticAnchors null for edge hosts → widening = silent no-op ghost; generic
+  edge ghost DEFERRED). **Edge hosts added** (verified emit polylines + reseed at generate() top):
+  `flowfield, wave, spirograph, topographic, phyllodash, diffgrowth, dendrite`. **Excluded, NOT
+  added** (structurally unreachable by the adapter prepass): `text` (drawTextNode) + `import`
+  (ImportedPath) — bespoke follow-up. **Independent opus review: SOUND** (hand-derived affine
+  fixtures cross-checked off-impl; per-host reseed audit of all 7; 2 mutation checks — rotate-sign
+  + host-reseed deletion — each flipped a red test then reverted; full suite re-run 4470/0).
+  **Browser-verified** a motif on a flowfield host (glyphs stamp along the flow trails; hiding both
+  host layers left only the motif tracing the swirl → capture + absolute-coord fold + z-order-
+  independent prepass all proven). **v1 limits (documented, match voronoi precedent):** symmetry
+  N>1 captures all N drawn copies; modulated edge host diverges (probe uses base params); capture is
+  pre-`applyNodeTransform` (matches paint only at identity — same limit semantic hosts have).
+  **For B3:** `hostPaths` + forced `anchorMode:'edge'` already in place; thread the chain/Sequencer
+  through edge hosts. **Open seams:** `bezierVertex`/`curveVertex` not recorded (no in-scope host
+  uses them); generic edge-anchor ghost preview deferred.

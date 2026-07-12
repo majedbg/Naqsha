@@ -473,3 +473,26 @@ doc + #79.
   concurrency-file-touching):** while stopping my own dev server I ran `pkill -f vite`, which
   is unscoped and also killed the OTHER session's dev server on :5173 — no files/git touched,
   but that session's `npm run dev` needs a restart if it relied on that process still running.
+- 2026-07-12 — **ISOLATION:** to stop colliding with the concurrent Raster-Etch session in the
+  main checkout, Phase D runs in a SEPARATE git worktree `../naqsha-motif-d` on branch
+  **`feat/motif-chain-d`** (cut from `feat/motif-chain` HEAD `aa18711`; node_modules symlinked).
+  `feat/motif-chain` is untouched with the Etch session's uncommitted work intact; fast-forward
+  `feat/motif-chain` onto `feat/motif-chain-d` once the tree is clear. Dev-server teardown is now
+  scoped to the worktree's own PID (never unscoped `pkill`).
+- 2026-07-12 — **D1 export/undo/persistence DONE** (`1bff198`, +14 tests, VERIFICATION-ONLY — no
+  production change; worktree gate src/lib/motif+svgExport+useLayers+shell 1031 green, build green).
+  `export.d1.test.js` (5): real export path `buildAllLayersSVG → MotifPattern.toSVGGroup`; every
+  slot glyph exports per-slot in order + per-slot canvas==SVG parity; (a) modifier-only slot (no
+  glyphRef → base, sizeScale baked) + (b) per-slot rotationRandom (delta baked, deterministic).
+  Multi-glyph export already worked from B1 — verification-only. `persistUndo.d1.test.jsx` (9):
+  LOAD-path bite — `migrateLayer` preserves `params`/`params.binding` by REF IDENTITY (confirmed it
+  never touches the binding); chain-form doc round-trips localStorage save↔load byte-identical
+  (chain/slots/pickedPaths/overrides); LEGACY doc loads with NO eager migration, first block edit
+  upgrades→chain as ONE undo entry (selection dropped), ⌘Z restores legacy, upgraded binding
+  persists; block-reorder/slot-edit/pickedPath-toggle each one undo entry with ⌘Z restore.
+  Mutate-to-red confirmed each (drop-slot-glyph, rotationRandom→0, migrateLayer-strips-binding,
+  ensureChainForm-keeps-selection). **Orchestrator-verified** (test-only slice; D2 whole-diff review
+  covers it next) — read the test files + reran gate. **Browser-verified** (worktree dev server,
+  scoped PID kill): Vine chip → exported SVG 57 rosette + 112 leaf (the ratio), reload preserved the
+  chain, chain edit + ⌘Z. **NEXT:** the AnchorGhostOverlay chain-form redirect (accumulated C3/C4
+  bug — its own scoped slice), then D2 whole-diff review + handoff.

@@ -3,8 +3,11 @@
 // canvas at the host pattern's candidate anchor positions: PLACED anchors (a
 // motif rule actually put a glyph there) read as filled, un-placed CANDIDATES as
 // hollow. Clicking a dot toggles a force-include / force-exclude override that
-// the placement engine ALREADY honors (selectAnchors' overrides stage), so the
-// user can hand-correct the automatic layout point-by-point.
+// the render seam ALREADY honors (the fixed post-chain override step, shared by
+// BOTH binding shapes via resolveSelection → overrides.js), so the user can
+// hand-correct the automatic layout point-by-point. The overlay is SHAPE-AWARE:
+// a chain-form binding stores overrides top-level at `binding.overrides`, a
+// legacy binding at `binding.selection.overrides` (see readOverrides below).
 //
 // COORDINATES — no conversion. Semantic anchors are already in canvas-pixel
 // world space [0..canvasW]×[0..canvasH], exactly where the host pattern draws.
@@ -18,13 +21,19 @@
 // a dot click is captured. Because we already know which anchor a circle is (no
 // hit-testing), onPointerDown reads data straight off the closure.
 //
-// SCOPE — semantic hosts (grid / recursive / spiral) PLUS voronoi. Voronoi is
-// GEOMETRY-IN (getSemanticAnchors needs the host's drawn segments), now wired via
-// the `patternInstances` prop: the real drawn host instance stashes
-// `motifHostGeometry = {drawnEdges, sites}` during generate(), and RightPanel
-// keeps `patternInstances` in React state (refreshed after every p5 render). GENERIC
-// EDGE hosts stay deferred (they need a generic drawn-polyline seam, not yet wired)
-// and still render nothing. Pure UI + wiring — the motif core is only CONSUMED, never edited.
+// SCOPE — this overlay has TWO render paths:
+//   • SEMANTIC override overlay (grid / recursive / spiral PLUS voronoi): faint
+//     placed/candidate ghosts, click-to-override. Voronoi is GEOMETRY-IN
+//     (getSemanticAnchors needs the host's drawn segments), wired via the
+//     `patternInstances` prop: the real drawn host instance stashes
+//     `motifHostGeometry = {drawnEdges, sites}` during generate(), and RightPanel
+//     keeps `patternInstances` in React state (refreshed after every p5 render).
+//   • EDGE-HOST PATH PICKER (C4): for a generic edge host (flowfield/wave/…) the
+//     dots come from the SAME record-mode polyline capture the render uses
+//     (`motifHostGeometry.hostPaths`, also surfaced through `patternInstances`),
+//     and render ONLY while the motif's Route card is armed (`motifPick`). This is
+//     the once-deferred generic edge ghost, now wired for path picking.
+// Pure UI + wiring — the motif core is only CONSUMED, never edited.
 
 import { useMemo } from 'react';
 import { isMotifLayer, motifHostId, deepMergeBinding, readChain } from '../../lib/motif/motifLayer';
@@ -98,8 +107,9 @@ export default function AnchorGhostOverlay({
   // the ephemeral Route-card arm target (Studio state). When it names the
   // selected EDGE-host motif, this overlay renders the edge-anchor ghost as a
   // clickable path picker; `onTogglePickedPath(pathIndex)` toggles that path in
-  // the armed route block's `pickedPaths` (a ROUTE-BLOCK edit — NEVER the legacy
-  // selection.overrides path below, which stays semantic-only). Both optional.
+  // the armed route block's `pickedPaths` (a ROUTE-BLOCK edit — a wholly separate
+  // write from the shape-aware override toggle below, which is scoped to semantic
+  // hosts). Both optional.
   motifPick = null,
   onTogglePickedPath = () => {},
 }) {
@@ -202,11 +212,12 @@ export default function AnchorGhostOverlay({
 
   // ── EDGE-HOST PATH PICKER (C4) ─────────────────────────────────────────────
   // A wholly separate render path from the semantic override overlay below: it
-  // reads/writes ONLY the route block's pickedPaths (via onTogglePickedPath),
-  // never binding.selection.* (chain-form drops it — that's the D1 misbehavior we
-  // do NOT touch). Renders ONLY when THIS motif's Route card is armed
-  // ("Pick on canvas"), so it's an intentional affordance, not clutter on every
-  // edge-host selection (a dense flowfield can emit hundreds of anchors).
+  // reads/writes ONLY the route block's pickedPaths (via onTogglePickedPath) — a
+  // ROUTE-BLOCK edit, distinct from the shape-aware include/exclude override
+  // toggle below (which is scoped to semantic hosts). Renders ONLY when THIS
+  // motif's Route card is armed ("Pick on canvas"), so it's an intentional
+  // affordance, not clutter on every edge-host selection (a dense flowfield can
+  // emit hundreds of anchors).
   if (isEdgeHost(host.patternType)) {
     const armed = !!motifPick && motifPick.layerId === motif.id;
     if (!armed) return null;

@@ -510,3 +510,105 @@ doc + #79.
   AnchorGhostOverlay touched; C4 edge/pickedPaths path untouched. **Orchestrator-verified** (real-
   component jsdom render tests + mutate-to-red; D2 does the in-app eyeball). Residual for D2: in-app
   real-chip eyeball; stale file-header/C4 comments now the semantic path is shape-aware.
+- 2026-07-12 — **D2 whole-diff adversarial review + HANDOFF DONE — FEATURE COMPLETE.**
+  Cross-cutting integration honesty battery over the WHOLE `56dc32c..HEAD` diff (NOT a per-slice
+  re-review — every phase A1–A4/B1–B3/C1–C5/D1 + the ghost redirect was independently reviewed
+  SOUND in its own slice). New `src/lib/motif/d2.battery.test.js` (+17 tests). Comment-only edit to
+  `AnchorGhostOverlay.jsx`. **Final gate: full `npx vitest run` 4650 passed | 54 skipped | 0 failed
+  (397 files); `npm run build` green.** No AdminPage flake this run. Both changes uncommitted for the
+  orchestrator.
+  - **HONESTY BATTERY (constructed against the INTEGRATED whole):**
+    1. **Determinism — PASS.** `chain.e2e.test.js` twice-run byte-identical `svgElements` end-to-end
+       (cycle mode, `expect(a.svgElements).toEqual(b.svgElements)` — the "IDENTICAL not exists" bar) +
+       new battery twice-run byte-identical assignment stream on the RANDOM branch (both hashRng
+       channels 'slot'/'rot' + rotationRandom). Emission never branches on cycle/random, so cycle-mode
+       end-to-end identity covers both. THREE DISTINCT verifications, kept distinct: (a) pure-pipeline
+       determinism = battery + cycle `chain.e2e`; (b) `capturePolylines` record-mode purity = its own
+       unit test, with edge-host BROWSER reality owned by B2/B3 (NOT this D2 eyeball); (c) the D2
+       eyeball = the semantic-host override redirect (Vine chip on a GRID host → `getSemanticAnchors`,
+       which does NOT touch the record-mode capture path). No single jsdom test spans useCanvas
+       `capturePolylines`→multi-path — unchanged from B3, documented, not a gap.
+    2. **Survivor-stability (ADR-0005) — PASS (new integration coverage).** Battery edits an UPSTREAM
+       BLOCK (everyN 2→3) so the survivor SET changes, then asserts every anchor in S2∩S3 keeps its
+       random `slotIndex` AND `rotationRandomDelta` (keyed on `hashRng(seed, anchor.id, …)`, survivor-
+       set-independent). The per-slice sequencer test could not make this claim (it fed dealSlots
+       different arrays directly). **Mutation-verified it bites:** re-keying the random deal off
+       survivor index turned it red; reverted. A companion test proves the shared anchors actually
+       land at different survivor indices between the two edits, so the invariant isn't vacuous.
+    3. **Byte-identical legacy compile (D9) — PASS, no regression (the one true blocking risk,
+       checked FIRST).** The A3 golden proves `runSelectionChain(compiled) == selectAnchors@HEAD`;
+       the real invariant is `== selectAnchors@baseline`. `git diff 56dc32c..HEAD -- placementEngine.js`
+       confirms `selectAnchors`' SELECTION stages 1–5 (roles/rate/skip/density/field) are UNTOUCHED —
+       the only change is stage 6 overrides extracted verbatim to `overrides.js` (identical
+       `DEFAULT_TOLERANCE=8`, identical include→exclude→orphan logic, exclude-wins). So the goldens
+       remain valid and legacy docs render unchanged. `chain.e2e.test.js` also re-affirms lazy-compile
+       render-seam parity end-to-end.
+    4. **Dual-emit per-slot parity — PASS (owned + re-affirmed).** `MotifPattern.test.js` (per-slot
+       canvas==SVG, independent parser), `export.d1.test.js` (real `buildAllLayersSVG` path, per-slot
+       incl. modifier-only + rotationRandom slots), `chain.e2e.test.js` (glyph-identity per slot). No
+       new finding; `resolvePlacements` sequencer changes are additive behind a null `assignment`
+       guard, legacy path byte-identical (confirmed in the diff).
+    5. **No input mutation — PASS (new coverage).** Battery deep-freezes (recursive) the inputs to all
+       six pure entry points — `runSelectionChain`, `dealSlots`, `compileSelectionToChain`/
+       `resolveSelection`, `chainEditor` ops, `motifLayer` helpers, `capturePolylines` — and asserts no
+       throw. **Mutation-verified it bites:** injecting a `chain[0].__probe=1` write threw on the
+       frozen input; reverted. Shallow-freeze would have missed nested `chain[i].pickedPaths`/slots —
+       the recursive freeze is the point.
+    6. **Chain invariants integrated — PASS.** Battery pins the terminal-sequence invariant
+       (at-most-one, last) through add/remove/reorder (2nd sequence rejected same-ref; new selection
+       block splices BEFORE the sequence; reorder that would strand a filter below the sequence
+       rejected) and C1 mutual-exclusivity (ensureChainForm drops `selection`; deepMergeBinding onto a
+       chain-form base never resurrects it — the C2 trap; applyPickedPathToggle migrates in one step
+       with no `selection`; JSON round-trip byte-identical). The override-toggle half of item 6 is
+       owned by `AnchorGhostOverlay.test.jsx` (23 green: chain-form→top-level `binding.overrides` no
+       resurrection; legacy→`selection.overrides` no forced migration; one undo; render-seam parity).
+  - **RESIDUALS CLEARED:**
+    - **In-app eyeball (worktree dev server :5180, own PID killed; concurrent Etch :5173 untouched).**
+      GRID host → tapped **Vine** chip → new motif "Rosette on Grid 1" is **chain-form from birth**
+      (`binding.chain` = route+sequence, NO `selection`). Selected it → overlay drew **169 violet
+      (#7c3aed) PLACED ghost dots** on the grid crossings (proves the shape-aware placement preview —
+      the redirect fix; the old legacy `placeMotifs`/`selection` read showed garbage here). Clicked a
+      PLACED dot (`crossing:0:0`) → it flipped placed→excluded (168/1), and the binding gained
+      **top-level `binding.overrides.exclude:["crossing:0:0"]`** with **`'selection' in binding` ===
+      false** and `chain` intact — the render seam's exact slot, C1 preserved, NO resurrection. **One
+      ⌘Z fully reverted** (overrides→null, 169 placed/0 excluded, still chain-form) — single undo
+      entry. Separately, the pre-existing **legacy** "Leaf on Grid 1" motif: clicking a placed dot
+      appended to **`binding.selection.overrides.exclude`** with **no `chain` key and no top-level
+      `overrides`** — legacy stays legacy, no forced migration. Both directions verified in the real
+      app.
+    - **Stale comments (AnchorGhostOverlay.jsx, comment-only) updated** to the shape-aware reality:
+      header "selectAnchors' overrides stage" → the shared post-chain override step via
+      `resolveSelection`/`overrides.js`, both shapes; SCOPE block "GENERIC EDGE hosts… render nothing"
+      → the C4 edge-host path picker now renders them when armed; the two "legacy selection.overrides
+      path / D1 misbehavior we do NOT touch" picker comments → the toggle below is now shape-aware.
+  - **KNOWN NON-BLOCKING FOLLOW-UPS (judged honest, NOT fixed — affirmed):**
+    - **Edge-ghost decimation** (~13k pointer-events dots on a dense flowfield; overlapping tendrils
+      can mis-toggle at crossings). Honest non-blocker: the picker renders ONLY when armed
+      (`if (!armed) return null`), it's opt-in, and the "N picked · Clear" readout makes a mis-toggle
+      visible and correctable. Decimate for polish later.
+    - **`sampleEdgeAnchors` runs on mere selection** (a memo before the unarmed early-return). Wasteful
+      once-per-selection-change, not wrong. Guard the memo behind `armed` for polish.
+    - **AnchorGhostOverlay per-slot tinting** (D1 optional): the ghost dots don't tint by which slot
+      glyph lands there. Cosmetic; deferred.
+    - **No remaining legacy-override callers**: the shape-aware `readOverrides`/`toggleOverride` are the
+      ONLY override read/write in the overlay; there is no other component reading `selection.overrides`
+      for motifs (C4 pickedPaths is a separate route-block path). The seam is clean.
+    - Carried from earlier slices: generic edge-anchor ghost `bezierVertex`/`curveVertex` not recorded
+      (no in-scope host uses them); `text`/`import` excluded from edge hosts (bespoke follow-up);
+      symmetry N>1 edge capture / modulated edge host are v1 limits matching the voronoi precedent.
+  - **MERGE NOTE.** All of Phase D lives on **`feat/motif-chain-d`** (this worktree, cut from
+    `feat/motif-chain` HEAD `aa18711`). `feat/motif-chain` still carries the concurrent Raster-Etch
+    session's UNCOMMITTED work in the main checkout. To land: (1) commit D2's two files on
+    `feat/motif-chain-d` (explicit paths: `src/lib/motif/d2.battery.test.js`,
+    `src/components/canvas/AnchorGhostOverlay.jsx`, this doc — NEVER `-A`); (2) once the Etch session's
+    checkout is clear/committed, **fast-forward `feat/motif-chain` onto `feat/motif-chain-d`**; (3) open
+    the #79 PR from `feat/motif-chain` → `main`.
+  - **IS #79 DONE?** Engineering-complete: all D1–D11 spec items shipped, honesty battery green,
+    full suite 4650/0 + build green, in-app override redirect verified both shapes. **Remaining human
+    steps to CLOSE #79:** (a) commit D2 + fast-forward + open the PR per the merge note; (b) a
+    designer pass on the authoring UX at 390px / iPad (rack + Sequencer + chips were browser-verified
+    per-slice but never in one sitting by a human); (c) decide whether the edge-ghost decimation /
+    per-slot tinting follow-ups block "closed" or spin out to their own issue (recommend spin-out —
+    they're polish, not correctness). No DB migration, no tier gating (chains persist via the existing
+    layer path). The Vine/rinceau HOST pattern (WI-2) and save-chain-to-library remain their own
+    grills in Deferred — out of #79 scope.

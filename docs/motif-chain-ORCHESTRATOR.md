@@ -496,3 +496,17 @@ doc + #79.
   scoped PID kill): Vine chip → exported SVG 57 rosette + 112 leaf (the ratio), reload preserved the
   chain, chain edit + ⌘Z. **NEXT:** the AnchorGhostOverlay chain-form redirect (accumulated C3/C4
   bug — its own scoped slice), then D2 whole-diff review + handoff.
+- 2026-07-12 — **AnchorGhostOverlay chain-form redirect DONE** (`8b11688`, accumulated C3/C4 bug,
+  its own scoped slice per the advisor; canvas+motif 694 green, build green). The semantic per-anchor
+  include/exclude override assumed LEGACY bindings (read/wrote `binding.selection.overrides`, previewed
+  via legacy `placeMotifs`) → broke on chain-form semantic motifs (starter chip on a grid host is
+  chain-form; rack-edited semantic upgrades): reads showed no overrides, the toggle RESURRECTED
+  `selection` + was ignored by the render seam, preview was garbage. **Fix (shape-aware, NO forced
+  migration):** `readOverrides`/`readRoles`/`isChainForm` helpers (chain-form → `binding.overrides` +
+  route-block roles AND-intersection; legacy → `selection.*`); placement preview via `resolveSelection`
+  → `resolvePlacements` (the real render path, both shapes); toggle write shape-aware — chain-form →
+  `deepMergeBinding(binding,{overrides})` (no chain touch, no selection key), legacy → `{selection:
+  {overrides}}` unchanged (an override toggle is NOT a block edit → legacy never force-migrated). Only
+  AnchorGhostOverlay touched; C4 edge/pickedPaths path untouched. **Orchestrator-verified** (real-
+  component jsdom render tests + mutate-to-red; D2 does the in-app eyeball). Residual for D2: in-app
+  real-chip eyeball; stale file-header/C4 comments now the semantic path is shape-aware.

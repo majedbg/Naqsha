@@ -30,7 +30,8 @@ import { useMemo } from 'react';
 import { isMotifLayer, motifHostId, deepMergeBinding, readChain } from '../../lib/motif/motifLayer';
 import { getSemanticAnchors } from '../../lib/motif/semanticAnchors';
 import { sampleEdgeAnchors } from '../../lib/motif/anchors';
-import { placeMotifs } from '../../lib/motif/placementEngine';
+import { resolveSelection } from '../../lib/motif/compileSelectionToChain';
+import { resolvePlacements } from '../../lib/motif/placementEngine';
 import { SEMANTIC_MOTIF_HOSTS, isEdgeHost } from '../../lib/motif/hostKinds';
 
 // This overlay previews SEMANTIC anchors only (grid/recursive/spiral are FORMULA
@@ -50,6 +51,41 @@ const EXCLUDE_STROKE = '#ef4444'; // red — force-excluded outline
 // Keep only string ids (override arrays may legally hold {x,y,role} refs too, but
 // this overlay only ever writes/reads id strings).
 const strings = (arr) => (Array.isArray(arr) ? arr.filter((x) => typeof x === 'string') : []);
+
+// SHAPE-AWARE READ helpers (D — chain-form vs legacy). A chain-form binding
+// (`binding.chain` present) is the C1 shape: `selection` is DROPPED, overrides
+// live TOP-LEVEL at `binding.overrides` (the exact slot the render seam reads,
+// MotifPattern.js:111). A legacy binding keeps `binding.selection.overrides`.
+// Reading the WRONG slot is precisely the D bug (empty overrides on a chain-form
+// motif that actually has some), so both call sites route through these.
+const isChainForm = (binding) => Array.isArray(binding && binding.chain);
+
+// The effective include/exclude override object for THIS binding shape. Never
+// null — returns `{}` so callers can `?.` safely.
+const readOverrides = (binding) => {
+  if (!binding) return {};
+  if (isChainForm(binding)) return binding.overrides || {};
+  return binding.selection?.overrides || {};
+};
+
+// The anchor ROLES this motif targets, for the display-focus filter (null/empty
+// ⇒ "all roles", show everything). Chain-form: intersect the non-null role sets
+// of every route block (an anchor must pass ALL of them to ever place); all-null
+// ⇒ null (no constraint). Legacy: `binding.selection.roles` verbatim.
+const readRoles = (binding) => {
+  if (!binding) return null;
+  if (isChainForm(binding)) {
+    let acc = null;
+    for (const block of readChain(binding)) {
+      if (block && block.type === 'route' && block.roles != null) {
+        const s = new Set(block.roles);
+        acc = acc == null ? s : new Set([...acc].filter((r) => s.has(r)));
+      }
+    }
+    return acc ? [...acc] : null;
+  }
+  return binding.selection?.roles ?? null;
+};
 
 export default function AnchorGhostOverlay({
   layers,
@@ -133,20 +169,30 @@ export default function AnchorGhostOverlay({
     return null;
   }, [host, canvasW, canvasH, patternInstances, motif]);
 
-  // Placements — run the SAME engine the real render uses, so PLACED state here
-  // matches what actually draws (overrides already folded in by placeMotifs).
+  // Placements — run the SAME chain-aware path the real render uses
+  // (MotifPattern.generate: resolveSelection → resolvePlacements), so PLACED
+  // state here matches what actually draws for BOTH binding shapes. This is the D
+  // fix: the old legacy `placeMotifs(anchors, binding)` read `binding.selection`,
+  // which is DROPPED on a chain-form binding (C1), producing garbage placedIds.
+  // resolveSelection handles chain-form AND legacy, and `binding.overrides` is
+  // exactly the slot the render seam threads (MotifPattern.js:111) — undefined on
+  // legacy, where resolveSelection's compile path overwrites it with the compiled
+  // `selection.overrides` anyway, so this is byte-identical to the real render.
   const placements = useMemo(() => {
     if (!anchors || !motif) return [];
-    // C4 landmine guard: placeMotifs is the LEGACY engine reading
-    // binding.selection. An edge host is chain-form (selection dropped), so
-    // running it here would produce garbage placedIds. The edge branch is
-    // pick-oriented (colored by pickedPaths), never placed/candidate, so it needs
-    // no placements at all — skip entirely for edge hosts.
+    // Edge-host guard (C4): the edge branch is pick-oriented (colored by
+    // pickedPaths), never placed/candidate, so it needs no placements — skip.
     if (host && isEdgeHost(host.patternType)) return [];
-    const { placements: p } = placeMotifs(anchors, motif.params.binding || {}, {
-      boundary: { type: 'rect', width: canvasW, height: canvasH },
+    const binding = motif.params.binding || {};
+    const { survivors, sequence } = resolveSelection(binding, anchors, {
       canvasW,
       canvasH,
+      overrides: binding.overrides,
+    });
+    const placementConfig = { ...(binding.placement || {}) };
+    if (sequence) placementConfig.sequence = sequence;
+    const { placements: p } = resolvePlacements(survivors, placementConfig, {
+      boundary: { type: 'rect', width: canvasW, height: canvasH },
     });
     return p;
   }, [anchors, motif, canvasW, canvasH, host]);
@@ -215,8 +261,12 @@ export default function AnchorGhostOverlay({
     );
   }
 
+  const binding = motif.params.binding || {};
   const placedIds = new Set(placements.map((p) => p.anchorId));
-  const ov = motif.params.binding?.selection?.overrides || {};
+  // SHAPE-AWARE overrides read: chain-form → binding.overrides; legacy →
+  // binding.selection.overrides (see readOverrides). Reading the legacy slot on a
+  // chain-form motif was the D bug — existing overrides showed as empty.
+  const ov = readOverrides(binding);
   const includeIds = new Set(strings(ov.include));
   const excludeIds = new Set(strings(ov.exclude));
 
@@ -224,7 +274,7 @@ export default function AnchorGhostOverlay({
   // overlay focused instead of drawing every crossing+edge+tip+cell). An
   // overridden anchor stays visible regardless of role so it's always toggleable.
   // roles null/empty ⇒ engine treats as "all roles", so show everything.
-  const roles = motif.params.binding?.selection?.roles;
+  const roles = readRoles(binding);
   const roleSet = Array.isArray(roles) && roles.length ? new Set(roles) : null;
   const displayAnchors = roleSet
     ? anchors.filter((a) => roleSet.has(a.role) || includeIds.has(a.id) || excludeIds.has(a.id))
@@ -251,12 +301,23 @@ export default function AnchorGhostOverlay({
       newInclude = [...newInclude, id];
     }
 
+    // SHAPE-AWARE WRITE, NO forced migration (the D spine). deepMergeBinding
+    // REPLACES arrays wholesale, so we pass the full new arrays. One onUpdateLayer
+    // ⇒ one undo entry, both shapes.
+    //   • chain-form → write TOP-LEVEL binding.overrides (the render seam's slot).
+    //     Does NOT touch `chain`, does NOT add a `selection` key (C1 intact).
+    //   • legacy → write binding.selection.overrides (byte-identical to before).
+    //     An anchor toggle is NOT a block edit, so a legacy binding STAYS legacy —
+    //     forcing a chain rewrite here would be a surprising, wrong migration.
+    const overridesPatch = { include: newInclude, exclude: newExclude };
+    const patch = isChainForm(binding)
+      ? { overrides: overridesPatch }
+      : { selection: { overrides: overridesPatch } };
+
     onUpdateLayer(motif.id, {
       params: {
         ...motif.params,
-        binding: deepMergeBinding(motif.params.binding, {
-          selection: { overrides: { include: newInclude, exclude: newExclude } },
-        }),
+        binding: deepMergeBinding(binding, patch),
       },
     });
   };

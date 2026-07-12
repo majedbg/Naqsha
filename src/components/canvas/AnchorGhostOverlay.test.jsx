@@ -14,6 +14,8 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, fireEvent } from '@testing-library/react';
 import AnchorGhostOverlay from './AnchorGhostOverlay';
 import { MOTIF_TYPE, createMotifParams } from '../../lib/motif/motifLayer';
+import { getSemanticAnchors } from '../../lib/motif/semanticAnchors';
+import { resolveSelection } from '../../lib/motif/compileSelectionToChain';
 
 const CANVAS_W = 800;
 const CANVAS_H = 600;
@@ -236,6 +238,148 @@ describe('AnchorGhostOverlay', () => {
     fireEvent.pointerDown(excluded);
     const [, patch] = onUpdateLayer.mock.calls[0];
     expect(patch.params.binding.selection.overrides.exclude).not.toContain('crossing:0:0');
+  });
+});
+
+// ── D-slice: CHAIN-FORM semantic motif overrides (issue #79) ──────────────────
+// A chain-form SEMANTIC motif (starter chip on a grid host, or a semantic motif
+// upgraded in the rack) stores its selection as `binding.chain` and drops
+// `binding.selection` (C1 mutual-exclusivity). Its overrides live TOP-LEVEL at
+// `binding.overrides` — the SAME slot the render seam (MotifPattern.js:111) reads.
+// The overlay must READ overrides/roles + placements shape-aware, and WRITE the
+// toggle to `binding.overrides` WITHOUT resurrecting `selection` and WITHOUT
+// forcing a legacy binding into chain-form.
+describe('AnchorGhostOverlay — chain-form semantic overrides (D)', () => {
+  // The EXACT compiled form of `crossingBinding` (roles crossing, rate n:2). The
+  // compileSelectionToChain byte-identity contract guarantees this renders the
+  // same survivors/placed set as the legacy binding — that parity is the proof
+  // the placement swap is wired to the real render path.
+  const chainCrossingBinding = {
+    chain: [
+      { type: 'route', roles: ['crossing'], pathScope: 'all' },
+      { type: 'everyN', n: 2, offset: 0, continuous: true },
+      { type: 'density', density: 1, seed: 1, rngMode: 'sequential' },
+    ],
+    placement: {},
+  };
+
+  // Recompute anchors exactly as the overlay does (formula host, params-only),
+  // so we can run the real render seam against a toggled binding.
+  function gridAnchors(host) {
+    return getSemanticAnchors(host.patternType, host.params, CANVAS_W, CANVAS_H, {
+      hostSeed: host.seed,
+    });
+  }
+
+  it('renders placed + candidate for a chain-form binding (chain path drives placement)', () => {
+    const host = gridHost();
+    const m = motif('m1', host.id, chainCrossingBinding);
+    const { container } = renderOverlay({ layers: [host, m], selectedLayerId: m.id });
+    expect(container.querySelectorAll('[data-state="placed"]').length).toBeGreaterThan(0);
+    expect(container.querySelectorAll('[data-state="candidate"]').length).toBeGreaterThan(0);
+  });
+
+  it('placement parity: chain-form placed set === legacy placed set (target #4)', () => {
+    const host = gridHost();
+    const legacyM = motif('mL', host.id, crossingBinding);
+    const chainM = motif('mC', host.id, chainCrossingBinding);
+    const { container: cL } = renderOverlay({ layers: [host, legacyM], selectedLayerId: legacyM.id });
+    const { container: cC } = renderOverlay({ layers: [host, chainM], selectedLayerId: chainM.id });
+    const placedIds = (c) =>
+      new Set(
+        [...c.querySelectorAll('[data-state="placed"]')].map((d) => d.getAttribute('data-anchor-id'))
+      );
+    const legacyPlaced = placedIds(cL);
+    const chainPlaced = placedIds(cC);
+    expect(chainPlaced.size).toBeGreaterThan(0);
+    expect([...chainPlaced].sort()).toEqual([...legacyPlaced].sort());
+  });
+
+  it('excluding a placed anchor writes binding.overrides (NOT selection), no selection key, one undo (targets #1/#3/#5)', () => {
+    const host = gridHost();
+    const m = motif('m1', host.id, chainCrossingBinding);
+    const onUpdateLayer = vi.fn();
+    const { container } = renderOverlay({ layers: [host, m], selectedLayerId: m.id, onUpdateLayer });
+    const placed = container.querySelector('[data-state="placed"]');
+    const id = placed.getAttribute('data-anchor-id');
+    fireEvent.pointerDown(placed);
+
+    // One undo entry.
+    expect(onUpdateLayer).toHaveBeenCalledTimes(1);
+    const [layerId, patch] = onUpdateLayer.mock.calls[0];
+    expect(layerId).toBe('m1');
+    const nb = patch.params.binding;
+
+    // Written to TOP-LEVEL binding.overrides; NO selection resurrection (C1).
+    expect(nb.overrides.exclude).toContain(id);
+    expect(nb.overrides.include).not.toContain(id);
+    expect('selection' in nb).toBe(false);
+    // chain preserved verbatim (not rewritten by an override toggle).
+    expect(nb.chain).toBe(chainCrossingBinding.chain);
+
+    // RENDER SEAM honors it: the toggled id is absent from survivors (target #1 —
+    // effect, not payload shape). Runs the exact path MotifPattern.js:108 uses.
+    const anchors = gridAnchors(host);
+    const { survivors } = resolveSelection(nb, anchors, { overrides: nb.overrides });
+    expect(survivors.map((a) => a.id)).not.toContain(id);
+  });
+
+  it('including a candidate writes binding.overrides.include + render seam adds it (target #1)', () => {
+    const host = gridHost();
+    const m = motif('m1', host.id, chainCrossingBinding);
+    const onUpdateLayer = vi.fn();
+    const { container } = renderOverlay({ layers: [host, m], selectedLayerId: m.id, onUpdateLayer });
+    const candidate = container.querySelector('[data-state="candidate"]');
+    const id = candidate.getAttribute('data-anchor-id');
+    fireEvent.pointerDown(candidate);
+
+    expect(onUpdateLayer).toHaveBeenCalledTimes(1);
+    const nb = onUpdateLayer.mock.calls[0][1].params.binding;
+    expect(nb.overrides.include).toContain(id);
+    expect('selection' in nb).toBe(false);
+
+    const anchors = gridAnchors(host);
+    const { survivors } = resolveSelection(nb, anchors, { overrides: nb.overrides });
+    expect(survivors.map((a) => a.id)).toContain(id);
+  });
+
+  it('round-trip: exclude → un-exclude restores (chain-form)', () => {
+    const host = gridHost();
+    // Pre-seed an exclude override at top-level binding.overrides on a placed id.
+    const seeded = {
+      chain: chainCrossingBinding.chain,
+      overrides: { include: [], exclude: [] },
+      placement: {},
+    };
+    // Find a placed id first via a scratch render.
+    const scratch = renderOverlay({ layers: [host, motif('mS', host.id, chainCrossingBinding)], selectedLayerId: 'mS' });
+    const placedId = scratch.container.querySelector('[data-state="placed"]').getAttribute('data-anchor-id');
+    seeded.overrides.exclude = [placedId];
+
+    const m = motif('m1', host.id, seeded);
+    const onUpdateLayer = vi.fn();
+    const { container } = renderOverlay({ layers: [host, m], selectedLayerId: m.id, onUpdateLayer });
+    const excluded = container.querySelector('[data-state="excluded"]');
+    expect(excluded).not.toBeNull();
+    expect(excluded.getAttribute('data-anchor-id')).toBe(placedId);
+    fireEvent.pointerDown(excluded);
+    const nb = onUpdateLayer.mock.calls[0][1].params.binding;
+    expect(nb.overrides.exclude).not.toContain(placedId);
+    expect('selection' in nb).toBe(false);
+  });
+
+  it('LEGACY binding stays legacy: toggle writes selection.overrides, NO chain key added (no forced migration, target #2)', () => {
+    const host = gridHost();
+    const m = motif('m1', host.id, crossingBinding);
+    const onUpdateLayer = vi.fn();
+    const { container } = renderOverlay({ layers: [host, m], selectedLayerId: m.id, onUpdateLayer });
+    const placed = container.querySelector('[data-state="placed"]');
+    const id = placed.getAttribute('data-anchor-id');
+    fireEvent.pointerDown(placed);
+    expect(onUpdateLayer).toHaveBeenCalledTimes(1);
+    const nb = onUpdateLayer.mock.calls[0][1].params.binding;
+    expect(nb.selection.overrides.exclude).toContain(id);
+    expect('chain' in nb).toBe(false); // legacy stays legacy — no migration
   });
 });
 

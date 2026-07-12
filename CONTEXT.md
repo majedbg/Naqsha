@@ -106,3 +106,42 @@ The calibrated optics recipe a preview material resolves to (clear acrylic,
 fluorescent acrylic, plywood…). The single source of truth for how a material
 renders; grounded in measured properties of the physical stock.
 _Avoid_: Material descriptor (identity only — kind, color, thickness — not optics)
+
+### Raster Etch
+
+**Etch**:
+A layer that turns an imported photograph into a laser engraving by mapping its
+tonal values to a 1-bit dot field — the raster counterpart to the vector layers
+(pattern / import / text / motif). An Etch always resolves to the engrave role and
+exports as an embedded bitmap, never as vector geometry. What renders on screen is
+exactly what etches (WYSIWYG); the laser threshold-passes the bitmap, it never
+re-dithers it.
+_Avoid_: Image (overloaded — SVG `import` is also an image), Raster (implementation
+word), Photo (the source, not the layer)
+
+**Etch Stack**:
+The ordered, reorderable rack of Stages an Etch's image flows through before it
+becomes the exported 1-bit bitmap — tone first, then value-to-dot mapping, then
+optional texture. Order is part of the document: the same Stages in a different
+order are a different Etch (paper-texture before vs after dithering reads
+differently). The rack model mirrors the motif Chain but is a distinct subsystem
+operating on pixels, not anchors.
+_Avoid_: Chain (reserved for motif anchor-streams), pipeline (the fixed internal
+engine), effect chain (overloaded)
+
+**Stage**:
+One unit in an Etch Stack — it transforms the pixel field (tone/levels), maps value
+to dots (dither, halftone), or textures it (paper). A Stage can be bypassed without
+being removed and reordered freely, like a device in an audio rack.
+_Avoid_: Block (reserved for motif Chains), Pass (collides with the Operation
+machine parameter), Effect / Filter (glossary-forbidden), Device (reserved for
+inspector panels)
+
+**Highlight Hold**:
+The guarantee that highlights above a cutoff produce zero etched dots — the "err on
+the side of NOT etching" floor that protects irreversible surfaces like mirror
+acrylic. Applied AFTER screening (a fixed terminal clamp, never a reorderable
+Stage), so no dither error-diffusion can violate it; the held region is shaded in
+the preview. Defaults on for mirror stock, off for forgiving stock.
+_Avoid_: White clamp / white-point (that is a Tone-Stage Levels control, which
+shapes but does not guarantee), Threshold (the screening cut, a different thing)

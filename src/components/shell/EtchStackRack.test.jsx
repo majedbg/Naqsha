@@ -12,6 +12,9 @@ function toneStack() {
     { id: 't1', type: 'tone', bypassed: false, params: { exposure: 0, brightness: 0, contrast: 0, levels: { blackPoint: 0, whitePoint: 255, gamma: 1 } } },
   ];
 }
+function ditherStage(id = 'd1', bypassed = false) {
+  return { id, type: 'dither', bypassed, params: { mode: 'floyd-steinberg', size: 1 } };
+}
 
 describe('EtchStackRack', () => {
   it('self-hides for a non-Etch layer', () => {
@@ -83,5 +86,70 @@ describe('EtchStackRack', () => {
     expect(screen.getByTestId('levels-black')).toBeInTheDocument();
     expect(screen.getByTestId('levels-white')).toBeInTheDocument();
     expect(screen.getByTestId('levels-gamma')).toBeInTheDocument();
+  });
+
+  // ── Dither Stage (S3, #82) ─────────────────────────────────────────────────
+  it('adds a Dither Stage through the canonical params write', () => {
+    const onUpdateLayer = vi.fn();
+    render(<EtchStackRack layer={etchLayer([])} onUpdateLayer={onUpdateLayer} />);
+    fireEvent.click(screen.getByTestId('etch-stack-add-dither'));
+    const patch = onUpdateLayer.mock.calls[0][1];
+    expect(patch.params.stack).toHaveLength(1);
+    expect(patch.params.stack[0].type).toBe('dither');
+    expect(patch.params.stack[0].params.mode).toBe('floyd-steinberg');
+    expect(patch.params.stack[0].params.size).toBe(1);
+  });
+
+  it('labels a Dither Stage "Dither" and never leaks a forbidden motif word', () => {
+    render(<EtchStackRack layer={etchLayer([ditherStage()])} onUpdateLayer={() => {}} />);
+    const rack = screen.getByTestId('etch-stack-rack');
+    expect(rack).toHaveTextContent(/Dither/);
+    expect(rack.textContent).not.toMatch(/\b(Chain|Block|effect|filter|device|pass)\b/i);
+  });
+
+  it('the Dither body exposes a mode selector (FS + Bayer 2/4/8) and a size slider', () => {
+    render(<EtchStackRack layer={etchLayer([ditherStage()])} onUpdateLayer={() => {}} />);
+    fireEvent.click(screen.getByTestId('etch-stage-expand'));
+    const body = screen.getByTestId('etch-dither-body');
+    const mode = within(body).getByTestId('dither-mode');
+    const values = Array.from(mode.querySelectorAll('option')).map((o) => o.value);
+    expect(values).toEqual(['floyd-steinberg', 'bayer-2', 'bayer-4', 'bayer-8']);
+    expect(within(body).getByTestId('dither-size')).toBeInTheDocument();
+  });
+
+  it('switching mode patches params.mode', () => {
+    const onUpdateLayer = vi.fn();
+    render(<EtchStackRack layer={etchLayer([ditherStage()])} onUpdateLayer={onUpdateLayer} />);
+    fireEvent.click(screen.getByTestId('etch-stage-expand'));
+    fireEvent.change(screen.getByTestId('dither-mode'), { target: { value: 'bayer-8' } });
+    expect(onUpdateLayer.mock.calls[0][1].params.stack[0].params.mode).toBe('bayer-8');
+  });
+
+  it('changing size patches params.size', () => {
+    const onUpdateLayer = vi.fn();
+    render(<EtchStackRack layer={etchLayer([ditherStage()])} onUpdateLayer={onUpdateLayer} />);
+    fireEvent.click(screen.getByTestId('etch-stage-expand'));
+    fireEvent.change(screen.getByTestId('dither-size'), { target: { value: '4' } });
+    expect(onUpdateLayer.mock.calls[0][1].params.stack[0].params.size).toBe(4);
+  });
+
+  it('badges a SECOND (non-winning) screening Stage as inactive — only one screens', () => {
+    render(<EtchStackRack layer={etchLayer([ditherStage('d1'), ditherStage('d2')])} onUpdateLayer={() => {}} />);
+    const rows = screen.getAllByTestId('etch-stage-row');
+    // First Dither is the active screen (no inactive badge); the second is badged.
+    expect(within(rows[0]).queryByTestId('stage-inactive')).toBeNull();
+    expect(within(rows[1]).getByTestId('stage-inactive')).toBeInTheDocument();
+  });
+
+  it('badges ANY Stage positioned below the active screen as inactive (post-screen)', () => {
+    // A Tone Stage dragged BELOW the active Dither is post-screen — it runs on
+    // nothing (applyFieldStages stops at the screen). It must show that feedback,
+    // not silently do nothing.
+    const toneStage = (id) => ({ id, type: 'tone', bypassed: false, params: { exposure: 0, brightness: 0, contrast: 0, levels: { blackPoint: 0, whitePoint: 255, gamma: 1 } } });
+    render(<EtchStackRack layer={etchLayer([toneStage('t-above'), ditherStage('d1'), toneStage('t-below')])} onUpdateLayer={() => {}} />);
+    const rows = screen.getAllByTestId('etch-stage-row');
+    expect(within(rows[0]).queryByTestId('stage-inactive')).toBeNull(); // Tone above the screen: active
+    expect(within(rows[1]).queryByTestId('stage-inactive')).toBeNull(); // the active screen itself
+    expect(within(rows[2]).getByTestId('stage-inactive')).toBeInTheDocument(); // Tone below: inactive
   });
 });

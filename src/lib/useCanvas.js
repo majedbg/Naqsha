@@ -438,8 +438,11 @@ export default function useCanvas(
       if (!isEtchLayer(layer)) continue;
       const { source, dpi, stack } = layer.params || {};
       // Include the Etch Stack in the signature so editing a Stage (add /
-      // reorder / bypass / any Tone control) re-resolves the single-source
-      // bitmap live — the Stack shapes the luma field the cut screens.
+      // reorder / bypass / any Tone/Dither control — mode & size live in each
+      // Stage's params, which JSON.stringify captures) re-resolves the
+      // single-source bitmap live. threshold/invert are intentionally OMITTED:
+      // they are not Etch-layer params yet (resolveEtchBitmap passes only
+      // { stack }), so there is nothing to key on until they become controls.
       const sig = `${dpi}|${canvasW}|${canvasH}|${source || ''}|${JSON.stringify(stack || [])}`;
       live.add(layer.id);
       const cached = cache.get(layer.id);

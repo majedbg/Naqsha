@@ -16,7 +16,14 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { isEtchLayer } from '../../lib/etch/etchLayer';
-import { createToneStage, STAGE_TONE } from '../../lib/etch/etchStage';
+import {
+  createToneStage,
+  createDitherStage,
+  STAGE_TONE,
+  STAGE_DITHER,
+  activeScreeningIndex,
+} from '../../lib/etch/etchStage';
+import { DITHER_MODES } from '../../lib/etch/etchDither';
 import { lumaHistogram } from '../../lib/etch/etchTone';
 import {
   addStage,
@@ -26,7 +33,12 @@ import {
   patchStageParams,
 } from '../../lib/etch/etchStackEditor';
 
-const STAGE_LABEL = { [STAGE_TONE]: 'Tone' };
+const STAGE_LABEL = { [STAGE_TONE]: 'Tone', [STAGE_DITHER]: 'Dither' };
+
+// The device-pixels-per-dither-cell range for the size slider (matches the
+// reference "size" control): 1 = full-resolution dots, up to a coarse ceiling.
+const DITHER_SIZE_MIN = 1;
+const DITHER_SIZE_MAX = 8;
 
 // Shared gamma range for BOTH the Tone gamma slider and the Levels midtone
 // handle (both bound to the one levels.gamma). Kept in sync so a handle-set
@@ -216,6 +228,47 @@ function ToneStageBody({ stage, source, onPatch }) {
   );
 }
 
+// The Dither Stage body: the screen MODE (Floyd–Steinberg or ordered Bayer
+// 2/4/8) and the SIZE (device-pixels per dither cell). A Dither Stage is the
+// screening producer — it maps the toned field to 1-bit dots, so its controls
+// choose HOW the tonal gradient becomes dot density (FS = smoothest diffusion;
+// Bayer = mechanical matrix), not how the field is toned.
+function DitherStageBody({ stage, onPatch }) {
+  const mode = stage.params?.mode ?? DITHER_MODES[0].value;
+  const size = stage.params?.size ?? 1;
+  return (
+    <div className="space-y-1.5 pt-1" data-testid="etch-dither-body">
+      <label className="flex items-center gap-2 text-[11px] text-ink-soft">
+        <span className="w-16 shrink-0">Mode</span>
+        <select
+          data-testid="dither-mode"
+          value={mode}
+          onChange={(e) => onPatch({ mode: e.target.value })}
+          className="flex-1 rounded-xs border border-hairline bg-paper-warm px-1 py-0.5 text-[11px] text-ink"
+        >
+          {DITHER_MODES.map((m) => (
+            <option key={m.value} value={m.value}>{m.label}</option>
+          ))}
+        </select>
+      </label>
+      <label className="flex items-center gap-2 text-[11px] text-ink-soft">
+        <span className="w-16 shrink-0">Size</span>
+        <input
+          type="range"
+          min={DITHER_SIZE_MIN}
+          max={DITHER_SIZE_MAX}
+          step={1}
+          value={size}
+          data-testid="dither-size"
+          onChange={(e) => onPatch({ size: Number(e.target.value) })}
+          className="h-1 flex-1 accent-violet"
+        />
+        <span className="w-10 shrink-0 text-right tabular-nums text-ink num">{size}</span>
+      </label>
+    </div>
+  );
+}
+
 /**
  * The Etch Stack rack. Self-hides for non-Etch layers so the Inspector can drop
  * it in unconditionally.
@@ -233,8 +286,17 @@ export default function EtchStackRack({ layer, onUpdateLayer }) {
 
   const writeStack = (next) => onUpdateLayer(layer.id, { params: { ...params, stack: next } });
 
+  // The ONE active screen (first non-bypassed screening Stage) — every OTHER
+  // screening Stage is inactive and gets badged, reflecting the exactly-one rule.
+  const screenIdx = activeScreeningIndex(stack);
+
   const onAdd = () => {
     const stage = createToneStage();
+    writeStack(addStage(stack, stage));
+    setExpanded((s) => new Set(s).add(stage.id));
+  };
+  const onAddDither = () => {
+    const stage = createDitherStage();
     writeStack(addStage(stack, stage));
     setExpanded((s) => new Set(s).add(stage.id));
   };
@@ -310,6 +372,19 @@ export default function EtchStackRack({ layer, onUpdateLayer }) {
                     >
                       {STAGE_LABEL[stage.type] || stage.type}
                     </button>
+                    {screenIdx >= 0 && index > screenIdx && (
+                      <span
+                        data-testid="stage-inactive"
+                        title={
+                          stage.type === STAGE_DITHER
+                            ? 'A screening Stage above this one already screens — only one screens at a time'
+                            : 'This Stage is below the active screen (post-screen) — it does not run yet'
+                        }
+                        className="rounded-xs border border-hairline px-1.5 py-0.5 text-[10px] font-medium text-ink-soft/60"
+                      >
+                        Inactive
+                      </span>
+                    )}
                     <button
                       type="button"
                       data-testid="etch-stage-bypass"
@@ -337,19 +412,32 @@ export default function EtchStackRack({ layer, onUpdateLayer }) {
                   {isOpen && stage.type === STAGE_TONE && (
                     <ToneStageBody stage={stage} source={source} onPatch={(patch) => onPatch(stage.id, patch)} />
                   )}
+                  {isOpen && stage.type === STAGE_DITHER && (
+                    <DitherStageBody stage={stage} onPatch={(patch) => onPatch(stage.id, patch)} />
+                  )}
                 </li>
               );
             })}
           </ul>
 
-          <button
-            type="button"
-            data-testid="etch-stack-add"
-            onClick={onAdd}
-            className="w-full rounded-xs border border-hairline bg-paper-warm px-2 py-1 text-[11px] font-medium text-ink-soft transition-colors hover:border-violet hover:text-ink"
-          >
-            + Add Tone Stage
-          </button>
+          <div className="flex gap-1.5">
+            <button
+              type="button"
+              data-testid="etch-stack-add"
+              onClick={onAdd}
+              className="flex-1 rounded-xs border border-hairline bg-paper-warm px-2 py-1 text-[11px] font-medium text-ink-soft transition-colors hover:border-violet hover:text-ink"
+            >
+              + Tone Stage
+            </button>
+            <button
+              type="button"
+              data-testid="etch-stack-add-dither"
+              onClick={onAddDither}
+              className="flex-1 rounded-xs border border-hairline bg-paper-warm px-2 py-1 text-[11px] font-medium text-ink-soft transition-colors hover:border-violet hover:text-ink"
+            >
+              + Dither Stage
+            </button>
+          </div>
         </>
       )}
     </div>

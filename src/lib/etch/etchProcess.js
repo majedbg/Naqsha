@@ -9,19 +9,23 @@
 // Materializing the buffer twice, or re-thresholding at export, would break
 // WYSIWYG — so this function is the ONLY place the cut happens.
 //
-// The Etch Stack (S2, #81) drops in as a field→field transform BETWEEN the gray
-// field and the cut: image → toGrayField → applyStack(ordered Stages) →
-// globalMask → bits. Screening stays the S1 plain global threshold at the tail;
-// the Stages only shape the luma field feeding it (Dither/Halftone screening
-// Stages arrive in S3/S5). No stack (the default) = exact S1 behaviour, so the
-// buffer feeding both consumers is unchanged and the S1 invariant tests stay
-// green. Highlight Hold (a fixed terminal clamp, never a Stage) is still future.
+// The Etch Stack drops Stages BETWEEN the gray field and the 1-bit output:
+//   image → toGrayField → apply FIELD Stages (Tone) in order → SCREEN → bits.
+// The SCREEN is the terminal producer and obeys the one-screen rule (S3, #82,
+// decision 8; the rule itself lives in etchStage): if an active screening Stage
+// (Dither now, Halftone in S5) is present, IT produces the bits; with none (empty
+// stack, Tone-only, or all screens bypassed) the plain global-threshold fallback
+// (globalMask) runs — byte-identical to the S1/S2 behaviour, so the S1/S2
+// invariant tests stay green. Whichever branch runs, `bits` is materialized
+// exactly ONCE here — the single source of truth both the canvas render and the
+// SVG export read (grilled decision 4, WYSIWYG), now holding WITH dithering too.
+// Highlight Hold (a fixed terminal clamp, never a Stage) is still future.
 //
 // Pure typed-array math, no DOM / no canvas, so it runs identically on the main
 // thread, in a Web Worker (etch.worker), and headless under vitest.
 
 import { toGrayField, globalMask } from '../extraction/preprocess.js';
-import { applyStack } from './etchStage.js';
+import { applyFieldStages, activeScreeningStage, screenStage } from './etchStage.js';
 
 /**
  * The plain global cut screening applies at the TAIL. Luma < ETCH_THRESHOLD
@@ -54,7 +58,12 @@ export const ETCH_THRESHOLD = 128;
  */
 export function etchSourceToBitmap(imageData, { threshold = ETCH_THRESHOLD, invert = false, stack } = {}) {
   const gray = toGrayField(imageData);
-  const field = applyStack(gray, stack);
-  const bits = globalMask(field, threshold, invert);
+  const field = applyFieldStages(gray, stack);
+  // One-screen rule: an active screening Stage produces the bits; else the plain
+  // global cut. Either way `bits` is materialized once — the single-source buffer.
+  const screen = activeScreeningStage(stack);
+  const bits = screen
+    ? screenStage(field, screen, { threshold, invert })
+    : globalMask(field, threshold, invert);
   return { bits, width: field.width, height: field.height };
 }

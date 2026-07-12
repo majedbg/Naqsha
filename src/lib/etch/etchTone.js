@@ -90,8 +90,8 @@ export function applyLevels(field, levels = NEUTRAL_LEVELS) {
  * (preprocess.adjustField) → levels, in that fixed order. Each sub-op returns
  * the SAME field object when its slice is neutral, so fully-neutral params are a
  * pixel-exact identity — "adding a Tone Stage changes nothing until you move a
- * control." (Bypass is handled one level up, in applyStack, by skipping the
- * Stage entirely; this is the separate default-params guard.)
+ * control." (Bypass is handled one level up, in applyFieldStages, by skipping
+ * the Stage entirely; this is the separate default-params guard.)
  *
  * @param {{gray:Float64Array, alpha, width:number, height:number}} field
  * @param {{exposure:number, brightness:number, contrast:number, levels:object}} params

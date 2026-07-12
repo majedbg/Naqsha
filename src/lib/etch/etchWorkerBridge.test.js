@@ -1,7 +1,8 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { computeEtchBitmap } from './etchWorkerBridge.js';
 import { etchSourceToBitmap } from './etchProcess.js';
-import { createToneStage } from './etchStage.js';
+import { createToneStage, createDitherStage } from './etchStage.js';
+import { DITHER_BAYER_4 } from './etchDither.js';
 
 function grayImage(rows) {
   const height = rows.length;
@@ -114,6 +115,57 @@ describe('worker-path Etch Stack parity (S2, #81)', () => {
   it('computeEtchBitmap forwards options.stack through a structured-clone boundary', async () => {
     // Faithful stand-in: clone the posted payload (as postMessage would), run the
     // worker contract, clone the result back.
+    class CloningWorker {
+      postMessage(msg) {
+        const clone = structuredClone(msg);
+        const { bits, width, height } = etchSourceToBitmap(clone.image, clone.options);
+        const back = structuredClone({ type: 'result', id: clone.id, bits, width, height });
+        queueMicrotask(() => this.onmessage({ data: back }));
+      }
+      terminate() {}
+    }
+    const viaWorker = await computeEtchBitmap(source, options, { workerFactory: () => new CloningWorker() });
+    const inline = etchSourceToBitmap(source, options);
+    expect(Array.from(viaWorker.bits)).toEqual(Array.from(inline.bits));
+  });
+});
+
+// A SCREENING Stage travels the same plain-data path as a field Stage, but it
+// produces the bits — so the worker must screen identically to the inline path.
+// If `options.stack`'s Dither params were dropped/renamed across the boundary the
+// worker would fall back to the plain cut and these would diverge.
+describe('worker-path Dither Stage parity (S3, #82)', () => {
+  const source = grayImage([
+    [0, 255, 60, 200, 32, 220, 96, 160],
+    [40, 90, 160, 210, 128, 64, 192, 16],
+    [130, 120, 128, 127, 200, 30, 150, 90],
+    [10, 245, 133, 122, 70, 205, 118, 48],
+  ]);
+  const stage = createDitherStage();
+  stage.params = { mode: DITHER_BAYER_4, size: 2 };
+  const options = { stack: [stage] };
+
+  it('the REAL etch.worker.js screens a Dither Stack identically to the inline path', async () => {
+    const posted = [];
+    const prevSelf = globalThis.self;
+    globalThis.self = { onmessage: null, postMessage: (msg) => posted.push(msg) };
+    try {
+      vi.resetModules(); // force the worker to re-register onmessage on THIS self
+      await import('./etch.worker.js');
+      const payload = structuredClone({ type: 'etch', id: 11, image: source, options });
+      globalThis.self.onmessage({ data: payload });
+    } finally {
+      globalThis.self = prevSelf;
+    }
+    const result = posted.find((m) => m.type === 'result' && m.id === 11);
+    const inline = etchSourceToBitmap(source, options);
+    expect(result).toBeTruthy();
+    expect(Array.from(result.bits)).toEqual(Array.from(inline.bits));
+    // Guard: the screen actually produced dithered dots (not the plain cut).
+    expect(Array.from(inline.bits)).not.toEqual(Array.from(etchSourceToBitmap(source).bits));
+  });
+
+  it('computeEtchBitmap forwards a Dither Stage across a structured-clone boundary', async () => {
     class CloningWorker {
       postMessage(msg) {
         const clone = structuredClone(msg);

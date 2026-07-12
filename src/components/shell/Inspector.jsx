@@ -52,8 +52,17 @@ import { channelForTarget } from "../../lib/fields/channelConsumers";
 import { canProduceLattice } from "../../lib/fields/latticeForLayer";
 import { resolveModulationForTarget } from "../../lib/fields/resolveModulationForTarget";
 import { ANCHOR_POS, ANCHOR_MID, ANCHOR_NEG } from "../../lib/fields/colormap";
-import { isMotifLayer, motifHostId, deepMergeBinding } from "../../lib/motif/motifLayer";
+import {
+  isMotifLayer,
+  motifHostId,
+  deepMergeBinding,
+  readChain,
+  ensureChainForm,
+} from "../../lib/motif/motifLayer";
 import { MOTIF_GLYPHS, getGlyph } from "../../lib/motif/glyphs";
+import { MOTIF_HOSTS, isSemanticHost } from "../../lib/motif/hostKinds";
+import { STARTER_CHIPS } from "../../lib/motif/starterChips";
+import MotifBlockRack from "./MotifBlockRack";
 
 // Modulation-scoped param control: the Grid's `warpNodes` slider (2–24). Reuses
 // the file's `accent-violet` range styling. Rendered INSIDE a <ModulationParamBox>
@@ -546,21 +555,13 @@ function ModulatorDevice({
   );
 }
 
-// Hosts that expose semantic anchors today. Grid/recursive/spiral derive anchors
-// from params (formula); voronoi derives them from its DRAWN cells, captured at
-// render time and threaded through useCanvas → resolveMotifHostParams → the
-// MotifPattern semantic path (see src/lib/motif/semanticAnchors.js). Edge-on-
-// arbitrary hosts still need a generic drawn-geometry seam and remain excluded.
-// The anchor-ghost overlay does NOT yet support voronoi (it can't reach the
-// per-frame hostGeometry) — deferred follow-on.
-const MOTIF_HOSTS = new Set(["grid", "recursive", "spiral", "voronoi"]);
-
-const MOTIF_ROLES = [
-  { key: "crossing", label: "Crossings" },
-  { key: "edge", label: "Edges" },
-  { key: "tip", label: "Tips" },
-  { key: "cell", label: "Cells" },
-];
+// Legal motif hosts now come from the shared classifier (src/lib/motif/hostKinds):
+// the SEMANTIC hosts (grid/recursive/spiral/voronoi) expose structural anchors,
+// while B2's EDGE hosts (flowfield/wave/…) support generic edge-mode motifs via
+// drawn-polyline capture. MOTIF_HOSTS below is the UNION — every type the device
+// may attach a motif to. Whether a given host uses semantic or edge anchoring is
+// resolved downstream (resolveMotifHostParams forces anchorMode:'edge' for edge
+// hosts); the device only branches on isSemanticHost for its role defaults/UI.
 
 // Motif device panel — add/edit/remove motifs that ADORN this host layer.
 // Shown ONLY for an eligible HOST (a grid/recursive/spiral pattern layer, never
@@ -569,7 +570,7 @@ const MOTIF_ROLES = [
 // placement binding. Every write re-spreads the whole params.binding via
 // deepMergeBinding so a partial patch never clobbers another branch — same
 // re-spread invariant as ModulatorDevice, extended to a nested schema.
-function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, customGlyphs, onEditGlyph, onNewMotif, onImportFile, libraryMotifs, onCopyLibraryGlyph, onUseLibraryGlyph }) {
+function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, customGlyphs, onEditGlyph, onNewMotif, onImportFile, libraryMotifs, onCopyLibraryGlyph, onUseLibraryGlyph, motifPick, onMotifPick }) {
   // Collapsed by default (mobile discoverability: the device sits at the TOP of
   // the Inspector for a host layer but stays folded until the user opens it).
   // Declared BEFORE the self-hide early return — the component renders
@@ -608,7 +609,10 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, 
   );
 
   // Rebuild params.binding whole on every write (deep-merge the patch), then
-  // re-spread params (onUpdateLayer shallow-merges the top level).
+  // re-spread params (onUpdateLayer shallow-merges the top level). Used ONLY for
+  // PLACEMENT edits (Size / Flip) — placement is a fixed tail (ADR-0004), never a
+  // chain block, so a placement edit on a legacy binding legitimately keeps it
+  // legacy (the mutual-exclusivity trap is about CHAIN edits, not placement).
   const patchMotif = (m, bindingPatch) =>
     onUpdateLayer(m.id, {
       params: {
@@ -616,6 +620,25 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, 
         binding: deepMergeBinding(m.params?.binding, bindingPatch),
       },
     });
+
+  // The Block-chain edit path (C2) — the FIRST block edit on a legacy binding
+  // must rewrite legacy→chain AND apply the edit as ONE undo entry (the C1
+  // handoff trap): ensureChainForm FIRST (compiles + DROPS `selection`, so
+  // deepMergeBinding can't resurrect it), then produce the new chain array, then a
+  // SINGLE onUpdateLayer. `mutate` is a pure chainEditor op over the base chain;
+  // when it returns the SAME array ref (a rejected drop / forbidden add) we skip
+  // the write entirely — no legacy→chain migration, no phantom undo entry.
+  const editChain = (m, mutate) => {
+    const base = ensureChainForm(m.params?.binding);
+    const nextChain = mutate(base.chain);
+    if (nextChain === base.chain) return; // no-op → no churn
+    onUpdateLayer(m.id, {
+      params: {
+        ...m.params,
+        binding: deepMergeBinding(base, { chain: nextChain }),
+      },
+    });
+  };
 
   // Arm the shared file input for a specific motif row, then open the picker.
   const openImportFor = (motifId) => {
@@ -629,6 +652,17 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, 
   // grilled decision 3). Inspector just names which layer + ref was clicked.
   const openEditorFor = (m) => {
     onEditGlyph?.(m.id, m.params?.glyphRef);
+  };
+
+  // Tap a Sequencer SLOT → open that slot's glyph in the Motif Edit Session with
+  // SLOT CONTEXT (C3, #79). The session's fork/Save-as-copy paths rebind THIS
+  // slot (binding.chain[seq].slots[slotIndex].glyphRef) instead of the layer's
+  // base glyphRef; editing a custom slot in place needs no rebind (shared id).
+  // `glyphRef` is the slot's effective ref (slot.glyphRef ?? base) resolved in
+  // the card. seqIndex is unused by `open` (it derives the at-most-one sequence
+  // from the binding) but kept in the signature for locality.
+  const openSlotEditorFor = (m, seqIndex, slotIndex, glyphRef) => {
+    onEditGlyph?.(m.id, glyphRef, { slotIndex });
   };
 
   // File-input mechanics only (Wave 3, #77): the read → parse → error → commit
@@ -645,12 +679,21 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, 
     onImportFile?.(file, targetId);
   };
 
+  // A SEMANTIC host (grid/voronoi/…) defaults to crossing anchors; an EDGE host
+  // (flowfield/wave/…) has only generic edge anchors, so it must default to
+  // roles:['edge'] AND anchorMode:'edge' — otherwise the crossing-role filter
+  // drops every edge anchor and nothing is placed (resolveMotifHostParams also
+  // forces edge mode, but the SELECTION roles must match here).
+  const hostIsSemantic = isSemanticHost(layer.patternType);
   const addMotif = () =>
     onAddMotif?.(layer.id, {
       glyphRef: "leaf",
-      anchorMode: "semantic",
+      anchorMode: hostIsSemantic ? "semantic" : "edge",
       binding: {
-        selection: { roles: ["crossing"], rate: { n: 1 } },
+        selection: {
+          roles: hostIsSemantic ? ["crossing"] : ["edge"],
+          rate: { n: 1 },
+        },
         placement: {
           sizing: { mode: "proportional", size: 18, min: 3, margin: 0.85 },
           orientation: { policy: "path", useNormal: true },
@@ -658,6 +701,9 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, 
         },
       },
     });
+
+  // Role scoping (semantic hosts expose crossing/tip/cell; edge hosts only Edges)
+  // now lives inside MotifBlockRack's Route card, driven by hostIsSemantic.
 
   return (
     <div
@@ -668,7 +714,17 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, 
         type="button"
         data-testid="motif-toggle"
         aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => {
+          const next = !open;
+          setOpen(next);
+          // Disarm canvas-pick on card COLLAPSE (C4 disarm event): the arm button
+          // lives inside {open && …}, so collapsing would otherwise strand the
+          // ephemeral motifPick with the overlay still armed and no visible
+          // off-switch. Only clear when THIS device owns the armed motif.
+          if (!next && motifPick && motifs.some((m) => m.id === motifPick.layerId)) {
+            onMotifPick?.(null);
+          }
+        }}
         className="flex w-full items-center gap-1.5 text-left text-xs font-semibold text-ink-soft uppercase tracking-wider outline-none hover:text-ink focus:text-ink"
       >
         <span aria-hidden="true" className="text-[10px] leading-none">
@@ -695,6 +751,54 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, 
             className="hidden"
             onChange={handleImportChange}
           />
+
+          {/* Starter chips (C5, #79) — curated one-tap chain presets, built-in
+              glyphs only. Each tap creates a NEW motif via the SAME onAddMotif
+              seam as "+ Add Motif" below, pre-populated with the chip's
+              host-aware chain + slots (chip.build(hostIsSemantic) already
+              returns a chain-form binding — createMotifParams/normalizeBinding
+              preserve `.chain` verbatim, C1 — so the rack renders its Blocks
+              immediately, no first-edit rewrite needed). */}
+          <div className="space-y-1" data-testid="motif-starter-chips">
+            <p className="text-[10px] font-medium uppercase tracking-wide text-ink-soft/70">
+              Quick start
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {STARTER_CHIPS.map((chip) => {
+                const built = chip.build(hostIsSemantic);
+                const previewGlyph = MOTIF_GLYPHS[built.glyphRef];
+                return (
+                  <button
+                    key={chip.id}
+                    type="button"
+                    data-testid={`motif-chip-${chip.id}`}
+                    title={chip.label}
+                    onClick={() => onAddMotif?.(layer.id, built)}
+                    className="flex items-center gap-1 rounded-full border border-hairline bg-paper px-2 py-1 text-[10px] text-ink-soft outline-none transition-colors hover:border-violet hover:text-ink"
+                  >
+                    <svg
+                      width="12"
+                      height="12"
+                      viewBox="-12 -12 24 24"
+                      aria-hidden="true"
+                      className="shrink-0"
+                    >
+                      {previewGlyph?.paths?.[0]?.d && (
+                        <path
+                          d={previewGlyph.paths[0].d}
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                        />
+                      )}
+                    </svg>
+                    <span className="whitespace-nowrap">{chip.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           {motifs.length === 0 && (
             <p className="text-[11px] text-ink-soft/70">
               No motifs on this host.
@@ -708,19 +812,13 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, 
         // edit" (the Edit button forks a copy first). WI-P2-2.
         const isCustomGlyph =
           !!glyphRef && !MOTIF_GLYPHS[glyphRef] && !!customGlyphs?.[glyphRef];
-        const roles = Array.isArray(m.params?.binding?.selection?.roles)
-          ? m.params.binding.selection.roles
-          : [];
-        const n = m.params?.binding?.selection?.rate?.n ?? 1;
+        // The effective Block chain for DISPLAY — readChain lazy-compiles a legacy
+        // binding on the fly so a not-yet-rewritten motif still shows its Blocks.
+        // Edit indices line up because editChain applies to ensureChainForm(old),
+        // which produces the same compiled chain.
+        const chain = readChain(m.params?.binding);
         const size = m.params?.binding?.placement?.sizing?.size ?? 18;
         const flip = m.params?.binding?.placement?.flip === true;
-
-        const toggleRole = (roleKey) => {
-          const next = roles.includes(roleKey)
-            ? roles.filter((r) => r !== roleKey)
-            : [...roles, roleKey];
-          patchMotif(m, { selection: { roles: next } });
-        };
 
         return (
           <div
@@ -842,45 +940,36 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, 
               </button>
             </div>
 
-            {/* Roles — which anchor kinds this motif adorns */}
-            <div className="flex flex-wrap gap-x-3 gap-y-1">
-              {MOTIF_ROLES.map((r) => (
-                <label
-                  key={r.key}
-                  className="flex items-center gap-1 text-[11px] text-ink-soft"
-                >
-                  <input
-                    type="checkbox"
-                    data-testid={`motif-role-${r.key}`}
-                    aria-label={r.label}
-                    checked={roles.includes(r.key)}
-                    onChange={() => toggleRole(r.key)}
-                  />
-                  <span>{r.label}</span>
-                </label>
-              ))}
-            </div>
+            {/* The Block stack (C2) — the selection CHAIN as reorderable Block
+                cards (route/everyN/skip/density/field + the terminal Sequencer).
+                Replaces the old flat role/Every-N controls; roles now live in the
+                Route card. Every edit routes through editChain (first-edit rewrite
+                as one undo entry + no-op guard). */}
+            <MotifBlockRack
+              chain={chain}
+              hostIsSemantic={hostIsSemantic}
+              onEditChain={(mutate) => editChain(m, mutate)}
+              // Canvas-pick arm state (C4): this row is armed only when the
+              // Studio-level pick target names THIS motif; onArmRoute reports the
+              // route block index back up (ephemeral, one armed at a time).
+              armedRouteIndex={
+                motifPick?.layerId === m.id ? motifPick.blockIndex : null
+              }
+              onArmRoute={(idx) =>
+                onMotifPick?.(
+                  idx == null ? null : { layerId: m.id, blockIndex: idx }
+                )
+              }
+              customGlyphs={customGlyphs}
+              baseGlyphRef={glyphRef}
+              onEditSlotGlyph={(seqIndex, slotIndex, slotGlyphRef) =>
+                openSlotEditorFor(m, seqIndex, slotIndex, slotGlyphRef)
+              }
+            />
 
-            {/* Every-Nth + Size */}
-            <div className="flex items-center gap-3">
-              <label className="flex items-center gap-1.5 text-[11px] text-ink-soft">
-                <span className="whitespace-nowrap">Every</span>
-                <input
-                  type="number"
-                  data-testid="motif-rate-n"
-                  aria-label="Every Nth"
-                  min={1}
-                  step={1}
-                  value={n}
-                  onChange={(e) => {
-                    const raw = Number(e.target.value);
-                    const next =
-                      Number.isFinite(raw) && raw >= 1 ? Math.round(raw) : 1;
-                    patchMotif(m, { selection: { rate: { n: next } } });
-                  }}
-                  className="w-12 rounded-xs border border-hairline bg-paper px-1 py-0.5 text-[11px] text-ink outline-none focus:border-violet num"
-                />
-              </label>
+            {/* Placement (fixed tail, ADR-0004 — NOT a chain block): Size + Flip.
+                Kept as fixed controls so authoring them never regresses. */}
+            <div className="space-y-1.5 border-t border-hairline/60 pt-2">
               <label className="flex items-center gap-1.5 text-[11px] text-ink-soft">
                 <span className="whitespace-nowrap">Size</span>
                 <input
@@ -900,21 +989,19 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, 
                   className="w-14 rounded-xs border border-hairline bg-paper px-1 py-0.5 text-[11px] text-ink outline-none focus:border-violet num"
                 />
               </label>
+              <label className="flex items-center gap-1.5 text-[11px] text-ink-soft">
+                <input
+                  type="checkbox"
+                  data-testid="motif-flip"
+                  aria-label="Flip"
+                  checked={flip}
+                  onChange={(e) =>
+                    patchMotif(m, { placement: { flip: e.target.checked } })
+                  }
+                />
+                <span>Flip</span>
+              </label>
             </div>
-
-            {/* Flip */}
-            <label className="flex items-center gap-1.5 text-[11px] text-ink-soft">
-              <input
-                type="checkbox"
-                data-testid="motif-flip"
-                aria-label="Flip"
-                checked={flip}
-                onChange={(e) =>
-                  patchMotif(m, { placement: { flip: e.target.checked } })
-                }
-              />
-              <span>Flip</span>
-            </label>
           </div>
         );
       })}
@@ -936,7 +1023,7 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, 
 // The param-editing body for one selected layer. Split into its own component so
 // usePatternCache (a hook) is only called when a layer is actually selected —
 // hooks can't be called conditionally inside Inspector itself.
-function SelectedLayerInspector({ layer, layers, unit, profileId, onUpdateLayer, onChangeLayerPattern, onVariableWeightChange, onPreviewField, onClosePreview, threeDSubMode, threeDFocusLayerId, onAddMotif, onRemoveLayer, customGlyphs, onEditGlyph, onNewMotif, onImportFile, libraryMotifs, onCopyLibraryGlyph, onUseLibraryGlyph }) {
+function SelectedLayerInspector({ layer, layers, unit, profileId, onUpdateLayer, onChangeLayerPattern, onVariableWeightChange, onPreviewField, onClosePreview, threeDSubMode, threeDFocusLayerId, onAddMotif, onRemoveLayer, customGlyphs, onEditGlyph, onNewMotif, onImportFile, libraryMotifs, onCopyLibraryGlyph, onUseLibraryGlyph, motifPick, onMotifPick }) {
   // Pattern swap: route through the same cache machine LayerCard uses, applied via
   // the pair-aware onChangeLayerPattern when present (falls back to a plain param
   // update so the component works standalone / in tests without a router).
@@ -987,6 +1074,8 @@ function SelectedLayerInspector({ layer, layers, unit, profileId, onUpdateLayer,
         libraryMotifs={libraryMotifs}
         onCopyLibraryGlyph={onCopyLibraryGlyph}
         onUseLibraryGlyph={onUseLibraryGlyph}
+        motifPick={motifPick}
+        onMotifPick={onMotifPick}
       />
 
       {/* Collapsible, grouped param controls (Structure / Scale / Variation /
@@ -1104,6 +1193,12 @@ export default function Inspector({
   canvasH,
   bedSize,
   onApplySheetSize,
+  // Canvas-pick (C4, #79): the ephemeral pick target `{layerId, blockIndex}` (or
+  // null) shared with the canvas AnchorGhostOverlay, and the setter. Both
+  // optional — a standalone Inspector renders the Route card without the
+  // "Pick on canvas" affordance doing anything.
+  motifPick,
+  onMotifPick,
 }) {
   // Resolved font for the text-properties readouts (cap-height / engrave
   // warnings). May be null on first paint before useFont resolves — the panel's
@@ -1196,6 +1291,8 @@ export default function Inspector({
       libraryMotifs={libraryMotifs}
       onCopyLibraryGlyph={onCopyLibraryGlyph}
       onUseLibraryGlyph={onUseLibraryGlyph}
+      motifPick={motifPick}
+      onMotifPick={onMotifPick}
     />
   );
 }

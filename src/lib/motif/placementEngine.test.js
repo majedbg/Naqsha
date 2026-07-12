@@ -738,3 +738,226 @@ describe('acceptance contract (no-overlap invariant + review fixes)', () => {
     expect(survivors.map((a) => a.id)).toEqual(['r0', 'r1', 'r2']);
   });
 });
+
+// ========================================================================
+// resolvePlacements — SEQUENCER (A4): object-form `config.sequence` deals Slots
+// to survivors and folds per-slot modifiers into each placement.
+// ========================================================================
+describe('resolvePlacements — Sequencer back-compat (no key leaks)', () => {
+  it('no sequence: NO glyphRef key on placements (byte-identical shape)', () => {
+    const anchors = Array.from({ length: 3 }, (_, i) => mkA(`a${i}`, i * 100, 0));
+    const { placements } = resolvePlacements(anchors, { sizing: { mode: 'fixed', size: 1 } });
+    for (const p of placements) {
+      expect('glyphRef' in p).toBe(false);
+    }
+  });
+
+  it('legacy string-array sequence stays byte-identical (still no glyphRef key)', () => {
+    const anchors = Array.from({ length: 4 }, (_, i) => mkA(`a${i}`, i * 100, 0));
+    const cfg = { sequence: ['A', 'B'], flip: true, sizing: { mode: 'fixed', size: 1 } };
+    const { placements } = resolvePlacements(anchors, cfg);
+    expect(placements.map((p) => p.seqId)).toEqual(['A', 'B', 'A', 'B']);
+    for (const p of placements) {
+      expect('glyphRef' in p).toBe(false);
+    }
+  });
+
+  it('an object-form block with empty slots is treated as no sequence', () => {
+    const anchors = Array.from({ length: 2 }, (_, i) => mkA(`a${i}`, i * 100, 0));
+    const { placements } = resolvePlacements(anchors, {
+      sequence: { type: 'sequence', mode: 'cycle', slots: [] },
+      sizing: { mode: 'fixed', size: 1 },
+    });
+    for (const p of placements) expect('glyphRef' in p).toBe(false);
+  });
+});
+
+describe('resolvePlacements — Sequencer glyphRef + cycle deal', () => {
+  it('sequenced placements carry the per-slot glyphRef (cycle x-o-x-o)', () => {
+    const anchors = Array.from({ length: 4 }, (_, i) => mkA(`a${i}`, i * 100, 0));
+    const { placements } = resolvePlacements(anchors, {
+      sequence: {
+        type: 'sequence',
+        mode: 'cycle',
+        slots: [{ glyphRef: 'flower' }, { glyphRef: 'leaf' }],
+      },
+      sizing: { mode: 'fixed', size: 1 },
+    });
+    expect(placements.map((p) => p.glyphRef)).toEqual(['flower', 'leaf', 'flower', 'leaf']);
+    expect(placements.map((p) => p.seqId)).toEqual([0, 1, 0, 1]); // slot index
+  });
+});
+
+describe('resolvePlacements — Sequencer Rest reserves no footprint', () => {
+  // Three anchors far enough that a glyph at a1 blocks a2, but a rest at a1
+  // frees a2. A distant a3 always places and proves the 4-draw jitter stream is
+  // preserved across the rest (identical rotation ⇒ stream not shifted).
+  const anchors = () => [
+    mkA('a0', 0, 0, { normal: 0 }),
+    mkA('a1', 6, 0, { normal: 0 }),
+    mkA('a2', 9, 0, { normal: 0 }),
+    mkA('a3', 100, 0, { normal: 0 }),
+  ];
+  // rotation-only jitter (position untouched) so acceptance is deterministic but
+  // a3.rotation still depends on the RNG stream position.
+  const jitter = { seed: 42, rotation: 1, rotationRange: 45, lateral: 0, along: 0, scale: 0 };
+  const sizing = { mode: 'fixed', size: 2.5 };
+
+  it('rest at a1 frees space for a2, and a distant a3 stays byte-identical', () => {
+    const allGlyph = resolvePlacements(anchors(), {
+      sequence: { type: 'sequence', mode: 'cycle', slots: [{ glyphRef: 'g' }] },
+      jitter,
+      sizing,
+    });
+    const withRest = resolvePlacements(anchors(), {
+      sequence: {
+        type: 'sequence',
+        mode: 'cycle',
+        // pattern A,rest,A,A ⇒ only a1 is a rest.
+        slots: [{ glyphRef: 'g' }, { rest: true }, { glyphRef: 'g' }, { glyphRef: 'g' }],
+      },
+      jitter,
+      sizing,
+    });
+
+    // a2 is REJECTED when a1 is a glyph (footprint blocks it)...
+    expect(byAnchorId(allGlyph.placements, 'a2')).toBeUndefined();
+    expect(allGlyph.rejected).toContainEqual({ anchorId: 'a2', reason: 'no-fit' });
+    // ...but ACCEPTED when a1 is a rest (rest reserved no footprint).
+    expect(byAnchorId(withRest.placements, 'a2')).toBeDefined();
+    // The rest is surfaced as a disposition, not silently dropped.
+    expect(withRest.rejected).toContainEqual({ anchorId: 'a1', reason: 'rest' });
+
+    // a3 (index 3) draws the SAME jitter block in both runs because the rest at
+    // a1 still consumed its 4 draws — proof the stream is rest-independent.
+    const a3Glyph = byAnchorId(allGlyph.placements, 'a3');
+    const a3Rest = byAnchorId(withRest.placements, 'a3');
+    expect(a3Rest.x).toBe(a3Glyph.x);
+    expect(a3Rest.y).toBe(a3Glyph.y);
+    expect(a3Rest.rotation).toBe(a3Glyph.rotation);
+  });
+});
+
+describe('resolvePlacements — Sequencer sizeScale drives acceptance packing', () => {
+  it('a bigger slot (sizeScale) rejects a neighbor that fit at scale 1', () => {
+    const anchors = () => [mkA('a0', 0, 0, { normal: 0 }), mkA('a1', 2.5, 0, { normal: 0 })];
+    // scale-1 baseline: both radius 1, distance 2.5 ≥ 2 ⇒ both fit.
+    const baseline = resolvePlacements(anchors(), {
+      sequence: { type: 'sequence', mode: 'cycle', slots: [{ glyphRef: 'a' }, { glyphRef: 'b' }] },
+      sizing: { mode: 'fixed', size: 1 },
+    });
+    expect(baseline.placements.map((p) => p.anchorId)).toEqual(['a0', 'a1']);
+
+    // a0's slot claims sizeScale 2 ⇒ radius 2; a1 (radius 1) now needs 3 > 2.5 ⇒ no-fit.
+    const bigger = resolvePlacements(anchors(), {
+      sequence: {
+        type: 'sequence',
+        mode: 'cycle',
+        slots: [{ glyphRef: 'a', sizeScale: 2 }, { glyphRef: 'b' }],
+      },
+      sizing: { mode: 'fixed', size: 1 },
+    });
+    expect(byAnchorId(bigger.placements, 'a0').radius).toBe(2);
+    expect(bigger.placements.map((p) => p.anchorId)).toEqual(['a0']);
+    expect(bigger.rejected).toContainEqual({ anchorId: 'a1', reason: 'no-fit' });
+  });
+});
+
+describe('resolvePlacements — Sequencer rotationOffset + flip precedence', () => {
+  it('rotationOffset is additive on the placement rotation', () => {
+    const anchors = [mkA('a0', 0, 0, { normal: 0 })];
+    const base = resolvePlacements(anchors, {
+      sequence: { type: 'sequence', mode: 'cycle', slots: [{ glyphRef: 'a' }] },
+      orientation: { policy: 'page', offset: 10 },
+      sizing: { mode: 'fixed', size: 1 },
+    });
+    const offset = resolvePlacements(anchors, {
+      sequence: { type: 'sequence', mode: 'cycle', slots: [{ glyphRef: 'a', rotationOffset: 30 }] },
+      orientation: { policy: 'page', offset: 10 },
+      sizing: { mode: 'fixed', size: 1 },
+    });
+    expect(base.placements[0].rotation).toBeCloseTo(10, 9);
+    expect(offset.placements[0].rotation).toBeCloseTo(40, 9);
+  });
+
+  it('slot flip (when specified) REPLACES the legacy 2-cycle; absent falls back', () => {
+    const anchors = Array.from({ length: 3 }, (_, i) => mkA(`a${i}`, i * 100, 0));
+    // legacy flip:true ⇒ 2-cycle [false,true,false]. Slot 1 forces flip:true on
+    // even index 0; slot 0 leaves it to the 2-cycle (absent ⇒ fall back).
+    const { placements } = resolvePlacements(anchors, {
+      flip: true,
+      sequence: {
+        type: 'sequence',
+        mode: 'cycle',
+        slots: [{ glyphRef: 'a', flip: true }, { glyphRef: 'b' }],
+      },
+      sizing: { mode: 'fixed', size: 1 },
+    });
+    // idx0 slot0 flip:true (specified, replaces 2-cycle's false) ⇒ true
+    // idx1 slot1 (absent) ⇒ 2-cycle at odd i ⇒ true
+    // idx2 slot0 flip:true (specified) ⇒ true
+    expect(placements.map((p) => p.flip)).toEqual([true, true, true]);
+  });
+
+  it('slot flip:false (specified) overrides the legacy 2-cycle true', () => {
+    const anchors = Array.from({ length: 2 }, (_, i) => mkA(`a${i}`, i * 100, 0));
+    const { placements } = resolvePlacements(anchors, {
+      flip: true, // legacy 2-cycle would be [false, true]
+      sequence: {
+        type: 'sequence',
+        mode: 'cycle',
+        // both slots force flip:false ⇒ legacy 2-cycle suppressed entirely.
+        slots: [{ glyphRef: 'a', flip: false }, { glyphRef: 'b', flip: false }],
+      },
+      sizing: { mode: 'fixed', size: 1 },
+    });
+    expect(placements.map((p) => p.flip)).toEqual([false, false]);
+  });
+});
+
+describe('resolvePlacements — Sequencer determinism + rotationRandom fold', () => {
+  it('sequenced run is byte-identical across two calls', () => {
+    const anchors = () => Array.from({ length: 6 }, (_, i) => mkA(`edge:0:${i}`, i * 30, 0, { normal: 0.3 }));
+    const cfg = {
+      sequence: {
+        type: 'sequence',
+        mode: 'random',
+        seed: 13,
+        slots: [
+          { glyphRef: 'a', sizeScale: 1.2, rotationRandom: { range: 20, spread: 'bell' } },
+          { glyphRef: 'b', weight: 2 },
+          { rest: true },
+        ],
+      },
+      jitter: { seed: 5, lateral: 0.5, lateralRange: 4, rotation: 0.5, rotationRange: 15 },
+      sizing: { mode: 'fixed', size: 3 },
+    };
+    const a = resolvePlacements(anchors(), cfg);
+    const b = resolvePlacements(anchors(), cfg);
+    expect(a.placements).toEqual(b.placements);
+    expect(a.rejected).toEqual(b.rejected);
+  });
+
+  it('rotationRandom folds into rotation (deterministic, per-anchor stable)', () => {
+    const anchors = [mkA('edge:0:7', 0, 0, { normal: 0 })];
+    const plain = resolvePlacements(anchors, {
+      sequence: { type: 'sequence', mode: 'cycle', seed: 2, slots: [{ glyphRef: 'a' }] },
+      orientation: { policy: 'page', offset: 0 },
+      sizing: { mode: 'fixed', size: 1 },
+    });
+    const randomized = resolvePlacements(anchors, {
+      sequence: {
+        type: 'sequence',
+        mode: 'cycle',
+        seed: 2,
+        slots: [{ glyphRef: 'a', rotationRandom: { range: 40, spread: 'flat' } }],
+      },
+      orientation: { policy: 'page', offset: 0 },
+      sizing: { mode: 'fixed', size: 1 },
+    });
+    // Base rotation is 0; the randomized run adds a nonzero hash-driven delta.
+    expect(plain.placements[0].rotation).toBeCloseTo(0, 9);
+    expect(randomized.placements[0].rotation).not.toBeCloseTo(0, 6);
+    expect(Math.abs(randomized.placements[0].rotation)).toBeLessThanOrEqual(40);
+  });
+});

@@ -105,3 +105,42 @@ describe('useCanvas — Voronoi motif placement is order-independent (seam fix)'
     });
   });
 });
+
+// B1 — the glyph-MAP injection seam. A chain/sequence motif layer must have
+// EVERY slot glyphRef (base + each Sequencer slot) resolved into an injected
+// `params.glyphs` map, so MotifPattern can stamp DIFFERENT glyphs per slot. This
+// drives the REAL useCanvas render: if useCanvas failed to collect the 'dot'
+// slot ref into the map, MotifPattern would skip every dot slot and DOT_D would
+// never appear in the output — so asserting BOTH built-in glyph `d` strings
+// appear proves the map was built AND consumed end-to-end.
+describe('useCanvas — motif chain injects the multi-glyph glyphs map', () => {
+  const LEAF_D = 'M0,-10';
+  const DOT_D = 'M3,0 L2.1213';
+
+  const chainMotif = {
+    id: 'cm', name: 'Vine on Voronoi', type: 'motif', patternType: 'motif',
+    visible: true, opacity: 100, bgOpacity: 0, color: '#123456', seed: 7,
+    params: {
+      glyphRef: 'leaf',
+      hostLayerId: 'vh',
+      anchorMode: 'semantic',
+      // Chain form: route to cell anchors, then a 2-slot Sequencer (leaf, dot).
+      binding: {
+        chain: [
+          { type: 'route', roles: ['cell'], pathScope: 'all' },
+          { type: 'sequence', mode: 'cycle', slots: [{ glyphRef: 'leaf' }, { glyphRef: 'dot' }] },
+        ],
+      },
+    },
+  };
+
+  it('a sequenced (chain) motif renders BOTH slot glyphs — the dot slot ref was collected into the map', async () => {
+    const { result } = harness([voronoiHost, chainMotif]);
+    await waitFor(() => {
+      expect(result.current.patternInstances.cm?.svgElements.length).toBeGreaterThan(0);
+    });
+    const svg = result.current.patternInstances.cm.svgElements.join('');
+    expect(svg).toContain(LEAF_D); // slot 0
+    expect(svg).toContain(DOT_D); // slot 1 — only present if 'dot' was mapped
+  });
+});

@@ -1,4 +1,5 @@
 import { useCallback } from "react";
+import { sequenceIndex, setSlotGlyphRef } from "../motif/chainEditor";
 
 // useGlyphCommits — the write-owner for glyph commits (Wave 1, motif-session
 // deepening, #77). CONTEXT.md "Motifs": a Glyph Commit is writing a glyph into
@@ -56,6 +57,43 @@ export default function useGlyphCommits({
     [layers, addCustomGlyph, updateLayer, recordBatch]
   );
 
+  // Fork a NEW glyph AND point a SEQUENCER SLOT's glyphRef at it (the C3 slot
+  // commit-back), folded into ONE history entry. This is the slot-scoped sibling
+  // of commitNewGlyph: instead of rebinding the LAYER's base `params.glyphRef`, it
+  // rebinds `binding.chain[<sequence>].slots[slotIndex].glyphRef`, so forking a
+  // built-in/unresolved slot glyph rebinds ONLY that slot — the base and sibling
+  // slots on other refs are untouched.
+  //
+  // The sequence block index is derived FRESH from the layer's current binding
+  // (the sequence is at-most-one and terminal), never captured at session-open
+  // time. Aborts BEFORE the glyph write (no dangling half-commit, mirroring
+  // commitNewGlyph's missing-layer guard) if the layer is gone, the binding isn't
+  // chain-form with a sequence, or slotIndex is out of range.
+  const commitNewGlyphToSlot = useCallback(
+    (glyph, layerId, slotIndex) => {
+      const layer = layers.find((l) => l.id === layerId);
+      if (!layer) return undefined;
+      const binding = layer.params?.binding;
+      const chain = binding?.chain;
+      const seqIdx = sequenceIndex(chain);
+      if (seqIdx === -1) return undefined; // not chain-form / no sequence to rebind
+      const slots = chain[seqIdx].slots;
+      if (!Array.isArray(slots) || slotIndex < 0 || slotIndex >= slots.length) {
+        return undefined; // out-of-range slot → no write
+      }
+      let newId;
+      recordBatch(() => {
+        newId = addCustomGlyph(glyph);
+        const nextChain = setSlotGlyphRef(chain, seqIdx, slotIndex, newId);
+        updateLayer(layerId, {
+          params: { ...layer.params, binding: { ...binding, chain: nextChain } },
+        });
+      });
+      return newId;
+    },
+    [layers, addCustomGlyph, updateLayer, recordBatch]
+  );
+
   // In-place commit of new geometry to an existing custom glyph (Save on one
   // already in the document — no layer write; `glyphRef` already points at it).
   // `updateCustomGlyph` already records its own single structural entry, so no
@@ -96,5 +134,11 @@ export default function useGlyphCommits({
     [recordBatch, customGlyphs, updateCustomGlyph, updateLayer]
   );
 
-  return { commitNewGlyph, updateGlyph, copyGlyphToDoc, placeFromLibrary };
+  return {
+    commitNewGlyph,
+    commitNewGlyphToSlot,
+    updateGlyph,
+    copyGlyphToDoc,
+    placeFromLibrary,
+  };
 }

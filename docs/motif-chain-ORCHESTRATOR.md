@@ -410,3 +410,26 @@ doc + #79.
   `docs/adr/0006`+`0007` (untracked). These are NOT motif work; every motif commit stages EXPLICIT
   paths only and leaves the Etch files untouched. Watch for collisions if both sessions touch a shared
   file (none so far — Etch is raster/pixels, motif is anchors/vector).
+- 2026-07-12 — **C4 Route card DONE** (`cbdd5a8`, +25 tests; src/components+src/lib/motif 1504
+  green, Studio 27 suites green, build green). Roles + path scope (all/closed/open/picked); picked
+  via canvas click. **Host gating (A2):** semantic → {all, open} only; edge → all four. **Stood up
+  the deferred B2 edge-anchor ghost:** useCanvas surfaces each edge host's captured `hostPaths` on
+  the drawn instance (`motifHostGeometry`, gated to edge hosts so voronoi's self-stash is untouched);
+  AnchorGhostOverlay runs `sampleEdgeAnchors(hostPaths, motif.edgeOpts)` → dots carrying
+  `meta.pathIndex`. **Canvas-pick:** ephemeral Studio `motifPick={layerId,blockIndex}` (never
+  persisted, one armed); overlay resolves its motif from `motifPick.layerId` (HOST is selected while
+  picking); a dot click toggles that pathIndex in the route block's `pickedPaths` via
+  `ensureChainForm → chainEditor.togglePickedPath → one updateLayer` (one undo). Disarms on
+  scope-away/collapse/deselect; "N picked · Clear". **Wiring writes the CHAIN route block, never
+  `selection.overrides`** (no selection resurrection, C1 intact). Guarded the overlay's legacy
+  `placeMotifs` preview → [] for edge hosts. **Independent opus review: SOUND** (raw-merge mutation +
+  hardcode-0 pathIndex mutation each red then reverted; gating double-guarded; shared-file surface
+  clean — voronoi untouched, overlay inert unless armed, additive wiring). **Browser-verified** on
+  the flowfield: picked-1-path placed 21 glyphs vs 2740 at all; one ⌘Z reverts one pick; Clear resets.
+  **D1/C5 follow-ups (non-blocking):** DECIMATE the edge ghost (~13k pointer-events dots on a dense
+  flowfield; overlapping tendrils can mis-toggle at crossings — clicking a visible tendril still
+  works, "N picked" makes errors visible/correctable); `sampleEdgeAnchors` runs on mere selection
+  (before the unarmed early-return); Studio deselect-disarm effect correct-on-read but untested.
+  **D1 (pre-flagged, NOT touched):** AnchorGhostOverlay's legacy per-anchor include/exclude override
+  reads/writes `selection.overrides` + uses legacy `placeMotifs` → misbehaves on chain-form motifs
+  (semantic hosts too); left intact for D1 to redirect onto the chain overrides seam.

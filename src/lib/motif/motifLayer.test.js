@@ -5,7 +5,11 @@ import {
   createMotifParams,
   motifHostId,
   motifAutoName,
+  deepMergeBinding,
+  readChain,
+  ensureChainForm,
 } from './motifLayer';
+import { compileSelectionToChain, resolveSelection } from './compileSelectionToChain';
 
 // motifLayer.js — schema helpers for the motif layer flat model (mirrors
 // useLayers.js createLayer conventions §3 of docs/motif-adorn-arch-brief.md).
@@ -153,5 +157,192 @@ describe('motifAutoName', () => {
 
   it('falls back to both defaults when host and glyph are missing', () => {
     expect(motifAutoName(null, null)).toBe('Motif on layer');
+  });
+});
+
+// C1 — chain data plumbing (issue #79). B3 flagged that normalizeBinding
+// silently dropped `binding.chain`/`binding.overrides`, so a chain never
+// survived createMotifParams. These tests pin the fix + the new pure
+// accessors the rack UI (C2/C3) will read/write through.
+
+describe('createMotifParams — chain-form binding preservation (C1)', () => {
+  it('preserves binding.chain + binding.overrides + binding.placement verbatim (chain-form input)', () => {
+    const chain = [{ type: 'route', roles: null, pathScope: 'all' }];
+    const overrides = { include: ['a1'], exclude: [] };
+    const params = createMotifParams({
+      glyphRef: 'leaf-01',
+      hostLayerId: 'layer-1',
+      binding: { chain, overrides, placement: { flip: true } },
+    });
+    expect(params.binding).toEqual({
+      chain,
+      overrides,
+      placement: { flip: true },
+    });
+  });
+
+  it('preserves binding.chain without overrides when overrides is absent', () => {
+    const chain = [{ type: 'everyN', n: 2, offset: 0, continuous: true }];
+    const params = createMotifParams({ binding: { chain } });
+    expect(params.binding).toEqual({ chain, placement: {} });
+    expect(params.binding).not.toHaveProperty('overrides');
+  });
+
+  it('does NOT force selection to coexist with a chain-form binding', () => {
+    const chain = [];
+    const params = createMotifParams({ binding: { chain, placement: {} } });
+    expect(params.binding).not.toHaveProperty('selection');
+  });
+
+  it('a legacy (no chain) binding still yields byte-identical {selection, placement} (regression pin)', () => {
+    const params = createMotifParams({
+      binding: { selection: { roles: ['crossing'] }, placement: { sizing: { mode: 'fixed' } } },
+    });
+    expect(params.binding).toEqual({
+      selection: { roles: ['crossing'] },
+      placement: { sizing: { mode: 'fixed' } },
+    });
+    expect(params.binding).not.toHaveProperty('chain');
+    expect(params.binding).not.toHaveProperty('overrides');
+  });
+
+  it('an empty/omitted binding still defaults to legacy shape { selection: {}, placement: {} }', () => {
+    expect(createMotifParams({}).binding).toEqual({ selection: {}, placement: {} });
+    expect(createMotifParams().binding).toEqual({ selection: {}, placement: {} });
+  });
+});
+
+describe('readChain (C1) — lazy-compile-on-read accessor for the rack UI', () => {
+  it('returns binding.chain AS-IS (same reference) when chain is present', () => {
+    const chain = [{ type: 'route', roles: null, pathScope: 'all' }];
+    const binding = { chain, placement: {} };
+    expect(readChain(binding)).toBe(chain);
+  });
+
+  it('compiles binding.selection when chain is absent (legacy binding)', () => {
+    const selection = { roles: ['tip'], rate: { n: 2, offset: 1 } };
+    const binding = { selection, placement: {} };
+    expect(readChain(binding)).toEqual(compileSelectionToChain(selection).chain);
+  });
+
+  it('handles an empty/undefined binding gracefully, matching compileSelectionToChain({})', () => {
+    expect(readChain(undefined)).toEqual(compileSelectionToChain({}).chain);
+    expect(readChain(null)).toEqual(compileSelectionToChain({}).chain);
+    expect(readChain({})).toEqual(compileSelectionToChain({}).chain);
+  });
+
+  it('never mutates the input binding', () => {
+    const selection = { roles: ['tip'] };
+    const binding = { selection, placement: {} };
+    const snapshot = JSON.parse(JSON.stringify(binding));
+    readChain(binding);
+    expect(binding).toEqual(snapshot);
+  });
+});
+
+describe('ensureChainForm (C1) — the first-edit rewrite primitive', () => {
+  it('is idempotent: an already-chain-form binding is returned UNCHANGED (same reference)', () => {
+    const binding = { chain: [{ type: 'route', roles: null, pathScope: 'all' }], placement: {} };
+    expect(ensureChainForm(binding)).toBe(binding);
+  });
+
+  it('rewrites a legacy binding to chain-form with the compiled chain + overrides', () => {
+    const selection = { roles: ['tip'], rate: { n: 2 }, overrides: { include: ['x'] } };
+    const binding = { selection, placement: { flip: true } };
+    const { chain, overrides } = compileSelectionToChain(selection);
+    const result = ensureChainForm(binding);
+    expect(result.chain).toEqual(chain);
+    expect(result.overrides).toEqual(overrides);
+    expect(result.placement).toEqual({ flip: true });
+  });
+
+  it('drops the stale `selection` key when rewriting to chain-form (documented choice — see contract comment)', () => {
+    const binding = { selection: { roles: ['tip'] }, placement: {} };
+    const result = ensureChainForm(binding);
+    expect(result).not.toHaveProperty('selection');
+  });
+
+  it('never mutates the input binding', () => {
+    const binding = { selection: { roles: ['tip'] }, placement: {} };
+    const snapshot = JSON.parse(JSON.stringify(binding));
+    ensureChainForm(binding);
+    expect(binding).toEqual(snapshot);
+  });
+
+  it('omits `overrides` on the rewritten binding when the legacy selection carried none', () => {
+    const binding = { selection: { roles: ['tip'] }, placement: {} };
+    const result = ensureChainForm(binding);
+    expect(result).not.toHaveProperty('overrides');
+  });
+
+  it('is consistent with readChain: the compiled chain equals what readChain returns for the same legacy binding', () => {
+    const binding = { selection: { roles: ['tip'], density: 0.5, seed: 7 }, placement: {} };
+    expect(ensureChainForm(binding).chain).toEqual(readChain(binding));
+  });
+
+  // Render-seam consistency lock: ensureChainForm parks overrides at the
+  // TOP-LEVEL binding.overrides (see decision above). MotifPattern.generate
+  // already threads that exact field into resolveSelection's opts.overrides
+  // for chain-form bindings (compileSelectionToChain.js `resolveSelection`,
+  // consumed at src/lib/motif/MotifPattern.js:107-111 — verified by reading,
+  // not re-tested here since it's the render seam C1 must not touch). This
+  // test pins the C1-side half of that contract: rewriting a legacy binding
+  // WITH overrides via ensureChainForm, then running it through
+  // resolveSelection with its own top-level overrides threaded, must select
+  // identically to running the original legacy binding directly — so the
+  // upgrade-on-first-edit never silently drops a user's canvas-pin override.
+  it('an upgraded binding selects identically to the original when its overrides are threaded (D9 upgrade-safety)', () => {
+    const anchors = [
+      { id: 'a1', role: 'tip', x: 0, y: 0, tangent: 0, normal: 0, s: 0, meta: { pathIndex: 0 } },
+      { id: 'a2', role: 'tip', x: 10, y: 0, tangent: 0, normal: 0, s: 1, meta: { pathIndex: 0 } },
+      { id: 'a3', role: 'tip', x: 20, y: 0, tangent: 0, normal: 0, s: 2, meta: { pathIndex: 0 } },
+    ];
+    const binding = {
+      selection: { roles: ['tip'], rate: { n: 2 }, overrides: { include: ['a2'], exclude: [] } },
+      placement: {},
+    };
+    const before = resolveSelection(binding, anchors);
+    const upgraded = ensureChainForm(binding);
+    const after = resolveSelection(upgraded, anchors, { overrides: upgraded.overrides });
+    expect(after.survivors.map((s) => s.id)).toEqual(before.survivors.map((s) => s.id));
+    expect(after.orphans).toEqual(before.orphans);
+  });
+});
+
+describe('deepMergeBinding — chain edits (C1)', () => {
+  it('a chain patch replaces the chain array wholesale WITHOUT clobbering placement/overrides', () => {
+    const base = {
+      chain: [{ type: 'route', roles: null, pathScope: 'all', bypass: false }],
+      overrides: { include: ['a1'] },
+      placement: { flip: true, jitter: { x: 2 } },
+    };
+    const newChain = [{ type: 'route', roles: null, pathScope: 'all', bypass: true }];
+    const merged = deepMergeBinding(base, { chain: newChain });
+    expect(merged.chain).toBe(newChain);
+    expect(merged.overrides).toEqual({ include: ['a1'] });
+    expect(merged.placement).toEqual({ flip: true, jitter: { x: 2 } });
+  });
+
+  it('toggling a single block bypass (caller builds the new chain array) merges cleanly', () => {
+    const base = {
+      chain: [
+        { type: 'route', roles: null, pathScope: 'all', bypass: false },
+        { type: 'everyN', n: 2, offset: 0, continuous: true, bypass: false },
+      ],
+      placement: {},
+    };
+    const toggled = base.chain.map((block, i) => (i === 1 ? { ...block, bypass: true } : block));
+    const merged = deepMergeBinding(base, { chain: toggled });
+    expect(merged.chain[1].bypass).toBe(true);
+    expect(merged.chain[0].bypass).toBe(false);
+    expect(merged.placement).toEqual({});
+    expect(base.chain[1].bypass).toBe(false); // input untouched
+  });
+
+  it('does not mutate the base binding', () => {
+    const base = { chain: [{ type: 'route' }], placement: { flip: true } };
+    const snapshot = JSON.parse(JSON.stringify(base));
+    deepMergeBinding(base, { chain: [{ type: 'route', bypass: true }] });
+    expect(base).toEqual(snapshot);
   });
 });

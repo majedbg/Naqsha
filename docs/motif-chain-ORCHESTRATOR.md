@@ -306,3 +306,30 @@ doc + #79.
   **For B3:** `hostPaths` + forced `anchorMode:'edge'` already in place; thread the chain/Sequencer
   through edge hosts. **Open seams:** `bezierVertex`/`curveVertex` not recorded (no in-scope host
   uses them); generic edge-anchor ghost preview deferred.
+- 2026-07-12 — **B3 chain wired end-to-end DONE** — **PHASE B COMPLETE** (`c1920fb`, +7 tests,
+  motif+useCanvas 502 green (was 495), build green). **VERIFICATION slice — NO production code
+  changed.** The chain data path was already wired by B1/B2: `binding` rides `layer.params.binding`
+  → `MotifPattern` reads `p.binding` (via the normal `renderParams = layer.params` spread) →
+  `resolveSelection` lazy-compiles legacy `binding.selection`→chain at the render seam (D9);
+  per-path restart (D4) keys off `meta.pathIndex`, which B2's multi-path edge hosts now supply.
+  New `chain.e2e.test.js` is the regression LOCK: full pure pipeline on a synthetic 2-path host
+  (path 0 = 5 anchors, cycle len 3 flower/leaf/rest) pins the ONE non-trivial boundary — path 1's
+  first slots differ between default per-path restart (fresh slot 0) and `continuous:true`
+  (mid-cycle global index) — via glyph-IDENTITY swap, not presence; + Rest consumes a step (gap,
+  no shift), twice-run determinism over full svgElements, and D9 legacy==compiled-chain parity
+  through the seam. **Independent opus review: SOUND** — full `normalizeBinding` caller trace
+  proves it strips `.chain` ONLY at motif CREATION (`addMotifLayer`), never on load
+  (`migrateLayer` leaves `params.binding` untouched) or update (shallow merge), so a chain written
+  to `params.binding.chain` survives to render (**the C1 deferral is legit, not hollow**); both
+  per-path mutations (force continuous / ignore pathKey) go red; FlowField continuity claim honest
+  (`beginShape/vertex`, one path per streamline → per-path restart genuinely fires per stem).
+  **Browser-verified** the rinceaux demo: chain seeded programmatically (no authoring UI yet —
+  C3/C5) into `params.binding.chain`, rosette/leaf glyphs stamp with rest gaps along the flowfield
+  trails. **Seams for C1:** `normalizeBinding` (motifLayer.js) must be extended to PRESERVE `.chain`
+  (currently drops it — fine today since only creation normalizes, but C1's "rewrite legacy→chain
+  on first block edit as one undo entry" must write + keep `.chain` through the layer/undo path);
+  chain-mode overrides still read from top-level `binding.overrides` (B1 placeholder — C1 owns the
+  final schema). **Coverage seam for D2:** end-to-end holds BY COMPOSITION (this test = MotifPattern
+  boundary; B1 `useCanvas.motif.test.jsx` = `binding.chain`→`params.glyphs` injection; browser demo
+  = real multi-path capture). No single headless test spans useCanvas `capturePolylines` → multi-path
+  boundary; D2 may add one (needs jsdom+p5, like useCanvas.motif.test.jsx).

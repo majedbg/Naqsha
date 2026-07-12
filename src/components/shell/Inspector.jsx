@@ -54,6 +54,7 @@ import { resolveModulationForTarget } from "../../lib/fields/resolveModulationFo
 import { ANCHOR_POS, ANCHOR_MID, ANCHOR_NEG } from "../../lib/fields/colormap";
 import { isMotifLayer, motifHostId, deepMergeBinding } from "../../lib/motif/motifLayer";
 import { MOTIF_GLYPHS, getGlyph } from "../../lib/motif/glyphs";
+import { MOTIF_HOSTS, isSemanticHost } from "../../lib/motif/hostKinds";
 
 // Modulation-scoped param control: the Grid's `warpNodes` slider (2–24). Reuses
 // the file's `accent-violet` range styling. Rendered INSIDE a <ModulationParamBox>
@@ -546,14 +547,13 @@ function ModulatorDevice({
   );
 }
 
-// Hosts that expose semantic anchors today. Grid/recursive/spiral derive anchors
-// from params (formula); voronoi derives them from its DRAWN cells, captured at
-// render time and threaded through useCanvas → resolveMotifHostParams → the
-// MotifPattern semantic path (see src/lib/motif/semanticAnchors.js). Edge-on-
-// arbitrary hosts still need a generic drawn-geometry seam and remain excluded.
-// The anchor-ghost overlay does NOT yet support voronoi (it can't reach the
-// per-frame hostGeometry) — deferred follow-on.
-const MOTIF_HOSTS = new Set(["grid", "recursive", "spiral", "voronoi"]);
+// Legal motif hosts now come from the shared classifier (src/lib/motif/hostKinds):
+// the SEMANTIC hosts (grid/recursive/spiral/voronoi) expose structural anchors,
+// while B2's EDGE hosts (flowfield/wave/…) support generic edge-mode motifs via
+// drawn-polyline capture. MOTIF_HOSTS below is the UNION — every type the device
+// may attach a motif to. Whether a given host uses semantic or edge anchoring is
+// resolved downstream (resolveMotifHostParams forces anchorMode:'edge' for edge
+// hosts); the device only branches on isSemanticHost for its role defaults/UI.
 
 const MOTIF_ROLES = [
   { key: "crossing", label: "Crossings" },
@@ -645,12 +645,21 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, 
     onImportFile?.(file, targetId);
   };
 
+  // A SEMANTIC host (grid/voronoi/…) defaults to crossing anchors; an EDGE host
+  // (flowfield/wave/…) has only generic edge anchors, so it must default to
+  // roles:['edge'] AND anchorMode:'edge' — otherwise the crossing-role filter
+  // drops every edge anchor and nothing is placed (resolveMotifHostParams also
+  // forces edge mode, but the SELECTION roles must match here).
+  const hostIsSemantic = isSemanticHost(layer.patternType);
   const addMotif = () =>
     onAddMotif?.(layer.id, {
       glyphRef: "leaf",
-      anchorMode: "semantic",
+      anchorMode: hostIsSemantic ? "semantic" : "edge",
       binding: {
-        selection: { roles: ["crossing"], rate: { n: 1 } },
+        selection: {
+          roles: hostIsSemantic ? ["crossing"] : ["edge"],
+          rate: { n: 1 },
+        },
         placement: {
           sizing: { mode: "proportional", size: 18, min: 3, margin: 0.85 },
           orientation: { policy: "path", useNormal: true },
@@ -658,6 +667,13 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, 
         },
       },
     });
+
+  // Only the semantic hosts expose crossing/tip/cell anchors; on an edge host the
+  // sole meaningful role is Edges, so hide the dead role checkboxes there (same
+  // consciously-scoped affordance decision as the AnchorGhostOverlay set).
+  const roleOptions = hostIsSemantic
+    ? MOTIF_ROLES
+    : MOTIF_ROLES.filter((r) => r.key === "edge");
 
   return (
     <div
@@ -844,7 +860,7 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, 
 
             {/* Roles — which anchor kinds this motif adorns */}
             <div className="flex flex-wrap gap-x-3 gap-y-1">
-              {MOTIF_ROLES.map((r) => (
+              {roleOptions.map((r) => (
                 <label
                   key={r.key}
                   className="flex items-center gap-1 text-[11px] text-ink-soft"

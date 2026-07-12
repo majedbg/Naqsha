@@ -145,3 +145,58 @@ describe('resolveMotifHostParams — voronoi drawn-geometry seam', () => {
     expect(out).not.toHaveProperty('sites');
   });
 });
+
+describe('resolveMotifHostParams — arbitrary-edge host capture (B2)', () => {
+  const flowHost = { id: 'fh', patternType: 'flowfield', params: { particleCount: 400 } };
+  const edgeMotif = {
+    id: 'em',
+    type: MOTIF_TYPE,
+    patternType: MOTIF_TYPE,
+    // Motif created with the 'semantic' DEFAULT — resolve must FORCE edge here.
+    params: { glyphRef: 'leaf', hostLayerId: 'fh', anchorMode: 'semantic' },
+  };
+  const hostPaths = [
+    { points: [{ x: 10, y: 10 }, { x: 20, y: 20 }], closed: false },
+    { points: [{ x: 0, y: 0 }, { x: 5, y: 0 }, { x: 5, y: 5 }], closed: true },
+  ];
+
+  it('forces anchorMode:edge and forwards captured hostPaths when present', () => {
+    const layers = [flowHost, edgeMotif];
+    const out = resolveMotifHostParams(edgeMotif, layers, { fh: { hostPaths } });
+    expect(out.hostPatternType).toBe('flowfield');
+    expect(out.anchorMode).toBe('edge');
+    expect(out.hostPaths).toBe(hostPaths);
+    // No semantic voronoi fields leak onto an edge host.
+    expect(out).not.toHaveProperty('drawnEdges');
+    expect(out).not.toHaveProperty('sites');
+    expect(out).not.toHaveProperty('drawnCells');
+  });
+
+  it('still forces anchorMode:edge but omits hostPaths when the host has not been probed', () => {
+    const layers = [flowHost, edgeMotif];
+    const out = resolveMotifHostParams(edgeMotif, layers, {});
+    expect(out.anchorMode).toBe('edge');
+    expect(out).not.toHaveProperty('hostPaths');
+  });
+
+  it('omits hostPaths when hostGeometry arg is omitted entirely (2-arg call)', () => {
+    const layers = [flowHost, edgeMotif];
+    const out = resolveMotifHostParams(edgeMotif, layers);
+    expect(out.anchorMode).toBe('edge');
+    expect(out).not.toHaveProperty('hostPaths');
+  });
+
+  it('does not treat an unknown / non-host patternType as an edge host', () => {
+    const textHost = { id: 'th', patternType: 'text', params: {} };
+    const m = {
+      id: 'm3',
+      type: MOTIF_TYPE,
+      patternType: MOTIF_TYPE,
+      params: { glyphRef: 'leaf', hostLayerId: 'th', anchorMode: 'edge' },
+    };
+    const layers = [textHost, m];
+    const out = resolveMotifHostParams(m, layers, { th: { hostPaths } });
+    // text is neither semantic nor edge → no forced anchorMode, no hostPaths.
+    expect(out).toEqual({ hostPatternType: 'text', hostParams: textHost.params });
+  });
+});

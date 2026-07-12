@@ -8,6 +8,8 @@ import { resolveMoireSource } from './moirePair';
 import { resolveModulationsForTarget, composeModulationParam } from './fields/resolveModulationForTarget';
 import { resolveMotifHostParams } from './motif/resolveMotifHost';
 import { collectMotifHostGeometry } from './motif/collectHostGeometry';
+import { capturePolylines } from './motif/capturePolylines';
+import { isEdgeHost } from './motif/hostKinds';
 import { isMotifLayer } from './motif/motifLayer';
 import { getGlyph } from './motif/glyphs';
 import { isSequenceBlock } from './motif/sequencer';
@@ -127,9 +129,21 @@ export default function useCanvas(
         PATTERN_CLASSES[host.patternType] || getDynamicPatternClass(host.patternType);
       if (!HostClass) return null;
       const probe = new HostClass();
+      // B2 — arbitrary-edge host capture: an EDGE host (flowfield/wave/…) has no
+      // semantic extractor, so probe it into a RECORD-mode adapter and fold the
+      // recorded draw stream into absolute-coordinate hostPaths (capturePolylines).
+      // Record is draw:false, so RNG/noise/color still delegate to live p5 → the
+      // captured geometry is byte-identical to the painted realization, and the
+      // host reseeds at the top of generate() → this probe never shifts its paint
+      // (same no-divergence guarantee as the voronoi probe below). A SEMANTIC host
+      // (voronoi) keeps the existing noDraw probe + motifHostGeometry read.
+      const recording = isEdgeHost(host.patternType);
+      const probeCtx = recording
+        ? new P5Adapter(p, { draw: false, record: true })
+        : noDrawCtx;
       p.push(); // defensive matrix isolation — probe never draws, but be safe
       probe.generateWithContext(
-        noDrawCtx,
+        probeCtx,
         host.seed,
         host.params,
         canvasW,
@@ -138,6 +152,10 @@ export default function useCanvas(
         host.opacity
       );
       p.pop();
+      if (recording) {
+        const hostPaths = capturePolylines(probeCtx.calls);
+        return hostPaths.length ? { hostPaths } : null;
+      }
       return probe.motifHostGeometry || null;
     });
 

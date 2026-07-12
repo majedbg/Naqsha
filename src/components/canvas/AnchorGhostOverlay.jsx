@@ -30,12 +30,18 @@ import { useMemo } from 'react';
 import { isMotifLayer, motifHostId, deepMergeBinding } from '../../lib/motif/motifLayer';
 import { getSemanticAnchors } from '../../lib/motif/semanticAnchors';
 import { placeMotifs } from '../../lib/motif/placementEngine';
+import { SEMANTIC_MOTIF_HOSTS } from '../../lib/motif/hostKinds';
 
-// Hosts with a semantic anchor extractor whose anchors are proven to sit on the
-// drawing. grid/recursive/spiral are FORMULA hosts (anchors from params alone).
-// voronoi is GEOMETRY-IN: its anchors come from the drawn host's stashed
-// `motifHostGeometry`, supplied here via the `patternInstances` prop.
-const MOTIF_HOSTS = new Set(['grid', 'recursive', 'spiral', 'voronoi']);
+// This overlay previews SEMANTIC anchors only (grid/recursive/spiral are FORMULA
+// hosts — anchors from params alone; voronoi is GEOMETRY-IN via the drawn host's
+// stashed `motifHostGeometry`, supplied through `patternInstances`). It is
+// DELIBERATELY scoped to the semantic set and NOT widened to B2's edge hosts:
+// getSemanticAnchors returns null for an edge host (flowfield/wave/…), so adding
+// them here would render a silent no-op ghost — a dead affordance. Edge-host
+// anchors come from the useCanvas record-mode capture (hostPaths), which this
+// overlay cannot reach, so a generic edge-ghost preview is deferred to a
+// follow-up rather than shipping an affordance that shows nothing.
+const MOTIF_HOSTS = SEMANTIC_MOTIF_HOSTS;
 
 const ACCENT = '#7c3aed'; // violet — placed / included fill
 const EXCLUDE_STROKE = '#ef4444'; // red — force-excluded outline

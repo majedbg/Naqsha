@@ -54,6 +54,7 @@ import { resolveModulationForTarget } from "../../lib/fields/resolveModulationFo
 import { ANCHOR_POS, ANCHOR_MID, ANCHOR_NEG } from "../../lib/fields/colormap";
 import { isMotifLayer, motifHostId, deepMergeBinding } from "../../lib/motif/motifLayer";
 import { MOTIF_GLYPHS, getGlyph } from "../../lib/motif/glyphs";
+import EtchStackRack from "./EtchStackRack";
 
 // Modulation-scoped param control: the Grid's `warpNodes` slider (2–24). Reuses
 // the file's `accent-violet` range styling. Rendered INSIDE a <ModulationParamBox>
@@ -988,6 +989,12 @@ function SelectedLayerInspector({ layer, layers, unit, profileId, onUpdateLayer,
         onCopyLibraryGlyph={onCopyLibraryGlyph}
         onUseLibraryGlyph={onUseLibraryGlyph}
       />
+
+      {/* Etch Stack rack (Raster Etch S2, #81) — the ordered, reorderable,
+          bypassable stack of Stages an Etch's luma field flows through before
+          screening, with the Tone Stage controls. Self-hides for non-Etch
+          layers, so it costs nothing for vector layers. */}
+      <EtchStackRack layer={layer} onUpdateLayer={onUpdateLayer} />
 
       {/* Collapsible, grouped param controls (Structure / Scale / Variation /
           Stroke / Transform — the existing PARAM_GROUPS). */}

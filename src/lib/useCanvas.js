@@ -436,8 +436,11 @@ export default function useCanvas(
     const live = new Set();
     for (const layer of layers) {
       if (!isEtchLayer(layer)) continue;
-      const { source, dpi } = layer.params || {};
-      const sig = `${dpi}|${canvasW}|${canvasH}|${source || ''}`;
+      const { source, dpi, stack } = layer.params || {};
+      // Include the Etch Stack in the signature so editing a Stage (add /
+      // reorder / bypass / any Tone control) re-resolves the single-source
+      // bitmap live — the Stack shapes the luma field the cut screens.
+      const sig = `${dpi}|${canvasW}|${canvasH}|${source || ''}|${JSON.stringify(stack || [])}`;
       live.add(layer.id);
       const cached = cache.get(layer.id);
       if (!etchCacheNeedsResolve(cached, sig)) continue;

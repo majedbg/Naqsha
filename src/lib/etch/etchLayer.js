@@ -54,12 +54,18 @@ export function etchPixelDims(physicalMm, dpi = DEFAULT_ETCH_DPI) {
  * offline path (grilled decision 7; signed-in bucket storage is S7). `dpi`
  * defaults to DEFAULT_ETCH_DPI. `sourceWidth` / `sourceHeight` record the
  * stored source's pixel size so consumers need not re-decode to know it.
+ *
+ * `stack` is the Etch Stack (S2, #81): the ordered, reorderable array of Stages
+ * the luma field flows through before screening. It is DOCUMENT state persisted
+ * on the layer (order round-trips through save/load). Defaults to empty — a new
+ * Etch screens at the plain S1 threshold until a Stage is added.
  */
-export function createEtchParams({ source, sourceWidth = 0, sourceHeight = 0, dpi = DEFAULT_ETCH_DPI } = {}) {
+export function createEtchParams({ source, sourceWidth = 0, sourceHeight = 0, dpi = DEFAULT_ETCH_DPI, stack } = {}) {
   return {
     source: source || null,
     sourceWidth,
     sourceHeight,
     dpi: dpi > 0 ? dpi : DEFAULT_ETCH_DPI,
+    stack: Array.isArray(stack) ? stack : [],
   };
 }

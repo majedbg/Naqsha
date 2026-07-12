@@ -6,6 +6,7 @@ import {
   etchPixelDims,
   createEtchParams,
 } from './etchLayer.js';
+import { migrateConfig } from '../migration.js';
 
 describe('etchLayer — type discriminator', () => {
   it('ETCH_TYPE is the persistent "etch" tag', () => {
@@ -51,14 +52,32 @@ describe('etchPixelDims — DPI drives exported bitmap dimensions', () => {
 });
 
 describe('createEtchParams', () => {
-  it('carries the source data-URI, its size, and defaults DPI to 254', () => {
+  it('carries the source data-URI, its size, and defaults DPI to 254 with an empty Etch Stack', () => {
     const params = createEtchParams({ source: 'data:image/png;base64,AAA', sourceWidth: 800, sourceHeight: 600 });
     expect(params).toEqual({
       source: 'data:image/png;base64,AAA',
       sourceWidth: 800,
       sourceHeight: 600,
       dpi: 254,
+      stack: [],
     });
+  });
+
+  it('a new Etch starts with an empty Etch Stack (screens at the plain S1 cut)', () => {
+    expect(createEtchParams({ source: 'x' }).stack).toEqual([]);
+  });
+
+  it('carries a supplied Etch Stack and its order round-trips through JSON save/load', () => {
+    const stack = [
+      { id: 'tone-1', type: 'tone', bypassed: false, params: { exposure: 30, brightness: 0, contrast: 0, levels: { blackPoint: 12, whitePoint: 240, gamma: 1.6 } } },
+      { id: 'tone-2', type: 'tone', bypassed: true, params: { exposure: 0, brightness: 10, contrast: 5, levels: { blackPoint: 0, whitePoint: 255, gamma: 1 } } },
+    ];
+    const params = createEtchParams({ source: 'x', stack });
+    // Simulate the document save→load boundary: serialize then parse.
+    const reloaded = JSON.parse(JSON.stringify(params));
+    expect(reloaded.stack).toEqual(stack);
+    // Order is document state: the second Stage stays second after round-trip.
+    expect(reloaded.stack.map((s) => s.id)).toEqual(['tone-1', 'tone-2']);
   });
 
   it('honors an explicit DPI and falls back to default for invalid DPI', () => {
@@ -69,5 +88,24 @@ describe('createEtchParams', () => {
 
   it('null source when none supplied', () => {
     expect(createEtchParams().source).toBeNull();
+  });
+});
+
+describe('Etch Stack persistence — order survives the real document load funnel', () => {
+  it('migrateConfig preserves a reordered Etch Stack losslessly', () => {
+    const stack = [
+      { id: 'tone-a', type: 'tone', bypassed: false, params: { exposure: 0, brightness: 0, contrast: 0, levels: { blackPoint: 20, whitePoint: 230, gamma: 1.4 } } },
+      { id: 'tone-b', type: 'tone', bypassed: true, params: { exposure: 15, brightness: 0, contrast: 0, levels: { blackPoint: 0, whitePoint: 255, gamma: 1 } } },
+    ];
+    const layer = {
+      id: 'e1', type: ETCH_TYPE, role: 'engrave', operationId: 'op-engrave',
+      params: createEtchParams({ source: 'x', stack }),
+    };
+    const cfg = { schemaVersion: 1, operations: [{ id: 'op-engrave', role: 'engrave' }], layers: [layer] };
+    // Round-trip through serialize → migrate (the load boundary spreads ...layer).
+    const reloaded = migrateConfig(JSON.parse(JSON.stringify(cfg)));
+    const out = reloaded.layers.find((l) => l.id === 'e1');
+    expect(out.params.stack).toEqual(stack);
+    expect(out.params.stack.map((s) => s.id)).toEqual(['tone-a', 'tone-b']);
   });
 });

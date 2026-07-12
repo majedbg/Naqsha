@@ -89,10 +89,13 @@ function resampleToImageData(img, w, h) {
  * @returns {Promise<{bits: Uint8Array, width: number, height: number}|null>}
  */
 export async function resolveEtchBitmap(layer, canvasW, canvasH, bridgeOpts = {}) {
-  const { source, dpi } = layer?.params || {};
+  const { source, dpi, stack } = layer?.params || {};
   if (!source) return null;
   const { width, height } = etchExportDims(canvasW, canvasH, dpi);
   const img = await loadImage(source);
   const imageData = resampleToImageData(img, width, height);
-  return computeEtchBitmap(imageData, {}, bridgeOpts);
+  // The Etch Stack config is plain data; it travels to the worker where the
+  // heavy per-pixel Stage work runs, then globalMask cuts the shaped field. The
+  // resulting `bits` stays the ONE buffer both canvas and export read.
+  return computeEtchBitmap(imageData, { stack }, bridgeOpts);
 }

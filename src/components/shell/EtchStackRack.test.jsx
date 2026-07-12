@@ -1,0 +1,87 @@
+// @vitest-environment jsdom
+import { describe, it, expect, vi } from 'vitest';
+import { render, screen, fireEvent, within } from '@testing-library/react';
+import EtchStackRack from './EtchStackRack';
+import { createEtchParams } from '../../lib/etch/etchLayer';
+
+function etchLayer(stack = []) {
+  return { id: 'e1', type: 'etch', params: createEtchParams({ source: null, stack }) };
+}
+function toneStack() {
+  return [
+    { id: 't1', type: 'tone', bypassed: false, params: { exposure: 0, brightness: 0, contrast: 0, levels: { blackPoint: 0, whitePoint: 255, gamma: 1 } } },
+  ];
+}
+
+describe('EtchStackRack', () => {
+  it('self-hides for a non-Etch layer', () => {
+    const { container } = render(<EtchStackRack layer={{ id: 'p1', type: 'pattern' }} onUpdateLayer={() => {}} />);
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it('uses Etch Stack vocabulary, never the forbidden motif words', () => {
+    render(<EtchStackRack layer={etchLayer(toneStack())} onUpdateLayer={() => {}} />);
+    const rack = screen.getByTestId('etch-stack-rack');
+    expect(rack).toHaveTextContent(/Etch Stack/);
+    expect(rack.textContent).not.toMatch(/\b(Chain|Block|effect|filter|device|pass)\b/i);
+  });
+
+  it('adds a Tone Stage through the canonical params write', () => {
+    const onUpdateLayer = vi.fn();
+    render(<EtchStackRack layer={etchLayer([])} onUpdateLayer={onUpdateLayer} />);
+    fireEvent.click(screen.getByTestId('etch-stack-add'));
+    expect(onUpdateLayer).toHaveBeenCalledTimes(1);
+    const [id, patch] = onUpdateLayer.mock.calls[0];
+    expect(id).toBe('e1');
+    expect(patch.params.stack).toHaveLength(1);
+    expect(patch.params.stack[0].type).toBe('tone');
+    expect(patch.params.stack[0].bypassed).toBe(false);
+  });
+
+  it('bypasses a Stage (writes bypassed:true for that Stage only)', () => {
+    const onUpdateLayer = vi.fn();
+    render(<EtchStackRack layer={etchLayer(toneStack())} onUpdateLayer={onUpdateLayer} />);
+    fireEvent.click(screen.getByTestId('etch-stage-bypass'));
+    const patch = onUpdateLayer.mock.calls[0][1];
+    expect(patch.params.stack[0].bypassed).toBe(true);
+  });
+
+  it('removes a Stage', () => {
+    const onUpdateLayer = vi.fn();
+    render(<EtchStackRack layer={etchLayer(toneStack())} onUpdateLayer={onUpdateLayer} />);
+    fireEvent.click(screen.getByTestId('etch-stage-remove'));
+    expect(onUpdateLayer.mock.calls[0][1].params.stack).toHaveLength(0);
+  });
+
+  it('a Tone slider patches its param (exposure) via patchStageParams', () => {
+    const onUpdateLayer = vi.fn();
+    render(<EtchStackRack layer={etchLayer(toneStack())} onUpdateLayer={onUpdateLayer} />);
+    // Expand the Stage body, then move exposure.
+    fireEvent.click(screen.getByTestId('etch-stage-expand'));
+    const body = screen.getByTestId('etch-tone-body');
+    fireEvent.change(within(body).getByTestId('tone-exposure'), { target: { value: '40' } });
+    const patch = onUpdateLayer.mock.calls[0][1];
+    expect(patch.params.stack[0].params.exposure).toBe(40);
+    // untouched params preserved
+    expect(patch.params.stack[0].params.levels.gamma).toBe(1);
+  });
+
+  it('the Gamma slider patches only the levels midtone, keeping black/white', () => {
+    const onUpdateLayer = vi.fn();
+    render(<EtchStackRack layer={etchLayer(toneStack())} onUpdateLayer={onUpdateLayer} />);
+    fireEvent.click(screen.getByTestId('etch-stage-expand'));
+    const body = screen.getByTestId('etch-tone-body');
+    fireEvent.change(within(body).getByTestId('tone-gamma'), { target: { value: '1.8' } });
+    const levels = onUpdateLayer.mock.calls[0][1].params.stack[0].params.levels;
+    expect(levels).toEqual({ blackPoint: 0, whitePoint: 255, gamma: 1.8 });
+  });
+
+  it('renders the Levels histogram control with black / white / gamma handles', () => {
+    render(<EtchStackRack layer={etchLayer(toneStack())} onUpdateLayer={() => {}} />);
+    fireEvent.click(screen.getByTestId('etch-stage-expand'));
+    expect(screen.getByTestId('etch-levels')).toBeInTheDocument();
+    expect(screen.getByTestId('levels-black')).toBeInTheDocument();
+    expect(screen.getByTestId('levels-white')).toBeInTheDocument();
+    expect(screen.getByTestId('levels-gamma')).toBeInTheDocument();
+  });
+});

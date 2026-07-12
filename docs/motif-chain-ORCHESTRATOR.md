@@ -353,3 +353,31 @@ doc + #79.
   `base = ensureChainForm(old); next = deepMergeBinding(base, patch); updateLayer(id, {params:{...
   layer.params, binding: next}})` → one coalescing undo entry. Per-block authoring mutators
   (add/remove/reorder/bypass, slot edit) are C2/C3, built on these primitives.
+- 2026-07-12 — **C2 Block rack DONE** (`1404347`, +~44 tests: new chainEditor 17, rack/Inspector
+  motif suite grown to 28; shell+motif 909 green, components 924 green, build green). Each motif
+  row's fixed selection controls → an expandable Ableton-style **Block stack** over the chain.
+  New pure **`chainEditor.js`** (reorder/add/remove/bypass/setBlock; every op returns INPUT ref
+  unchanged on reject/no-op — the contract the one-undo guard keys off) + new **`MotifBlockRack.jsx`**
+  (DndContext/SortableContext à la PatternGalleryView; cards from `readChain`; functional everyN/
+  skip/density/field cards, minimal route/sequence shells; dock orientation via
+  `useInspectorDockContext` — bottom→horizontal, right/null→vertical). Inspector MotifDevice renders
+  the rack; **Size/Flip kept as a fixed Placement footer** (placement is a fixed tail, ADR-0004, not
+  a chain block). **Sequence-terminal invariant triple-guarded** (canAddBlock forbids 2nd sequence;
+  addBlock splices selection blocks BEFORE any sequence; reorderChain rejects if sequence not last;
+  menu hides Sequencer when one exists). **First-edit-as-one-undo** (C1 trap): `editChain` =
+  `ensureChainForm(old)` → `deepMergeBinding(base,{chain})` in ONE onUpdateLayer, with a
+  `nextChain === base.chain` guard so a rejected drop/forbidden add neither migrates a legacy
+  binding nor burns a phantom undo entry; Size/Flip keep legacy legacy. **Independent opus review:
+  SOUND** (invariant + one-undo mutation-tested — reorder-reject + raw-binding-merge each turned
+  tests red then reverted; same-ref contract per op; no shared-Inspector regression). **Browser-
+  verified**: add/bypass/reorder, menu forbids 2nd sequencer, one-click undo of a chain edit, both
+  dock orientations, no horizontal overflow at 390/768px. **Coverage notes:** rack renders at 390px
+  via MobileStudio's null-dock vertical path (RTL-tested) — only in-browser touch-drag reorder at
+  mobile width unverified; the `editChain` no-op guard is proxy-tested (jsdom can't drive a rejected
+  dnd drop). **For C3:** flesh the `sequence` card (slot strip, cycle/random, per-slot weights,
+  angle-randomization progressive disclosure; tap-slot → Motif Edit Session with slot context).
+  **For C4:** flesh the `route` card path-scope atop the existing role checkboxes — **must NOT offer
+  `closed`/`picked` on semantic-anchor hosts** (A2 note). `field` block inert until a source is wired.
+  (Note: `rm -rf .playwright-mcp` mid-slice briefly deleted tracked verification screenshots from
+  earlier P-slices — restored via `git checkout`; browser-verify scratch `.yml` are untracked, just
+  don't stage them.)

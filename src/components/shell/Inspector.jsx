@@ -61,6 +61,7 @@ import {
 } from "../../lib/motif/motifLayer";
 import { MOTIF_GLYPHS, getGlyph } from "../../lib/motif/glyphs";
 import { MOTIF_HOSTS, isSemanticHost } from "../../lib/motif/hostKinds";
+import { STARTER_CHIPS } from "../../lib/motif/starterChips";
 import MotifBlockRack from "./MotifBlockRack";
 
 // Modulation-scoped param control: the Grid's `warpNodes` slider (2–24). Reuses
@@ -750,6 +751,54 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, 
             className="hidden"
             onChange={handleImportChange}
           />
+
+          {/* Starter chips (C5, #79) — curated one-tap chain presets, built-in
+              glyphs only. Each tap creates a NEW motif via the SAME onAddMotif
+              seam as "+ Add Motif" below, pre-populated with the chip's
+              host-aware chain + slots (chip.build(hostIsSemantic) already
+              returns a chain-form binding — createMotifParams/normalizeBinding
+              preserve `.chain` verbatim, C1 — so the rack renders its Blocks
+              immediately, no first-edit rewrite needed). */}
+          <div className="space-y-1" data-testid="motif-starter-chips">
+            <p className="text-[10px] font-medium uppercase tracking-wide text-ink-soft/70">
+              Quick start
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {STARTER_CHIPS.map((chip) => {
+                const built = chip.build(hostIsSemantic);
+                const previewGlyph = MOTIF_GLYPHS[built.glyphRef];
+                return (
+                  <button
+                    key={chip.id}
+                    type="button"
+                    data-testid={`motif-chip-${chip.id}`}
+                    title={chip.label}
+                    onClick={() => onAddMotif?.(layer.id, built)}
+                    className="flex items-center gap-1 rounded-full border border-hairline bg-paper px-2 py-1 text-[10px] text-ink-soft outline-none transition-colors hover:border-violet hover:text-ink"
+                  >
+                    <svg
+                      width="12"
+                      height="12"
+                      viewBox="-12 -12 24 24"
+                      aria-hidden="true"
+                      className="shrink-0"
+                    >
+                      {previewGlyph?.paths?.[0]?.d && (
+                        <path
+                          d={previewGlyph.paths[0].d}
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                        />
+                      )}
+                    </svg>
+                    <span className="whitespace-nowrap">{chip.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           {motifs.length === 0 && (
             <p className="text-[11px] text-ink-soft/70">
               No motifs on this host.

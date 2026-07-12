@@ -4,13 +4,16 @@
 // plus the exported deepMergeBinding helper's partial-patch invariant.
 
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, within } from "@testing-library/react";
 import Inspector from "./Inspector";
+import { InspectorDockProvider } from "./inspectorDockContext";
 import {
   MOTIF_TYPE,
   createMotifParams,
   deepMergeBinding,
+  ensureChainForm,
 } from "../../lib/motif/motifLayer";
+import { reorderChain } from "../../lib/motif/chainEditor";
 
 vi.mock("../../lib/AuthContext", () => ({
   useAuth: () => ({ tier: "studio" }),
@@ -163,7 +166,7 @@ describe("MotifDevice", () => {
     expect(opts.binding.selection.roles).toEqual(["crossing"]);
   });
 
-  it("toggling a role writes an explicit roles array via a deep-merged patch", () => {
+  it("toggling a role in the Route card writes chain-form (roles on the route block)", () => {
     const onUpdateLayer = vi.fn();
     const motif = motifLayer("m1", "host1", defaultBinding);
     render(
@@ -175,16 +178,20 @@ describe("MotifDevice", () => {
       />
     );
     fireEvent.click(screen.getByTestId("motif-toggle"));
-    // Add 'edge' (crossing already on).
-    fireEvent.click(screen.getByTestId("motif-role-edge"));
-    expect(onUpdateLayer).toHaveBeenCalledWith("m1", expect.anything());
+    // Add 'edge' (crossing already on, from the compiled Route block).
+    fireEvent.click(screen.getByTestId("motif-block-role-edge"));
+    expect(onUpdateLayer).toHaveBeenCalledTimes(1);
     const [, patch] = onUpdateLayer.mock.calls[0];
-    expect(patch.params.binding.selection.roles).toEqual(["crossing", "edge"]);
-    // Placement branch preserved by the deep merge.
+    // First-edit rewrite: chain-form, legacy `selection` DROPPED.
+    expect(patch.params.binding.chain).toBeInstanceOf(Array);
+    expect(patch.params.binding.selection).toBeUndefined();
+    const route = patch.params.binding.chain.find((b) => b.type === "route");
+    expect(route.roles).toEqual(["crossing", "edge"]);
+    // Placement preserved through the merge.
     expect(patch.params.binding.placement.sizing.size).toBe(18);
   });
 
-  it("editing Every-Nth deep-merges into selection.rate.n (min 1)", () => {
+  it("editing Every N in its Block card writes chain-form (everyN.n, min 1)", () => {
     const onUpdateLayer = vi.fn();
     const motif = motifLayer("m1", "host1", defaultBinding);
     render(
@@ -196,12 +203,14 @@ describe("MotifDevice", () => {
       />
     );
     fireEvent.click(screen.getByTestId("motif-toggle"));
-    fireEvent.change(screen.getByTestId("motif-rate-n"), {
+    fireEvent.change(screen.getByTestId("motif-block-n"), {
       target: { value: "4" },
     });
+    expect(onUpdateLayer).toHaveBeenCalledTimes(1);
     const [, patch] = onUpdateLayer.mock.calls[0];
-    expect(patch.params.binding.selection.rate.n).toBe(4);
-    expect(patch.params.binding.selection.roles).toEqual(["crossing"]);
+    const everyN = patch.params.binding.chain.find((b) => b.type === "everyN");
+    expect(everyN.n).toBe(4);
+    expect(patch.params.binding.selection).toBeUndefined();
   });
 
   // ── Custom glyphs (WI-5): the picker lists imported motifs alongside
@@ -450,5 +459,249 @@ describe("MotifDevice", () => {
     });
     // Already in the doc → no redundant copy (just a rebind).
     expect(onCopyLibraryGlyph).not.toHaveBeenCalled();
+  });
+});
+
+// ── C2: the Block rack (MotifBlockRack rendered inside the device row) ─────────
+describe("MotifBlockRack (C2)", () => {
+  // A motif whose binding is already chain-form (createMotifParams preserves it
+  // via normalizeBinding).
+  function chainMotif(id, hostId, chain) {
+    return {
+      id,
+      name: id,
+      type: MOTIF_TYPE,
+      patternType: MOTIF_TYPE,
+      params: createMotifParams({
+        hostLayerId: hostId,
+        glyphRef: "leaf",
+        binding: { chain, placement: defaultBinding.placement },
+      }),
+      randomizeKeys: [],
+      paramsCache: {},
+    };
+  }
+
+  const seqBlock = () => ({ type: "sequence", mode: "cycle", slots: [] });
+
+  function expand(ui) {
+    const r = render(ui);
+    fireEvent.click(screen.getByTestId("motif-toggle"));
+    return r;
+  }
+
+  it("renders one Block card per compiled block for a LEGACY motif (Route/Every N/Density)", () => {
+    const motif = motifLayer("m1", "host1", defaultBinding);
+    expand(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    const cards = screen.getAllByTestId("motif-block");
+    expect(cards.map((c) => c.getAttribute("data-block-type"))).toEqual([
+      "route",
+      "everyN",
+      "density",
+    ]);
+  });
+
+  it("bypass toggle flips block.bypass and writes chain-form (one undo entry)", () => {
+    const onUpdateLayer = vi.fn();
+    const motif = motifLayer("m1", "host1", defaultBinding);
+    expand(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={onUpdateLayer}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    fireEvent.click(screen.getAllByTestId("motif-block-bypass")[0]); // Route
+    expect(onUpdateLayer).toHaveBeenCalledTimes(1);
+    const [, patch] = onUpdateLayer.mock.calls[0];
+    expect(patch.params.binding.chain[0].bypass).toBe(true);
+    expect(patch.params.binding.selection).toBeUndefined();
+  });
+
+  it("adding a selection block via the menu appends it (chain-form)", () => {
+    const onUpdateLayer = vi.fn();
+    const motif = motifLayer("m1", "host1", defaultBinding);
+    expand(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={onUpdateLayer}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    fireEvent.change(screen.getByTestId("motif-block-add"), {
+      target: { value: "skip" },
+    });
+    expect(onUpdateLayer).toHaveBeenCalledTimes(1);
+    const [, patch] = onUpdateLayer.mock.calls[0];
+    const types = patch.params.binding.chain.map((b) => b.type);
+    expect(types).toContain("skip");
+    // With no sequence, a selection block appends to the end.
+    expect(types[types.length - 1]).toBe("skip");
+  });
+
+  it("adding a Sequencer appends it terminally (last element)", () => {
+    const onUpdateLayer = vi.fn();
+    const motif = motifLayer("m1", "host1", defaultBinding);
+    expand(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={onUpdateLayer}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    fireEvent.change(screen.getByTestId("motif-block-add"), {
+      target: { value: "sequence" },
+    });
+    const [, patch] = onUpdateLayer.mock.calls[0];
+    const chain = patch.params.binding.chain;
+    expect(chain[chain.length - 1].type).toBe("sequence");
+  });
+
+  it("the add-menu HIDES the Sequencer option once a sequence exists (at-most-one)", () => {
+    const motif = chainMotif("m1", "host1", [
+      { type: "route", roles: ["crossing"], pathScope: "all" },
+      seqBlock(),
+    ]);
+    expand(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    const addMenu = screen.getByTestId("motif-block-add");
+    // No "Sequencer" option in the add menu (a second sequence is forbidden).
+    expect(
+      within(addMenu).queryByRole("option", { name: "Sequencer" })
+    ).toBeNull();
+    // Selection blocks are still offered.
+    expect(
+      within(addMenu).getByRole("option", { name: "Every N" })
+    ).toBeInTheDocument();
+  });
+
+  it("a selection block added while a sequence exists is inserted BEFORE the sequence", () => {
+    const onUpdateLayer = vi.fn();
+    const motif = chainMotif("m1", "host1", [
+      { type: "route", roles: ["crossing"], pathScope: "all" },
+      seqBlock(),
+    ]);
+    expand(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={onUpdateLayer}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    fireEvent.change(screen.getByTestId("motif-block-add"), {
+      target: { value: "everyN" },
+    });
+    const [, patch] = onUpdateLayer.mock.calls[0];
+    const types = patch.params.binding.chain.map((b) => b.type);
+    expect(types).toEqual(["route", "everyN", "sequence"]);
+  });
+
+  it("removing a block writes the shortened chain (chain-form)", () => {
+    const onUpdateLayer = vi.fn();
+    const motif = motifLayer("m1", "host1", defaultBinding);
+    expand(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={onUpdateLayer}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    // Remove the first card (Route).
+    fireEvent.click(screen.getAllByTestId("motif-block-remove")[0]);
+    const [, patch] = onUpdateLayer.mock.calls[0];
+    expect(patch.params.binding.chain.map((b) => b.type)).toEqual([
+      "everyN",
+      "density",
+    ]);
+  });
+
+  it("orientation follows the dock: vertical by default, horizontal in the bottom shelf", () => {
+    const motif = motifLayer("m1", "host1", defaultBinding);
+    // No dock provider → vertical.
+    const { unmount } = expand(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    expect(screen.getByTestId("motif-rack")).toHaveAttribute(
+      "data-orientation",
+      "vertical"
+    );
+    unmount();
+
+    // Bottom shelf → horizontal.
+    render(
+      <InspectorDockProvider value={{ dockPosition: "bottom" }}>
+        <Inspector
+          layers={[hostLayer("host1", "grid"), motif]}
+          selectedLayerId="host1"
+          onUpdateLayer={() => {}}
+          onChangeLayerPattern={() => {}}
+        />
+      </InspectorDockProvider>
+    );
+    fireEvent.click(screen.getByTestId("motif-toggle"));
+    expect(screen.getByTestId("motif-rack")).toHaveAttribute(
+      "data-orientation",
+      "horizontal"
+    );
+  });
+
+  it("Placement Size/Flip still work and stay LEGACY-preserving (no forced chain rewrite)", () => {
+    const onUpdateLayer = vi.fn();
+    const motif = motifLayer("m1", "host1", defaultBinding);
+    expand(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={onUpdateLayer}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    fireEvent.change(screen.getByTestId("motif-size"), { target: { value: "30" } });
+    const [, patch] = onUpdateLayer.mock.calls[0];
+    // Placement edits are orthogonal to the chain — a legacy binding stays legacy.
+    expect(patch.params.binding.placement.sizing.size).toBe(30);
+    expect(patch.params.binding.selection).toBeDefined();
+    expect(patch.params.binding.chain).toBeUndefined();
+  });
+
+  it("editChain no-churn: a rejected chain op returns the SAME ref, so the write is skipped", () => {
+    // Reconstructs the exact editChain composition MotifDevice uses for a rejected
+    // reorder (selection block dragged below the terminal sequence). The guard is
+    // `nextChain === base.chain` → skip onUpdateLayer, so a legacy binding is
+    // NEITHER migrated NOR churned into a phantom undo entry.
+    const base = ensureChainForm({
+      chain: [
+        { type: "route", roles: ["crossing"], pathScope: "all" },
+        { type: "everyN", n: 2 },
+        seqBlock(),
+      ],
+      placement: {},
+    });
+    // Move 'route' (0) below the sequence (2) — illegal.
+    const nextChain = reorderChain(base.chain, 0, 2);
+    expect(nextChain).toBe(base.chain); // same ref → editChain returns early
   });
 });

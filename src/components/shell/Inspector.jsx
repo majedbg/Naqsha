@@ -52,9 +52,16 @@ import { channelForTarget } from "../../lib/fields/channelConsumers";
 import { canProduceLattice } from "../../lib/fields/latticeForLayer";
 import { resolveModulationForTarget } from "../../lib/fields/resolveModulationForTarget";
 import { ANCHOR_POS, ANCHOR_MID, ANCHOR_NEG } from "../../lib/fields/colormap";
-import { isMotifLayer, motifHostId, deepMergeBinding } from "../../lib/motif/motifLayer";
+import {
+  isMotifLayer,
+  motifHostId,
+  deepMergeBinding,
+  readChain,
+  ensureChainForm,
+} from "../../lib/motif/motifLayer";
 import { MOTIF_GLYPHS, getGlyph } from "../../lib/motif/glyphs";
 import { MOTIF_HOSTS, isSemanticHost } from "../../lib/motif/hostKinds";
+import MotifBlockRack from "./MotifBlockRack";
 
 // Modulation-scoped param control: the Grid's `warpNodes` slider (2–24). Reuses
 // the file's `accent-violet` range styling. Rendered INSIDE a <ModulationParamBox>
@@ -555,13 +562,6 @@ function ModulatorDevice({
 // resolved downstream (resolveMotifHostParams forces anchorMode:'edge' for edge
 // hosts); the device only branches on isSemanticHost for its role defaults/UI.
 
-const MOTIF_ROLES = [
-  { key: "crossing", label: "Crossings" },
-  { key: "edge", label: "Edges" },
-  { key: "tip", label: "Tips" },
-  { key: "cell", label: "Cells" },
-];
-
 // Motif device panel — add/edit/remove motifs that ADORN this host layer.
 // Shown ONLY for an eligible HOST (a grid/recursive/spiral pattern layer, never
 // a motif layer itself). Each motif is a sibling layer whose params.hostLayerId
@@ -608,7 +608,10 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, 
   );
 
   // Rebuild params.binding whole on every write (deep-merge the patch), then
-  // re-spread params (onUpdateLayer shallow-merges the top level).
+  // re-spread params (onUpdateLayer shallow-merges the top level). Used ONLY for
+  // PLACEMENT edits (Size / Flip) — placement is a fixed tail (ADR-0004), never a
+  // chain block, so a placement edit on a legacy binding legitimately keeps it
+  // legacy (the mutual-exclusivity trap is about CHAIN edits, not placement).
   const patchMotif = (m, bindingPatch) =>
     onUpdateLayer(m.id, {
       params: {
@@ -616,6 +619,25 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, 
         binding: deepMergeBinding(m.params?.binding, bindingPatch),
       },
     });
+
+  // The Block-chain edit path (C2) — the FIRST block edit on a legacy binding
+  // must rewrite legacy→chain AND apply the edit as ONE undo entry (the C1
+  // handoff trap): ensureChainForm FIRST (compiles + DROPS `selection`, so
+  // deepMergeBinding can't resurrect it), then produce the new chain array, then a
+  // SINGLE onUpdateLayer. `mutate` is a pure chainEditor op over the base chain;
+  // when it returns the SAME array ref (a rejected drop / forbidden add) we skip
+  // the write entirely — no legacy→chain migration, no phantom undo entry.
+  const editChain = (m, mutate) => {
+    const base = ensureChainForm(m.params?.binding);
+    const nextChain = mutate(base.chain);
+    if (nextChain === base.chain) return; // no-op → no churn
+    onUpdateLayer(m.id, {
+      params: {
+        ...m.params,
+        binding: deepMergeBinding(base, { chain: nextChain }),
+      },
+    });
+  };
 
   // Arm the shared file input for a specific motif row, then open the picker.
   const openImportFor = (motifId) => {
@@ -668,12 +690,8 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, 
       },
     });
 
-  // Only the semantic hosts expose crossing/tip/cell anchors; on an edge host the
-  // sole meaningful role is Edges, so hide the dead role checkboxes there (same
-  // consciously-scoped affordance decision as the AnchorGhostOverlay set).
-  const roleOptions = hostIsSemantic
-    ? MOTIF_ROLES
-    : MOTIF_ROLES.filter((r) => r.key === "edge");
+  // Role scoping (semantic hosts expose crossing/tip/cell; edge hosts only Edges)
+  // now lives inside MotifBlockRack's Route card, driven by hostIsSemantic.
 
   return (
     <div
@@ -724,19 +742,13 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, 
         // edit" (the Edit button forks a copy first). WI-P2-2.
         const isCustomGlyph =
           !!glyphRef && !MOTIF_GLYPHS[glyphRef] && !!customGlyphs?.[glyphRef];
-        const roles = Array.isArray(m.params?.binding?.selection?.roles)
-          ? m.params.binding.selection.roles
-          : [];
-        const n = m.params?.binding?.selection?.rate?.n ?? 1;
+        // The effective Block chain for DISPLAY — readChain lazy-compiles a legacy
+        // binding on the fly so a not-yet-rewritten motif still shows its Blocks.
+        // Edit indices line up because editChain applies to ensureChainForm(old),
+        // which produces the same compiled chain.
+        const chain = readChain(m.params?.binding);
         const size = m.params?.binding?.placement?.sizing?.size ?? 18;
         const flip = m.params?.binding?.placement?.flip === true;
-
-        const toggleRole = (roleKey) => {
-          const next = roles.includes(roleKey)
-            ? roles.filter((r) => r !== roleKey)
-            : [...roles, roleKey];
-          patchMotif(m, { selection: { roles: next } });
-        };
 
         return (
           <div
@@ -858,45 +870,20 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, 
               </button>
             </div>
 
-            {/* Roles — which anchor kinds this motif adorns */}
-            <div className="flex flex-wrap gap-x-3 gap-y-1">
-              {roleOptions.map((r) => (
-                <label
-                  key={r.key}
-                  className="flex items-center gap-1 text-[11px] text-ink-soft"
-                >
-                  <input
-                    type="checkbox"
-                    data-testid={`motif-role-${r.key}`}
-                    aria-label={r.label}
-                    checked={roles.includes(r.key)}
-                    onChange={() => toggleRole(r.key)}
-                  />
-                  <span>{r.label}</span>
-                </label>
-              ))}
-            </div>
+            {/* The Block stack (C2) — the selection CHAIN as reorderable Block
+                cards (route/everyN/skip/density/field + the terminal Sequencer).
+                Replaces the old flat role/Every-N controls; roles now live in the
+                Route card. Every edit routes through editChain (first-edit rewrite
+                as one undo entry + no-op guard). */}
+            <MotifBlockRack
+              chain={chain}
+              hostIsSemantic={hostIsSemantic}
+              onEditChain={(mutate) => editChain(m, mutate)}
+            />
 
-            {/* Every-Nth + Size */}
-            <div className="flex items-center gap-3">
-              <label className="flex items-center gap-1.5 text-[11px] text-ink-soft">
-                <span className="whitespace-nowrap">Every</span>
-                <input
-                  type="number"
-                  data-testid="motif-rate-n"
-                  aria-label="Every Nth"
-                  min={1}
-                  step={1}
-                  value={n}
-                  onChange={(e) => {
-                    const raw = Number(e.target.value);
-                    const next =
-                      Number.isFinite(raw) && raw >= 1 ? Math.round(raw) : 1;
-                    patchMotif(m, { selection: { rate: { n: next } } });
-                  }}
-                  className="w-12 rounded-xs border border-hairline bg-paper px-1 py-0.5 text-[11px] text-ink outline-none focus:border-violet num"
-                />
-              </label>
+            {/* Placement (fixed tail, ADR-0004 — NOT a chain block): Size + Flip.
+                Kept as fixed controls so authoring them never regresses. */}
+            <div className="space-y-1.5 border-t border-hairline/60 pt-2">
               <label className="flex items-center gap-1.5 text-[11px] text-ink-soft">
                 <span className="whitespace-nowrap">Size</span>
                 <input
@@ -916,21 +903,19 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, 
                   className="w-14 rounded-xs border border-hairline bg-paper px-1 py-0.5 text-[11px] text-ink outline-none focus:border-violet num"
                 />
               </label>
+              <label className="flex items-center gap-1.5 text-[11px] text-ink-soft">
+                <input
+                  type="checkbox"
+                  data-testid="motif-flip"
+                  aria-label="Flip"
+                  checked={flip}
+                  onChange={(e) =>
+                    patchMotif(m, { placement: { flip: e.target.checked } })
+                  }
+                />
+                <span>Flip</span>
+              </label>
             </div>
-
-            {/* Flip */}
-            <label className="flex items-center gap-1.5 text-[11px] text-ink-soft">
-              <input
-                type="checkbox"
-                data-testid="motif-flip"
-                aria-label="Flip"
-                checked={flip}
-                onChange={(e) =>
-                  patchMotif(m, { placement: { flip: e.target.checked } })
-                }
-              />
-              <span>Flip</span>
-            </label>
           </div>
         );
       })}

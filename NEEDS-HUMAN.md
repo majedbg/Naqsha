@@ -62,3 +62,15 @@ captured and must be confirmed live.
       Note the one interaction: once Grid is warp-modulated it emits a `<path>`, so a
       **warped** grid becomes plotter-visible for the first time while an unwarped grid
       still does not — expected, not a regression.
+
+## Raster Etch S1 (#80) — localStorage quota for Etch source data-URIs
+
+- [ ] **Etch source data-URIs can exceed the localStorage quota (S1 known limit).**
+      A guest/offline Etch stores its downscaled (≤1024px) source as a PNG data-URI on
+      the layer; several Etches (or one large one) can push the `sonoform-layers` blob
+      past the ~5MB `localStorage` ceiling. S1 FIX 4 isolates that write so a
+      `QuotaExceededError` no longer cascade-kills the other document writes and now
+      emits a `console.warn` (no more silent TOTAL loss), but the Etch source itself
+      still won't persist when over quota. **Real fix = source compression + signed-in
+      private-bucket storage (S7 / #86).** Until then, a large multi-Etch document may
+      not fully survive a guest reload.

@@ -9,6 +9,7 @@ import { operationIdForRole } from './operations';
 import { parseSVGImport } from './svgImport';
 import { defaultTextParams } from './text/textLayer';
 import { MOTIF_TYPE, createMotifParams, motifAutoName } from './motif/motifLayer';
+import { ETCH_TYPE, createEtchParams } from './etch/etchLayer';
 import { getGlyph, MOTIF_GLYPHS } from './motif/glyphs';
 import { normalizePanels, loadPanels, savePanels } from './panels';
 
@@ -270,8 +271,19 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
     if (!persistToLocal) return;
     clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
+      // The layers write is ISOLATED (Raster Etch S1 FIX 4): an Etch source is a
+      // large PNG data-URI, so this write can throw QuotaExceededError. Left in
+      // the shared try/catch below it would swallow the error AND skip every
+      // subsequent setItem → silent TOTAL document loss on reload. Its own
+      // try/catch + a warning keeps the smaller writes (bg/panels/glyphs/opts)
+      // running and surfaces the quota problem. (Known S1 limit — see
+      // NEEDS-HUMAN.md; real fix is source compression + the S7 bucket.)
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(layers));
+      } catch (err) {
+        console.warn('Naqsha: could not persist layers to localStorage (quota exceeded?). Other document state was still saved.', err);
+      }
+      try {
         localStorage.setItem(BG_STORAGE_KEY, bgColor);
         savePanels(panels); // sonoform-panels (WI-1) rides the same debounce
         // sonoform-custom-glyphs (WI-3) rides the same debounce so guest work
@@ -459,6 +471,56 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
     });
     return { ok: true, id };
   }, [cap, layers, customGlyphs, recordStructuralFn]);
+
+  // Create an ETCH layer — the raster counterpart to the vector layers (Raster
+  // Etch S1, issue #80). Mirrors addImportedLayer/addTextLayer EXACTLY: id
+  // generated outside the updater (survives StrictMode double-invoke, returned
+  // for selection), capacity decided synchronously off live `layers`, returns
+  // { ok, id } or { ok:false, error }. An Etch always resolves to the ENGRAVE
+  // role and references an engrave Operation (grilled decision 6 — no new process
+  // type; DPI lives on the layer). The imported photo is stored as a capped
+  // (≤~1024px) data-URI in `params.source` (guest/offline path, decision 7); the
+  // caller (Studio) decodes + downscales before calling. `opts.transform` seeds
+  // the committed transform (used by pointer-place), like the sibling creators.
+  const addEtchLayer = useCallback((opts = {}) => {
+    if (layers.length >= cap) return { ok: false, error: 'Layer limit reached.' };
+
+    recordStructuralFn(); // history: past the cap guard, this will mutate
+    const id = genId();
+    setLayers((prev) => {
+      if (prev.length >= cap) return prev; // re-check against live state
+      const index = prev.length;
+      const layer = {
+        id,
+        name: `Etch ${index + 1}`,
+        nameIsCustom: false,
+        locked: false,
+        type: ETCH_TYPE,
+        color: '#000000',
+        opacity: 100,
+        visible: true,
+        bgColor: '#ffffff',
+        bgOpacity: 0,
+        patternType: ETCH_TYPE,       // stable, non-colliding (mirrors text/import/motif)
+        params: createEtchParams({
+          source: opts.source,
+          sourceWidth: opts.sourceWidth,
+          sourceHeight: opts.sourceHeight,
+          dpi: opts.dpi,
+        }),
+        seed: 0,
+        randomizeKeys: [],
+        paramsCache: {},
+        role: 'engrave',              // an Etch is engrave-role (decision 6)
+        operationId: operationIdForRole('engrave'),
+        penSlot: (index % 4) + 1,
+        panelId: null, // Panel membership (WI-1); normalizer assigns on load.
+        ...(opts.transform ? { transform: opts.transform } : {}),
+      };
+      return [...prev, layer];
+    });
+    return { ok: true, id };
+  }, [cap, layers, recordStructuralFn]);
 
   const duplicateLayer = useCallback((id) => {
     recordStructuralFn(); // history: discrete structural entry
@@ -885,7 +947,7 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
   }, []);
 
   return {
-    layers, addLayer, addImportedLayer, addTextLayer, addMotifLayer, duplicateLayer, removeLayer, updateLayer, reorderLayers,
+    layers, addLayer, addImportedLayer, addTextLayer, addMotifLayer, addEtchLayer, duplicateLayer, removeLayer, updateLayer, reorderLayers,
     changeLayerPattern,
     randomizeLayer, randomizeAll, randomizeLayerParams, randomizeAllParams,
     loadLayerSet, bgColor, setBgColor,

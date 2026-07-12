@@ -13,8 +13,22 @@ import { transformToSVG } from './transform/transformOps.js';
 import { isTextLayer, textNodeFromLayer } from './text/textLayer.js';
 import { TextNode } from './scene/TextNode.js';
 import { importLayerPivot } from './scene/placement.js';
+import { etchImageMarkup } from './etch/etchSvg.js';
+import { resolveExportColor } from './fabrication.js';
 
 const pxToMm = (px) => (px / PPI) * MM_PER_IN;
+
+// The engrave colour an Etch's embedded bitmap is painted in. Resolved the SAME
+// way the canvas resolves it (resolveExportColor — the operation-aware
+// fabrication colour that materialPreview's operation mode also delegates to),
+// so recolouring the Engrave Operation moves the exported bitmap in lockstep
+// with the canvas (WYSIWYG, grilled decision 4 on the colour axis). Falls back
+// to the layer's own colour when no operation library is threaded through
+// (legacy/test callers), keeping non-operation exports byte-stable. Scoped to
+// the etch path only — vector layers are unchanged.
+function etchEngraveColor(layer, operations, outputMode) {
+  return operations ? resolveExportColor(layer, { operations, outputMode }) : layer.color;
+}
 
 // Wrap a layer's rendered content in the layer's interactive transform (move /
 // resize / rotate), pivoted about the SAME center useCanvas renders with so the
@@ -118,6 +132,20 @@ export function buildLayerSVG(layer, patternInstance, canvasW, canvasH, opts = {
     const meta = buildMeta({ metadata: opts.metadata, manifest: opts.manifest });
     return `${svgOpen(canvasW, canvasH, meta)}\n  <rect width="100%" height="100%" fill="white"/>\n  ${placed}\n</svg>`;
   }
+  // Etch layers (Raster Etch, ADR-0006) export as an embedded 1-bit bitmap
+  // `<image>` at the engrave colour — NEVER vector — reading the SAME buffer the
+  // canvas rendered. Duck-typed on `supportsEtchExport`; every other layer keeps
+  // the vector path below (ADR-0001 two-path preserved).
+  if (patternInstance?.supportsEtchExport) {
+    const color = etchEngraveColor(layer, opts.operations, opts.profileId);
+    const markup = etchImageMarkup(patternInstance.etchBitmap, color, layer.id, canvasW, canvasH);
+    const placed = wrapLayerTransform(markup, layer, canvasW, canvasH);
+    const meta = buildMeta({ metadata: opts.metadata, manifest: opts.manifest });
+    return `${svgOpen(canvasW, canvasH, meta)}
+  <rect width="100%" height="100%" fill="white"/>
+  ${placed}
+</svg>`;
+  }
   const bgRect = layerBgRect(layer, canvasW, canvasH);
   // Role-based laser export (issue #68): an extracted pattern on the laser
   // profile paints each path by its own fabrication role (data-role) so laser
@@ -168,7 +196,7 @@ function variableWeightGroup(layer, instance, profileId) {
 // exported file still contained them. cropToSheet defaults true (matching
 // runPlanModel) but clipping needs BOTH flags — callers that pass no sheetRect
 // (all legacy call sites) get byte-identical output.
-export function buildAllLayersSVG(layers, patternInstances, canvasW, canvasH, includeHidden = false, { metadata = false, manifest, optimizations, profileId, font, cropToSheet = true, sheetRect = null } = {}) {
+export function buildAllLayersSVG(layers, patternInstances, canvasW, canvasH, includeHidden = false, { metadata = false, manifest, optimizations, profileId, operations, font, cropToSheet = true, sheetRect = null } = {}) {
   // Clip only when the preference asks for it AND there is a Sheet to clip
   // against — the same doClip rule runPlanModel applies, so file and plan
   // decide identically.
@@ -185,6 +213,16 @@ export function buildAllLayersSVG(layers, patternInstances, canvasW, canvasH, in
       if (isTextLayer(l)) return textLayerGroup(l, font);
       const instance = patternInstances[l.id];
       if (!instance) return '';
+      // Etch layers (ADR-0006) export as an embedded 1-bit bitmap `<image>` at the
+      // engrave colour, reading the SAME buffer the canvas drew (grilled decision
+      // 4). Raster, so NOT routed through hybridClipMarkup (which parses vector
+      // path data) — it embeds regardless of cropToSheet. cut/score/pattern layers
+      // fall through to the vector path below, keeping ADR-0001's two-path export.
+      if (instance.supportsEtchExport) {
+        const color = etchEngraveColor(l, operations, profileId);
+        const markup = etchImageMarkup(instance.etchBitmap, color, l.id, canvasW, canvasH);
+        return wrapLayerTransform(markup, l, canvasW, canvasH);
+      }
       const bgRect = layerBgRect(l, canvasW, canvasH);
       // Variable-weight layers export per-element band colors (additive); every
       // other layer keeps the byte-stable single-color group path.

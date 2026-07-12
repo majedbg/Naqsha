@@ -166,6 +166,7 @@ export default function MenuBar({
   onOpen,
   onExamples,
   onImport,
+  onImportEtch,
   onExport,
   onSubmitToOrg,
   onSave,
@@ -259,6 +260,9 @@ export default function MenuBar({
         { label: "Open…", onSelect: onOpen },
         { label: "Examples", onSelect: onExamples },
         { label: "Import…", onSelect: onImport, disabled: !onImport },
+        // Import Image (Etch)… — a raster photo becomes an Etch layer (Raster
+        // Etch S1, #80): threshold → 1-bit dot field → embedded-bitmap export.
+        { label: "Import Image (Etch)…", onSelect: onImportEtch, disabled: !onImportEtch },
         { separator: true },
         // Document Setup… (C6 / #14) — machine profile + bed (= artboard).
         {

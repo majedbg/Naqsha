@@ -312,6 +312,7 @@ export default function Studio({ submitOrg = null } = {}) {
     addImportedLayer,
     addTextLayer,
     addMotifLayer,
+    addEtchLayer,
     updateLayer,
     reorderLayers,
     changeLayerPattern,
@@ -1244,6 +1245,49 @@ export default function Studio({ submitOrg = null } = {}) {
     [handleImportSVG]
   );
 
+  // Import Image (Etch) — read a raster photo, downscale it to a capped
+  // (≤1024px) data-URI (guest/offline path, Raster Etch S1 #80), and create an
+  // Etch layer that thresholds it to a 1-bit dot field exported as an embedded
+  // bitmap. Uses the extraction imageIO seam (fileToDataURL → loadImage →
+  // cropToImageData → imageDataToDataURL) so no new DOM/canvas plumbing is added.
+  const etchFileInputRef = useRef(null);
+  const handleImportEtchClick = useCallback(() => {
+    etchFileInputRef.current?.click();
+  }, []);
+  const handleEtchFileChange = useCallback(
+    async (e) => {
+      const file = e.target.files?.[0];
+      e.target.value = ""; // allow re-importing the same file
+      if (!file) return;
+      try {
+        const { fileToDataURL, loadImage, cropToImageData, imageDataToDataURL } =
+          await import("../lib/extraction/imageIO.js");
+        const dataUrl = await fileToDataURL(file);
+        const img = await loadImage(dataUrl);
+        // Downscale to the capped source (longest side ≤ 1024px) held on the layer.
+        const capped = cropToImageData(
+          img,
+          { x: 0, y: 0, w: img.naturalWidth, h: img.naturalHeight },
+          1024
+        );
+        const source = imageDataToDataURL(capped);
+        const outcome = addEtchLayer({
+          source,
+          sourceWidth: capped.width,
+          sourceHeight: capped.height,
+        });
+        if (outcome?.ok) {
+          setSelectedLayerId(outcome.id);
+        } else {
+          setImportError(outcome?.error || "Could not import that image.");
+        }
+      } catch {
+        setImportError("Could not read that image.");
+      }
+    },
+    [addEtchLayer]
+  );
+
   // Drag-drop + paste onto the canvas (the other two entry points).
   useSvgImport(canvasContainerRef, handleImportSVG);
 
@@ -1509,6 +1553,9 @@ export default function Studio({ submitOrg = null } = {}) {
     exportLayerSVG(exportLayer(layer), instance, canvasW, canvasH, {
       metadata: limits.svgMetadata,
       profileId: machineProfile,
+      // Operation library so an Etch's embedded-bitmap colour resolves through
+      // its engrave Operation (same as the canvas), not a hardcoded layer colour.
+      operations,
       font: textFont,
     });
   };
@@ -1530,6 +1577,9 @@ export default function Studio({ submitOrg = null } = {}) {
         // enabled layers (#17 / #4 follow-up). Additive: non-enabled layers are
         // unaffected and export byte-identically.
         profileId: machineProfile,
+        // Operation library so an Etch's embedded-bitmap colour resolves through
+        // its engrave Operation (same as the canvas), not a hardcoded layer colour.
+        operations,
         // Resolved font so text layers export their glyph outlines (phase 6).
         font: textFont,
       }
@@ -1734,6 +1784,16 @@ export default function Studio({ submitOrg = null } = {}) {
         accept=".svg,image/svg+xml"
         className="hidden"
         onChange={handleImportFileChange}
+      />
+      {/* Hidden file input backing File > Import Image (Etch) (Raster Etch S1,
+          #80). Reads a raster photo and adds one Etch layer. */}
+      <input
+        ref={etchFileInputRef}
+        type="file"
+        accept="image/png,image/jpeg,image/webp,image/*"
+        data-testid="etch-image-input"
+        className="hidden"
+        onChange={handleEtchFileChange}
       />
       {/* Studio-in-canvas (Lane B / B7, #16): hosted inside the pro shell's
           Canvas region, so Studio renders ONLY the live canvas here. The title,
@@ -2047,6 +2107,7 @@ export default function Studio({ submitOrg = null } = {}) {
             onOpen={() => setUI("showLoadModal", true)}
             onExamples={() => setUI("showExamples", !showExamples)}
             onImport={handleImportClick}
+            onImportEtch={handleImportEtchClick}
             // Quick export (⌘E): write the file AND surface an Export Receipt
             // (ADR 0001) — never a silent export. Run plan… (⇧⌘E) opens the
             // pre-flight destination. Preferences… opens the crop-to-Sheet toggle.

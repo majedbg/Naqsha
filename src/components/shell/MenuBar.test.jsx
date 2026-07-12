@@ -67,7 +67,8 @@ describe("MenuBar (B5 — top menu bar structure)", () => {
     openMenu("File");
     const menu = screen.getByRole("menu", { name: "File" });
     // Anchored names so "Save…" doesn't also match "Save to cloud".
-    const items = [/^new$/i, /^open/i, /^examples$/i, /^import/i, /^export/i, /^save…$/i];
+    // "Import…" is anchored so it doesn't also match "Import Image (Etch)…".
+    const items = [/^new$/i, /^open/i, /^examples$/i, /^import…$/i, /^export/i, /^save…$/i];
     for (const item of items) {
       expect(
         within(menu).getByRole("menuitem", { name: item })

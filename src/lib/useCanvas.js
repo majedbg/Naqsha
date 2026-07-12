@@ -17,6 +17,10 @@ import { importLayerPivot } from './scene/placement';
 import { buildSelectables } from './scene/selectables';
 import { resolveCanvasColor, sheetBackground, offSheetDimFactor } from './materialPreview';
 import { effectiveVisible } from './panels';
+import { isEtchLayer } from './etch/etchLayer';
+import { makeEtchInstance } from './etch/etchInstance';
+import { bitmapToRGBA } from './etch/etchBitmap';
+import { resolveEtchBitmap, etchCacheNeedsResolve } from './etch/etchSource';
 
 // Pivoted node transform shared by render + selection chrome. Matches the SVG
 // `translate(x y) translate(cx cy) rotate scale translate(-cx -cy)` form emitted
@@ -79,6 +83,15 @@ export default function useCanvas(
   const rafRef = useRef(null);
   const [patternInstances, setPatternInstances] = useState({});
   const instancesRef = useRef({});
+  // Etch (Raster Etch S1, #80): the single-source 1-bit bitmap is produced
+  // ASYNCHRONOUSLY (decode → resample → worker), so it can't be built inside the
+  // synchronous p5 draw. The cache holds `layer.id → { sig, bitmap }`; an effect
+  // below fills it and calls the latest renderAll (held in a ref, like
+  // transformsRef, to avoid dep churn) to repaint. renderAll's draw loop reads
+  // the cached bitmap and both draws AND registers the export instance from it —
+  // the same buffer for canvas and SVG (grilled decision 4).
+  const etchBitmapCacheRef = useRef(new Map());
+  const renderAllRef = useRef(null);
   // Live transform/selection read inside renderAll WITHOUT entering its dep
   // array — keeps renderAll's identity stable so the 150ms param-debounce
   // effect doesn't re-fire on every drag frame. The rAF effect below drives
@@ -182,6 +195,32 @@ export default function useCanvas(
         instance.generateWithContext(
           drawCtx, layer.seed, layer.params, canvasW, canvasH, resolveCanvasColor(layer, { operations, outputMode, colorView, panels }), drawOpacity
         );
+        p.pop();
+        continue;
+      }
+
+      // Etch layer (Raster Etch, ADR-0006): a raster layer with no generative
+      // PatternClass. Its 1-bit bitmap is computed off-thread and cached; here we
+      // draw that SAME bitmap (via bitmapToRGBA) pixelated-scaled into the canvas
+      // box, and register makeEtchInstance(bitmap) so svgExport embeds the exact
+      // buffer we drew — the WYSIWYG single-source invariant (grilled decision 4).
+      // Until the async bitmap arrives, the instance carries a null bitmap (export
+      // emits nothing, no crash) and nothing is drawn.
+      if (isEtchLayer(layer)) {
+        const cached = etchBitmapCacheRef.current.get(layer.id);
+        const bitmap = cached ? cached.bitmap : null;
+        newInstances[layer.id] = makeEtchInstance(bitmap);
+        if (!vis || !bitmap || !bitmap.width || !bitmap.height) continue;
+        const color = resolveCanvasColor(layer, { operations, outputMode, colorView, panels });
+        const rgba = bitmapToRGBA(bitmap, color);
+        const img = p.createImage(bitmap.width, bitmap.height);
+        img.loadPixels();
+        img.pixels.set(rgba);
+        img.updatePixels();
+        p.push();
+        applyNodeTransform(p, nodeTransforms[layer.id], canvasW / 2, canvasH / 2);
+        p.noSmooth(); // pixelated — each dot maps to physical size (WYSIWYG)
+        p.image(img, 0, 0, canvasW, canvasH);
         p.pop();
         continue;
       }
@@ -372,6 +411,63 @@ export default function useCanvas(
     // `panels` is a dep so toggling a panel's visibility (new array identity)
     // gives renderAll a new identity → the debounce effect re-fires and repaints.
   }, [layers, canvasW, canvasH, bgColor, font, operations, outputMode, colorView, panels, customGlyphs]);
+
+  // Keep the latest renderAll in a ref so the async Etch effect can repaint
+  // WITHOUT taking renderAll as a dependency (which would relaunch bitmap
+  // computation on every param edit). Mirrors transformsRef's decoupling.
+  useEffect(() => {
+    renderAllRef.current = renderAll;
+  }, [renderAll]);
+
+  // Etch bitmaps: compute the single-source 1-bit buffer for every Etch layer
+  // whose source/DPI/canvas-size changed, off the main thread (grilled decision
+  // 4). Fills etchBitmapCacheRef then repaints via renderAllRef. Keyed by a
+  // signature so an unchanged Etch never recomputes; removed Etches are pruned.
+  //
+  // Liveness (FIX 2): the entry carries a `resolving` flag and the effect does
+  // NOT cancel/drop in-flight results. An unrelated `layers`-identity change
+  // during the ~10–50ms decode therefore can't strand the Etch at `bitmap:null`
+  // — etchCacheNeedsResolve relaunches a still-unresolved entry, and every
+  // resolve writes its result (guarded by a re-read of the current signature so
+  // a superseded run can't clobber a newer bitmap). Writing to the ref Map after
+  // unmount is harmless: renderAll no-ops once p5Ref is torn down.
+  useEffect(() => {
+    const cache = etchBitmapCacheRef.current;
+    const live = new Set();
+    for (const layer of layers) {
+      if (!isEtchLayer(layer)) continue;
+      const { source, dpi } = layer.params || {};
+      const sig = `${dpi}|${canvasW}|${canvasH}|${source || ''}`;
+      live.add(layer.id);
+      const cached = cache.get(layer.id);
+      if (!etchCacheNeedsResolve(cached, sig)) continue;
+      // Carry forward a same-signature bitmap (a benign relaunch) but mark the
+      // entry resolving so a concurrent effect run doesn't double-launch.
+      const carried = cached && cached.sig === sig ? cached.bitmap : null;
+      cache.set(layer.id, { sig, bitmap: carried, resolving: true });
+      resolveEtchBitmap(layer, canvasW, canvasH)
+        .then((bitmap) => {
+          const cur = cache.get(layer.id);
+          if (!cur || cur.sig !== sig) return; // superseded by a newer signature
+          if (!bitmap) {
+            cache.set(layer.id, { ...cur, resolving: false });
+            return;
+          }
+          cache.set(layer.id, { sig, bitmap, resolving: false });
+          renderAllRef.current?.();
+        })
+        .catch(() => {
+          // decode/threshold failure: clear the in-flight flag so a later run can
+          // retry, leaving any last-known bitmap intact. No crash.
+          const cur = cache.get(layer.id);
+          if (cur && cur.sig === sig) cache.set(layer.id, { ...cur, resolving: false });
+        });
+    }
+    // Prune cache entries for layers that no longer exist.
+    for (const id of [...cache.keys()]) {
+      if (!live.has(id)) cache.delete(id);
+    }
+  }, [layers, canvasW, canvasH]);
 
   // Initialize p5 instance
   useEffect(() => {

@@ -25,6 +25,8 @@ import { makeEtchInstance } from './etch/etchInstance';
 import { bitmapToRGBA } from './etch/etchBitmap';
 import { resolveEtchBitmap, etchCacheNeedsResolve } from './etch/etchSource';
 import { resolveHold } from './etch/etchHold';
+import { createAdaptiveRenderScheduler } from './adaptiveRenderScheduler';
+import { isFrameStatsEnabled } from './onboarding/frameStatsFlag';
 
 // Pivoted node transform shared by render + selection chrome. Matches the SVG
 // `translate(x y) translate(cx cy) rotate scale translate(-cx -cy)` form emitted
@@ -83,8 +85,28 @@ export default function useCanvas(
   customGlyphs = {}
 ) {
   const p5Ref = useRef(null);
-  const debounceRef = useRef(null);
   const rafRef = useRef(null);
+  // Param-edit render scheduler (FIX 1 / D19): rAF-coalesced with adaptive
+  // backoff, replacing the old fixed 150ms debounce. Created ONCE (a plain ref,
+  // not state — it must persist across renders and never re-instantiate). The
+  // ?fps=1 diagnostic seam publishes the last render's cost + mode to a window
+  // global so the P0-B measurement can read per-seed render cost live; it's
+  // wired ONLY when the flag is on, so normal sessions pay nothing.
+  const schedulerRef = useRef(null);
+  if (schedulerRef.current === null) {
+    const fpsDiag = typeof window !== 'undefined' && isFrameStatsEnabled(window.location?.search);
+    schedulerRef.current = createAdaptiveRenderScheduler({
+      onMeasure: fpsDiag
+        ? (costMs, mode) => {
+            const prev = window.__naqshaRenderStats;
+            // `n` is a monotonic render counter so a measurement can prove
+            // renderAll fired MORE THAN ONCE during a single continuous drag
+            // (the liveness FIX 1 restores), not just fps.
+            window.__naqshaRenderStats = { costMs, mode, t: Date.now(), n: (prev?.n || 0) + 1 };
+          }
+        : undefined,
+    });
+  }
   const [patternInstances, setPatternInstances] = useState({});
   const instancesRef = useRef({});
   // Etch (Raster Etch S1, #80): the single-source 1-bit bitmap is produced
@@ -640,21 +662,36 @@ export default function useCanvas(
     };
   }, [containerRef, canvasW, canvasH]);
 
-  // Debounced re-render on layer changes
+  // Re-render on layer/param changes — rAF-COALESCED with adaptive backoff (FIX
+  // 1 / D19), replacing the old fixed 150ms debounce. During a fast continuous
+  // param-drag this now renders ~once per animation frame (the art morphs LIVE)
+  // instead of firing zero frames until motion pauses and snapping to the final
+  // frame. Heavy configs (Count → ~5000) whose render exceeds a frame budget
+  // fall back to a debounce automatically (see adaptiveRenderScheduler) so they
+  // never redraw-every-frame into jank. The scheduler keeps the LATEST closure,
+  // so no cleanup-cancel-per-change (that would recreate the never-renders-mid-
+  // drag bug) — it's cancelled only on unmount, in the dedicated effect below.
   useEffect(() => {
-    if (!p5Ref.current) return;
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => {
+    if (!p5Ref.current) return undefined;
+    schedulerRef.current.schedule(() => {
       // Resize canvas if needed
       if (p5Ref.current && (p5Ref.current.width !== canvasW || p5Ref.current.height !== canvasH)) {
         p5Ref.current.resizeCanvas(canvasW, canvasH);
       }
       renderAll();
-    }, 150);
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-    };
+    });
+    return undefined;
   }, [layers, canvasW, canvasH, bgColor, renderAll]);
+
+  // Cancel any pending coalesced/backoff render on UNMOUNT only (an empty-dep
+  // effect's cleanup runs once, at teardown — never per param change), so a
+  // frame scheduled just before the canvas goes away can't fire against a
+  // removed p5 instance. renderAll itself also guards on p5Ref, so this is
+  // belt-and-suspenders.
+  useEffect(() => {
+    const scheduler = schedulerRef.current;
+    return () => scheduler.cancel();
+  }, []);
 
   // Immediate (un-debounced) re-render when transforms or selection change —
   // throttled to one frame via rAF. Patterns are deterministic by seed, so

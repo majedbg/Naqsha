@@ -7,6 +7,91 @@ deferred, or otherwise noteworthy build decision. Companion docs:
 
 ---
 
+## FIX 1 — live-drag "morph" latency: FIXED (rAF-coalesced adaptive render, replaces the 150ms debounce)
+
+**Status:** FIXED + browser-verified (prod build). Was the OVERVIEW §7 item 1 fast-follow —
+the highest-value one.
+
+**The bug:** param edits rode a fixed 150ms `setTimeout` debounce in `useCanvas.js`
+(~L549-563), keyed on `[layers, …]`. During a fast CONTINUOUS mouse-drag `layers`
+changes faster than 150ms, so the timer kept resetting and `renderAll` fired ZERO times
+until motion paused — the canvas looked frozen then snapped to the final frame. (Arrow
+keys / Shuffle updated live because they're discrete.) This sat directly under the
+onboarding "watch the art update live" promise. Note: P0-B's earlier "60fps during a
+continuous drag" reading was a FALSE positive — it measured idle input handling on a
+canvas that wasn't actually re-rendering.
+
+**The fix:** a new `src/lib/adaptiveRenderScheduler.js` — `createAdaptiveRenderScheduler()`
+— replaces the debounce. It **coalesces renders to at most one per animation frame** (rAF)
+so a drag morphs live while cadence stays capped, and **measures each render's cost**; after
+a short streak (2, not a single spike — hysteresis so one GC pause can't strand the rest of
+a drag) of over-budget renders it **backs off to the 150ms debounce** for that heavy config,
+restoring the live path the instant a render comes back under budget. A pending frame is
+NOT cancelled by later `schedule()` calls (that would recreate the never-renders-mid-drag
+bug) — it keeps the latest closure and fires; the last change before drag-end schedules the
+trailing settle render. All timer/clock primitives are injected → fully unit-tested with a
+hand-driven mocked rAF+timer queue (mirrors `useFrameStats`).
+
+- `useCanvas.js`: the `[layers, …]` debounce effect now calls `scheduler.schedule(render)`
+  (no per-change cleanup-cancel — that would refire the bug); a dedicated empty-dep effect
+  cancels only on UNMOUNT. The separate rAF-throttled TRANSFORM path (node drag/resize/
+  rotate, `[transforms, selectedNodeId]`) is UNTOUCHED. The async Etch repaint
+  (`renderAllRef`) is untouched. **SVG export is unaffected** — it reads cached
+  `patternInstances` built inside `renderAll`; only the scheduling of `renderAll` changed,
+  not its content, and a coalesced render is never MORE stale than the old 150ms debounce.
+
+**Threshold = 33ms, anchored to the documented 30fps workshop-iPad floor (D19)** — one frame
+at 30fps. Policy: render every frame while we can hold ≥30fps; back off only when a render
+can't sustain the floor. A tighter 16ms (one 60fps frame) would silently snap-to-final any
+seed rendering in the 16–33ms band — which on a slow device could be a curated default seed
+itself (the false-negative the adversarial reviewer/advisor flagged). Because the decision is
+per-measured-cost, the scheduler self-adapts to the actual device: a render that's cheap on
+desktop but 40ms on an iPad backs off THERE, correctly.
+
+**Liveness measured DIRECTLY (renders-during-drag), not just fps** (the P0-B trap): a
+24-step continuous drag (one param change per animation frame) on each seed's HERO control,
+counting how many times `renderAll` actually fired (a `?fps=1` diagnostic seam publishes
+render cost + a monotonic render counter to `window.__naqshaRenderStats`, wired ONLY under
+`?fps=1`).
+
+| seed (default) | hero control | render cost (prod) | renders / 24-step drag | mode | verdict |
+|---|---|---|---|---|---|
+| **Phyllotaxis** | Divergence Angle / Size | **1.5–4.4 ms** | **24 / 24** (~56/s) | live | ✅ morphs live @ 60fps (overlay: `60 fps · avg 16.6ms · max 17.6ms`) |
+| **Recursive** | Scale Factor | **0.4–2.7 ms** | **24 / 24** (~55/s) | live | ✅ morphs live |
+| **Topographic** | Zoom / Feature Size (noiseScale) | 17–72 ms (52 ms baseline) | 9 / 24 (~7/s) | backoff (partial) | ◑ genuinely too heavy for full 60fps live morph; degrades gracefully — still far better than the old snap-to-1 |
+| **Topographic, Levels→max** (heavy stress) | — | 150–172 ms | ~2 (guard) | backoff | ✅ adaptive guard: renders ~twice, NOT 24×170ms of blocking jank |
+
+Dev-build numbers (Vite dev) ran 2–4× heavier as expected (Phyllotaxis ~2–3ms, Recursive
+~11ms, Topographic ~52–60ms) — recorded here so the prod/dev gap is explicit; prod is the
+source of truth. Internal `now()`-around-`renderAll` (JS + canvas-command-submit) reads a
+touch lower than the `?fps=1` overlay (true frame time) — fine for triggering backoff,
+where generate cost dominates.
+
+**BEFORE (150ms debounce):** every seed rendered 0–1 frames during a continuous drag, then
+snapped to the final frame. **AFTER:** Phyllotaxis + Recursive (incl. the default landing
+seed) morph fully live at 60fps; Topographic is no worse than before and backs off safely
+(never janks). No dropped frames on the live path.
+
+**Adaptive fallback rationale:** heavy configs (the Count/particle controls reach ~5000, and
+Topographic's default marching-squares generate is intrinsically ~50ms) would jank if
+rendered every frame; the 150ms debounce was the one thing protecting them. The scheduler
+KEEPS that protection but only engages it when a render is actually measured heavy, so light
+configs are no longer needlessly throttled.
+
+**Product follow-up (not a code fix):** Topographic's curated default (Resolution 160 /
+Levels 16) is heavy enough (~52ms prod) that it backs off rather than morphing live. If live
+morph on Topographic's "drag me" is desired, LIGHTEN the seed (e.g. Resolution 160→~120,
+Levels 16→~12) in `seedDocuments.js` (already marked `// TODO(user): tune`) — an aesthetic
+decision left to the user, not changed here.
+
+**Tests:** `adaptiveRenderScheduler.test.js` (10: coalescing / multi-frame liveness /
+trailing-settle / cancel / cheap-stays-live / single-spike-tolerated / streak-backoff /
+heavy-debounce-during-motion / restore-live / onMeasure). Existing `useCanvas.*` tests
+(which await renders via `waitFor`, not hardcoded 150ms advances) stay green. Full suite
+green, no test weakened.
+
+---
+
 ## FIX 2 — P0-C "New session" reload race: CLOSED (synchronous document flush)
 
 **Status:** FIXED + browser-verified. Was the OVERVIEW §7 item 2 fast-follow.

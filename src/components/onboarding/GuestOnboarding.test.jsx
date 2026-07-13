@@ -8,6 +8,7 @@ import {
   setOnboardingDismissed,
 } from '../../lib/onboarding/dismissalStore';
 import { getSeedDocument } from '../../lib/onboarding/seedDocuments';
+import { isModulationNudgeSeen } from '../../lib/onboarding/modulationNudgeStore';
 
 // `getSeedDocument` builds on `createLayer`, which assigns a fresh random id
 // per call (by design — see seedDocuments.js), so two independent calls for
@@ -521,8 +522,18 @@ describe('GuestOnboarding — S6 modulation nudge (D17a/D22)', () => {
 
   it('shows the nudge and emits SECOND_PARAM_CHANGE once a 2nd DISTINCT param key changes', () => {
     setOnboardingDismissed(true);
+    // lensTipUsed=true — the lens tip is out of the way here (see the
+    // dedicated mutual-exclusion suite below); this test is isolating nudge
+    // logic only, same as `setOnboardingDismissed(true)` above is a
+    // precondition rather than the thing under test.
     const { rerender } = render(
-      <GuestOnboarding isGuest onLoadSeed={vi.fn()} activeLayer={ACTIVE_LAYER} onUpdateLayer={vi.fn()} />
+      <GuestOnboarding
+        isGuest
+        onLoadSeed={vi.fn()}
+        activeLayer={ACTIVE_LAYER}
+        onUpdateLayer={vi.fn()}
+        lensTipUsed
+      />
     );
 
     rerender(
@@ -531,6 +542,7 @@ describe('GuestOnboarding — S6 modulation nudge (D17a/D22)', () => {
         onLoadSeed={vi.fn()}
         activeLayer={{ ...ACTIVE_LAYER, params: { ...ACTIVE_LAYER.params, angle: 137.6 } }}
         onUpdateLayer={vi.fn()}
+        lensTipUsed
       />
     );
     expect(NUDGE()).not.toBeInTheDocument();
@@ -545,6 +557,7 @@ describe('GuestOnboarding — S6 modulation nudge (D17a/D22)', () => {
           params: { ...ACTIVE_LAYER.params, angle: 137.6, minSize: 6 },
         }}
         onUpdateLayer={vi.fn()}
+        lensTipUsed
       />
     );
 
@@ -562,7 +575,13 @@ describe('GuestOnboarding — S6 modulation nudge (D17a/D22)', () => {
   it('copy invites discovery — does NOT claim a live/running effect (D9 static-seed guard)', () => {
     setOnboardingDismissed(true);
     const { rerender } = render(
-      <GuestOnboarding isGuest onLoadSeed={vi.fn()} activeLayer={ACTIVE_LAYER} onUpdateLayer={vi.fn()} />
+      <GuestOnboarding
+        isGuest
+        onLoadSeed={vi.fn()}
+        activeLayer={ACTIVE_LAYER}
+        onUpdateLayer={vi.fn()}
+        lensTipUsed
+      />
     );
     rerender(
       <GuestOnboarding
@@ -573,6 +592,7 @@ describe('GuestOnboarding — S6 modulation nudge (D17a/D22)', () => {
           params: { ...ACTIVE_LAYER.params, angle: 137.6, minSize: 6 },
         }}
         onUpdateLayer={vi.fn()}
+        lensTipUsed
       />
     );
     expect(NUDGE()).toBeInTheDocument();
@@ -585,7 +605,13 @@ describe('GuestOnboarding — S6 modulation nudge (D17a/D22)', () => {
   it('the nudge is a real, accessibly-named, dismissable <button> (no telemetry re-fire, chooser untouched)', () => {
     setOnboardingDismissed(true);
     const { rerender } = render(
-      <GuestOnboarding isGuest onLoadSeed={vi.fn()} activeLayer={ACTIVE_LAYER} onUpdateLayer={vi.fn()} />
+      <GuestOnboarding
+        isGuest
+        onLoadSeed={vi.fn()}
+        activeLayer={ACTIVE_LAYER}
+        onUpdateLayer={vi.fn()}
+        lensTipUsed
+      />
     );
     rerender(
       <GuestOnboarding
@@ -596,6 +622,7 @@ describe('GuestOnboarding — S6 modulation nudge (D17a/D22)', () => {
           params: { ...ACTIVE_LAYER.params, angle: 137.6, minSize: 6 },
         }}
         onUpdateLayer={vi.fn()}
+        lensTipUsed
       />
     );
     const dismissBtn = screen.getByRole('button', { name: /dismiss modulation nudge/i });
@@ -637,9 +664,18 @@ describe('GuestOnboarding — S6 modulation nudge (D17a/D22)', () => {
   });
 
   it('does not visually show while the chooser is still OPEN, even past the threshold (avoids front-loading, D17); appears once dismissed', () => {
-    // Chooser starts open (not dismissed) — non-blocking, D2.
+    // Chooser starts open (not dismissed) — non-blocking, D2. lensTipUsed
+    // is out of the way (true) so dismissing the chooser doesn't then hand
+    // off to the mutually-exclusive lens tip instead — that hand-off is
+    // covered by its own suite below.
     const { rerender } = render(
-      <GuestOnboarding isGuest onLoadSeed={vi.fn()} activeLayer={ACTIVE_LAYER} onUpdateLayer={vi.fn()} />
+      <GuestOnboarding
+        isGuest
+        onLoadSeed={vi.fn()}
+        activeLayer={ACTIVE_LAYER}
+        onUpdateLayer={vi.fn()}
+        lensTipUsed
+      />
     );
     expect(CHOOSER()).toBeInTheDocument();
 
@@ -652,6 +688,7 @@ describe('GuestOnboarding — S6 modulation nudge (D17a/D22)', () => {
           params: { ...ACTIVE_LAYER.params, angle: 137.6, minSize: 6 },
         }}
         onUpdateLayer={vi.fn()}
+        lensTipUsed
       />
     );
     // Telemetry already fired (activation is a real event regardless of display)...
@@ -668,8 +705,16 @@ describe('GuestOnboarding — S6 modulation nudge (D17a/D22)', () => {
 
   it('switching to a different seed (new activeLayer.id) resets the distinct-key count for the new seed', () => {
     setOnboardingDismissed(true);
+    // lensTipUsed=true throughout — out of the way, see comment on the
+    // mutual-exclusion suite below.
     const { rerender } = render(
-      <GuestOnboarding isGuest onLoadSeed={vi.fn()} activeLayer={ACTIVE_LAYER} onUpdateLayer={vi.fn()} />
+      <GuestOnboarding
+        isGuest
+        onLoadSeed={vi.fn()}
+        activeLayer={ACTIVE_LAYER}
+        onUpdateLayer={vi.fn()}
+        lensTipUsed
+      />
     );
     // One distinct key changed on the FIRST seed.
     rerender(
@@ -678,6 +723,7 @@ describe('GuestOnboarding — S6 modulation nudge (D17a/D22)', () => {
         onLoadSeed={vi.fn()}
         activeLayer={{ ...ACTIVE_LAYER, params: { ...ACTIVE_LAYER.params, angle: 137.6 } }}
         onUpdateLayer={vi.fn()}
+        lensTipUsed
       />
     );
     expect(NUDGE()).not.toBeInTheDocument();
@@ -691,7 +737,13 @@ describe('GuestOnboarding — S6 modulation nudge (D17a/D22)', () => {
       params: { scaleFactor: 0.71, depth: 4, rotationPerLevel: 36, shape: 'pentagon' },
     };
     rerender(
-      <GuestOnboarding isGuest onLoadSeed={vi.fn()} activeLayer={NEW_SEED_LAYER} onUpdateLayer={vi.fn()} />
+      <GuestOnboarding
+        isGuest
+        onLoadSeed={vi.fn()}
+        activeLayer={NEW_SEED_LAYER}
+        onUpdateLayer={vi.fn()}
+        lensTipUsed
+      />
     );
     expect(NUDGE()).not.toBeInTheDocument();
 
@@ -703,6 +755,7 @@ describe('GuestOnboarding — S6 modulation nudge (D17a/D22)', () => {
         onLoadSeed={vi.fn()}
         activeLayer={{ ...NEW_SEED_LAYER, params: { ...NEW_SEED_LAYER.params, scaleFactor: 0.75 } }}
         onUpdateLayer={vi.fn()}
+        lensTipUsed
       />
     );
     expect(NUDGE()).not.toBeInTheDocument();
@@ -717,6 +770,7 @@ describe('GuestOnboarding — S6 modulation nudge (D17a/D22)', () => {
           params: { ...NEW_SEED_LAYER.params, scaleFactor: 0.75, depth: 5 },
         }}
         onUpdateLayer={vi.fn()}
+        lensTipUsed
       />
     );
     expect(NUDGE()).toBeInTheDocument();
@@ -724,8 +778,16 @@ describe('GuestOnboarding — S6 modulation nudge (D17a/D22)', () => {
 
   it('fires at most once per session (sessionStorage-gated) — a Shuffle-style multi-key jump only triggers it once', () => {
     setOnboardingDismissed(true);
+    // lensTipUsed=true — out of the way, see comment on the mutual-exclusion
+    // suite below.
     const { rerender, unmount } = render(
-      <GuestOnboarding isGuest onLoadSeed={vi.fn()} activeLayer={ACTIVE_LAYER} onUpdateLayer={vi.fn()} />
+      <GuestOnboarding
+        isGuest
+        onLoadSeed={vi.fn()}
+        activeLayer={ACTIVE_LAYER}
+        onUpdateLayer={vi.fn()}
+        lensTipUsed
+      />
     );
     rerender(
       <GuestOnboarding
@@ -736,9 +798,11 @@ describe('GuestOnboarding — S6 modulation nudge (D17a/D22)', () => {
           params: { ...ACTIVE_LAYER.params, angle: 137.6, minSize: 6, maxSize: 44 },
         }}
         onUpdateLayer={vi.fn()}
+        lensTipUsed
       />
     );
     expect(NUDGE()).toBeInTheDocument();
+    expect(isModulationNudgeSeen()).toBe(true);
     expect(
       emitOnboardingEvent.mock.calls.filter((call) => call[0] === ONBOARDING_EVENTS.SECOND_PARAM_CHANGE)
     ).toHaveLength(1);
@@ -795,8 +859,16 @@ describe('GuestOnboarding — S6 modulation nudge (D17a/D22)', () => {
     }));
 
     setOnboardingDismissed(true);
+    // lensTipUsed=true — out of the way, see comment on the mutual-exclusion
+    // suite below.
     const { rerender } = render(
-      <GuestOnboarding isGuest onLoadSeed={vi.fn()} activeLayer={ACTIVE_LAYER} onUpdateLayer={vi.fn()} />
+      <GuestOnboarding
+        isGuest
+        onLoadSeed={vi.fn()}
+        activeLayer={ACTIVE_LAYER}
+        onUpdateLayer={vi.fn()}
+        lensTipUsed
+      />
     );
     rerender(
       <GuestOnboarding
@@ -807,6 +879,7 @@ describe('GuestOnboarding — S6 modulation nudge (D17a/D22)', () => {
           params: { ...ACTIVE_LAYER.params, angle: 137.6, minSize: 6 },
         }}
         onUpdateLayer={vi.fn()}
+        lensTipUsed
       />
     );
 
@@ -814,5 +887,150 @@ describe('GuestOnboarding — S6 modulation nudge (D17a/D22)', () => {
     expect(nudge).toBeInTheDocument();
     expect(nudge.className).toMatch(/anim-rise/);
     expect(screen.getByRole('button', { name: /dismiss modulation nudge/i })).toBeInTheDocument();
+  });
+});
+
+// Opus review of S5/S6 — FIX 1 (SHOULD-FIX): the lens tip and the
+// modulation nudge could both be visible at once (a guest who makes 2 param
+// edits before ever clicking the Operation lens). FIX 2 (nit): Escape only
+// dismissed the chooser, not the nudge/lens tip.
+describe('GuestOnboarding — lens tip / modulation nudge mutual exclusion + Escape (Opus review fix)', () => {
+  const LENS_TIP = () => screen.queryByTestId('guest-lens-tip');
+  const NUDGE = () => screen.queryByTestId('guest-modulation-nudge');
+
+  beforeEach(() => {
+    sessionStorage.clear();
+    vi.clearAllMocks();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('suppresses the nudge while the lens tip is showing, and shows it once the lens tip is gone — without prematurely consuming the once-per-session flag', () => {
+    setOnboardingDismissed(true);
+    const { rerender } = render(
+      <GuestOnboarding
+        isGuest
+        onLoadSeed={vi.fn()}
+        activeLayer={ACTIVE_LAYER}
+        onUpdateLayer={vi.fn()}
+        lensTipUsed={false}
+      />
+    );
+    expect(LENS_TIP()).toBeInTheDocument();
+    expect(NUDGE()).not.toBeInTheDocument();
+
+    // Cross the 2nd-distinct-param-change threshold while the lens tip is
+    // still up.
+    rerender(
+      <GuestOnboarding
+        isGuest
+        onLoadSeed={vi.fn()}
+        activeLayer={{
+          ...ACTIVE_LAYER,
+          params: { ...ACTIVE_LAYER.params, angle: 137.6, minSize: 6 },
+        }}
+        onUpdateLayer={vi.fn()}
+        lensTipUsed={false}
+      />
+    );
+    // Activation is a real event regardless of display (telemetry fires
+    // exactly like it does while the chooser is still open)...
+    expect(emitOnboardingEvent).toHaveBeenCalledWith(
+      ONBOARDING_EVENTS.SECOND_PARAM_CHANGE,
+      expect.anything()
+    );
+    // ...but the nudge stays hidden — showing it now would overlap the lens
+    // tip — and the once-per-session flag must NOT be burned while it's
+    // suppressed (a reload here must still be able to show it later).
+    expect(NUDGE()).not.toBeInTheDocument();
+    expect(isModulationNudgeSeen()).toBe(false);
+
+    // The lens tip goes away (guest engaged the lens, or dismissed the
+    // tip) — the nudge now appears, and ONLY NOW is the flag persisted.
+    rerender(
+      <GuestOnboarding
+        isGuest
+        onLoadSeed={vi.fn()}
+        activeLayer={{
+          ...ACTIVE_LAYER,
+          params: { ...ACTIVE_LAYER.params, angle: 137.6, minSize: 6 },
+        }}
+        onUpdateLayer={vi.fn()}
+        lensTipUsed={true}
+      />
+    );
+    expect(LENS_TIP()).not.toBeInTheDocument();
+    expect(NUDGE()).toBeInTheDocument();
+    expect(isModulationNudgeSeen()).toBe(true);
+
+    // Threshold activation telemetry did not re-fire for the hand-off.
+    expect(
+      emitOnboardingEvent.mock.calls.filter((call) => call[0] === ONBOARDING_EVENTS.SECOND_PARAM_CHANGE)
+    ).toHaveLength(1);
+  });
+
+  it('Escape dismisses the modulation nudge when it is showing', () => {
+    setOnboardingDismissed(true);
+    const { rerender } = render(
+      <GuestOnboarding
+        isGuest
+        onLoadSeed={vi.fn()}
+        activeLayer={ACTIVE_LAYER}
+        onUpdateLayer={vi.fn()}
+        lensTipUsed
+      />
+    );
+    rerender(
+      <GuestOnboarding
+        isGuest
+        onLoadSeed={vi.fn()}
+        activeLayer={{
+          ...ACTIVE_LAYER,
+          params: { ...ACTIVE_LAYER.params, angle: 137.6, minSize: 6 },
+        }}
+        onUpdateLayer={vi.fn()}
+        lensTipUsed
+      />
+    );
+    expect(NUDGE()).toBeInTheDocument();
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(NUDGE()).not.toBeInTheDocument();
+  });
+
+  it('Escape dismisses the lens tip when it is showing', () => {
+    setOnboardingDismissed(true);
+    const onDismissLensTip = vi.fn();
+    render(
+      <GuestOnboarding
+        isGuest
+        onLoadSeed={vi.fn()}
+        lensTipUsed={false}
+        onDismissLensTip={onDismissLensTip}
+      />
+    );
+    expect(LENS_TIP()).toBeInTheDocument();
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(onDismissLensTip).toHaveBeenCalledTimes(1);
+  });
+
+  it('Escape does nothing (no throw, does not swallow) when no onboarding surface is open', () => {
+    setOnboardingDismissed(true);
+    const onDismissLensTip = vi.fn();
+    render(
+      <GuestOnboarding
+        isGuest
+        onLoadSeed={vi.fn()}
+        lensTipUsed // lens tip already used/dismissed — nothing left open
+        onDismissLensTip={onDismissLensTip}
+      />
+    );
+    expect(LENS_TIP()).not.toBeInTheDocument();
+    expect(NUDGE()).not.toBeInTheDocument();
+
+    expect(() => fireEvent.keyDown(document, { key: 'Escape' })).not.toThrow();
+    expect(onDismissLensTip).not.toHaveBeenCalled();
   });
 });

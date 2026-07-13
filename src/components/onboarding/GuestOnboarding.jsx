@@ -195,6 +195,18 @@ export default function GuestOnboarding({
   // NOT per-seed (unlike heroCueStore) — once fired, the nudge never re-fires
   // even if the guest later switches starters and makes more distinct edits
   // there (D17: "at most two tips in v1", this is a one-shot prompt).
+  //
+  // Opus review (S5/S6, FIX 1) — `nudgeSeen` below is a LOCAL re-entrancy
+  // guard only (seeded from the persisted flag so an already-fired-in-a-prior-
+  // mount session skips detection entirely). It intentionally does NOT
+  // persist `markModulationNudgeSeen()` at threshold-cross time anymore: the
+  // lens tip (S5) and this nudge must be mutually exclusive on screen (see
+  // `showNudge` below), so crossing the threshold while the lens tip is still
+  // showing must NOT burn the one-shot session flag before the guest has
+  // actually seen the nudge — a reload before the lens tip is
+  // dismissed/used would otherwise permanently lose the nudge. The flag is
+  // persisted separately, only once the nudge is actually displayed (see the
+  // effect below `showNudge`).
   const [nudgeSeen, setNudgeSeen] = useState(() => isModulationNudgeSeen());
   const [nudgeVisible, setNudgeVisible] = useState(false);
   const paramBaselineRef = useRef(null);
@@ -218,7 +230,9 @@ export default function GuestOnboarding({
       }
     }
     if (changedParamKeysRef.current.size >= 2) {
-      markModulationNudgeSeen();
+      // Activation is a real event regardless of display (same
+      // display-independent telemetry contract the chooser-open case above
+      // already relies on) — only the STORE PERSIST is deferred to display.
       setNudgeSeen(true);
       setNudgeVisible(true);
       emitOnboardingEvent(ONBOARDING_EVENTS.SECOND_PARAM_CHANGE, {
@@ -238,7 +252,24 @@ export default function GuestOnboarding({
   // non-blocking, D2), but the visual prompt waits so a guest never sees the
   // chooser + the nudge stacked at once. Telemetry above still fires at the
   // true moment of activation, independent of this display gate.
-  const showNudge = isGuest && dismissed && nudgeVisible;
+  //
+  // Opus review (S5/S6, FIX 1) — also mutually exclusive with the lens tip
+  // (`!showLensTip`): a guest who makes 2 param edits before ever engaging
+  // the Operation lens would otherwise see both the centered nudge (w-72)
+  // and the left-anchored lens tip (w-64) stacked at once, which can overlap
+  // on a narrow canvas. The lens tip wins the race (it's about the deeper
+  // "real fabrication file" wow, per the fix note) — this nudge simply waits
+  // until the lens tip is gone (dismissed, or `lensTipUsed` flips true).
+  const showNudge = isGuest && dismissed && nudgeVisible && !showLensTip;
+
+  // Persist the once-per-session flag ONLY once the nudge is actually shown
+  // to the guest — see the comment on `nudgeSeen` above for why this can't
+  // happen at threshold-cross time. `markModulationNudgeSeen` is idempotent
+  // (plain sessionStorage set), so re-running this on further renders while
+  // `showNudge` stays true is harmless.
+  useEffect(() => {
+    if (showNudge) markModulationNudgeSeen();
+  }, [showNudge]);
 
   // Shared by the button's `disabled` state and the keydown handler's
   // early-return, so both surfaces agree on when Shuffle is unavailable —
@@ -299,6 +330,32 @@ export default function GuestOnboarding({
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
   }, [isOpen, handleDismiss]);
+
+  // Opus review (S5/S6, FIX 2, nit) — Escape only dismissed the chooser;
+  // extend the same document-level pattern to the nudge and the lens tip so
+  // keyboard users can dismiss those too. Scoped exactly like the chooser's
+  // own listener above: only attached while one of the two is actually
+  // visible, and `stopPropagation` only fires on the branch that actually
+  // dismisses something — if neither is open, this effect isn't even
+  // mounted, so Studio's own Escape handling (e.g. armed-placement
+  // Esc-to-cancel) is never touched. Priority if both were somehow open:
+  // nudge, then lens tip — moot in practice today since `showNudge` already
+  // requires `!showLensTip` (see above), so at most one of the two is ever
+  // visible at once, but the explicit order matches the fix note.
+  useEffect(() => {
+    if (!showNudge && !showLensTip) return undefined;
+    const onKeyDown = (e) => {
+      if (e.key !== 'Escape') return;
+      e.stopPropagation();
+      if (showNudge) {
+        handleDismissNudge();
+      } else if (showLensTip) {
+        onDismissLensTip();
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [showNudge, showLensTip, handleDismissNudge, onDismissLensTip]);
 
   if (!isGuest) return null;
 

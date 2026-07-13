@@ -4,7 +4,7 @@
 // cues normally.
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { isHeroCueSeen, markHeroCueSeen } from './heroCueStore';
+import { isHeroCueSeen, markHeroCueSeen, resetHeroCueSession } from './heroCueStore';
 
 describe('heroCueStore (S3)', () => {
   beforeEach(() => {
@@ -49,5 +49,32 @@ describe('heroCueStore (S3)', () => {
   it('handles a nullish pattern type without throwing', () => {
     expect(isHeroCueSeen(undefined)).toBe(false);
     expect(() => markHeroCueSeen(undefined)).not.toThrow();
+  });
+
+  it('resetHeroCueSession() clears every pattern type at once ("New session" reset, P0-C)', () => {
+    markHeroCueSeen('phyllotaxis');
+    markHeroCueSeen('recursive');
+    markHeroCueSeen('topographic');
+
+    resetHeroCueSession();
+
+    expect(isHeroCueSeen('phyllotaxis')).toBe(false);
+    expect(isHeroCueSeen('recursive')).toBe(false);
+    expect(isHeroCueSeen('topographic')).toBe(false);
+    expect(sessionStorage.length).toBe(0);
+  });
+
+  it('resetHeroCueSession() does not throw when sessionStorage access throws, and clears the memory fallback', () => {
+    const getter = vi.spyOn(window, 'sessionStorage', 'get').mockImplementation(() => {
+      throw new Error('sessionStorage unavailable');
+    });
+
+    expect(() => markHeroCueSeen('phyllotaxis')).not.toThrow();
+    expect(isHeroCueSeen('phyllotaxis')).toBe(true); // memory fallback recorded it
+
+    expect(() => resetHeroCueSession()).not.toThrow();
+    expect(isHeroCueSeen('phyllotaxis')).toBe(false); // memory fallback cleared
+
+    getter.mockRestore();
   });
 });

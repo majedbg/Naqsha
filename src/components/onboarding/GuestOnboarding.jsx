@@ -30,6 +30,8 @@ import {
   isModulationNudgeSeen,
   markModulationNudgeSeen,
 } from '../../lib/onboarding/modulationNudgeStore';
+import { resetAllOnboarding } from '../../lib/onboarding/session';
+import ConfirmDialog from '../ui/ConfirmDialog';
 
 // D16 confidence line — naqsheh metaphor + reversibility. Copy is LOCKED
 // verbatim (BUILD BRIEF). "naqsheh" is metaphor copy only here, never a UI
@@ -110,6 +112,14 @@ function StarterCard({ seedKey, onSelect }) {
 // "Choose your naqsheh" chooser itself is dismissed (`dismissed`, local
 // state below) — showing the chooser + drag-me cue + lens tip all at once on
 // landing would be exactly the front-loaded "tour fatigue" D17 warns against.
+// P0-C — "New session / hand to next person" reset (D18). `onNewSession` is
+// an OPTIONAL extra hook for Studio-owned onboarding state that lives
+// OUTSIDE this component (today: just `lensTipUsed`, S5's own useState seeded
+// once from lensTipStore at mount — see Studio.jsx). This component clears
+// every store it knows about itself via `resetAllOnboarding` + resyncs its
+// OWN local state (dismissed/nudge); `onNewSession` exists purely so Studio
+// can resync state it owns that this component has no reach into, without
+// this component needing to know Studio's internals.
 export default function GuestOnboarding({
   isGuest,
   onLoadSeed,
@@ -117,6 +127,7 @@ export default function GuestOnboarding({
   onUpdateLayer,
   lensTipUsed = false,
   onDismissLensTip = () => {},
+  onNewSession = () => {},
 }) {
   // Lazy init reads sessionStorage once on mount (matches the dismissal
   // store's own per-tab semantics) — a fresh page load re-evaluates this and
@@ -211,6 +222,46 @@ export default function GuestOnboarding({
   const [nudgeVisible, setNudgeVisible] = useState(false);
   const paramBaselineRef = useRef(null);
   const changedParamKeysRef = useRef(new Set());
+
+  // P0-C — "New session / hand to next person" (D18). This wipes the current
+  // canvas to the default seed, so a single accidental click must never
+  // discard real work: `confirmingNewSession` arms a `ConfirmDialog` (the
+  // codebase's established destructive-action confirm — never window.confirm,
+  // see ConfirmDialog.jsx's own comment) rather than acting immediately.
+  const [confirmingNewSession, setConfirmingNewSession] = useState(false);
+
+  const handleRequestNewSession = useCallback(() => {
+    setConfirmingNewSession(true);
+  }, []);
+
+  const handleCancelNewSession = useCallback(() => {
+    setConfirmingNewSession(false);
+  }, []);
+
+  const handleConfirmNewSession = useCallback(() => {
+    // 1. Clear every per-tab onboarding store this component doesn't own
+    //    directly (dismissal/hero-cue/lens-tip/modulation-nudge) in one call.
+    resetAllOnboarding();
+    // 2. Reset the canvas to the DEFAULT seed via the SAME document-load path
+    //    the starter cards above use (`onLoadSeed` === `loadDocumentLayers`)
+    //    — not the previous attendee's work-in-progress.
+    onLoadSeed?.(getSeedDocument(DEFAULT_SEED_KEY));
+    // 3. Resync THIS component's own local state, which was seeded from the
+    //    stores above only once at mount and would otherwise stay stale even
+    //    though the underlying store is now cleared (a reload wouldn't fix
+    //    this either — sessionStorage survives it, D3/D18 — this reset IS the
+    //    hand-off mechanism).
+    setDismissed(false); // re-open the chooser for the next attendee
+    setNudgeSeen(false);
+    setNudgeVisible(false);
+    paramBaselineRef.current = null;
+    changedParamKeysRef.current = new Set();
+    // 4. Resync Studio-owned onboarding state this component can't reach
+    //    (lensTipUsed) — see the component doc comment above.
+    onNewSession?.();
+    setConfirmingNewSession(false);
+    emitOnboardingEvent(ONBOARDING_EVENTS.NEW_SESSION);
+  }, [onLoadSeed, onNewSession]);
 
   useEffect(() => {
     if (!isGuest || nudgeSeen || !activeLayer) return;
@@ -361,50 +412,82 @@ export default function GuestOnboarding({
 
   return (
     <>
-      {/* Persistent re-open affordance (D4). Always present for guests, even
-          after dismissal, so the chooser is recoverable. Small + unobtrusive
-          — top-left of the canvas region (see placement rationale below),
-          out of the way of the cut/engrave lens (bottom-left) and the
-          panels export button (top-right). */}
-      <button
-        type="button"
-        onClick={handleReopen}
-        aria-label="Reopen starter guide"
-        title="Choose a starting pattern"
-        // Top-left of the canvas region is the one corner nothing else
-        // claims (ColorViewControl owns bottom-left, the zoom pod owns
-        // bottom-right, the laser-only panels-ZIP export owns top-right) —
-        // keeps this persistent affordance visible but out of the way of
-        // every other floating control instead of crowding the zoom pod.
-        // S6 a11y sweep (D21/P0-D): bumped 28px -> 32px toward the ~40px
-        // touch-target guidance — a full 40px would visually clash with the
-        // rest of the app's much denser icon buttons (ColorViewControl's own
-        // controls are 16-20px, see BUILD-NOTES), so this is a pragmatic
-        // partial fix, not full compliance.
-        className="absolute top-3 left-3 z-40 flex h-8 w-8 items-center justify-center rounded-full border border-hairline bg-paper/95 text-xs font-semibold text-ink-soft shadow-pop backdrop-blur-[2px] transition-colors hover:border-violet/60 hover:text-ink"
-      >
-        ?
-      </button>
+      {/* Top-left onboarding row: "?" reopen (D4), Shuffle (S4), and the
+          P0-C "New session" reset all share ONE flex row (rather than each
+          claiming its own hardcoded `left-N` offset) so a variable-width
+          label (e.g. "Surprise me") can never silently collide with its
+          neighbor — flexbox handles the spacing instead of guessed pixel
+          math. Top-left of the canvas region is the one corner nothing else
+          claims (ColorViewControl owns bottom-left, the zoom pod owns
+          bottom-right, the laser-only panels-ZIP export owns top-right). */}
+      <div className="absolute top-3 left-3 z-40 flex items-center gap-2">
+        {/* Persistent re-open affordance (D4). Always present for guests,
+            even after dismissal, so the chooser is recoverable. */}
+        <button
+          type="button"
+          onClick={handleReopen}
+          aria-label="Reopen starter guide"
+          title="Choose a starting pattern"
+          // S6 a11y sweep (D21/P0-D): bumped 28px -> 32px toward the ~40px
+          // touch-target guidance — a full 40px would visually clash with the
+          // rest of the app's much denser icon buttons (ColorViewControl's
+          // own controls are 16-20px, see BUILD-NOTES), so this is a
+          // pragmatic partial fix, not full compliance.
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-hairline bg-paper/95 text-xs font-semibold text-ink-soft shadow-pop backdrop-blur-[2px] transition-colors hover:border-violet/60 hover:text-ink"
+        >
+          ?
+        </button>
 
-      {/* S4 — Shuffle / "Surprise me" (D11, BUILD BRIEF element #3). Sits
-          right next to the "?" affordance so it reads as part of the SAME
-          onboarding row, always available (independent of the chooser's
-          open/dismissed state — it's the post-aha exploration engine, not a
-          first-run-only prompt). Never switches starter/pattern type — only
-          re-rolls the active seed's own params within curated ranges. */}
-      <button
-        type="button"
-        onClick={handleShuffle}
-        disabled={shuffleDisabled}
-        aria-label="Surprise me — shuffle this pattern within its curated range"
-        title="Surprise me (S)"
-        // S6 a11y sweep: 28px -> 32px height, same rationale as the "?"
-        // button above.
-        className="absolute top-3 left-12 z-40 flex h-8 items-center gap-1 rounded-full border border-hairline bg-paper/95 px-2.5 text-[11px] font-semibold text-ink-soft shadow-pop backdrop-blur-[2px] transition-colors hover:border-violet/60 hover:text-ink disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-hairline disabled:hover:text-ink-soft"
-      >
-        <span aria-hidden="true">🎲</span>
-        Surprise me
-      </button>
+        {/* S4 — Shuffle / "Surprise me" (D11, BUILD BRIEF element #3).
+            Always available (independent of the chooser's open/dismissed
+            state — it's the post-aha exploration engine, not a
+            first-run-only prompt). Never switches starter/pattern type —
+            only re-rolls the active seed's own params within curated
+            ranges. */}
+        <button
+          type="button"
+          onClick={handleShuffle}
+          disabled={shuffleDisabled}
+          aria-label="Surprise me — shuffle this pattern within its curated range"
+          title="Surprise me (S)"
+          // S6 a11y sweep: 28px -> 32px height, same rationale as the "?"
+          // button above.
+          className="flex h-8 shrink-0 items-center gap-1 rounded-full border border-hairline bg-paper/95 px-2.5 text-[11px] font-semibold text-ink-soft shadow-pop backdrop-blur-[2px] transition-colors hover:border-violet/60 hover:text-ink disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-hairline disabled:hover:text-ink-soft"
+        >
+          <span aria-hidden="true">🎲</span>
+          Surprise me
+        </button>
+
+        {/* P0-C — "New session / hand to next person" (D18, BUILD BRIEF
+            "shared-machine re-fire"). A long-lived guest tab on a shared
+            workshop machine can't rely on a reload to re-show onboarding
+            (sessionStorage survives it, D3) — this is the RELIABLE hand-off
+            action instead. Arms a `ConfirmDialog` rather than acting
+            immediately (see `handleRequestNewSession` above): this wipes the
+            current canvas to the default seed, so a single accidental click
+            must never discard real work. */}
+        <button
+          type="button"
+          onClick={handleRequestNewSession}
+          aria-label="Start a new session — hand off to the next person: clears this tab's guide and reloads the default pattern"
+          title="New session (hand to next person)"
+          className="flex h-8 shrink-0 items-center gap-1 rounded-full border border-hairline bg-paper/95 px-2.5 text-[11px] font-semibold text-ink-soft shadow-pop backdrop-blur-[2px] transition-colors hover:border-violet/60 hover:text-ink"
+        >
+          <span aria-hidden="true">↺</span>
+          New session
+        </button>
+      </div>
+
+      <ConfirmDialog
+        open={confirmingNewSession}
+        title="Start a new session?"
+        message="This clears the current canvas and resets the guide for the next person. Unsaved changes to this pattern will be lost."
+        confirmLabel="Start new session"
+        cancelLabel="Cancel"
+        danger
+        onConfirm={handleConfirmNewSession}
+        onCancel={handleCancelNewSession}
+      />
 
       {!dismissed && (
         <div

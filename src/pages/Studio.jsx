@@ -951,6 +951,17 @@ export default function Studio({ submitOrg = null } = {}) {
     setLensTipUsed(true);
   }, []);
 
+  // P0-C — "New session / hand to next person" (D18). `lensTipUsed` above is
+  // seeded from `lensTipStore` only ONCE at mount, so GuestOnboarding's own
+  // `resetAllOnboarding()` clearing that store does not, by itself, make the
+  // lens tip re-eligible to show for the next attendee — this Studio-owned
+  // piece of state must be resynced explicitly. GuestOnboarding calls this
+  // via its `onNewSession` prop as the one hook into onboarding state it
+  // can't reach directly (everything else it owns and resyncs itself).
+  const handleOnboardingNewSession = useCallback(() => {
+    setLensTipUsed(false);
+  }, []);
+
   // Motif-editor mini Preview (WI-P2-5, D5): the live full-canvas render inputs
   // the editor's throttled preview re-stamps through. MIRRORS RightPanel's
   // canonical useCanvas call exactly — `machineProfile: activeProfileId`,
@@ -2116,6 +2127,7 @@ export default function Studio({ submitOrg = null } = {}) {
           onUpdateLayer={updateLayer}
           lensTipUsed={lensTipUsed}
           onDismissLensTip={handleDismissLensTip}
+          onNewSession={handleOnboardingNewSession}
         />
       </div>
 

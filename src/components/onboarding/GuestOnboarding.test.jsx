@@ -7,8 +7,10 @@ import {
   isOnboardingDismissed,
   setOnboardingDismissed,
 } from '../../lib/onboarding/dismissalStore';
-import { getSeedDocument } from '../../lib/onboarding/seedDocuments';
-import { isModulationNudgeSeen } from '../../lib/onboarding/modulationNudgeStore';
+import { DEFAULT_SEED_KEY, getSeedDocument } from '../../lib/onboarding/seedDocuments';
+import { isModulationNudgeSeen, markModulationNudgeSeen } from '../../lib/onboarding/modulationNudgeStore';
+import { markHeroCueSeen, isHeroCueSeen } from '../../lib/onboarding/heroCueStore';
+import { markLensTipSeen, isLensTipSeen } from '../../lib/onboarding/lensTipStore';
 
 // `getSeedDocument` builds on `createLayer`, which assigns a fresh random id
 // per call (by design — see seedDocuments.js), so two independent calls for
@@ -25,6 +27,7 @@ vi.mock('../../lib/onboarding/telemetry', () => ({
     SHUFFLE_CLICK: 'onboarding:shuffle-click',
     LENS_OPENED: 'onboarding:lens-opened',
     SECOND_PARAM_CHANGE: 'onboarding:second-param-change',
+    NEW_SESSION: 'onboarding:new-session',
   },
   emitOnboardingEvent: vi.fn(),
 }));
@@ -1032,5 +1035,128 @@ describe('GuestOnboarding — lens tip / modulation nudge mutual exclusion + Esc
 
     expect(() => fireEvent.keyDown(document, { key: 'Escape' })).not.toThrow();
     expect(onDismissLensTip).not.toHaveBeenCalled();
+  });
+});
+
+describe('GuestOnboarding — P0-C "New session / hand to next person" (D18)', () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+    vi.clearAllMocks();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const NEW_SESSION_BUTTON = () =>
+    screen.getByRole('button', { name: /start a new session/i });
+  const CONFIRM_DIALOG = () => screen.queryByRole('alertdialog');
+
+  it('renders the "New session" reset for a guest', () => {
+    render(<GuestOnboarding isGuest onLoadSeed={vi.fn()} />);
+    expect(NEW_SESSION_BUTTON()).toBeInTheDocument();
+  });
+
+  it('does not render the "New session" reset for a signed-in / non-guest user', () => {
+    render(<GuestOnboarding isGuest={false} onLoadSeed={vi.fn()} />);
+    expect(screen.queryByRole('button', { name: /start a new session/i })).not.toBeInTheDocument();
+  });
+
+  it('a single click only ARMS the confirm dialog — does not reset anything yet', () => {
+    const onLoadSeed = vi.fn();
+    const onNewSession = vi.fn();
+    setOnboardingDismissed(true);
+    markHeroCueSeen('phyllotaxis');
+    markLensTipSeen();
+    markModulationNudgeSeen();
+
+    render(<GuestOnboarding isGuest onLoadSeed={onLoadSeed} onNewSession={onNewSession} />);
+    fireEvent.click(NEW_SESSION_BUTTON());
+
+    expect(CONFIRM_DIALOG()).toBeInTheDocument();
+    // Nothing has actually happened yet — a single accidental click must
+    // never discard real work.
+    expect(onLoadSeed).not.toHaveBeenCalled();
+    expect(onNewSession).not.toHaveBeenCalled();
+    expect(emitOnboardingEvent).not.toHaveBeenCalledWith(
+      ONBOARDING_EVENTS.NEW_SESSION,
+      expect.anything()
+    );
+    expect(isOnboardingDismissed()).toBe(true);
+    expect(isHeroCueSeen('phyllotaxis')).toBe(true);
+    expect(isLensTipSeen()).toBe(true);
+    expect(isModulationNudgeSeen()).toBe(true);
+  });
+
+  it('Cancel aborts the reset — dialog closes, nothing changes', () => {
+    const onLoadSeed = vi.fn();
+    setOnboardingDismissed(true);
+    markLensTipSeen();
+
+    render(<GuestOnboarding isGuest onLoadSeed={onLoadSeed} />);
+    fireEvent.click(NEW_SESSION_BUTTON());
+    expect(CONFIRM_DIALOG()).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
+
+    expect(CONFIRM_DIALOG()).not.toBeInTheDocument();
+    expect(onLoadSeed).not.toHaveBeenCalled();
+    expect(isOnboardingDismissed()).toBe(true);
+    expect(isLensTipSeen()).toBe(true);
+  });
+
+  it('confirming clears every onboarding store, reloads the DEFAULT seed via onLoadSeed, re-opens the chooser, and emits NEW_SESSION telemetry', () => {
+    const onLoadSeed = vi.fn();
+    const onNewSession = vi.fn();
+    // Arrange every store as "dismissed/seen" — simulating a guest mid-session.
+    setOnboardingDismissed(true);
+    markHeroCueSeen('phyllotaxis');
+    markHeroCueSeen('recursive');
+    markLensTipSeen();
+    markModulationNudgeSeen();
+
+    render(
+      <GuestOnboarding
+        isGuest
+        onLoadSeed={onLoadSeed}
+        lensTipUsed
+        onNewSession={onNewSession}
+      />
+    );
+    expect(CHOOSER()).not.toBeInTheDocument(); // dismissed going in
+
+    fireEvent.click(NEW_SESSION_BUTTON());
+    fireEvent.click(screen.getByRole('button', { name: /start new session/i }));
+
+    // Canvas reset to the DEFAULT seed via the SAME document-load path S2 uses.
+    expect(onLoadSeed).toHaveBeenCalledTimes(1);
+    expect(withoutIds(onLoadSeed.mock.calls[0][0])).toEqual(
+      withoutIds(getSeedDocument(DEFAULT_SEED_KEY))
+    );
+
+    // Every per-tab onboarding store cleared.
+    expect(isOnboardingDismissed()).toBe(false);
+    expect(isHeroCueSeen('phyllotaxis')).toBe(false);
+    expect(isHeroCueSeen('recursive')).toBe(false);
+    expect(isLensTipSeen()).toBe(false);
+    expect(isModulationNudgeSeen()).toBe(false);
+
+    // Chooser re-opened for the next attendee.
+    expect(CHOOSER()).toBeInTheDocument();
+
+    // Studio-owned state this component can't reach (lensTipUsed) resynced
+    // via the onNewSession hook.
+    expect(onNewSession).toHaveBeenCalledTimes(1);
+
+    // Telemetry emitted.
+    expect(emitOnboardingEvent).toHaveBeenCalledWith(ONBOARDING_EVENTS.NEW_SESSION);
+
+    // Dialog closed itself.
+    expect(CONFIRM_DIALOG()).not.toBeInTheDocument();
+  });
+
+  it('is a real, accessibly-named, keyboard-focusable <button> (not a div click handler)', () => {
+    render(<GuestOnboarding isGuest onLoadSeed={vi.fn()} />);
+    const btn = NEW_SESSION_BUTTON();
+    expect(btn.tagName).toBe('BUTTON');
   });
 });

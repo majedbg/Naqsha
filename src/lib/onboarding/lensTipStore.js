@@ -40,3 +40,19 @@ export function markLensTipSeen() {
   const ok = safeSet(KEY, 'true');
   if (!ok) memoryFallback = true;
 }
+
+function safeRemove(key) {
+  try {
+    window.sessionStorage.removeItem(key);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// "New session / hand to next person" reset (P0-C) — clears the "seen" flag
+// so the tip is eligible to show again for the next attendee.
+export function resetLensTipSession() {
+  const ok = safeRemove(KEY);
+  if (!ok) memoryFallback = false;
+}

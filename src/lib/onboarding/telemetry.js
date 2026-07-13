@@ -20,6 +20,10 @@ export const ONBOARDING_EVENTS = Object.freeze({
   // S2 — a guest picked one of the three "Choose your naqsheh" starter cards
   // (as opposed to dismissing the chooser and keeping the default seed).
   STARTER_SELECTED: 'onboarding:starter-selected',
+  // P0-C — the "New session / hand to next person" reset was confirmed and
+  // applied (D18): every onboarding store cleared, canvas reloaded to the
+  // default seed, chooser re-opened for the next attendee.
+  NEW_SESSION: 'onboarding:new-session',
 });
 
 // Emit an onboarding event. Never throws — a broken instrumentation call must

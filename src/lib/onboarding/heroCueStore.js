@@ -47,3 +47,33 @@ export function markHeroCueSeen(patternType) {
   const ok = safeSet(storageKey(patternType), 'true');
   if (!ok) memoryFallback.add(patternType);
 }
+
+function safeRemove(key) {
+  try {
+    window.sessionStorage.removeItem(key);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// "New session / hand to next person" reset (P0-C). Unlike the single-flag
+// stores (dismissalStore/lensTipStore/modulationNudgeStore), this store is
+// keyed per pattern type, so there is no single key to clear — every
+// matching sessionStorage key must be found and removed individually. Keys
+// are collected first, then removed, so removal never mutates the storage
+// object mid-iteration.
+export function resetHeroCueSession() {
+  memoryFallback.clear();
+  try {
+    const keysToRemove = [];
+    for (let i = 0; i < window.sessionStorage.length; i++) {
+      const key = window.sessionStorage.key(i);
+      if (key && key.startsWith(KEY_PREFIX)) keysToRemove.push(key);
+    }
+    keysToRemove.forEach(safeRemove);
+  } catch {
+    // sessionStorage unavailable (SSR/private-mode) — memory fallback above
+    // already handles the in-memory case; nothing else to clear.
+  }
+}

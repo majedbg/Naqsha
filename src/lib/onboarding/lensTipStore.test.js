@@ -3,7 +3,7 @@
 // a guest has engaged the lens switch or manually dismissed the tip.
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { isLensTipSeen, markLensTipSeen } from './lensTipStore';
+import { isLensTipSeen, markLensTipSeen, resetLensTipSession } from './lensTipStore';
 
 describe('lensTipStore (S5)', () => {
   beforeEach(() => {
@@ -36,6 +36,27 @@ describe('lensTipStore (S5)', () => {
     expect(() => markLensTipSeen()).not.toThrow();
     expect(() => isLensTipSeen()).not.toThrow();
     expect(isLensTipSeen()).toBe(true); // memory fallback still recorded the mark
+
+    getter.mockRestore();
+  });
+
+  it('resetLensTipSession() clears a seen flag ("New session" reset, P0-C)', () => {
+    markLensTipSeen();
+    expect(isLensTipSeen()).toBe(true);
+    resetLensTipSession();
+    expect(isLensTipSeen()).toBe(false);
+  });
+
+  it('resetLensTipSession() does not throw when sessionStorage access throws, and clears the memory fallback', () => {
+    const getter = vi.spyOn(window, 'sessionStorage', 'get').mockImplementation(() => {
+      throw new Error('sessionStorage unavailable');
+    });
+
+    expect(() => markLensTipSeen()).not.toThrow();
+    expect(isLensTipSeen()).toBe(true);
+
+    expect(() => resetLensTipSession()).not.toThrow();
+    expect(isLensTipSeen()).toBe(false);
 
     getter.mockRestore();
   });

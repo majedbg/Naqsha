@@ -8,8 +8,11 @@ import { resolveMoireSource } from './moirePair';
 import { resolveModulationsForTarget, composeModulationParam } from './fields/resolveModulationForTarget';
 import { resolveMotifHostParams } from './motif/resolveMotifHost';
 import { collectMotifHostGeometry } from './motif/collectHostGeometry';
+import { capturePolylines } from './motif/capturePolylines';
+import { isEdgeHost } from './motif/hostKinds';
 import { isMotifLayer } from './motif/motifLayer';
 import { getGlyph } from './motif/glyphs';
+import { isSequenceBlock } from './motif/sequencer';
 import { handlesFor } from './transform/handles';
 import { drawTextNode } from './text/drawTextNode';
 import { isTextLayer, textNodeFromLayer } from './text/textLayer';
@@ -146,9 +149,21 @@ export default function useCanvas(
         PATTERN_CLASSES[host.patternType] || getDynamicPatternClass(host.patternType);
       if (!HostClass) return null;
       const probe = new HostClass();
+      // B2 — arbitrary-edge host capture: an EDGE host (flowfield/wave/…) has no
+      // semantic extractor, so probe it into a RECORD-mode adapter and fold the
+      // recorded draw stream into absolute-coordinate hostPaths (capturePolylines).
+      // Record is draw:false, so RNG/noise/color still delegate to live p5 → the
+      // captured geometry is byte-identical to the painted realization, and the
+      // host reseeds at the top of generate() → this probe never shifts its paint
+      // (same no-divergence guarantee as the voronoi probe below). A SEMANTIC host
+      // (voronoi) keeps the existing noDraw probe + motifHostGeometry read.
+      const recording = isEdgeHost(host.patternType);
+      const probeCtx = recording
+        ? new P5Adapter(p, { draw: false, record: true })
+        : noDrawCtx;
       p.push(); // defensive matrix isolation — probe never draws, but be safe
       probe.generateWithContext(
-        noDrawCtx,
+        probeCtx,
         host.seed,
         host.params,
         canvasW,
@@ -157,6 +172,10 @@ export default function useCanvas(
         host.opacity
       );
       p.pop();
+      if (recording) {
+        const hostPaths = capturePolylines(probeCtx.calls);
+        return hostPaths.length ? { hostPaths } : null;
+      }
       return probe.motifHostGeometry || null;
     });
 
@@ -321,23 +340,58 @@ export default function useCanvas(
         renderParams = { ...renderParams, ...motifHost };
       }
 
-      // Motif GLYPH resolution (WI-3). Resolve the layer's `glyphRef` against the
-      // built-in library first, then the document custom-glyph store, and inject
-      // the resolved glyph OBJECT so MotifPattern (and the export path that reuses
-      // its baked svgElements) stays decoupled from the store. Mirrors the
-      // motifHost injection above. A MISSING glyph (e.g. a shared doc whose custom
-      // glyph was stripped) resolves to undefined → no injection → MotifPattern's
-      // built-in fallback also misses → renders nothing (graceful degrade, no
-      // crash). Built-in motifs inject the same built-in object getGlyph returns,
-      // so their output is byte-identical to before. Gated on isMotifLayer so
-      // every other layer type is untouched.
+      // Motif GLYPH resolution (WI-3 + B1 multi-glyph). Resolve the layer's glyphs
+      // against the built-in library first, then the document custom-glyph store,
+      // and inject the resolved OBJECT(s) so MotifPattern (and the export path that
+      // reuses its baked svgElements) stays decoupled from the store. Mirrors the
+      // motifHost injection above; gated on isMotifLayer so every other layer type
+      // is untouched.
+      //   • `glyph` — the BASE single glyph (from renderParams.glyphRef). Kept for
+      //     back-compat: unsequenced/built-in-only motifs consume this and stay
+      //     byte-identical. A MISSING base glyph (e.g. a shared doc whose custom
+      //     glyph was stripped) resolves to undefined → no injection → MotifPattern
+      //     renders nothing (graceful degrade, no crash).
+      //   • `glyphs` — a MAP of EVERY glyphRef the layer might stamp: the base ref
+      //     PLUS every Sequencer slot's glyphRef found in binding.chain. A slot ref
+      //     that doesn't resolve is simply absent from the map (MotifPattern skips
+      //     that instance). Built-in-only motifs (no sequence) inject a map of just
+      //     the base glyph → byte-identical (unsequenced placements never consult
+      //     the map).
       if (isMotifLayer(layer)) {
-        const glyph = getGlyph(renderParams.glyphRef, customGlyphs);
-        if (glyph) renderParams = { ...renderParams, glyph };
+        const baseGlyph = getGlyph(renderParams.glyphRef, customGlyphs);
+        if (baseGlyph) renderParams = { ...renderParams, glyph: baseGlyph };
+        // Collect every glyphRef the layer could stamp: base + Sequencer slots.
+        const refs = new Set();
+        if (renderParams.glyphRef != null) refs.add(renderParams.glyphRef);
+        const chain = layer.params?.binding?.chain;
+        if (Array.isArray(chain)) {
+          for (const block of chain) {
+            if (!isSequenceBlock(block)) continue;
+            for (const slot of block.slots) {
+              if (slot && slot.glyphRef != null) refs.add(slot.glyphRef);
+            }
+          }
+        }
+        const glyphs = {};
+        for (const ref of refs) {
+          const g = getGlyph(ref, customGlyphs);
+          if (g) glyphs[ref] = g; // unresolved refs stay absent → skipped downstream
+        }
+        renderParams = { ...renderParams, glyphs };
       }
 
       const instance = new PatternClass();
       newInstances[layer.id] = instance;
+
+      // C4 — edge-ghost seam: surface the prepass-captured hostPaths on the DRAWN
+      // instance so the AnchorGhostOverlay can sample edge anchors for the canvas
+      // path-picker (parallels voronoi's self-stashed motifHostGeometry; edge
+      // hosts don't set it themselves). Absent capture → no attach → the overlay
+      // renders no edge ghost (graceful). Guarded to edge hosts so it never
+      // clobbers a semantic host's own motifHostGeometry.
+      if (isEdgeHost(layer.patternType) && hostGeometry[layer.id]?.hostPaths) {
+        instance.motifHostGeometry = { hostPaths: hostGeometry[layer.id].hostPaths };
+      }
 
       if (!vis) {
         // Still generate for SVG export, but don't draw to canvas

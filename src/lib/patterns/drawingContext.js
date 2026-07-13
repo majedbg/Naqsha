@@ -69,13 +69,23 @@ import { mulberry32 } from './rng';
  * P5Adapter — production DrawingContext backed by a live p5 instance.
  *
  * @param {object} p - the live p5 instance
- * @param {{ draw?: boolean }} [opts] - draw:false makes transform/style/draw
- *   calls no-ops (hidden-layer generation), while RNG/color still delegate to p5.
+ * @param {{ draw?: boolean, record?: boolean }} [opts] - draw:false makes
+ *   transform/style/draw calls no-ops (hidden-layer generation), while RNG/color
+ *   still delegate to p5. record:true ALSO appends every TRANSFORM and polyline
+ *   DRAW op to `this.calls` (as { op, args }) — the B2 arbitrary-edge host-capture
+ *   seam. Record is orthogonal to draw: `{draw:false, record:true}` paints
+ *   nothing yet records the exact call stream (RNG still delegates to live p5, so
+ *   the recorded geometry is byte-identical to a real draw of the same host).
+ *   capturePolylines.js folds `this.calls` into absolute-coordinate hostPaths.
  */
 export class P5Adapter {
   constructor(p, opts = {}) {
     this._p = p;
     this._draw = opts.draw !== false; // default true
+    this._record = !!opts.record;     // default false
+    // Recorded TRANSFORM + polyline-DRAW ops (record mode only). Consumed by
+    // capturePolylines.js; empty/unused when record is off.
+    this.calls = [];
 
     // Constants sourced from the LIVE p5 instance — never hardcoded, so the
     // exact values p5's own methods expect are forwarded back to them.
@@ -86,6 +96,8 @@ export class P5Adapter {
     this.CENTER = p.CENTER;
     this.ROUND = p.ROUND;
   }
+
+  _rec(op, a) { if (this._record) this.calls.push({ op, args: a }); }
 
   // --- randomness / noise: ALWAYS delegate to live p5 (byte-identity) ---
   randomSeed(s) { return this._p.randomSeed(s); }
@@ -100,14 +112,17 @@ export class P5Adapter {
   blue(c) { return this._p.blue(c); }
   map(...a) { return this._p.map(...a); }
 
-  // --- transform stack: canvas-only side effects (no-op in no-draw) ---
-  push() { if (this._draw) this._p.push(); }
-  pop() { if (this._draw) this._p.pop(); }
-  translate(...a) { if (this._draw) this._p.translate(...a); }
-  rotate(...a) { if (this._draw) this._p.rotate(...a); }
-  scale(...a) { if (this._draw) this._p.scale(...a); }
+  // --- transform stack: canvas-only side effects (no-op in no-draw). RECORDED
+  //     in record mode EVEN under no-draw — capturePolylines needs the CTM ops to
+  //     fold local-frame geometry (e.g. applySymmetryDraw's translate/rotate) into
+  //     absolute canvas coordinates. ---
+  push() { this._rec('push', []); if (this._draw) this._p.push(); }
+  pop() { this._rec('pop', []); if (this._draw) this._p.pop(); }
+  translate(...a) { this._rec('translate', a); if (this._draw) this._p.translate(...a); }
+  rotate(...a) { this._rec('rotate', a); if (this._draw) this._p.rotate(...a); }
+  scale(...a) { this._rec('scale', a); if (this._draw) this._p.scale(...a); }
 
-  // --- style: canvas-only side effects (no-op in no-draw) ---
+  // --- style: canvas-only side effects (no-op in no-draw; not recorded) ---
   stroke(...a) { if (this._draw) this._p.stroke(...a); }
   noStroke() { if (this._draw) this._p.noStroke(); }
   fill(...a) { if (this._draw) this._p.fill(...a); }
@@ -116,15 +131,17 @@ export class P5Adapter {
   strokeCap(...a) { if (this._draw) this._p.strokeCap(...a); }
   rectMode(...a) { if (this._draw) this._p.rectMode(...a); }
 
-  // --- draw: canvas-only side effects (no-op in no-draw) ---
-  line(...a) { if (this._draw) this._p.line(...a); }
+  // --- draw: canvas-only side effects (no-op in no-draw). Polyline ops (line +
+  //     beginShape/vertex/endShape) are RECORDED in record mode; ellipse/rect/
+  //     triangle are not polylines and are intentionally NOT recorded. ---
+  line(...a) { this._rec('line', a); if (this._draw) this._p.line(...a); }
   ellipse(...a) { if (this._draw) this._p.ellipse(...a); }
   rect(...a) { if (this._draw) this._p.rect(...a); }
   triangle(...a) { if (this._draw) this._p.triangle(...a); }
-  beginShape(...a) { if (this._draw) this._p.beginShape(...a); }
-  vertex(...a) { if (this._draw) this._p.vertex(...a); }
+  beginShape(...a) { this._rec('beginShape', a); if (this._draw) this._p.beginShape(...a); }
+  vertex(...a) { this._rec('vertex', a); if (this._draw) this._p.vertex(...a); }
   bezierVertex(...a) { if (this._draw) this._p.bezierVertex(...a); }
-  endShape(...a) { if (this._draw) this._p.endShape(...a); }
+  endShape(...a) { this._rec('endShape', a); if (this._draw) this._p.endShape(...a); }
 }
 
 /** Parse a #rrggbb / #rgb hex string into {r,g,b} (0..255). Test-only helper. */

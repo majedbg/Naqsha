@@ -15,6 +15,7 @@
 // hosts remain OUT of scope for this slice.
 
 import { isMotifLayer, motifHostId } from './motifLayer.js';
+import { isEdgeHost } from './hostKinds.js';
 
 /**
  * Extra render params a motif layer needs, or null when the layer is not a
@@ -50,6 +51,18 @@ export function resolveMotifHostParams(layer, layers, hostGeometry = {}) {
       if (geom.sites) out.sites = geom.sites;
       if (geom.drawnCells) out.drawnCells = geom.drawnCells; // legacy
     }
+  } else if (isEdgeHost(host.patternType)) {
+    // B2 — arbitrary-edge host (flowfield/wave/…): the host has NO semantic
+    // extractor, so FORCE edge anchoring and forward the polylines captured by
+    // the record-mode prepass (capturePolylines) as `hostPaths`. anchorMode:'edge'
+    // overrides whatever the binding stored (motifs are created with the
+    // 'semantic' default) so the motif samples generic Edge anchors along the
+    // host's drawn geometry. Absent hostPaths (host not yet probed) → omit → the
+    // motif degrades to empty edge anchors → nothing placed (graceful, z-order-
+    // independent once the prepass has run).
+    out.anchorMode = 'edge';
+    const geom = hostGeometry[hostId];
+    if (geom && geom.hostPaths) out.hostPaths = geom.hostPaths;
   }
   return out;
 }

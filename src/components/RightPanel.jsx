@@ -195,6 +195,11 @@ export default function RightPanel({
   // callers that don't wire it (mobile / ShareView / tests) render unchanged —
   // the overlay renders (ghosts show) but a dot click is inert.
   onUpdateLayer = () => {},
+  // Canvas path-picker (C4, #79): the ephemeral Route-card arm target shared with
+  // the AnchorGhostOverlay, and the toggle the picker calls on a dot click. Both
+  // no-op/null by default so non-wired callers render the canvas unchanged.
+  motifPick = null,
+  onTogglePickedPath = () => {},
   onSelect = () => {},
   onMove = () => {},
   onCommit = () => {},
@@ -951,6 +956,8 @@ export default function RightPanel({
           canvasH={canvasH}
           onUpdateLayer={onUpdateLayer}
           patternInstances={patternInstances}
+          motifPick={motifPick}
+          onTogglePickedPath={onTogglePickedPath}
         />
       </div>
 

@@ -86,6 +86,46 @@ open decision: custom glyph → edit in place; built-in → fork a Draft Glyph; 
 Draft Glyph.
 _Avoid_: editor state, modal state (implementation words)
 
+**Chain**:
+The ordered list of Blocks a motif's anchors flow through before stamping — the
+maker adds, reorders, bypasses, and repeats Blocks freely, like instrument effects
+in a rack. Order is part of the document: the same Blocks in a different order are
+a different design.
+_Avoid_: pipeline (implementation word for the fixed engine stages), graph (chains
+are linear; there is no splitting or merging)
+
+**Block**:
+One unit in a Chain — it filters the anchor stream (every-Nth, skip rhythm,
+density, field mask) or annotates it (Sequencer). A Block can be bypassed without
+being removed.
+_Avoid_: node (implies a graph), device (reserved for inspector panels like the
+Motif device), effect
+
+**Sequencer**:
+The Block that deals Slots to surviving anchors — in cycling order (the x‑o‑x‑o
+rhythm) or as a weighted random draw — making one motif layer alternate flowers,
+leaves, and rests along a stem.
+_Avoid_: arpeggiator, randomizer (inspirations, not names), pattern (hopelessly
+overloaded)
+
+**Route**:
+The Block that scopes a motif to part of its host — by anchor role and by path
+(all, closed loops, open strands, or specific paths picked on canvas). "Flowers
+on the border ring, leaves on the inner tendrils" is two motifs with two Routes.
+_Avoid_: filter (every selection Block filters), target (modulation word)
+
+**Slot**:
+One step in a Sequencer — a glyph plus light modifiers (size scale, rotation
+offset, flip, optional randomized rotation with a chosen spread shape), or a Rest.
+Modifiers ride on top of the layer's base placement, so the layer's size still
+scales the whole run.
+_Avoid_: step (visual/UI word), frame
+
+**Rest**:
+A Slot that stamps nothing — a deliberate silence in the rhythm, distinct from a
+skip rhythm upstream because it occupies a step in the cycle.
+_Avoid_: null slot, gap
+
 ### Material Preview
 
 **Mark**:

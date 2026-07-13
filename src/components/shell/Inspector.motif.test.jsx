@@ -4,13 +4,16 @@
 // plus the exported deepMergeBinding helper's partial-patch invariant.
 
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, within } from "@testing-library/react";
 import Inspector from "./Inspector";
+import { InspectorDockProvider } from "./inspectorDockContext";
 import {
   MOTIF_TYPE,
   createMotifParams,
   deepMergeBinding,
+  ensureChainForm,
 } from "../../lib/motif/motifLayer";
+import { reorderChain } from "../../lib/motif/chainEditor";
 
 vi.mock("../../lib/AuthContext", () => ({
   useAuth: () => ({ tier: "studio" }),
@@ -163,7 +166,7 @@ describe("MotifDevice", () => {
     expect(opts.binding.selection.roles).toEqual(["crossing"]);
   });
 
-  it("toggling a role writes an explicit roles array via a deep-merged patch", () => {
+  it("toggling a role in the Route card writes chain-form (roles on the route block)", () => {
     const onUpdateLayer = vi.fn();
     const motif = motifLayer("m1", "host1", defaultBinding);
     render(
@@ -175,16 +178,20 @@ describe("MotifDevice", () => {
       />
     );
     fireEvent.click(screen.getByTestId("motif-toggle"));
-    // Add 'edge' (crossing already on).
-    fireEvent.click(screen.getByTestId("motif-role-edge"));
-    expect(onUpdateLayer).toHaveBeenCalledWith("m1", expect.anything());
+    // Add 'edge' (crossing already on, from the compiled Route block).
+    fireEvent.click(screen.getByTestId("motif-block-role-edge"));
+    expect(onUpdateLayer).toHaveBeenCalledTimes(1);
     const [, patch] = onUpdateLayer.mock.calls[0];
-    expect(patch.params.binding.selection.roles).toEqual(["crossing", "edge"]);
-    // Placement branch preserved by the deep merge.
+    // First-edit rewrite: chain-form, legacy `selection` DROPPED.
+    expect(patch.params.binding.chain).toBeInstanceOf(Array);
+    expect(patch.params.binding.selection).toBeUndefined();
+    const route = patch.params.binding.chain.find((b) => b.type === "route");
+    expect(route.roles).toEqual(["crossing", "edge"]);
+    // Placement preserved through the merge.
     expect(patch.params.binding.placement.sizing.size).toBe(18);
   });
 
-  it("editing Every-Nth deep-merges into selection.rate.n (min 1)", () => {
+  it("editing Every N in its Block card writes chain-form (everyN.n, min 1)", () => {
     const onUpdateLayer = vi.fn();
     const motif = motifLayer("m1", "host1", defaultBinding);
     render(
@@ -196,12 +203,14 @@ describe("MotifDevice", () => {
       />
     );
     fireEvent.click(screen.getByTestId("motif-toggle"));
-    fireEvent.change(screen.getByTestId("motif-rate-n"), {
+    fireEvent.change(screen.getByTestId("motif-block-n"), {
       target: { value: "4" },
     });
+    expect(onUpdateLayer).toHaveBeenCalledTimes(1);
     const [, patch] = onUpdateLayer.mock.calls[0];
-    expect(patch.params.binding.selection.rate.n).toBe(4);
-    expect(patch.params.binding.selection.roles).toEqual(["crossing"]);
+    const everyN = patch.params.binding.chain.find((b) => b.type === "everyN");
+    expect(everyN.n).toBe(4);
+    expect(patch.params.binding.selection).toBeUndefined();
   });
 
   // ── Custom glyphs (WI-5): the picker lists imported motifs alongside
@@ -450,5 +459,687 @@ describe("MotifDevice", () => {
     });
     // Already in the doc → no redundant copy (just a rebind).
     expect(onCopyLibraryGlyph).not.toHaveBeenCalled();
+  });
+});
+
+// ── C2: the Block rack (MotifBlockRack rendered inside the device row) ─────────
+describe("MotifBlockRack (C2)", () => {
+  // A motif whose binding is already chain-form (createMotifParams preserves it
+  // via normalizeBinding).
+  function chainMotif(id, hostId, chain) {
+    return {
+      id,
+      name: id,
+      type: MOTIF_TYPE,
+      patternType: MOTIF_TYPE,
+      params: createMotifParams({
+        hostLayerId: hostId,
+        glyphRef: "leaf",
+        binding: { chain, placement: defaultBinding.placement },
+      }),
+      randomizeKeys: [],
+      paramsCache: {},
+    };
+  }
+
+  const seqBlock = () => ({ type: "sequence", mode: "cycle", slots: [] });
+
+  function expand(ui) {
+    const r = render(ui);
+    fireEvent.click(screen.getByTestId("motif-toggle"));
+    return r;
+  }
+
+  it("renders one Block card per compiled block for a LEGACY motif (Route/Every N/Density)", () => {
+    const motif = motifLayer("m1", "host1", defaultBinding);
+    expand(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    const cards = screen.getAllByTestId("motif-block");
+    expect(cards.map((c) => c.getAttribute("data-block-type"))).toEqual([
+      "route",
+      "everyN",
+      "density",
+    ]);
+  });
+
+  it("bypass toggle flips block.bypass and writes chain-form (one undo entry)", () => {
+    const onUpdateLayer = vi.fn();
+    const motif = motifLayer("m1", "host1", defaultBinding);
+    expand(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={onUpdateLayer}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    fireEvent.click(screen.getAllByTestId("motif-block-bypass")[0]); // Route
+    expect(onUpdateLayer).toHaveBeenCalledTimes(1);
+    const [, patch] = onUpdateLayer.mock.calls[0];
+    expect(patch.params.binding.chain[0].bypass).toBe(true);
+    expect(patch.params.binding.selection).toBeUndefined();
+  });
+
+  it("adding a selection block via the menu appends it (chain-form)", () => {
+    const onUpdateLayer = vi.fn();
+    const motif = motifLayer("m1", "host1", defaultBinding);
+    expand(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={onUpdateLayer}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    fireEvent.change(screen.getByTestId("motif-block-add"), {
+      target: { value: "skip" },
+    });
+    expect(onUpdateLayer).toHaveBeenCalledTimes(1);
+    const [, patch] = onUpdateLayer.mock.calls[0];
+    const types = patch.params.binding.chain.map((b) => b.type);
+    expect(types).toContain("skip");
+    // With no sequence, a selection block appends to the end.
+    expect(types[types.length - 1]).toBe("skip");
+  });
+
+  it("adding a Sequencer appends it terminally (last element)", () => {
+    const onUpdateLayer = vi.fn();
+    const motif = motifLayer("m1", "host1", defaultBinding);
+    expand(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={onUpdateLayer}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    fireEvent.change(screen.getByTestId("motif-block-add"), {
+      target: { value: "sequence" },
+    });
+    const [, patch] = onUpdateLayer.mock.calls[0];
+    const chain = patch.params.binding.chain;
+    expect(chain[chain.length - 1].type).toBe("sequence");
+  });
+
+  it("the add-menu HIDES the Sequencer option once a sequence exists (at-most-one)", () => {
+    const motif = chainMotif("m1", "host1", [
+      { type: "route", roles: ["crossing"], pathScope: "all" },
+      seqBlock(),
+    ]);
+    expand(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    const addMenu = screen.getByTestId("motif-block-add");
+    // No "Sequencer" option in the add menu (a second sequence is forbidden).
+    expect(
+      within(addMenu).queryByRole("option", { name: "Sequencer" })
+    ).toBeNull();
+    // Selection blocks are still offered.
+    expect(
+      within(addMenu).getByRole("option", { name: "Every N" })
+    ).toBeInTheDocument();
+  });
+
+  it("a selection block added while a sequence exists is inserted BEFORE the sequence", () => {
+    const onUpdateLayer = vi.fn();
+    const motif = chainMotif("m1", "host1", [
+      { type: "route", roles: ["crossing"], pathScope: "all" },
+      seqBlock(),
+    ]);
+    expand(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={onUpdateLayer}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    fireEvent.change(screen.getByTestId("motif-block-add"), {
+      target: { value: "everyN" },
+    });
+    const [, patch] = onUpdateLayer.mock.calls[0];
+    const types = patch.params.binding.chain.map((b) => b.type);
+    expect(types).toEqual(["route", "everyN", "sequence"]);
+  });
+
+  it("removing a block writes the shortened chain (chain-form)", () => {
+    const onUpdateLayer = vi.fn();
+    const motif = motifLayer("m1", "host1", defaultBinding);
+    expand(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={onUpdateLayer}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    // Remove the first card (Route).
+    fireEvent.click(screen.getAllByTestId("motif-block-remove")[0]);
+    const [, patch] = onUpdateLayer.mock.calls[0];
+    expect(patch.params.binding.chain.map((b) => b.type)).toEqual([
+      "everyN",
+      "density",
+    ]);
+  });
+
+  it("orientation follows the dock: vertical by default, horizontal in the bottom shelf", () => {
+    const motif = motifLayer("m1", "host1", defaultBinding);
+    // No dock provider → vertical.
+    const { unmount } = expand(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    expect(screen.getByTestId("motif-rack")).toHaveAttribute(
+      "data-orientation",
+      "vertical"
+    );
+    unmount();
+
+    // Bottom shelf → horizontal.
+    render(
+      <InspectorDockProvider value={{ dockPosition: "bottom" }}>
+        <Inspector
+          layers={[hostLayer("host1", "grid"), motif]}
+          selectedLayerId="host1"
+          onUpdateLayer={() => {}}
+          onChangeLayerPattern={() => {}}
+        />
+      </InspectorDockProvider>
+    );
+    fireEvent.click(screen.getByTestId("motif-toggle"));
+    expect(screen.getByTestId("motif-rack")).toHaveAttribute(
+      "data-orientation",
+      "horizontal"
+    );
+  });
+
+  it("Placement Size/Flip still work and stay LEGACY-preserving (no forced chain rewrite)", () => {
+    const onUpdateLayer = vi.fn();
+    const motif = motifLayer("m1", "host1", defaultBinding);
+    expand(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={onUpdateLayer}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    fireEvent.change(screen.getByTestId("motif-size"), { target: { value: "30" } });
+    const [, patch] = onUpdateLayer.mock.calls[0];
+    // Placement edits are orthogonal to the chain — a legacy binding stays legacy.
+    expect(patch.params.binding.placement.sizing.size).toBe(30);
+    expect(patch.params.binding.selection).toBeDefined();
+    expect(patch.params.binding.chain).toBeUndefined();
+  });
+
+  it("editChain no-churn: a rejected chain op returns the SAME ref, so the write is skipped", () => {
+    // Reconstructs the exact editChain composition MotifDevice uses for a rejected
+    // reorder (selection block dragged below the terminal sequence). The guard is
+    // `nextChain === base.chain` → skip onUpdateLayer, so a legacy binding is
+    // NEITHER migrated NOR churned into a phantom undo entry.
+    const base = ensureChainForm({
+      chain: [
+        { type: "route", roles: ["crossing"], pathScope: "all" },
+        { type: "everyN", n: 2 },
+        seqBlock(),
+      ],
+      placement: {},
+    });
+    // Move 'route' (0) below the sequence (2) — illegal.
+    const nextChain = reorderChain(base.chain, 0, 2);
+    expect(nextChain).toBe(base.chain); // same ref → editChain returns early
+  });
+});
+
+// ── C3: the Sequencer card (slot strip, deal mode, weights, angle disclosure,
+//    tap-to-edit) rendered inside the terminal sequence Block ────────────────
+describe("Sequencer card (C3)", () => {
+  // A chain-form motif with a terminal sequence at index 1 (seqIndex=1).
+  function seqMotif(id, hostId, { mode = "cycle", slots = [] } = {}) {
+    return {
+      id,
+      name: id,
+      type: MOTIF_TYPE,
+      patternType: MOTIF_TYPE,
+      params: createMotifParams({
+        hostLayerId: hostId,
+        glyphRef: "leaf",
+        binding: {
+          chain: [
+            { type: "route", roles: ["crossing"], pathScope: "all" },
+            { type: "sequence", mode, slots },
+          ],
+          placement: defaultBinding.placement,
+        },
+      }),
+      randomizeKeys: [],
+      paramsCache: {},
+    };
+  }
+
+  function expandSeq(ui) {
+    const r = render(ui);
+    fireEvent.click(screen.getByTestId("motif-toggle"));
+    return r;
+  }
+
+  const seqOf = (patch) => {
+    const chain = patch.params.binding.chain;
+    return chain.find((b) => b.type === "sequence");
+  };
+
+  it("renders a glyph thumbnail per glyph slot + a Rest chip for a rest slot", () => {
+    const motif = seqMotif("m1", "host1", {
+      slots: [{ glyphRef: "leaf" }, { rest: true }, { glyphRef: "flower" }],
+    });
+    expandSeq(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    const chips = screen.getAllByTestId("motif-slot");
+    expect(chips).toHaveLength(3);
+    // Two glyph slots (tap-to-edit buttons) + one rest chip.
+    expect(screen.getAllByTestId("motif-slot-edit")).toHaveLength(2);
+    expect(screen.getByTestId("motif-slot-rest")).toBeInTheDocument();
+  });
+
+  it("Cycle | Random toggle writes block.mode as chain-form (one undo entry)", () => {
+    const onUpdateLayer = vi.fn();
+    const motif = seqMotif("m1", "host1", { mode: "cycle", slots: [{ glyphRef: "leaf" }] });
+    expandSeq(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={onUpdateLayer}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    fireEvent.click(screen.getByTestId("motif-seq-mode-random"));
+    expect(onUpdateLayer).toHaveBeenCalledTimes(1);
+    const [, patch] = onUpdateLayer.mock.calls[0];
+    expect(seqOf(patch).mode).toBe("random");
+    expect(patch.params.binding.selection).toBeUndefined();
+  });
+
+  it("per-slot weight sliders appear ONLY in Random mode (positional in Cycle)", () => {
+    const slots = [{ glyphRef: "leaf" }, { rest: true }];
+    // Cycle → no weight sliders.
+    const { unmount } = expandSeq(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), seqMotif("m1", "host1", { mode: "cycle", slots })]}
+        selectedLayerId="host1"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    expect(screen.queryByTestId("motif-slot-weight")).toBeNull();
+    unmount();
+    // Random → a weight slider per slot, INCLUDING the rest.
+    expandSeq(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), seqMotif("m2", "host1", { mode: "random", slots })]}
+        selectedLayerId="host1"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    expect(screen.getAllByTestId("motif-slot-weight")).toHaveLength(2);
+  });
+
+  it("setting a weight (Random mode) writes slot.weight", () => {
+    const onUpdateLayer = vi.fn();
+    const motif = seqMotif("m1", "host1", {
+      mode: "random",
+      slots: [{ glyphRef: "leaf" }, { glyphRef: "flower" }],
+    });
+    expandSeq(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={onUpdateLayer}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    fireEvent.change(screen.getAllByTestId("motif-slot-weight")[1], {
+      target: { value: "3" },
+    });
+    const [, patch] = onUpdateLayer.mock.calls[0];
+    expect(seqOf(patch).slots[1].weight).toBe(3);
+    expect(seqOf(patch).slots[0].weight).toBeUndefined();
+  });
+
+  it("angle-randomization checkbox reveals range + spread and writes slot.rotationRandom", () => {
+    const onUpdateLayer = vi.fn();
+    const motif = seqMotif("m1", "host1", { slots: [{ glyphRef: "leaf" }] });
+    expandSeq(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={onUpdateLayer}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    // Disclosure closed initially — no range/spread controls.
+    expect(screen.queryByTestId("motif-slot-range")).toBeNull();
+    expect(screen.queryByTestId("motif-slot-spread")).toBeNull();
+    // Enabling writes a rotationRandom spec.
+    fireEvent.click(screen.getByTestId("motif-slot-anglerand"));
+    const [, patch] = onUpdateLayer.mock.calls[0];
+    expect(seqOf(patch).slots[0].rotationRandom).toEqual({ range: 30, spread: "flat" });
+  });
+
+  it("an enabled slot shows range + spread; unchecking removes rotationRandom", () => {
+    const onUpdateLayer = vi.fn();
+    const motif = seqMotif("m1", "host1", {
+      slots: [{ glyphRef: "leaf", rotationRandom: { range: 45, spread: "bell" } }],
+    });
+    expandSeq(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={onUpdateLayer}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    // Revealed because the slot already carries rotationRandom.
+    expect(screen.getByTestId("motif-slot-range")).toBeInTheDocument();
+    expect(screen.getByTestId("motif-slot-spread")).toHaveValue("bell");
+    // Unchecking removes the spec.
+    fireEvent.click(screen.getByTestId("motif-slot-anglerand"));
+    const [, patch] = onUpdateLayer.mock.calls[0];
+    expect("rotationRandom" in seqOf(patch).slots[0]).toBe(true);
+    expect(seqOf(patch).slots[0].rotationRandom).toBeUndefined();
+  });
+
+  it("Add Glyph / Add Rest append a slot (chain-form, terminal sequence stays last)", () => {
+    const onUpdateLayer = vi.fn();
+    const motif = seqMotif("m1", "host1", { slots: [{ glyphRef: "leaf" }] });
+    const { rerender } = expandSeq(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={onUpdateLayer}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    fireEvent.click(screen.getByTestId("motif-slot-add"));
+    let [, patch] = onUpdateLayer.mock.calls[0];
+    expect(seqOf(patch).slots).toHaveLength(2);
+    // New glyph slot defaults to the base glyphRef.
+    expect(seqOf(patch).slots[1]).toEqual({ glyphRef: "leaf" });
+    // Sequence remains the terminal block.
+    const types = patch.params.binding.chain.map((b) => b.type);
+    expect(types[types.length - 1]).toBe("sequence");
+
+    onUpdateLayer.mockClear();
+    fireEvent.click(screen.getByTestId("motif-slot-add-rest"));
+    [, patch] = onUpdateLayer.mock.calls[0];
+    expect(seqOf(patch).slots[1]).toEqual({ rest: true });
+  });
+
+  it("removing a slot writes the shortened slots array", () => {
+    const onUpdateLayer = vi.fn();
+    const motif = seqMotif("m1", "host1", {
+      slots: [{ glyphRef: "leaf" }, { glyphRef: "flower" }, { rest: true }],
+    });
+    expandSeq(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={onUpdateLayer}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    fireEvent.click(screen.getAllByTestId("motif-slot-remove")[1]); // drop 'flower'
+    const [, patch] = onUpdateLayer.mock.calls[0];
+    expect(seqOf(patch).slots).toEqual([{ glyphRef: "leaf" }, { rest: true }]);
+  });
+
+  it("tapping a slot glyph opens the editor with SLOT CONTEXT (layer id, slot glyphRef, slotIndex)", () => {
+    const onEditGlyph = vi.fn();
+    const motif = seqMotif("m1", "host1", {
+      slots: [{ glyphRef: "leaf" }, { glyphRef: "flower" }],
+    });
+    expandSeq(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+        onEditGlyph={onEditGlyph}
+      />
+    );
+    fireEvent.click(screen.getAllByTestId("motif-slot-edit")[1]); // tap slot 1 (flower)
+    expect(onEditGlyph).toHaveBeenCalledTimes(1);
+    const [layerId, glyphRef, opts] = onEditGlyph.mock.calls[0];
+    expect(layerId).toBe("m1");
+    expect(glyphRef).toBe("flower");
+    expect(opts).toEqual({ slotIndex: 1 });
+  });
+
+  it("tapping a modifier-only slot (no glyphRef) opens the editor on the BASE glyph", () => {
+    const onEditGlyph = vi.fn();
+    // slot 0 has no glyphRef → renders + forks from the base ('leaf').
+    const motif = seqMotif("m1", "host1", { slots: [{ sizeScale: 2 }] });
+    expandSeq(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+        onEditGlyph={onEditGlyph}
+      />
+    );
+    fireEvent.click(screen.getByTestId("motif-slot-edit"));
+    const [layerId, glyphRef, opts] = onEditGlyph.mock.calls[0];
+    expect(layerId).toBe("m1");
+    expect(glyphRef).toBe("leaf"); // base fallback
+    expect(opts).toEqual({ slotIndex: 0 });
+  });
+});
+
+// ── C4: Route card path scope + canvas-pick (issue #79) ───────────────────────
+describe("Route card path scope + canvas-pick (C4)", () => {
+  function chainMotif(id, hostId, chain) {
+    return {
+      id,
+      name: id,
+      type: MOTIF_TYPE,
+      patternType: MOTIF_TYPE,
+      params: createMotifParams({
+        hostLayerId: hostId,
+        glyphRef: "leaf",
+        binding: { chain, placement: defaultBinding.placement },
+      }),
+      randomizeKeys: [],
+      paramsCache: {},
+    };
+  }
+
+  function expand(ui) {
+    const r = render(ui);
+    fireEvent.click(screen.getByTestId("motif-toggle"));
+    return r;
+  }
+
+  it("GATING: an EDGE host offers all four scopes (all/closed/open/picked)", () => {
+    const motif = chainMotif("m1", "fh", [
+      { type: "route", roles: ["edge"], pathScope: "all" },
+    ]);
+    expand(
+      <Inspector
+        layers={[hostLayer("fh", "flowfield"), motif]}
+        selectedLayerId="fh"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    expect(screen.getByTestId("motif-route-scope-all")).toBeInTheDocument();
+    expect(screen.getByTestId("motif-route-scope-closed")).toBeInTheDocument();
+    expect(screen.getByTestId("motif-route-scope-open")).toBeInTheDocument();
+    expect(screen.getByTestId("motif-route-scope-picked")).toBeInTheDocument();
+  });
+
+  it("GATING: a SEMANTIC host HIDES closed/picked (offers only all/open)", () => {
+    const motif = chainMotif("m1", "host1", [
+      { type: "route", roles: ["crossing"], pathScope: "all" },
+    ]);
+    expand(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    expect(screen.getByTestId("motif-route-scope-all")).toBeInTheDocument();
+    expect(screen.getByTestId("motif-route-scope-open")).toBeInTheDocument();
+    expect(screen.queryByTestId("motif-route-scope-closed")).toBeNull();
+    expect(screen.queryByTestId("motif-route-scope-picked")).toBeNull();
+  });
+
+  it("selecting a scope writes chain-form pathScope (one undo, no selection resurrection)", () => {
+    const onUpdateLayer = vi.fn();
+    // Legacy binding → the write must migrate to chain-form and drop selection.
+    const motif = motifLayer("m1", "fh", {
+      selection: { roles: ["edge"], rate: { n: 1 } },
+      placement: defaultBinding.placement,
+    });
+    expand(
+      <Inspector
+        layers={[hostLayer("fh", "flowfield"), motif]}
+        selectedLayerId="fh"
+        onUpdateLayer={onUpdateLayer}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    fireEvent.click(screen.getByTestId("motif-route-scope-closed"));
+    expect(onUpdateLayer).toHaveBeenCalledTimes(1);
+    const [, patch] = onUpdateLayer.mock.calls[0];
+    expect(patch.params.binding.selection).toBeUndefined();
+    const route = patch.params.binding.chain.find((b) => b.type === "route");
+    expect(route.pathScope).toBe("closed");
+  });
+
+  it("picked scope reveals a 'Pick on canvas' arm; clicking arms THIS route block", () => {
+    const onMotifPick = vi.fn();
+    const motif = chainMotif("m1", "fh", [
+      { type: "route", roles: ["edge"], pathScope: "picked", pickedPaths: [] },
+    ]);
+    expand(
+      <Inspector
+        layers={[hostLayer("fh", "flowfield"), motif]}
+        selectedLayerId="fh"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+        motifPick={null}
+        onMotifPick={onMotifPick}
+      />
+    );
+    const arm = screen.getByTestId("motif-route-pick-arm");
+    expect(arm).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(arm);
+    // Route block is the only block → index 0.
+    expect(onMotifPick).toHaveBeenCalledWith({ layerId: "m1", blockIndex: 0 });
+  });
+
+  it("the arm reads pressed + disarms (onMotifPick null) when THIS block is the pick target", () => {
+    const onMotifPick = vi.fn();
+    const motif = chainMotif("m1", "fh", [
+      { type: "route", roles: ["edge"], pathScope: "picked", pickedPaths: [2] },
+    ]);
+    expand(
+      <Inspector
+        layers={[hostLayer("fh", "flowfield"), motif]}
+        selectedLayerId="fh"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+        motifPick={{ layerId: "m1", blockIndex: 0 }}
+        onMotifPick={onMotifPick}
+      />
+    );
+    const arm = screen.getByTestId("motif-route-pick-arm");
+    expect(arm).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(arm); // toggle off
+    expect(onMotifPick).toHaveBeenCalledWith(null);
+  });
+
+  it("the 'N picked · Clear' summary reflects pickedPaths; Clear empties it", () => {
+    const onUpdateLayer = vi.fn();
+    const motif = chainMotif("m1", "fh", [
+      { type: "route", roles: ["edge"], pathScope: "picked", pickedPaths: [1, 3] },
+    ]);
+    expand(
+      <Inspector
+        layers={[hostLayer("fh", "flowfield"), motif]}
+        selectedLayerId="fh"
+        onUpdateLayer={onUpdateLayer}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    expect(screen.getByTestId("motif-route-picked-summary")).toHaveTextContent("2 picked");
+    fireEvent.click(screen.getByTestId("motif-route-picked-clear"));
+    const [, patch] = onUpdateLayer.mock.calls[0];
+    const route = patch.params.binding.chain.find((b) => b.type === "route");
+    expect(route.pickedPaths).toEqual([]);
+  });
+
+  it("collapsing the Motif device while armed disarms (onMotifPick null)", () => {
+    const onMotifPick = vi.fn();
+    const motif = chainMotif("m1", "fh", [
+      { type: "route", roles: ["edge"], pathScope: "picked", pickedPaths: [0] },
+    ]);
+    render(
+      <Inspector
+        layers={[hostLayer("fh", "flowfield"), motif]}
+        selectedLayerId="fh"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+        motifPick={{ layerId: "m1", blockIndex: 0 }}
+        onMotifPick={onMotifPick}
+      />
+    );
+    // Device starts collapsed; open it, then collapse it while armed.
+    fireEvent.click(screen.getByTestId("motif-toggle")); // open
+    fireEvent.click(screen.getByTestId("motif-toggle")); // collapse
+    expect(onMotifPick).toHaveBeenLastCalledWith(null);
+  });
+
+  it("switching scope AWAY from picked while armed disarms (onMotifPick null)", () => {
+    const onMotifPick = vi.fn();
+    const motif = chainMotif("m1", "fh", [
+      { type: "route", roles: ["edge"], pathScope: "picked", pickedPaths: [0] },
+    ]);
+    expand(
+      <Inspector
+        layers={[hostLayer("fh", "flowfield"), motif]}
+        selectedLayerId="fh"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+        motifPick={{ layerId: "m1", blockIndex: 0 }}
+        onMotifPick={onMotifPick}
+      />
+    );
+    fireEvent.click(screen.getByTestId("motif-route-scope-all"));
+    expect(onMotifPick).toHaveBeenCalledWith(null);
   });
 });

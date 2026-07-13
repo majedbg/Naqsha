@@ -39,6 +39,7 @@ import StudioSubmitModal from "../components/org/StudioSubmitModal";
 import MotifEditorModal from "../components/motif-editor/MotifEditorModal";
 import MaterialEvaluationDialog from "../components/evaluation/MaterialEvaluationDialog";
 import { parseDToAnchors, anchorsToD } from "../lib/motif/pathModel";
+import { applyPickedPathToggle } from "../lib/motif/motifLayer";
 import useMotifEditorSession from "../lib/hooks/useMotifEditorSession";
 import useGlyphCommits from "../lib/hooks/useGlyphCommits";
 
@@ -596,6 +597,46 @@ export default function Studio({ submitOrg = null } = {}) {
   const selectedLayerId = selectionExists
     ? selectedLayerIdState
     : layers[0]?.id ?? null;
+
+  // Canvas path-picker arm state (C4, #79). `motifPick = {layerId, blockIndex}`
+  // names the motif + route block whose "Pick on canvas" is armed; null = not
+  // picking. EPHEMERAL — never persisted to the document, shared with the canvas
+  // AnchorGhostOverlay (which renders the armed motif's edge-anchor dots) and the
+  // host-inspector Route card (which arms it). Cleared when the user navigates
+  // away from BOTH the armed motif and its host (the Route card lives in the
+  // host's inspector, so staying on the host must keep the arm).
+  const [motifPick, setMotifPick] = useState(null);
+  useEffect(() => {
+    if (!motifPick) return;
+    const armedLayer = layers.find((l) => l.id === motifPick.layerId);
+    const hostId = armedLayer?.params?.hostLayerId ?? null;
+    if (selectedLayerId !== motifPick.layerId && selectedLayerId !== hostId) {
+      setMotifPick(null);
+    }
+  }, [selectedLayerId, motifPick, layers]);
+
+  // A canvas edge-ghost dot click toggles that path in the armed route block's
+  // pickedPaths: ensureChainForm → togglePickedPath → deepMergeBinding, in ONE
+  // updateLayer (one undo entry). applyPickedPathToggle migrates a legacy binding
+  // + DROPS `selection` (mutual-exclusivity intact); it returns the SAME binding
+  // ref on a stale/non-route target so a misdirected click writes nothing.
+  const handleTogglePickedPath = useCallback(
+    (pathIndex) => {
+      if (!motifPick) return;
+      const layer = layers.find((l) => l.id === motifPick.layerId);
+      if (!layer) return;
+      const nextBinding = applyPickedPathToggle(
+        layer.params.binding,
+        motifPick.blockIndex,
+        pathIndex
+      );
+      if (nextBinding === layer.params.binding) return; // no-op → no write
+      updateLayer(layer.id, {
+        params: { ...layer.params, binding: nextBinding },
+      });
+    },
+    [motifPick, layers, updateLayer]
+  );
 
   // Text edit lifecycle (phase 5). `editingNodeId` names the text layer whose
   // content is being typed into the on-canvas TextEditOverlay; null = no editor
@@ -1918,6 +1959,9 @@ export default function Studio({ submitOrg = null } = {}) {
           // Motif anchor-ghost overlay writes force-include/exclude overrides
           // back onto the motif layer's binding via the shared updateLayer.
           onUpdateLayer={updateLayer}
+          // Canvas path-picker (C4): the armed pick target + the per-path toggle.
+          motifPick={motifPick}
+          onTogglePickedPath={handleTogglePickedPath}
           onSelect={setSelectedLayerId}
           onMove={handleCanvasMove}
           onCommit={handleCanvasCommit}
@@ -2320,6 +2364,10 @@ export default function Studio({ submitOrg = null } = {}) {
             onUseLibraryGlyph={(glyph, layerId, params) =>
               glyphCommits.placeFromLibrary(glyph, layerId, params)
             }
+            // Canvas path-picker (C4): the host-inspector Route card arms/reads
+            // the ephemeral pick target shared with the canvas overlay.
+            motifPick={motifPick}
+            onMotifPick={setMotifPick}
           />
           ),
           inspectorSlot

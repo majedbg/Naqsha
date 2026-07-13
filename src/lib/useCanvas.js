@@ -564,7 +564,7 @@ export default function useCanvas(
     };
     for (const layer of layers) {
       if (!isEtchLayer(layer)) continue;
-      const { source, dpi, stack } = layer.params || {};
+      const { source, sourcePath, dpi, stack } = layer.params || {};
       // Highlight Hold (S4, #83): resolve the material-aware default HERE, where
       // panels + the Material lens live. The EFFECTIVE material (panel material
       // first, else the lens material — the SAME precedence the canvas shades
@@ -580,7 +580,9 @@ export default function useCanvas(
       // Hold / moving its cutoff / changing the panel material re-resolves the
       // single-source bitmap live. threshold/invert are intentionally OMITTED:
       // they are not Etch-layer params yet.
-      const sig = `${dpi}|${canvasW}|${canvasH}|${source || ''}|${JSON.stringify(stack || [])}|${hold.enabled ? 1 : 0}:${hold.cutoff}`;
+      // A layer carries either an inline `source` (guest) or a `sourcePath`
+      // (signed-in, S7 #86) — key on whichever identifies its source bytes.
+      const sig = `${dpi}|${canvasW}|${canvasH}|${source || sourcePath || ''}|${JSON.stringify(stack || [])}|${hold.enabled ? 1 : 0}:${hold.cutoff}`;
       live.add(layer.id);
       const cached = cache.get(layer.id);
       if (!etchCacheNeedsResolve(cached, sig)) continue;

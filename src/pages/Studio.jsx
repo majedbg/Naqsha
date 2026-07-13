@@ -68,6 +68,7 @@ import {
 } from "../lib/panels";
 import { exportPanelsZip } from "../lib/panelExport";
 import { isTextLayer } from "../lib/text/textLayer";
+import { persistEtchSource } from "../lib/etch/etchSourceStorage";
 import { useFont } from "../lib/text/fontRegistry";
 import { useAuth } from "../lib/AuthContext";
 import useGlobalMotifLibrary from "../lib/hooks/useGlobalMotifLibrary";
@@ -1415,11 +1416,18 @@ export default function Studio({ submitOrg = null } = {}) {
           1024
         );
         const source = imageDataToDataURL(capped);
-        const outcome = addEtchLayer({
-          source,
-          sourceWidth: capped.width,
-          sourceHeight: capped.height,
+        // Hybrid source storage (decision 7 / S7, #86): a SIGNED-IN user uploads
+        // the full-res `file` to the private `etch-sources` bucket and the layer
+        // stores a `sourcePath` (no base64 in the saved design); a GUEST/offline
+        // user — or any upload failure — keeps the S1 capped data-URI on the
+        // layer (unchanged; the maker never loses work).
+        const params = await persistEtchSource({
+          userId: user?.id,
+          file,
+          capped: { source, width: capped.width, height: capped.height },
+          full: { width: img.naturalWidth, height: img.naturalHeight },
         });
+        const outcome = addEtchLayer(params);
         if (outcome?.ok) {
           setSelectedLayerId(outcome.id);
         } else {
@@ -1429,7 +1437,7 @@ export default function Studio({ submitOrg = null } = {}) {
         setImportError("Could not read that image.");
       }
     },
-    [addEtchLayer]
+    [addEtchLayer, user?.id]
   );
 
   // Drag-drop + paste onto the canvas (the other two entry points).

@@ -72,8 +72,74 @@ captured and must be confirmed live.
       `QuotaExceededError` no longer cascade-kills the other document writes and now
       emits a `console.warn` (no more silent TOTAL loss), but the Etch source itself
       still won't persist when over quota. **Real fix = source compression + signed-in
-      private-bucket storage (S7 / #86).** Until then, a large multi-Etch document may
-      not fully survive a guest reload.
+      private-bucket storage (S7 / #86 — now built, see below; guests are still capped).**
+      Until then, a large multi-Etch document may not fully survive a guest reload.
+
+## Raster Etch S7 (#86) — signed-in source bucket + `sourcePath` (UNAPPLIED MIGRATION)
+
+- [ ] **Apply migration `supabase/migrations/20250101000015_etch_sources.sql` — NOT run by the agent.**
+      It provisions the PRIVATE `etch-sources` storage bucket (public = false, 10 MB cap,
+      images only) plus an **owner-only** `storage.objects` RLS policy: object access is
+      scoped to the first path segment (`(storage.foldername(name))[1] = auth.uid()::text`),
+      the standard per-user-folder pattern — mirroring the `material-evaluations` bucket
+      (migration 014). **NO table / NO column**: `sourcePath` is a plain Etch-layer param
+      that rides inside the existing `public.designs.config` jsonb (`{ layers, … }`), so no
+      schema change is needed.
+      - **Human-gated & must be coordinated** with the other unapplied migration
+        (`014_material_evaluations.sql`, above) — apply both via the Supabase SQL editor / CLI.
+        Nothing in CI or the agent run touched a live database.
+      - **How it behaves once applied:** on import a SIGNED-IN user's full-resolution source
+        photo is uploaded to `etch-sources` under `<uid>/<sourceId>/source.<ext>` and the
+        layer stores only `sourcePath` (no base64 in the saved design); on load the Etch
+        downloads its source from the bucket (a download, not a signed URL — keeps the
+        resample canvas same-origin so `getImageData` isn't tainted) and feeds it into the
+        SAME `resolveEtchBitmap` pipeline. A GUEST/offline user keeps the S1 capped data-URI
+        on the layer, UNCHANGED, and any upload failure falls back to that data-URI (no lost
+        work).
+      - **How to verify (needs the migration applied + live auth — cannot be checked by the
+        green gate):**
+        1. Signed in, `File → Import Image` an Etch. Confirm the source object appears in the
+           `etch-sources` bucket under your uid, the saved design's layer holds a `sourcePath`
+           (NOT a `source` data-URI), and reloading the design re-renders the Etch by
+           downloading from the bucket.
+        2. Confirm owner-only RLS: a second account cannot read the first account's objects.
+        3. Signed OUT (or with the backend offline), import an Etch and confirm it still uses
+           the local capped data-URI exactly as before (guest path unchanged).
+      - **Known operational gap (orphan-on-abandon), out of scope for this slice:** unlike the
+        material-evaluation precedent (which uploads the object AND inserts its DB row in one
+        call), the Etch source is uploaded at IMPORT time while `sourcePath` is only persisted
+        by a LATER design save. If the user imports an Etch then never saves (closes the tab,
+        deletes the layer, discards the draft), the uploaded object is stranded in the bucket
+        with nothing referencing it, and there is no reaper. A real fix needs save-time
+        reconciliation or a periodic orphan sweep — deferred, but worth knowing before this
+        bucket accrues storage.
+
+- [ ] **PRODUCT DECISION (C-1) — signed-in Etch silently breaks in SHARED designs. Decide before
+      signed-in Etch ships to makers who share.** A shared design (`share_token` →
+      `loadSharedDesign`) carries the Etch layer's `sourcePath` in its config. For a signed-in
+      maker the source now lives ONLY in the owner-private `etch-sources` bucket, so a
+      RECIPIENT's `fetchEtchSourceDataUrl` hits owner-only RLS → download fails → null → the
+      Etch renders as its placeholder. Previously (guest inline `source` data-URI travelled in
+      the shared config) the same shared design rendered the Etch. So this slice is a **sharing
+      regression** for signed-in makers. The human must decide: **is Etch-in-shared-design
+      supported?** If YES, sharing must fall back to an inline/copied source in the shared
+      config OR a recipient-scoped signed URL (a real feature, not a bug-fix). If NO, document
+      it as a known limitation. **Not code-fixed in this slice — surfaced for the decision.**
+
+- [ ] **(M-2) A source over the 10 MB bucket cap silently falls back to guest-grade storage.**
+      `uploadEtchSource` throws on an over-cap file, so `persistEtchSource` returns the CAPPED
+      data-URI — graceful (no lost work), but the "full-resolution source survives" promise
+      fails with NO user-facing signal. A friendly "too large, stored at reduced resolution"
+      message is future work.
+
+- [ ] **(M-3) Only `File → Import Image` was rewired to the bucket.** Signed-in drag-drop /
+      paste image imports still inline the base64 source. Inconsistent (some signed-in Etches
+      bucket-backed, some inline); unify the other import entry points in a later slice.
+
+- [ ] **(M-4, minor) In-session download cache is unbounded.** `fetchEtchSourceDataUrl` memoizes
+      one data-URL per distinct `sourcePath` for the session; the S-1 sign-out clear caps the
+      worst case (it empties on account switch). Add an LRU bound only if session Etch counts
+      grow large — not needed now.
 
 ## Raster Etch S4 (#83) — Highlight Hold
 

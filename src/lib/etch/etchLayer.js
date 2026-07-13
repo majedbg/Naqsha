@@ -50,10 +50,12 @@ export function etchPixelDims(physicalMm, dpi = DEFAULT_ETCH_DPI) {
 }
 
 /**
- * Build the `params` object for a new Etch layer. `source` is the capped
- * (≤~1024px) data-URI of the imported photo held ON the layer — the guest /
- * offline path (grilled decision 7; signed-in bucket storage is S7). `dpi`
- * defaults to DEFAULT_ETCH_DPI. `sourceWidth` / `sourceHeight` record the
+ * Build the `params` object for a new Etch layer. Hybrid source storage (grilled
+ * decision 7): a GUEST/offline Etch holds its capped (≤~1024px) `source` data-URI
+ * ON the layer; a SIGNED-IN Etch holds a `sourcePath` pointing at the private
+ * `etch-sources` bucket instead (S7, #86 — no base64 in the saved design), and
+ * the source is downloaded on load. A layer carries one or the other, never both.
+ * `dpi` defaults to DEFAULT_ETCH_DPI. `sourceWidth` / `sourceHeight` record the
  * stored source's pixel size so consumers need not re-decode to know it.
  *
  * `stack` is the Etch Stack (S2, #81): the ordered, reorderable array of Stages
@@ -66,9 +68,10 @@ export function etchPixelDims(physicalMm, dpi = DEFAULT_ETCH_DPI) {
  * to AUTO (`enabled: null`) so the material-aware default resolves at use-time
  * once the Etch's panel — hence its material — is known (mirror → on, else off).
  */
-export function createEtchParams({ source, sourceWidth = 0, sourceHeight = 0, dpi = DEFAULT_ETCH_DPI, stack, hold } = {}) {
+export function createEtchParams({ source, sourcePath, sourceWidth = 0, sourceHeight = 0, dpi = DEFAULT_ETCH_DPI, stack, hold } = {}) {
   return {
     source: source || null,
+    sourcePath: sourcePath || null,
     sourceWidth,
     sourceHeight,
     dpi: dpi > 0 ? dpi : DEFAULT_ETCH_DPI,

@@ -56,6 +56,7 @@ import { isMotifLayer, motifHostId, deepMergeBinding } from "../../lib/motif/mot
 import { MOTIF_GLYPHS, getGlyph } from "../../lib/motif/glyphs";
 import EtchStackRack from "./EtchStackRack";
 import EtchHighlightHold from "./EtchHighlightHold";
+import EtchPreviewHero from "./EtchPreviewHero";
 
 // Modulation-scoped param control: the Grid's `warpNodes` slider (2–24). Reuses
 // the file's `accent-violet` range styling. Rendered INSIDE a <ModulationParamBox>
@@ -938,7 +939,7 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, 
 // The param-editing body for one selected layer. Split into its own component so
 // usePatternCache (a hook) is only called when a layer is actually selected —
 // hooks can't be called conditionally inside Inspector itself.
-function SelectedLayerInspector({ layer, layers, panels, colorView, unit, profileId, onUpdateLayer, onChangeLayerPattern, onVariableWeightChange, onPreviewField, onClosePreview, threeDSubMode, threeDFocusLayerId, onAddMotif, onRemoveLayer, customGlyphs, onEditGlyph, onNewMotif, onImportFile, libraryMotifs, onCopyLibraryGlyph, onUseLibraryGlyph }) {
+function SelectedLayerInspector({ layer, layers, panels, colorView, etchBitmap, unit, profileId, onUpdateLayer, onChangeLayerPattern, onVariableWeightChange, onPreviewField, onClosePreview, threeDSubMode, threeDFocusLayerId, onAddMotif, onRemoveLayer, customGlyphs, onEditGlyph, onNewMotif, onImportFile, libraryMotifs, onCopyLibraryGlyph, onUseLibraryGlyph }) {
   // Pattern swap: route through the same cache machine LayerCard uses, applied via
   // the pair-aware onChangeLayerPattern when present (falls back to a plain param
   // update so the component works standalone / in tests without a router).
@@ -1004,6 +1005,14 @@ function SelectedLayerInspector({ layer, layers, panels, colorView, unit, profil
           from the layer's panel material. Self-hides for non-Etch layers. */}
       <EtchHighlightHold layer={layer} panels={panels} colorView={colorView} onUpdateLayer={onUpdateLayer} />
 
+      {/* 1:1 "what etches" preview hero (Raster Etch S9, #88) — a pixel-accurate
+          verification view of the Etch's exported 1-bit output (the held band
+          shaded), so the maker can inspect the true dot density before an
+          irreversible mirror cut. Reads the SAME single-source `etchBitmap` the
+          canvas draws + svgExport embeds (grilled decision 4) — never a second
+          resolve. Self-hides for non-Etch layers / while the bitmap resolves. */}
+      <EtchPreviewHero layer={layer} bitmap={etchBitmap} />
+
       {/* Collapsible, grouped param controls (Structure / Scale / Variation /
           Stroke / Transform — the existing PARAM_GROUPS). */}
       {layerParamsValue && (
@@ -1066,6 +1075,11 @@ export default function Inspector({
   // lens material — to resolve its material-aware default (review FIX A). Optional.
   colorView = null,
   selectedLayerId,
+  // Resolved single-source Etch bitmap for the selected layer (Raster Etch S9,
+  // #88), surfaced from useCanvas → RightPanel → Studio. The 1:1 "what etches"
+  // preview hero reads it — the SAME buffer that exports, no second resolve. Null
+  // while resolving / for non-Etch layers → the hero self-hides. Optional.
+  etchBitmap = null,
   // Active document unit ('mm' | 'in' | 'px') from Studio. Threaded into the
   // param context so length-tagged params display/convert in it (#13). Undefined
   // = raw px display (back-compat with callers that don't pass it).
@@ -1204,6 +1218,7 @@ export default function Inspector({
       layers={layers}
       panels={panels}
       colorView={colorView}
+      etchBitmap={etchBitmap}
       unit={unit}
       profileId={profileId}
       onUpdateLayer={onUpdateLayer}

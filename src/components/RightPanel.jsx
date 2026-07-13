@@ -128,6 +128,10 @@ export default function RightPanel({
   patternInstancesRef,
   canvasContainerRef,
   onPatternInstancesChange,
+  // Surfaces the resolved single-source Etch bitmaps (layerId → bitmap) to the
+  // parent for the Inspector's 1:1 "what etches" preview hero (Raster Etch S9,
+  // #88). Optional — legacy/test callers that don't pass it skip the hero.
+  onEtchBitmapsChange,
   bgColor,
   onBgColorChange,
   unit = 'mm',
@@ -262,7 +266,7 @@ export default function RightPanel({
   // useCanvas so text layers can render their outlines.
   const { font: textFont } = useFont();
 
-  const { patternInstances } = useCanvas(
+  const { patternInstances, etchBitmaps } = useCanvas(
     containerRef,
     layers,
     canvasW,
@@ -384,6 +388,14 @@ export default function RightPanel({
       onPatternInstancesChange(patternInstances);
     }
   }, [patternInstances, patternInstancesRef, onPatternInstancesChange]);
+
+  // Surface the resolved single-source Etch bitmaps to the parent so the Inspector's
+  // 1:1 "what etches" preview hero (Raster Etch S9, #88) reads the SAME buffer that
+  // exports — no second resolve. State (not a ref) so the Inspector re-renders when
+  // a bitmap resolves async.
+  useEffect(() => {
+    if (onEtchBitmapsChange) onEtchBitmapsChange(etchBitmaps);
+  }, [etchBitmaps, onEtchBitmapsChange]);
 
   // Expose canvas container so parent can grab thumbnails
   useEffect(() => {

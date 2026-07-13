@@ -962,6 +962,11 @@ export default function Studio({ submitOrg = null } = {}) {
   const { groups, saveGroup, deleteGroup, renameGroup } = useLayerGroups();
   const patternInstancesRef = useRef({});
   const canvasContainerRef = useRef(null);
+  // Resolved single-source Etch bitmaps (layerId → { bits, held, width, height }),
+  // surfaced up from useCanvas via RightPanel. STATE (not a ref) so the Inspector's
+  // 1:1 "what etches" preview hero (Raster Etch S9, #88) re-renders when a bitmap
+  // resolves async — it reads the SAME buffer that exports (grilled decision 4).
+  const [etchBitmaps, setEtchBitmaps] = useState({});
 
   // === Run Plan (Wave-3 Lane I, PRD #73) ===
   // The plan is a shell-morph: AppShell provides the open/closed state around the
@@ -1879,6 +1884,9 @@ export default function Studio({ submitOrg = null } = {}) {
           canvasW={canvasW}
           canvasH={canvasH}
           patternInstancesRef={patternInstancesRef}
+          // Surfaces the resolved single-source Etch bitmaps for the Inspector's
+          // 1:1 "what etches" preview hero (#88) — same buffer that exports.
+          onEtchBitmapsChange={setEtchBitmaps}
           canvasContainerRef={canvasContainerRef}
           bgColor={bgColor}
           onBgColorChange={handleBgColorChange}
@@ -2249,6 +2257,10 @@ export default function Studio({ submitOrg = null } = {}) {
             // For a Moiré role-B selection this is the partner-A id, so edits
             // redirect to A (B reads A) — matching legacy LayersSection behavior.
             selectedLayerId={inspectorTargetId}
+            // Resolved single-source Etch bitmap for the 1:1 "what etches" preview
+            // hero (#88) — the SAME buffer that exports (no second resolve). Null
+            // while resolving / for non-Etch layers → the hero self-hides.
+            etchBitmap={etchBitmaps[inspectorTargetId] ?? null}
             // Active document unit (#13) — length-tagged params display/convert
             // in this unit; values stay px in layer state.
             unit={unit}

@@ -92,6 +92,12 @@ export default function useCanvas(
   // the cached bitmap and both draws AND registers the export instance from it —
   // the same buffer for canvas and SVG (grilled decision 4).
   const etchBitmapCacheRef = useRef(new Map());
+  // Surface the resolved single-source bitmaps up as STATE (the ref alone can't
+  // re-render a consumer). The 1:1 "what etches" preview hero (Raster Etch S9,
+  // #88) reads `etchBitmaps[layerId]` — the SAME object reference cached above
+  // and registered via makeEtchInstance for export, never a second resolve — so
+  // the hero shows bit-for-bit what exports (grilled decision 4).
+  const [etchBitmaps, setEtchBitmaps] = useState({});
   const renderAllRef = useRef(null);
   // Live transform/selection read inside renderAll WITHOUT entering its dep
   // array — keeps renderAll's identity stable so the 150ms param-debounce
@@ -459,6 +465,18 @@ export default function useCanvas(
   useEffect(() => {
     const cache = etchBitmapCacheRef.current;
     const live = new Set();
+    // Surface a layer's CURRENT cache bitmap into the `etchBitmaps` state — the
+    // single source the preview hero (#88) reads. Called after every TERMINAL
+    // cache write (resolved / null / failed) so the surfaced state can never
+    // outlive the buffer the canvas draws + svgExport embeds. Guarded to the same
+    // reference so it's a no-op (no re-render) when nothing changed. Deliberately
+    // NOT called on the in-flight relaunch (resolving:true) write — that would
+    // flicker the hero to its placeholder on every DPI/Stage/Hold edit; the hero
+    // holds the last-good bitmap until the re-resolve lands (or genuinely fails).
+    const syncSurfaced = (id) => {
+      const b = cache.get(id)?.bitmap ?? null;
+      setEtchBitmaps((prev) => (prev[id] === b ? prev : { ...prev, [id]: b }));
+    };
     for (const layer of layers) {
       if (!isEtchLayer(layer)) continue;
       const { source, dpi, stack } = layer.params || {};
@@ -490,23 +508,45 @@ export default function useCanvas(
           const cur = cache.get(layer.id);
           if (!cur || cur.sig !== sig) return; // superseded by a newer signature
           if (!bitmap) {
+            // Resolve produced no bitmap: the cache genuinely has nothing to draw
+            // or export. Mirror that into the surfaced state (below) so the hero
+            // drops to its placeholder in lockstep — never phantom stale dots (#88).
             cache.set(layer.id, { ...cur, resolving: false });
+            syncSurfaced(layer.id);
             return;
           }
           cache.set(layer.id, { sig, bitmap, resolving: false });
+          // Surface the SAME resolved object up as state so the preview hero
+          // (#88) re-renders with exactly what was cached + will export.
+          syncSurfaced(layer.id);
           renderAllRef.current?.();
         })
         .catch(() => {
           // decode/threshold failure: clear the in-flight flag so a later run can
-          // retry, leaving any last-known bitmap intact. No crash.
+          // retry. The cache entry has NO bitmap now (a superseding signature
+          // nulled it on relaunch), so mirror that into the surfaced state — the
+          // hero must NOT keep painting a pattern that no longer draws/exports (#88).
           const cur = cache.get(layer.id);
-          if (cur && cur.sig === sig) cache.set(layer.id, { ...cur, resolving: false });
+          if (cur && cur.sig === sig) {
+            cache.set(layer.id, { ...cur, resolving: false });
+            syncSurfaced(layer.id);
+          }
         });
     }
     // Prune cache entries for layers that no longer exist.
     for (const id of [...cache.keys()]) {
       if (!live.has(id)) cache.delete(id);
     }
+    // Mirror the prune into the surfaced state, but ONLY when a key actually went
+    // stale — otherwise this every-run setState would loop. (Removed Etches drop
+    // their preview; live entries keep their last-resolved bitmap.)
+    setEtchBitmaps((prev) => {
+      const stale = Object.keys(prev).filter((id) => !live.has(id));
+      if (stale.length === 0) return prev;
+      const next = { ...prev };
+      for (const id of stale) delete next[id];
+      return next;
+    });
     // `panels` AND `colorView` are deps because the resolved Highlight Hold
     // default reads the EFFECTIVE material — the layer's panel material OR the
     // Material-lens material. Changing this panel's material (touches only
@@ -587,5 +627,5 @@ export default function useCanvas(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [transforms, selectedNodeId]);
 
-  return { patternInstances };
+  return { patternInstances, etchBitmaps };
 }

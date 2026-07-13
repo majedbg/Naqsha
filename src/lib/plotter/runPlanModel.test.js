@@ -364,3 +364,115 @@ describe('runPlanModel — Pen Swaps surface in the estimate (plotter)', () => {
     expect(model.estimate.totalSec).toBeCloseTo(rowSum + PEN_SWAP_SEC * 1, 9);
   });
 });
+
+// ── Raster Etch: the area×DPI branch under the engrave Operation (S8, #87) ────
+//
+// An Etch has no vector paths — buildPlottableLayers skips it (no toSVGGroup) —
+// so before this branch the Run Plan was SILENT about it. These tests pin the
+// new behaviour: the Etch is estimated by the raster model (etchRasterEstimate),
+// grouped under its engrave Operation, annotated with raster + DPI, and its
+// seconds fold into totalSec while the vector layers' estimate is untouched.
+
+describe('runPlanModel — raster Etch estimate (area×DPI)', () => {
+  // An Etch layer as useLayers.addEtchLayer builds it: engrave role/op, DPI on
+  // the layer. Full-canvas placement means its footprint is the Sheet.
+  function etchLayer(id, { dpi = 254, ...extra } = {}) {
+    return {
+      id, visible: true, color: '#000', opacity: 100,
+      type: 'etch', role: 'engrave', operationId: 'op-engrave',
+      params: { dpi }, ...extra,
+    };
+  }
+
+  // A Sheet of a KNOWN physical size so the raster math is hand-traceable:
+  // 100mm × 100mm. pxToMm(mmToPx(100)) === 100.
+  const SHEET_100MM = { x: 0, y: 0, width: mmToPx(100), height: mmToPx(100) };
+
+  it('lists an Etch under its engrave Operation with a raster + DPI annotation', () => {
+    const model = runPlanModel({
+      layers: [etchLayer('e', { dpi: 254 })],
+      instances: {}, // an Etch needs no toSVGGroup instance for the estimate
+      operations: OPS, profileId: 'laser',
+      sheetRect: SHEET_100MM,
+    });
+    expect(model.opRows.map((r) => r.opId)).toEqual(['op-engrave']);
+    const row = model.opRows[0];
+    expect(row).toMatchObject({ name: 'Engrave', process: 'engrave', layerCount: 1 });
+    // The annotation the panel renders: raster + the layer's DPI.
+    expect(row.raster).toMatchObject({ dpi: 254, layerCount: 1 });
+    // 100mm×100mm @254DPI @100mm/s (laser engrave fallback speed) = 1000s scan
+    // + 2s overhead = 1002s. This is a raster figure, not a path-length one.
+    expect(row.sec).toBeCloseTo(1002, 3);
+    // drawMm/travelMm are 0 — a scan has no vector path length.
+    expect(row.drawMm).toBe(0);
+    expect(row.travelMm).toBe(0);
+  });
+
+  it("folds the Etch's time into totalSec and keeps the agreement invariant", () => {
+    const model = runPlanModel({
+      layers: [etchLayer('e', { dpi: 254 })],
+      instances: {}, operations: OPS, profileId: 'laser', sheetRect: SHEET_100MM,
+    });
+    expect(model.estimate.totalSec).toBeCloseTo(1002, 3);
+    // Σ opRows.sec === totalSec (no Pen Swaps on laser) — the etch seconds are in
+    // BOTH the row and the total, so panel headline and receipt minutes agree.
+    const rowSum = model.opRows.reduce((s, r) => s + r.sec, 0);
+    expect(rowSum).toBeCloseTo(model.estimate.totalSec, 6);
+  });
+
+  it('higher DPI → longer estimate (DPI drives the scan)', () => {
+    const at254 = runPlanModel({
+      layers: [etchLayer('e', { dpi: 254 })],
+      instances: {}, operations: OPS, profileId: 'laser', sheetRect: SHEET_100MM,
+    });
+    const at508 = runPlanModel({
+      layers: [etchLayer('e', { dpi: 508 })],
+      instances: {}, operations: OPS, profileId: 'laser', sheetRect: SHEET_100MM,
+    });
+    expect(at508.estimate.totalSec).toBeGreaterThan(at254.estimate.totalSec);
+    expect(at508.opRows[0].raster.dpi).toBe(508);
+  });
+
+  it('MIXED doc: a vector engrave layer AND a raster Etch estimate both and sum', () => {
+    // Baseline: the vector engrave layer alone → its path-length seconds.
+    const vectorOnly = runPlanModel({
+      layers: [layer('v', { operationId: 'op-engrave' })],
+      instances: { v: fakeInstance(INSIDE_GROUP) },
+      operations: OPS, profileId: 'laser', sheetRect: SHEET_100MM,
+    });
+    const vectorSec = vectorOnly.opRows[0].sec;
+    expect(vectorSec).toBeGreaterThan(0);
+    expect(vectorOnly.opRows[0].raster).toBeUndefined(); // no etch → no annotation
+
+    // Baseline: the Etch alone → its raster seconds.
+    const etchOnly = runPlanModel({
+      layers: [etchLayer('e', { dpi: 254 })],
+      instances: {}, operations: OPS, profileId: 'laser', sheetRect: SHEET_100MM,
+    });
+    const etchSec = etchOnly.opRows[0].sec;
+
+    // Both on the SAME engrave Operation → one row, layerCount 2, seconds summed,
+    // vector geometry preserved (drawMm > 0) AND the raster annotation present.
+    const mixed = runPlanModel({
+      layers: [layer('v', { operationId: 'op-engrave' }), etchLayer('e', { dpi: 254 })],
+      instances: { v: fakeInstance(INSIDE_GROUP) },
+      operations: OPS, profileId: 'laser', sheetRect: SHEET_100MM,
+    });
+    expect(mixed.opRows.map((r) => r.opId)).toEqual(['op-engrave']);
+    const row = mixed.opRows[0];
+    expect(row.layerCount).toBe(2);
+    expect(row.drawMm).toBeGreaterThan(0);      // the vector engrave still counts
+    expect(row.raster).toMatchObject({ dpi: 254, layerCount: 1 });
+    expect(row.sec).toBeCloseTo(vectorSec + etchSec, 6);
+    expect(mixed.estimate.totalSec).toBeCloseTo(vectorSec + etchSec, 6);
+  });
+
+  it('a non-etch-only doc is byte-identical to before (no raster field, no regression)', () => {
+    const model = runPlanModel({
+      layers: [layer('a'), layer('b', { operationId: 'op-score' })],
+      instances: { a: fakeInstance(INSIDE_GROUP), b: fakeInstance(INSIDE_GROUP) },
+      operations: OPS, profileId: 'laser', sheetRect: SHEET_100MM,
+    });
+    for (const row of model.opRows) expect(row.raster).toBeUndefined();
+  });
+});

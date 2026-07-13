@@ -99,11 +99,14 @@
 import {
   buildPlottableLayers, buildRouteFromLayers, applyOptimizationsToPaths,
 } from './fabricationPipeline.js';
-import { runEstimate } from './runEstimate.js';
+import { runEstimate, machineSpeedFor } from './runEstimate.js';
+import { etchRasterEstimate } from './etchRasterEstimate.js';
 import { countOverlaps } from './overlapCheck.js';
 import { resolveOperation, operationIdForRole } from '../operations.js';
 import { defaultBedSize } from '../machineProfiles.js';
+import { isEtchLayer, DEFAULT_ETCH_DPI } from '../etch/etchLayer.js';
 import { pxToMm } from './pathOps.js';
+import { PEN_SWAP_SEC } from './constants.js';
 
 // Float slack when comparing a Sheet dimension against the bed (both in mm). A
 // Sheet exactly the bed size is fabricable; only a genuine excess warns.
@@ -197,25 +200,108 @@ export function runPlanModel(input = {}) {
     paths: g.layers.flatMap((l) => l.machinePaths),
   }));
 
-  const estimate = runEstimate(opGroups, profileId);
+  // The VECTOR estimate — path-length time for the resolvable vector layers,
+  // untouched by anything raster (so vector-only documents remain byte-identical).
+  const vectorEstimate = runEstimate(opGroups, profileId);
 
-  // opRows — one per Operation, parallel to estimate.perOp (same order, same
-  // groups). drawMm/travelMm/passes/sec come from the estimate so a row and the
-  // headline can never disagree.
-  const opRows = orderedGroups.map((g, i) => {
-    const per = estimate.perOp[i] || {};
-    return {
-      opId: g.operation.id,
-      name: g.operation.name,
-      process: g.operation.process,
-      color: g.operation.color,
-      layerCount: g.layers.length,
-      drawMm: per.drawMm ?? 0,
-      travelMm: per.travelMm ?? 0,
-      passes: per.passes ?? 1,
-      sec: per.sec ?? 0,
+  // ── raster Etch branch (S8, #87; ADR-0006) ──────────────────────────────────
+  // An Etch has no vector paths — buildPlottableLayers skipped it above (no
+  // toSVGGroup) — so without this branch the Run Plan would be SILENT about it.
+  // An Etch's run time is a SCAN of its bounding box (area×DPI), a fundamentally
+  // different physics from path length, so it gets its own estimator
+  // (etchRasterEstimate) rather than being shoehorned into runEstimate. Each Etch
+  // still groups under its engrave Operation (grilled decision 6 — reuse engrave,
+  // no new process type); its seconds fold into that Operation's row and the
+  // total, so the agreement invariant (Σ opRows.sec + swaps === totalSec) holds.
+  //
+  // FOOTPRINT: the S1 spine places an Etch full-canvas, so its physical size is
+  // the Sheet's (sheetRect px → mm). Sub-canvas placement via a layer transform is
+  // documented future work; without a Sheet the row is still emitted (never
+  // silent) with a zero-area estimate.
+  const etchWidthMm = sheetRect ? pxToMm(sheetRect.width) : 0;
+  const etchHeightMm = sheetRect ? pxToMm(sheetRect.height) : 0;
+  // opId → { operation, sec, layerCount, dpis:Set }
+  const etchByOp = new Map();
+  for (const layer of layers) {
+    if (!isEtchLayer(layer) || !layer.visible) continue;
+    let operation = resolveOperation(operations, layer.operationId);
+    // An Etch defaults to the ENGRAVE Operation (its role), not the cut default.
+    if (!operation) operation = resolveOperation(operations, operationIdForRole('engrave'));
+    if (!operation) { unresolved.push({ layerId: layer.id }); continue; }
+
+    const dpi = layer?.params?.dpi > 0 ? layer.params.dpi : DEFAULT_ETCH_DPI;
+    const { sec } = etchRasterEstimate({
+      widthMm: etchWidthMm,
+      heightMm: etchHeightMm,
+      dpi,
+      // The SAME machine speed the vector model engraves at (machineSpeedFor) —
+      // so raster and vector agree about how fast the head moves.
+      speed: machineSpeedFor(operation, profileId),
+    });
+
+    let agg = etchByOp.get(operation.id);
+    if (!agg) { agg = { operation, sec: 0, layerCount: 0, dpis: new Set() }; etchByOp.set(operation.id, agg); }
+    agg.sec += sec;
+    agg.layerCount += 1;
+    agg.dpis.add(dpi);
+  }
+
+  // Merge the vector groups and the etch groups into ONE ordered set of
+  // Operations (an engrave Operation may carry BOTH). Ordering stays machine
+  // execution order (op.order ascending) across the union.
+  const opById = new Map(); // opId → operation
+  for (const g of orderedGroups) opById.set(g.operation.id, g.operation);
+  for (const [opId, agg] of etchByOp) if (!opById.has(opId)) opById.set(opId, agg.operation);
+  const orderedOps = [...opById.values()].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+
+  // opRows + the merged estimate.perOp are built together and stay PARALLEL, so
+  // every consumer that reads perOp[i] alongside opRows[i] still agrees. drawMm/
+  // travelMm/passes come from the vector side (a scan has none); sec is the sum of
+  // the vector and raster contributions for that Operation.
+  const opRows = [];
+  const perOp = [];
+  for (const operation of orderedOps) {
+    const vecIdx = orderedGroups.findIndex((g) => g.operation.id === operation.id);
+    const vecGroup = vecIdx >= 0 ? orderedGroups[vecIdx] : null;
+    const vecPer = vecIdx >= 0 ? (vectorEstimate.perOp[vecIdx] || {}) : {};
+    const etch = etchByOp.get(operation.id);
+
+    const drawMm = vecPer.drawMm ?? 0;
+    const travelMm = vecPer.travelMm ?? 0;
+    const passes = vecPer.passes ?? 1;
+    const sec = (vecPer.sec ?? 0) + (etch?.sec ?? 0);
+
+    const row = {
+      opId: operation.id,
+      name: operation.name,
+      process: operation.process,
+      color: operation.color,
+      layerCount: (vecGroup?.layers.length ?? 0) + (etch?.layerCount ?? 0),
+      drawMm,
+      travelMm,
+      passes,
+      sec,
     };
-  });
+    if (etch) {
+      // The panel's raster annotation ("raster · N DPI"). `dpi` is the single DPI
+      // when the Operation's Etches share one; null when they differ (the panel
+      // then reads "mixed DPI"). `sec` is the raster share so a reader can tell
+      // the scan time from the vector time in a mixed Operation.
+      const dpi = etch.dpis.size === 1 ? [...etch.dpis][0] : null;
+      row.raster = { dpi, layerCount: etch.layerCount, sec: etch.sec };
+    }
+    opRows.push(row);
+    perOp.push({ opId: operation.id, drawMm, travelMm, passes, sec });
+  }
+
+  // The merged estimate: the same swap term as the vector model (an Etch is
+  // engrave — same pen — and adds no swaps), plus the raster seconds now living in
+  // perOp. totalSec === Σ perOp.sec + swaps keeps the invariant exact.
+  const estimate = {
+    totalSec: perOp.reduce((s, o) => s + o.sec, 0) + PEN_SWAP_SEC * vectorEstimate.penSwaps,
+    perOp,
+    penSwaps: vectorEstimate.penSwaps,
+  };
 
   // route — the animated run-through, over the SAME execution-ordered geometry,
   // tinted by Operation color (the machine view re-tints paths by operation). One

@@ -79,6 +79,27 @@ describe("RunPlanPanel (Run Plan pre-flight face, PRD #73)", () => {
     expect(within(rows[2]).getByText("Engrave")).toBeInTheDocument();
   });
 
+  it("annotates an Etch-bearing engrave row with 'raster · N DPI' (S8, #87)", () => {
+    // runPlanModel tags an engrave opRow that carries an Etch with a `raster`
+    // annotation; the panel must render it so the maker sees the est is a scan.
+    renderPanel({
+      runPlan: makeRunPlan({
+        opRows: [
+          { opId: "op-engrave", name: "Engrave", process: "engrave", color: "#000",
+            layerCount: 1, drawMm: 0, travelMm: 0, passes: 1, sec: 1002,
+            raster: { dpi: 254, layerCount: 1, sec: 1002 } },
+        ],
+      }),
+    });
+    const note = screen.getByTestId("run-plan-raster-note");
+    expect(note).toHaveTextContent("raster 254 DPI");
+  });
+
+  it("does NOT show a raster note on a plain vector row", () => {
+    renderPanel();
+    expect(screen.queryByTestId("run-plan-raster-note")).not.toBeInTheDocument();
+  });
+
   it("shows the headline estimate 'Estimated · N min' from estimate.totalSec", () => {
     renderPanel();
     // 240s → round(240/60) = 4 min.

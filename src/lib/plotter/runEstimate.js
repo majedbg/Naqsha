@@ -58,6 +58,22 @@ function positiveParam(params, key, fallback) {
   return Number.isFinite(v) && v > 0 ? v : fallback;
 }
 
+/**
+ * The DRAW speed (mm/s) the machine engraves/cuts an Operation at under a given
+ * profile — the SINGLE speed source both this vector model and the raster Etch
+ * model (etchRasterEstimate) read, so the two never disagree about how fast the
+ * head moves. A laser uses the Operation's OWN tuned speed (fallback when
+ * absent); the plotter/drag/unknown-profile fallback uses the AxiDraw machine
+ * constant. This is exactly the value the laser branch below applies to draw
+ * time, factored out so the Etch can reuse it.
+ */
+export function machineSpeedFor(operation, profileId) {
+  if (profileId === 'laser') {
+    return positiveParam(operation?.machineParams, 'speed', LASER_SPEED_FALLBACK);
+  }
+  return DRAW_SPEED;
+}
+
 export function runEstimate(opGroups, profileId) {
   if (!Array.isArray(opGroups) || opGroups.length === 0) {
     return { totalSec: 0, perOp: [], penSwaps: 0 };
@@ -81,7 +97,7 @@ export function runEstimate(opGroups, profileId) {
       // Laser: cut time from the Operation's own speed × passes; travel at the
       // fixed per-profile rapid constant.
       passes = positiveParam(params, 'passes', 1);
-      const speed = positiveParam(params, 'speed', LASER_SPEED_FALLBACK);
+      const speed = machineSpeedFor(g?.operation, profileId);
       sec = (drawMm * passes) / speed + travelMm / LASER_RAPID_SPEED;
     } else {
       // Plotter, drag, and the unknown-profile fallback all use the AxiDraw

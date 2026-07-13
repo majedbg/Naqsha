@@ -159,8 +159,62 @@ describe("buildExportReceipt — resilience to sparse input", () => {
       minutes: 2,
       croppedCount: 0,
       warningCount: 0,
+      etchCount: 0,
       variant: "clean",
       line: "Exported — Estimated · 2 min",
     });
+  });
+});
+
+// ── raster Etch — the receipt must never be silent about it (S8, #87) ─────────
+//
+// An Etch's scan time already folds into estimate.totalSec (runPlanModel), so it
+// is ALWAYS in the minutes. But a raster scan can be long and is a distinct kind
+// of work, so the receipt also names it in a calm clause — never silent, never
+// alarmed. buildExportReceipt reads the raster annotation runPlanModel puts on
+// each engrave opRow.
+
+describe("buildExportReceipt — raster Etch clause", () => {
+  // A runPlan whose engrave opRow carries a raster annotation, as runPlanModel
+  // emits for an Etch. `etchLayers` is that Operation's Etch count.
+  function etchRunPlan({ totalSec = 0, etchLayers = 1, warnings = [] } = {}) {
+    return {
+      opRows: [
+        { opId: "op-engrave", name: "Engrave", process: "engrave", sec: totalSec,
+          raster: { dpi: 254, layerCount: etchLayers, sec: totalSec } },
+      ],
+      estimate: { totalSec, perOp: [], penSwaps: 0 },
+      warnings,
+      route: [],
+      crops: [],
+    };
+  }
+
+  it("names one raster etch in a calm clause (time already in the total)", () => {
+    const r = buildExportReceipt(etchRunPlan({ totalSec: 600, etchLayers: 1 }));
+    expect(r.etchCount).toBe(1);
+    expect(r.line).toBe("Exported — Estimated · 10 min · 1 raster etch");
+  });
+
+  it("pluralizes multiple raster etches", () => {
+    const r = buildExportReceipt(etchRunPlan({ totalSec: 600, etchLayers: 3 }));
+    expect(r.etchCount).toBe(3);
+    expect(r.line).toBe("Exported — Estimated · 10 min · 3 raster etches");
+  });
+
+  it("orders the etch clause before crops and warnings, all calm", () => {
+    const r = buildExportReceipt(
+      etchRunPlan({ totalSec: 600, etchLayers: 1, warnings: [croppedWarning(2), otherWarning("off-bed")] })
+    );
+    expect(r.line).toBe(
+      "Exported — Estimated · 10 min · 1 raster etch · 2 paths cropped at sheet edge · 1 warning"
+    );
+    expect(r.line).not.toMatch(/[!⚠❗‼]/);
+  });
+
+  it("is silent about the etch clause only when there is no etch (no regression)", () => {
+    const r = buildExportReceipt(runPlan({ totalSec: 300 }));
+    expect(r.etchCount).toBe(0);
+    expect(r.line).toBe("Exported — Estimated · 5 min");
   });
 });

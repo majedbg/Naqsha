@@ -29,6 +29,19 @@
 
 const CROPPED_TYPE = "cropped-paths";
 
+// Sum the Etch layers across the plan's Operations. runPlanModel tags every
+// engrave opRow that carries an Etch with `raster: { dpi, layerCount, sec }`
+// (S8, #87); the receipt reads that annotation so it can name the raster work.
+// The Etch's scan time is ALREADY inside estimate.totalSec — this only makes the
+// receipt non-silent about it, never double-counts the minutes.
+function etchCountOf(runPlan) {
+  const rows = Array.isArray(runPlan?.opRows) ? runPlan.opRows : [];
+  return rows.reduce((n, row) => {
+    const c = row?.raster?.layerCount;
+    return n + (Number.isFinite(c) && c > 0 ? c : 0);
+  }, 0);
+}
+
 // The count carried by a cropped-paths warning. Lane I spreads the payload onto
 // the warning object, so the canonical read is the top-level `count`; the
 // `payload.count` fallback keeps this robust if the model is ever restructured.
@@ -48,7 +61,7 @@ function plural(count, singular, pluralForm) {
  *
  * @param {object} runPlan - runPlanModel output (from Lane I).
  * @returns {{ minutes:number, croppedCount:number, warningCount:number,
- *            variant:'clean'|'cropped'|'warnings', line:string }}
+ *            etchCount:number, variant:'clean'|'cropped'|'warnings', line:string }}
  */
 export function buildExportReceipt(runPlan) {
   const totalSec = runPlan?.estimate?.totalSec ?? 0;
@@ -60,7 +73,11 @@ export function buildExportReceipt(runPlan) {
   // Everything that is NOT the cropped-paths warning — cropping owns its own
   // clause, so it must not also be counted here (see header note).
   const warningCount = warnings.filter((w) => w?.type !== CROPPED_TYPE).length;
+  const etchCount = etchCountOf(runPlan);
 
+  // `variant` stays a crop/warning classification — an Etch is calm, not a
+  // warning, so it never flips the receipt into "warnings". It rides as its own
+  // clause and its time is already in the minutes.
   let variant;
   if (warningCount > 0) variant = "warnings";
   else if (croppedCount > 0) variant = "cropped";
@@ -71,6 +88,13 @@ export function buildExportReceipt(runPlan) {
   // leads with the word "Estimated". Principle 7: specific, unhurried, no "!"
   // and no alarm glyphs; a cropped path is an action taken, not a warning.
   const clauses = ["Estimated", `${minutes} min`];
+  // The Etch clause leads the situational clauses: it explains WHERE much of the
+  // estimated time went (a raster scan), so it sits right after the minutes and
+  // before the crop/warning notes. Calm, no alarm glyph — an Etch is work done,
+  // not a problem.
+  if (etchCount > 0) {
+    clauses.push(plural(etchCount, "raster etch", "raster etches"));
+  }
   if (croppedCount > 0) {
     clauses.push(`${plural(croppedCount, "path", "paths")} cropped at sheet edge`);
   }
@@ -79,5 +103,5 @@ export function buildExportReceipt(runPlan) {
   }
   const line = `Exported — ${clauses.join(" · ")}`;
 
-  return { minutes, croppedCount, warningCount, variant, line };
+  return { minutes, croppedCount, warningCount, etchCount, variant, line };
 }

@@ -244,6 +244,15 @@ export default function RunPlanPanel({
                   <span className="block truncate text-sm text-ink">{op.name}</span>
                   <span className="block truncate text-[10px] capitalize text-ink-soft">
                     {op.process} · {op.layerCount} {op.layerCount === 1 ? "layer" : "layers"}
+                    {/* Raster annotation (S8, #87): an engrave Operation that carries
+                        an Etch scans a bitmap area×DPI, not a path — say so, and at
+                        what DPI, so its `est` reads as a scan figure. "DPI" survives
+                        the capitalize transform (already uppercase). */}
+                    {op.raster && (
+                      <span data-testid="run-plan-raster-note">
+                        {" · "}raster {op.raster.dpi ? `${op.raster.dpi} DPI` : "mixed DPI"}
+                      </span>
+                    )}
                   </span>
                 </span>
                 <Metric label="draw" value={`${Math.round(op.drawMm)} mm`} />

@@ -23,6 +23,7 @@ vi.mock('../../lib/onboarding/telemetry', () => ({
     STARTER_SELECTED: 'onboarding:starter-selected',
     SHUFFLE_CLICK: 'onboarding:shuffle-click',
     LENS_OPENED: 'onboarding:lens-opened',
+    SECOND_PARAM_CHANGE: 'onboarding:second-param-change',
   },
   emitOnboardingEvent: vi.fn(),
 }));
@@ -471,5 +472,347 @@ describe('GuestOnboarding — S5 Operation lens discoverability tip (D13/D17)', 
     const dismissBtn = screen.queryByRole('button', { name: /dismiss lens tip/i });
     expect(dismissBtn).toBeInTheDocument();
     expect(() => fireEvent.click(dismissBtn)).not.toThrow();
+  });
+});
+
+describe('GuestOnboarding — S6 modulation nudge (D17a/D22)', () => {
+  const NUDGE = () => screen.queryByTestId('guest-modulation-nudge');
+
+  beforeEach(() => {
+    sessionStorage.clear();
+    vi.clearAllMocks();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('does not show after only ONE distinct param key changes (not "second change of the same key")', () => {
+    setOnboardingDismissed(true);
+    const { rerender } = render(
+      <GuestOnboarding isGuest onLoadSeed={vi.fn()} activeLayer={ACTIVE_LAYER} onUpdateLayer={vi.fn()} />
+    );
+    expect(NUDGE()).not.toBeInTheDocument();
+
+    // Same key ("angle") changes twice — still only ONE distinct key.
+    rerender(
+      <GuestOnboarding
+        isGuest
+        onLoadSeed={vi.fn()}
+        activeLayer={{ ...ACTIVE_LAYER, params: { ...ACTIVE_LAYER.params, angle: 137.6 } }}
+        onUpdateLayer={vi.fn()}
+      />
+    );
+    expect(NUDGE()).not.toBeInTheDocument();
+
+    rerender(
+      <GuestOnboarding
+        isGuest
+        onLoadSeed={vi.fn()}
+        activeLayer={{ ...ACTIVE_LAYER, params: { ...ACTIVE_LAYER.params, angle: 137.7 } }}
+        onUpdateLayer={vi.fn()}
+      />
+    );
+    expect(NUDGE()).not.toBeInTheDocument();
+    expect(emitOnboardingEvent).not.toHaveBeenCalledWith(
+      ONBOARDING_EVENTS.SECOND_PARAM_CHANGE,
+      expect.anything()
+    );
+  });
+
+  it('shows the nudge and emits SECOND_PARAM_CHANGE once a 2nd DISTINCT param key changes', () => {
+    setOnboardingDismissed(true);
+    const { rerender } = render(
+      <GuestOnboarding isGuest onLoadSeed={vi.fn()} activeLayer={ACTIVE_LAYER} onUpdateLayer={vi.fn()} />
+    );
+
+    rerender(
+      <GuestOnboarding
+        isGuest
+        onLoadSeed={vi.fn()}
+        activeLayer={{ ...ACTIVE_LAYER, params: { ...ACTIVE_LAYER.params, angle: 137.6 } }}
+        onUpdateLayer={vi.fn()}
+      />
+    );
+    expect(NUDGE()).not.toBeInTheDocument();
+
+    // A DIFFERENT key changes — this is the 2nd distinct key.
+    rerender(
+      <GuestOnboarding
+        isGuest
+        onLoadSeed={vi.fn()}
+        activeLayer={{
+          ...ACTIVE_LAYER,
+          params: { ...ACTIVE_LAYER.params, angle: 137.6, minSize: 6 },
+        }}
+        onUpdateLayer={vi.fn()}
+      />
+    );
+
+    expect(NUDGE()).toBeInTheDocument();
+    expect(emitOnboardingEvent).toHaveBeenCalledWith(
+      ONBOARDING_EVENTS.SECOND_PARAM_CHANGE,
+      expect.objectContaining({ patternType: 'phyllotaxis' })
+    );
+    // Fired exactly once for this event, even though more re-renders may follow.
+    expect(
+      emitOnboardingEvent.mock.calls.filter((call) => call[0] === ONBOARDING_EVENTS.SECOND_PARAM_CHANGE)
+    ).toHaveLength(1);
+  });
+
+  it('copy invites discovery — does NOT claim a live/running effect (D9 static-seed guard)', () => {
+    setOnboardingDismissed(true);
+    const { rerender } = render(
+      <GuestOnboarding isGuest onLoadSeed={vi.fn()} activeLayer={ACTIVE_LAYER} onUpdateLayer={vi.fn()} />
+    );
+    rerender(
+      <GuestOnboarding
+        isGuest
+        onLoadSeed={vi.fn()}
+        activeLayer={{
+          ...ACTIVE_LAYER,
+          params: { ...ACTIVE_LAYER.params, angle: 137.6, minSize: 6 },
+        }}
+        onUpdateLayer={vi.fn()}
+      />
+    );
+    expect(NUDGE()).toBeInTheDocument();
+    // The banned claim from an earlier draft of the copy (there is no live
+    // modulation running on a static seed, D9-fallback).
+    expect(screen.queryByText(/glow follows your pattern/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/route it into another layer/i)).toBeInTheDocument();
+  });
+
+  it('the nudge is a real, accessibly-named, dismissable <button> (no telemetry re-fire, chooser untouched)', () => {
+    setOnboardingDismissed(true);
+    const { rerender } = render(
+      <GuestOnboarding isGuest onLoadSeed={vi.fn()} activeLayer={ACTIVE_LAYER} onUpdateLayer={vi.fn()} />
+    );
+    rerender(
+      <GuestOnboarding
+        isGuest
+        onLoadSeed={vi.fn()}
+        activeLayer={{
+          ...ACTIVE_LAYER,
+          params: { ...ACTIVE_LAYER.params, angle: 137.6, minSize: 6 },
+        }}
+        onUpdateLayer={vi.fn()}
+      />
+    );
+    const dismissBtn = screen.getByRole('button', { name: /dismiss modulation nudge/i });
+    expect(dismissBtn.tagName).toBe('BUTTON');
+
+    fireEvent.click(dismissBtn);
+    expect(NUDGE()).not.toBeInTheDocument();
+    expect(isOnboardingDismissed()).toBe(true); // chooser dismissal state untouched by the nudge
+
+    expect(
+      emitOnboardingEvent.mock.calls.filter((call) => call[0] === ONBOARDING_EVENTS.SECOND_PARAM_CHANGE)
+    ).toHaveLength(1); // dismissing does not re-fire telemetry
+  });
+
+  it('never shows for a signed-in / non-guest user, even after 2 distinct param changes', () => {
+    const { rerender } = render(
+      <GuestOnboarding
+        isGuest={false}
+        onLoadSeed={vi.fn()}
+        activeLayer={ACTIVE_LAYER}
+        onUpdateLayer={vi.fn()}
+      />
+    );
+    rerender(
+      <GuestOnboarding
+        isGuest={false}
+        onLoadSeed={vi.fn()}
+        activeLayer={{
+          ...ACTIVE_LAYER,
+          params: { ...ACTIVE_LAYER.params, angle: 137.6, minSize: 6 },
+        }}
+        onUpdateLayer={vi.fn()}
+      />
+    );
+    expect(NUDGE()).not.toBeInTheDocument();
+    expect(
+      emitOnboardingEvent.mock.calls.filter((call) => call[0] === ONBOARDING_EVENTS.SECOND_PARAM_CHANGE)
+    ).toHaveLength(0);
+  });
+
+  it('does not visually show while the chooser is still OPEN, even past the threshold (avoids front-loading, D17); appears once dismissed', () => {
+    // Chooser starts open (not dismissed) — non-blocking, D2.
+    const { rerender } = render(
+      <GuestOnboarding isGuest onLoadSeed={vi.fn()} activeLayer={ACTIVE_LAYER} onUpdateLayer={vi.fn()} />
+    );
+    expect(CHOOSER()).toBeInTheDocument();
+
+    rerender(
+      <GuestOnboarding
+        isGuest
+        onLoadSeed={vi.fn()}
+        activeLayer={{
+          ...ACTIVE_LAYER,
+          params: { ...ACTIVE_LAYER.params, angle: 137.6, minSize: 6 },
+        }}
+        onUpdateLayer={vi.fn()}
+      />
+    );
+    // Telemetry already fired (activation is a real event regardless of display)...
+    expect(emitOnboardingEvent).toHaveBeenCalledWith(
+      ONBOARDING_EVENTS.SECOND_PARAM_CHANGE,
+      expect.anything()
+    );
+    // ...but the card itself waits for the chooser to close.
+    expect(NUDGE()).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /skip starter chooser/i }));
+    expect(NUDGE()).toBeInTheDocument();
+  });
+
+  it('switching to a different seed (new activeLayer.id) resets the distinct-key count for the new seed', () => {
+    setOnboardingDismissed(true);
+    const { rerender } = render(
+      <GuestOnboarding isGuest onLoadSeed={vi.fn()} activeLayer={ACTIVE_LAYER} onUpdateLayer={vi.fn()} />
+    );
+    // One distinct key changed on the FIRST seed.
+    rerender(
+      <GuestOnboarding
+        isGuest
+        onLoadSeed={vi.fn()}
+        activeLayer={{ ...ACTIVE_LAYER, params: { ...ACTIVE_LAYER.params, angle: 137.6 } }}
+        onUpdateLayer={vi.fn()}
+      />
+    );
+    expect(NUDGE()).not.toBeInTheDocument();
+
+    // Guest picks a DIFFERENT starter — new layer id, fresh params (a real
+    // document load, not a patch on the same layer).
+    const NEW_SEED_LAYER = {
+      id: 'layer-2-xyz',
+      patternType: 'recursive',
+      locked: false,
+      params: { scaleFactor: 0.71, depth: 4, rotationPerLevel: 36, shape: 'pentagon' },
+    };
+    rerender(
+      <GuestOnboarding isGuest onLoadSeed={vi.fn()} activeLayer={NEW_SEED_LAYER} onUpdateLayer={vi.fn()} />
+    );
+    expect(NUDGE()).not.toBeInTheDocument();
+
+    // Only ONE distinct key changed so far on the NEW seed — must not fire
+    // (the old seed's "angle" change must not carry over).
+    rerender(
+      <GuestOnboarding
+        isGuest
+        onLoadSeed={vi.fn()}
+        activeLayer={{ ...NEW_SEED_LAYER, params: { ...NEW_SEED_LAYER.params, scaleFactor: 0.75 } }}
+        onUpdateLayer={vi.fn()}
+      />
+    );
+    expect(NUDGE()).not.toBeInTheDocument();
+
+    // A second distinct key on the NEW seed does fire.
+    rerender(
+      <GuestOnboarding
+        isGuest
+        onLoadSeed={vi.fn()}
+        activeLayer={{
+          ...NEW_SEED_LAYER,
+          params: { ...NEW_SEED_LAYER.params, scaleFactor: 0.75, depth: 5 },
+        }}
+        onUpdateLayer={vi.fn()}
+      />
+    );
+    expect(NUDGE()).toBeInTheDocument();
+  });
+
+  it('fires at most once per session (sessionStorage-gated) — a Shuffle-style multi-key jump only triggers it once', () => {
+    setOnboardingDismissed(true);
+    const { rerender, unmount } = render(
+      <GuestOnboarding isGuest onLoadSeed={vi.fn()} activeLayer={ACTIVE_LAYER} onUpdateLayer={vi.fn()} />
+    );
+    rerender(
+      <GuestOnboarding
+        isGuest
+        onLoadSeed={vi.fn()}
+        activeLayer={{
+          ...ACTIVE_LAYER,
+          params: { ...ACTIVE_LAYER.params, angle: 137.6, minSize: 6, maxSize: 44 },
+        }}
+        onUpdateLayer={vi.fn()}
+      />
+    );
+    expect(NUDGE()).toBeInTheDocument();
+    expect(
+      emitOnboardingEvent.mock.calls.filter((call) => call[0] === ONBOARDING_EVENTS.SECOND_PARAM_CHANGE)
+    ).toHaveLength(1);
+    unmount();
+
+    // A fresh mount within the SAME session (sessionStorage not cleared)
+    // must never show or re-fire it again, even with an active layer already
+    // past the threshold on first render.
+    vi.clearAllMocks();
+    render(
+      <GuestOnboarding
+        isGuest
+        onLoadSeed={vi.fn()}
+        activeLayer={{
+          ...ACTIVE_LAYER,
+          params: { ...ACTIVE_LAYER.params, angle: 137.6, minSize: 6, maxSize: 44 },
+        }}
+        onUpdateLayer={vi.fn()}
+      />
+    );
+    expect(NUDGE()).not.toBeInTheDocument();
+    expect(
+      emitOnboardingEvent.mock.calls.filter((call) => call[0] === ONBOARDING_EVENTS.SECOND_PARAM_CHANGE)
+    ).toHaveLength(0);
+  });
+
+  it('is a no-op (no crash) when there is no active layer', () => {
+    setOnboardingDismissed(true);
+    expect(() =>
+      render(<GuestOnboarding isGuest onLoadSeed={vi.fn()} activeLayer={null} onUpdateLayer={vi.fn()} />)
+    ).not.toThrow();
+    expect(NUDGE()).not.toBeInTheDocument();
+  });
+
+  // Part B a11y sweep — unlike HeroDragCue's looping pulse (which branches in
+  // JS via matchMedia), the nudge's ONE-SHOT entrance reuses the existing
+  // `.anim-rise` utility (src/index.css), whose duration collapses to 0ms
+  // under `prefers-reduced-motion: reduce` via the `--motion-*` CSS tokens
+  // (styles/tokens.css) — the same mechanism already relied on by the gallery
+  // cards / picker panels / ModulationParamBox reveal (naqsha-reveal-rows).
+  // No JS branch is needed here, so this test just confirms reduced motion
+  // never hides or breaks the nudge — the CSS collapse is a token-level
+  // concern, not independently assertable from jsdom (no real animation
+  // engine runs here).
+  it('still renders (content + dismiss button) under prefers-reduced-motion, carrying the token-driven entrance class', () => {
+    window.matchMedia = vi.fn().mockImplementation((query) => ({
+      matches: query.includes('prefers-reduced-motion'),
+      media: query,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      addListener: () => {},
+      removeListener: () => {},
+      dispatchEvent: () => false,
+    }));
+
+    setOnboardingDismissed(true);
+    const { rerender } = render(
+      <GuestOnboarding isGuest onLoadSeed={vi.fn()} activeLayer={ACTIVE_LAYER} onUpdateLayer={vi.fn()} />
+    );
+    rerender(
+      <GuestOnboarding
+        isGuest
+        onLoadSeed={vi.fn()}
+        activeLayer={{
+          ...ACTIVE_LAYER,
+          params: { ...ACTIVE_LAYER.params, angle: 137.6, minSize: 6 },
+        }}
+        onUpdateLayer={vi.fn()}
+      />
+    );
+
+    const nudge = NUDGE();
+    expect(nudge).toBeInTheDocument();
+    expect(nudge.className).toMatch(/anim-rise/);
+    expect(screen.getByRole('button', { name: /dismiss modulation nudge/i })).toBeInTheDocument();
   });
 });

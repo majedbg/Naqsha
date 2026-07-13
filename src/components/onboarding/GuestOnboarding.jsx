@@ -13,7 +13,7 @@
 // the same `!user && tier === 'guest'` guard S1 uses for the seed default, to
 // avoid a loading-flash chooser for a signed-in user — see seedDocuments
 // wiring in Studio.jsx) — this component just trusts it.
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   DEFAULT_SEED_KEY,
   SEED_KEYS,
@@ -26,12 +26,24 @@ import {
 import { emitOnboardingEvent, ONBOARDING_EVENTS } from '../../lib/onboarding/telemetry';
 import { shuffleSeedParams } from '../../lib/onboarding/shuffle';
 import { isTextEntryTarget } from '../../lib/history/typingGuard';
+import {
+  isModulationNudgeSeen,
+  markModulationNudgeSeen,
+} from '../../lib/onboarding/modulationNudgeStore';
 
 // D16 confidence line — naqsheh metaphor + reversibility. Copy is LOCKED
 // verbatim (BUILD BRIEF). "naqsheh" is metaphor copy only here, never a UI
 // noun elsewhere (D25).
 const CONFIDENCE_LINE =
   "This is your naqsheh — the sheet the machine weaves. Nudge anything; ⌘Z undoes it. You can't break it.";
+
+// S6 — D17a modulation nudge copy. The seeds are STATIC (D9-fallback — no
+// live modulation runs on any starter yet, see seedDocuments.js), so this
+// must NOT claim a running effect ("that glow follows your pattern") — there
+// is no glow. It invites discovery of the feature instead.
+// TODO(user): tune nudge copy
+const MODULATION_NUDGE_LINE =
+  "Want your pattern to move on its own? Route it into another layer — that's modulation, the thing that makes this more than a drawing.";
 
 // Static v1 copy per starter (BUILD BRIEF "three starters", D6). No live
 // thumbnail render in v1 — a static glyph + one-word character label + a
@@ -156,6 +168,78 @@ export default function GuestOnboarding({
   // lens or dismissed the tip itself this session.
   const showLensTip = isGuest && dismissed && !lensTipUsed;
 
+  // S6 — D17a modulation nudge + D22 activation event ("second distinct
+  // param change"). Watches the SAME `activeLayer` prop Shuffle (S4) already
+  // reads — no separate observation path into the param-write pipeline is
+  // needed, matching the pattern LayerCard/useLayerParams funnel every param
+  // edit (drag, arrow-key, or Shuffle's own re-roll) through: `onChange` ->
+  // `writeParams({ params })` -> the same `onUpdateLayer(id, patch)` setter
+  // that produces the next `activeLayer.params` this component already
+  // receives as a prop. Diffing that object against a per-seed baseline is
+  // therefore sufficient to "observe changes without disrupting normal
+  // editing" — no new write-path hook required.
+  //
+  // Distinct keys are counted PER ACTIVE SEED: the baseline resets whenever
+  // `activeLayer.id` changes (a fresh mount, or the guest picked a different
+  // starter via the chooser — `onLoadSeed`/`loadDocumentLayers` always
+  // builds a brand-new layer id, see seedDocuments.js), so switching
+  // starters starts a fresh count rather than carrying over an unrelated
+  // seed's edits. A Shuffle re-roll writes through the identical
+  // `onUpdateLayer` path as a manual drag (see the S4 handler above, and the
+  // matching precedent in HeroDragCue's own comment: "no separate aha-reached
+  // emit needed here" for Shuffle-driven changes) — so a Shuffle click that
+  // touches 2+ keys at once also counts, consistent with how the rest of
+  // onboarding already treats Shuffle as equivalent to a manual edit.
+  //
+  // The "seen" flag (modulationNudgeStore) is a single session-wide flag,
+  // NOT per-seed (unlike heroCueStore) — once fired, the nudge never re-fires
+  // even if the guest later switches starters and makes more distinct edits
+  // there (D17: "at most two tips in v1", this is a one-shot prompt).
+  const [nudgeSeen, setNudgeSeen] = useState(() => isModulationNudgeSeen());
+  const [nudgeVisible, setNudgeVisible] = useState(false);
+  const paramBaselineRef = useRef(null);
+  const changedParamKeysRef = useRef(new Set());
+
+  useEffect(() => {
+    if (!isGuest || nudgeSeen || !activeLayer) return;
+    const currentParams = activeLayer.params || {};
+    const baseline = paramBaselineRef.current;
+    if (!baseline || baseline.layerId !== activeLayer.id) {
+      // Fresh seed (first render for this layer id, or a starter switch) —
+      // (re)start the distinct-key count from this seed's own params, never
+      // comparing across two different seeds' values.
+      paramBaselineRef.current = { layerId: activeLayer.id, params: currentParams };
+      changedParamKeysRef.current = new Set();
+      return;
+    }
+    for (const key of Object.keys(currentParams)) {
+      if (currentParams[key] !== baseline.params[key]) {
+        changedParamKeysRef.current.add(key);
+      }
+    }
+    if (changedParamKeysRef.current.size >= 2) {
+      markModulationNudgeSeen();
+      setNudgeSeen(true);
+      setNudgeVisible(true);
+      emitOnboardingEvent(ONBOARDING_EVENTS.SECOND_PARAM_CHANGE, {
+        patternType: activeLayer.patternType,
+        keys: Array.from(changedParamKeysRef.current),
+      });
+    }
+  }, [isGuest, nudgeSeen, activeLayer]);
+
+  const handleDismissNudge = useCallback(() => {
+    setNudgeVisible(false);
+  }, []);
+
+  // Only actually shown once the chooser is dismissed — same front-loading
+  // guard as the lens tip above (D17): the 2nd-distinct-change threshold can
+  // technically be crossed while the chooser is still open (it's
+  // non-blocking, D2), but the visual prompt waits so a guest never sees the
+  // chooser + the nudge stacked at once. Telemetry above still fires at the
+  // true moment of activation, independent of this display gate.
+  const showNudge = isGuest && dismissed && nudgeVisible;
+
   // Shared by the button's `disabled` state and the keydown handler's
   // early-return, so both surfaces agree on when Shuffle is unavailable —
   // silently no-op'ing on a locked layer with no visual feedback was itself
@@ -235,7 +319,12 @@ export default function GuestOnboarding({
         // bottom-right, the laser-only panels-ZIP export owns top-right) —
         // keeps this persistent affordance visible but out of the way of
         // every other floating control instead of crowding the zoom pod.
-        className="absolute top-3 left-3 z-40 flex h-7 w-7 items-center justify-center rounded-full border border-hairline bg-paper/95 text-xs font-semibold text-ink-soft shadow-pop backdrop-blur-[2px] transition-colors hover:border-violet/60 hover:text-ink"
+        // S6 a11y sweep (D21/P0-D): bumped 28px -> 32px toward the ~40px
+        // touch-target guidance — a full 40px would visually clash with the
+        // rest of the app's much denser icon buttons (ColorViewControl's own
+        // controls are 16-20px, see BUILD-NOTES), so this is a pragmatic
+        // partial fix, not full compliance.
+        className="absolute top-3 left-3 z-40 flex h-8 w-8 items-center justify-center rounded-full border border-hairline bg-paper/95 text-xs font-semibold text-ink-soft shadow-pop backdrop-blur-[2px] transition-colors hover:border-violet/60 hover:text-ink"
       >
         ?
       </button>
@@ -252,7 +341,9 @@ export default function GuestOnboarding({
         disabled={shuffleDisabled}
         aria-label="Surprise me — shuffle this pattern within its curated range"
         title="Surprise me (S)"
-        className="absolute top-3 left-12 z-40 flex h-7 items-center gap-1 rounded-full border border-hairline bg-paper/95 px-2.5 text-[11px] font-semibold text-ink-soft shadow-pop backdrop-blur-[2px] transition-colors hover:border-violet/60 hover:text-ink disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-hairline disabled:hover:text-ink-soft"
+        // S6 a11y sweep: 28px -> 32px height, same rationale as the "?"
+        // button above.
+        className="absolute top-3 left-12 z-40 flex h-8 items-center gap-1 rounded-full border border-hairline bg-paper/95 px-2.5 text-[11px] font-semibold text-ink-soft shadow-pop backdrop-blur-[2px] transition-colors hover:border-violet/60 hover:text-ink disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-hairline disabled:hover:text-ink-soft"
       >
         <span aria-hidden="true">🎲</span>
         Surprise me
@@ -285,7 +376,10 @@ export default function GuestOnboarding({
               type="button"
               onClick={handleDismiss}
               aria-label="Skip starter chooser"
-              className="-mt-0.5 -mr-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded text-ink-soft transition-colors hover:bg-muted hover:text-ink"
+              // S6 a11y sweep: 20px -> 24px, same partial-fix rationale as
+              // the "?"/Shuffle buttons above (matches the new S6
+              // modulation-nudge dismiss button for consistency).
+              className="-mt-0.5 -mr-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded text-ink-soft transition-colors hover:bg-muted hover:text-ink"
             >
               ×
             </button>
@@ -328,7 +422,10 @@ export default function GuestOnboarding({
               type="button"
               onClick={onDismissLensTip}
               aria-label="Dismiss lens tip"
-              className="-mt-0.5 -mr-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded text-ink-soft transition-colors hover:bg-muted hover:text-ink"
+              // S6 a11y sweep: 20px -> 24px, same partial-fix rationale as
+              // the "?"/Shuffle buttons above (matches the new S6
+              // modulation-nudge dismiss button for consistency).
+              className="-mt-0.5 -mr-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded text-ink-soft transition-colors hover:bg-muted hover:text-ink"
             >
               ×
             </button>
@@ -339,6 +436,36 @@ export default function GuestOnboarding({
             aria-hidden="true"
             className="absolute -bottom-1.5 left-6 h-3 w-3 rotate-45 border-b border-r border-hairline bg-paper"
           />
+        </div>
+      )}
+
+      {/* S6 — Modulation nudge (D17a, D22 activation event). Fires once the
+          guest has made a 2nd DISTINCT param change on the active seed AND
+          the chooser is dismissed (see `showNudge` above). Bottom-center,
+          away from every corner-anchored surface (chooser/reopen/Shuffle
+          top-left, ColorViewControl + the lens tip bottom-left, zoom pod
+          bottom-right, laser panels-ZIP export top-right) so it never
+          overlaps another onboarding or canvas control. Centered via
+          `inset-x-0 mx-auto` (NOT a `-translate-x-1/2` transform) so it can
+          also carry `anim-rise`'s entrance transform without the two
+          fighting over the `transform` property. */}
+      {showNudge && (
+        <div
+          aria-label="Modulation nudge"
+          data-testid="guest-modulation-nudge"
+          className="anim-rise absolute bottom-4 inset-x-0 z-30 mx-auto w-72 rounded-lg border border-hairline bg-paper/95 p-2.5 shadow-pop backdrop-blur-[2px]"
+        >
+          <div className="flex items-start justify-between gap-2">
+            <p className="text-[10px] leading-snug text-ink-soft">{MODULATION_NUDGE_LINE}</p>
+            <button
+              type="button"
+              onClick={handleDismissNudge}
+              aria-label="Dismiss modulation nudge"
+              className="-mt-0.5 -mr-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded text-ink-soft transition-colors hover:bg-muted hover:text-ink"
+            >
+              ×
+            </button>
+          </div>
         </div>
       )}
     </>

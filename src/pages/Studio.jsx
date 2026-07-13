@@ -56,6 +56,7 @@ const RUN_PLAN_PROFILE_LABELS = {
 import useLayers from "../lib/useLayers";
 import { getSeedDocument, DEFAULT_SEED_KEY } from "../lib/onboarding/seedDocuments";
 import GuestOnboarding from "../components/onboarding/GuestOnboarding";
+import FrameStatsOverlay from "../components/onboarding/FrameStatsOverlay";
 import { isLensTipSeen, markLensTipSeen } from "../lib/onboarding/lensTipStore";
 import { emitOnboardingEvent, ONBOARDING_EVENTS } from "../lib/onboarding/telemetry";
 import useLayerGroups from "../lib/useLayerGroups";
@@ -2129,6 +2130,12 @@ export default function Studio({ submitOrg = null } = {}) {
           onDismissLensTip={handleDismissLensTip}
           onNewSession={handleOnboardingNewSession}
         />
+
+        {/* P0-B (D19) — frame-time/FPS readout. Opt-in only via `?fps=1`;
+            renders nothing and schedules no rAF loop otherwise (see
+            FrameStatsOverlay.jsx). Not guest-gated: it's a measurement
+            instrument for any session, not part of the onboarding UX. */}
+        <FrameStatsOverlay />
       </div>
 
       {/* Save dialog */}

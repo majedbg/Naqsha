@@ -268,3 +268,164 @@ and the new modulation nudge (S6). Findings:
 No test was weakened; 14 new tests added (4 store + 10 component,
 including the reduced-motion render test above), `npm test` stayed at
 4724 passed / 54 skipped (up from 4710/54, skip count unchanged).
+
+---
+
+## P0-B — live-drag performance (D19): measured, no coalescing added
+
+**Investigated first, per the slice instructions, before building anything.**
+
+**(A) Is 3D/bloom mounted on the guest landing?** No — confirmed **NOT
+mounted by default; strictly opt-in**, so "defer 3D/bloom until after the
+first aha" (D19) is **already true by construction**. No machinery was built
+to enforce it.
+- `<Canvas>` (`@react-three/fiber`) renders in `src/components/canvas3d/Scene3D.jsx:361`.
+- It's gated at `src/components/RightPanel.jsx:950`:
+  `{threeDMode !== "off" && <Canvas3DHost>...}` — `threeDMode` defaults to
+  `"off"` (`RightPanel.jsx:105`), sourced from `Studio.jsx:1927`'s
+  `threeD.subMode`, whose reducer initializes to `'off'`
+  (`src/lib/three3d/subModeReducer.js:29-30`).
+- It only flips on via a direct user click: `ColorViewControl.jsx:221`
+  (`onClick={() => (threeDActive ? onExit3D() : onEnter3D())}`) calling
+  `use3DLensEntry.enter3D` (`src/lib/three3d/use3DLensEntry.js:37-40`).
+- `Canvas3DHost` additionally `lazy(() => import('./Scene3D.jsx'))`s the
+  whole three.js chunk (`Canvas3DHost.jsx:7`), so it isn't even in the
+  initial JS bundle for a guest who never opens the 3D lens.
+- Bloom (`EmissiveBloom`, wrapping `@react-three/postprocessing`) renders
+  inside that same `<Canvas>` tree at `Scene3D.jsx:463-469`
+  (`{bloomActive && <EmissiveBloom .../>}`), with its own additional
+  on-demand gate (`bloomActive`, `Scene3D.jsx:104-112,244`) — "the default
+  Surface-A view runs with zero post-processing" (comment, `Scene3D.jsx:458-462`).
+
+**(B) Does the param-drag path already coalesce?** Yes — **a 150ms
+`setTimeout` debounce already exists**, so no second coalescing layer was
+added.
+- Slider drag → `Slider.jsx:283` `onChange` → `updateLayer`
+  (`useLayers.js:636-652`) → `setLayers`, synchronously per event.
+- Recompute is debounced in `src/lib/useCanvas.js:549-563` ("Debounced
+  re-render on layer changes", `setTimeout(..., 150)`), keyed on
+  `[layers, canvasW, canvasH, bgColor, renderAll]`.
+- A **separate** rAF-throttled immediate-render path exists
+  (`useCanvas.js:565-588`) but is explicitly scoped to `[transforms,
+  selectedNodeId]` only — i.e. node drag/resize/rotate, not param edits; the
+  comment at lines 566-568/582-586 spells out that param edits deliberately
+  stay on the 150ms debounce and must not leak into this path. This is a
+  *different* concern from the slider-drag path measured here.
+
+**Frame-time / FPS readout built (D19 instrument):**
+- `src/lib/onboarding/useFrameStats.js` — `useFrameStats(enabled)` hook;
+  runs an rAF loop only while `enabled`, accumulates frame deltas, and
+  publishes a windowed `{ fps, avgFrameMs, maxFrameMs, samples }` snapshot
+  every 500ms of measured frame time. `computeFrameStats(deltas)` is a pure
+  function (no DOM/timers) so the fps math is unit-tested directly; the rAF
+  loop itself is tested with a mocked `requestAnimationFrame`/
+  `cancelAnimationFrame` queue driven by hand via `renderHook` + `act`.
+- `src/lib/onboarding/frameStatsFlag.js` — `isFrameStatsEnabled(search)`,
+  a pure query-string check for `?fps=1`.
+- `src/components/onboarding/FrameStatsOverlay.jsx` — tiny fixed
+  top-right badge (`data-testid="frame-stats-overlay"`), renders `null` and
+  schedules **no rAF at all** when disabled, so mounting it unconditionally
+  in `Studio.jsx` (not guest-gated — it's a measurement instrument, not part
+  of the onboarding UX) costs nothing for the default case.
+- **How to enable:** open the app with `?fps=1` in the URL, e.g.
+  `http://localhost:5173/?fps=1`. Deliberately query-param-only rather than
+  a `DEV` env check, so it's off by default for *everyone* — guests, devs,
+  prod — until someone deliberately opts in, in dev or prod builds alike
+  (satisfies "do NOT show it to normal users... by default" without relying
+  on build mode).
+- Tests: `useFrameStats.test.js` (9 cases: pure-math edge cases + hook
+  rAF-scheduling/reset behavior), `frameStatsFlag.test.js` (6 cases),
+  `FrameStatsOverlay.test.jsx` (2 cases) — 17 new tests total.
+
+**Measured desktop drag (Playwright, Chromium, 1440×900, `localhost:5173/?fps=1`):**
+
+First attempt was flawed and got corrected before writing this up (caught by
+an advisor review before committing — worth recording so the methodology is
+trusted). A continuous mouse drag at a ~16ms step cadence read a sustained
+"60fps" throughout, but that number is a false positive for the thing D19
+actually cares about: `useCanvas.js`'s debounce (finding B) resets on every
+`layers` change, and a 16ms-cadence drag fires a new change *faster than the
+150ms debounce window*, so `renderAll` — the actual expensive p5 recompute —
+never fires **during** a fast continuous drag at all, only once ~150ms after
+the last move. The continuous-drag "60fps" was measuring React's input
+handling on an otherwise-idle canvas, not the recompute cost. (Confirmed
+directly: mid-drag the Divergence Angle readout doesn't reflect the
+in-flight position because a full-circle sweep returns to its start angle —
+not decisive on its own, which is exactly why the follow-up test below uses
+discrete, held positions instead.)
+
+**Corrected measurement:** discrete stepped moves on the same Divergence
+Angle dial, each followed by a >150ms hold (mouse still down, no further
+movement) so the debounce actually fires and `renderAll` runs for real,
+sampled after each hold:
+
+| step | angle after move | fps | avg frame | max frame |
+|---|---|---|---|---|
+| (idle baseline, before any move) | 100.00° | 60 | 16.7ms | 18.7ms |
+| 1 | 100.00° | 60 | 16.7ms | 18.6ms |
+| 2 | 170.00° | 60 | 16.7ms | 17.8ms |
+| 3 | 170.00° | 60 | 16.7ms | 18.8ms |
+| 4 | 100.00° | 60 | 16.7ms | 18.4ms |
+| 5 | 135.00° | 60 | 16.7ms | 18.5ms |
+| (after release, +700ms) | 135.00° | 60 | 16.6ms | 18.3ms |
+
+Each step's angle reading changed (confirming a real recompute fired, not a
+no-op), and the canvas visibly redrew a different pattern each time
+(screenshotted at 135° — an 8-arm starburst, distinct from the 100°/170°
+frames). `maxFrameMs` — an exact max over the sample window, not an average,
+so a single slow recompute frame would show up directly — never exceeded
+18.8ms across five real, isolated recomputes, statistically indistinguishable
+from the 18.7ms idle baseline. The curated Phyllotaxis seed (count=500) fits
+its full recompute + p5 redraw inside a single frame's budget with room to
+spare; there is no dropped-frame stall to fix.
+
+**Result: no dropped frames under either methodology**, and the corrected
+methodology is the one that actually exercises the recompute path D19 is
+worried about. Nowhere near the "50% below budget" trigger the brief sets
+for adding coalescing.
+
+**Two things this measurement does NOT establish, worth being explicit
+about:**
+- **The debounce is a latency property, not an fps one.** During a smooth
+  continuous drag the canvas renders **zero times** until motion pauses,
+  then fires once ~150ms later — a fast dial sweep looks frozen and snaps to
+  the final frame on release, it does not visually morph mid-sweep (unlike
+  the arrow-key path, which updates on every discrete keypress and *does*
+  read as live). That sits directly under the "the art updates live" cue in
+  the drag-me copy. This is real but is a UX/latency question, not the
+  fps/jank question D19 asks P0-B to answer — flagging as a candidate
+  fast-follow, not fixing it here (see below).
+- **Only the default seed (Phyllotaxis, count=500) was measured, and it's
+  cheap** — the idle baseline itself already reads ~18.7ms, so the
+  recompute's marginal cost on top of that is close to zero. Recursive and
+  Topographic weren't measured, and the Count × Spacing control goes up to
+  5000. The 150ms debounce is exactly what protects those heavier
+  configurations from a redraw-every-frame cost — this, not "phyllotaxis
+  happens to be cheap," is the real reason not to add rAF-coalescing on top
+  of it unattended: doing so would remove the one thing standing between a
+  high-count drag and a genuinely janky recompute-every-16ms loop, on a
+  shared render pipeline this slice is explicitly scoped to leave alone.
+
+**Decision: no rAF-coalescing added.** Per the slice instructions
+("IF drag is already smooth... do NOT add coalescing"): both conditions for
+skipping applied — coalescing already exists (the 150ms debounce, finding
+B) AND the measurement showed no perf gap to fix. Building a second
+coalescing layer on top of an already-smooth, already-debounced path would
+be speculative complexity with no evidence behind it — exactly what this
+slice's "measure first" framing warns against.
+
+**iPad / on-device: UNVERIFIED.** No physical iPad was available in this
+session (per D19's explicit fallback). Desktop Chromium numbers above are
+recorded; the `?fps=1` overlay is the durable instrument for a human to
+repeat this same measurement on a real workshop iPad later — flagging this
+here rather than claiming iPad parity.
+
+**Files added:** `src/lib/onboarding/useFrameStats.js` (+test),
+`src/lib/onboarding/frameStatsFlag.js` (+test),
+`src/components/onboarding/FrameStatsOverlay.jsx` (+test). **Files
+modified:** `src/pages/Studio.jsx` (mounts `<FrameStatsOverlay />` inside
+the canvas region, alongside `<GuestOnboarding />`). No P0/DB/auth files
+touched; `PatternPickerModal`/`MobileStudio` untouched.
+
+`npm test`: 4761 passed / 54 skipped (up from 4744/54 baseline; +17 new
+tests, skip count unchanged, no existing test weakened).

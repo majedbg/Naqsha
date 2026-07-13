@@ -61,20 +61,26 @@ describe('STARTER_CHIPS — curated set', () => {
   });
 });
 
+// Representative hosts for the two branches, exercised via patternType (the
+// build() input). 'grid' is a crossing-producing semantic host; 'flowfield' is
+// an edge host. Spiral is covered separately below (its default role differs).
+const SEMANTIC_HOST = 'grid';
+const EDGE_HOST = 'flowfield';
+
 describe.each(STARTER_CHIPS)('chip $id', (chip) => {
   it('is engine-valid on a SEMANTIC host: runSelectionChain does not throw', () => {
-    const built = chip.build(true);
+    const built = chip.build(SEMANTIC_HOST);
     expect(() => runSelectionChain(semanticAnchors(), built.binding.chain)).not.toThrow();
   });
 
   it('is engine-valid on an EDGE host: runSelectionChain does not throw', () => {
-    const built = chip.build(false);
+    const built = chip.build(EDGE_HOST);
     expect(() => runSelectionChain(edgeAnchors(), built.binding.chain)).not.toThrow();
   });
 
   it('any sequence block is terminal and at-most-one, on both host branches', () => {
-    for (const hostIsSemantic of [true, false]) {
-      const { binding } = chip.build(hostIsSemantic);
+    for (const patternType of [SEMANTIC_HOST, EDGE_HOST]) {
+      const { binding } = chip.build(patternType);
       const { chain } = binding;
       // At most one sequence block total (chainEditor.hasSequence/sequenceIndex
       // model "at-most-one" by construction: sequenceIndex finds the FIRST; we
@@ -88,8 +94,8 @@ describe.each(STARTER_CHIPS)('chip $id', (chip) => {
   });
 
   it('every glyphRef (base + slots) resolves to a BUILT-IN, no customGlyphs needed', () => {
-    for (const hostIsSemantic of [true, false]) {
-      const built = chip.build(hostIsSemantic);
+    for (const patternType of [SEMANTIC_HOST, EDGE_HOST]) {
+      const built = chip.build(patternType);
       expect(getGlyph(built.glyphRef)).toBeTruthy();
       expect(MOTIF_GLYPHS[built.glyphRef]).toBeTruthy();
       for (const block of built.binding.chain) {
@@ -105,16 +111,16 @@ describe.each(STARTER_CHIPS)('chip $id', (chip) => {
   });
 
   it('host-aware output: semantic branch never offers closed/picked route scope', () => {
-    const built = chip.build(true);
+    const built = chip.build(SEMANTIC_HOST);
     expect(built.anchorMode).toBe('semantic');
     const route = built.binding.chain.find((b) => b.type === 'route');
     expect(route).toBeTruthy();
-    expect(route.roles).toEqual(['crossing']);
+    expect(route.roles).toEqual(['crossing']); // grid produces crossing
     expect(['all', 'open']).toContain(route.pathScope);
   });
 
   it('host-aware output: edge branch uses edge roles + anchorMode', () => {
-    const built = chip.build(false);
+    const built = chip.build(EDGE_HOST);
     expect(built.anchorMode).toBe('edge');
     const route = built.binding.chain.find((b) => b.type === 'route');
     expect(route).toBeTruthy();
@@ -123,8 +129,8 @@ describe.each(STARTER_CHIPS)('chip $id', (chip) => {
   });
 
   it('createMotifParams/normalizeBinding round-trip keeps .chain (C1 chain-form)', () => {
-    for (const hostIsSemantic of [true, false]) {
-      const built = chip.build(hostIsSemantic);
+    for (const patternType of [SEMANTIC_HOST, EDGE_HOST]) {
+      const built = chip.build(patternType);
       const params = createMotifParams(built);
       expect(Array.isArray(params.binding.chain)).toBe(true);
       expect(params.binding.chain).toEqual(built.binding.chain);
@@ -137,9 +143,37 @@ describe.each(STARTER_CHIPS)('chip $id', (chip) => {
 
 // --- chip-specific chain content (the actual pattern each chip should produce) --
 
+// Regression (issue: dead-default role on spiral): a chip landing on a DEFAULT
+// spiral must route to a role the spiral actually produces. The spiral extractor
+// emits no `crossing` hub under the app default innerRadius (5) — its only live
+// semantic roles are `edge`/`tip` — so the blanket `crossing` default placed
+// nothing. defaultRolesForHost('spiral') → ['edge'], so every chip now selects a
+// live role on a spiral host. Mirrors the addMotif fix in Inspector.jsx.
+describe('spiral host — chip route defaults to a LIVE role, not the dead crossing', () => {
+  it.each(STARTER_CHIPS)('chip $id: spiral → edge roles, semantic anchorMode', (chip) => {
+    const built = chip.build('spiral');
+    expect(built.anchorMode).toBe('semantic'); // spiral is still a semantic host
+    const route = built.binding.chain.find((b) => b.type === 'route');
+    expect(route).toBeTruthy();
+    expect(route.roles).toEqual(['edge']);
+    expect(route.roles).not.toContain('crossing'); // the pre-fix dead default
+  });
+
+  it('every chip PLACES on a default-spiral-shaped anchor set (edge role, open arms)', () => {
+    // edgeAnchors mirrors a default spiral's live anchors: `edge` role, open
+    // paths (meta.closed:false) — exactly what a spiral's arc-length samples are.
+    // A chip that still required `crossing` would place ZERO here.
+    for (const chip of STARTER_CHIPS) {
+      const built = chip.build('spiral');
+      const { survivors } = runSelectionChain(edgeAnchors(), built.binding.chain);
+      expect(survivors.length).toBeGreaterThan(0);
+    }
+  });
+});
+
 describe('alternate-xo chip', () => {
   it('is a cycle sequence [glyph, rest]', () => {
-    const { binding } = STARTER_CHIPS.find((c) => c.id === 'alternate-xo').build(true);
+    const { binding } = STARTER_CHIPS.find((c) => c.id === 'alternate-xo').build('grid');
     const seq = binding.chain.find((b) => b.type === 'sequence');
     expect(seq.mode).toBe('cycle');
     expect(seq.slots).toHaveLength(2);
@@ -151,7 +185,7 @@ describe('alternate-xo chip', () => {
 
 describe('vine chip', () => {
   it('is a cycle sequence [rosette, leaf, leaf]', () => {
-    const { binding } = STARTER_CHIPS.find((c) => c.id === 'vine').build(true);
+    const { binding } = STARTER_CHIPS.find((c) => c.id === 'vine').build('grid');
     const seq = binding.chain.find((b) => b.type === 'sequence');
     expect(seq.mode).toBe('cycle');
     expect(seq.slots.map((s) => s.glyphRef)).toEqual(['rosette', 'leaf', 'leaf']);
@@ -160,7 +194,7 @@ describe('vine chip', () => {
 
 describe('sparse-scatter chip', () => {
   it('has a density block <1 and a single (non-sequenced) glyph', () => {
-    const { binding } = STARTER_CHIPS.find((c) => c.id === 'sparse-scatter').build(true);
+    const { binding } = STARTER_CHIPS.find((c) => c.id === 'sparse-scatter').build('grid');
     expect(hasSequence(binding.chain)).toBe(false);
     const density = binding.chain.find((b) => b.type === 'density');
     expect(density).toBeTruthy();
@@ -171,7 +205,7 @@ describe('sparse-scatter chip', () => {
 
 describe('border-march chip', () => {
   it('has a route block + everyN and a single (non-sequenced) glyph', () => {
-    const { binding } = STARTER_CHIPS.find((c) => c.id === 'border-march').build(true);
+    const { binding } = STARTER_CHIPS.find((c) => c.id === 'border-march').build('grid');
     expect(hasSequence(binding.chain)).toBe(false);
     const route = binding.chain.find((b) => b.type === 'route');
     const everyN = binding.chain.find((b) => b.type === 'everyN');
@@ -181,7 +215,7 @@ describe('border-march chip', () => {
   });
 
   it('places anchors on an OPEN edge host (flowfield-shaped streamlines)', () => {
-    const built = STARTER_CHIPS.find((c) => c.id === 'border-march').build(false);
+    const built = STARTER_CHIPS.find((c) => c.id === 'border-march').build('flowfield');
     const { survivors } = runSelectionChain(edgeAnchors(), built.binding.chain);
     // Every fixture anchor has meta.closed:false (open streamlines); a chip
     // that silently required 'closed' scope would place ZERO anchors here.

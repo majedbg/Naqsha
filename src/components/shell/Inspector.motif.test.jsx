@@ -166,6 +166,29 @@ describe("MotifDevice", () => {
     expect(opts.binding.selection.roles).toEqual(["crossing"]);
   });
 
+  it("Add Motif on a SPIRAL host defaults to a role the spiral actually emits (edge, not the dead crossing)", () => {
+    // A default spiral emits no `crossing` hub (innerRadius=5 ⇒ startR≠0), so the
+    // blanket `crossing` default placed nothing. The host-aware default must be a
+    // live role — `edge` — so glyphs appear on a fresh spiral.
+    const onAddMotif = vi.fn();
+    render(
+      <Inspector
+        layers={[hostLayer("sp", "spiral")]}
+        selectedLayerId="sp"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+        onAddMotif={onAddMotif}
+      />
+    );
+    fireEvent.click(screen.getByTestId("motif-toggle"));
+    fireEvent.click(screen.getByTestId("motif-add"));
+    const [hostId, opts] = onAddMotif.mock.calls[0];
+    expect(hostId).toBe("sp");
+    expect(opts.anchorMode).toBe("semantic"); // spiral is still a semantic host
+    expect(opts.binding.selection.roles).toEqual(["edge"]);
+    expect(opts.binding.selection.roles).not.toContain("crossing");
+  });
+
   it("toggling a role in the Route card writes chain-form (roles on the route block)", () => {
     const onUpdateLayer = vi.fn();
     const motif = motifLayer("m1", "host1", defaultBinding);

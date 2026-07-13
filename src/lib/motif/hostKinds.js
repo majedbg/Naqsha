@@ -53,6 +53,37 @@ export const MOTIF_HOSTS = Object.freeze(
   new Set([...SEMANTIC_MOTIF_HOSTS, ...EDGE_MOTIF_HOSTS])
 );
 
+// The selection role a motif takes when FIRST added to a host. It MUST be a role
+// the host actually PRODUCES under DEFAULT params — otherwise the initial
+// selection is empty, nothing renders, and every chain option the user then
+// toggles operates on an empty set. grid/recursive/voronoi always emit `crossing`
+// (grid: lattice intersections; recursive: polygon vertices; voronoi: shared
+// circumcenters), so they keep it. SPIRAL does NOT: its only `crossing` is the
+// center hub, emitted solely when armCount>1 AND the arms share the origin
+// (startR===0). The app default innerRadius (5, DEFAULT_PARAMS.spiral) keeps
+// startR≠0, so a default spiral yields NO crossing anchors — it defaults to
+// `edge` (arc-length samples along each arm), which it always produces. Any host
+// not listed (edge hosts, unknown) falls back to `edge`, matching the generic
+// Edge-anchor path. Keyed by PATTERN_CLASSES registry id.
+const DEFAULT_SEMANTIC_ROLE = Object.freeze({
+  grid: 'crossing',
+  recursive: 'crossing',
+  voronoi: 'crossing',
+  spiral: 'edge',
+});
+
+/**
+ * Default selection role(s) for a motif freshly added to `patternType`. Always a
+ * role the host emits under DEFAULT params, so the first placement is non-empty
+ * (fixes the blanket-`crossing` dead-default on spiral). Edge hosts and any host
+ * without a semantic mapping → ['edge'].
+ * @param {string} patternType
+ * @returns {string[]}
+ */
+export function defaultRolesForHost(patternType) {
+  return [DEFAULT_SEMANTIC_ROLE[patternType] ?? 'edge'];
+}
+
 /** @param {string} patternType @returns {boolean} */
 export function isSemanticHost(patternType) {
   return SEMANTIC_MOTIF_HOSTS.has(patternType);

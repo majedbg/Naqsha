@@ -4,7 +4,7 @@
 // (see src/lib/motif/glyphs.js MOTIF_GLYPHS — no customGlyphs, so a chip
 // works in any document, including one with none imported yet).
 //
-// Pure module — no p5/DOM/React. `chip.build(hostIsSemantic)` returns the
+// Pure module — no p5/DOM/React. `chip.build(patternType)` returns the
 // SAME shape `Inspector.jsx`'s `addMotif` already passes to `onAddMotif`
 // (`{glyphRef, anchorMode, binding}`), except `binding` is already CHAIN-FORM
 // (`{chain, placement}`) rather than legacy `{selection, placement}` — C1's
@@ -14,17 +14,23 @@
 // immediately, no first-edit rewrite needed.
 //
 // HOST-AWARENESS (reusing the existing addMotif host-aware logic,
-// Inspector.jsx ~687): a chip's ROUTE block adapts roles + path scope to the
-// host via `hostAwareRoute` below —
+// Inspector.jsx ~697): a chip's ROUTE block adapts roles + path scope to the
+// host via `hostAwareRoute` below, keyed by the host's `patternType` —
 //   • semantic host (grid/recursive/spiral/voronoi): anchorMode 'semantic',
-//     roles ['crossing'], scope NEVER 'closed'/'picked' (A2 — those anchors
-//     carry no meta.closed/pathIndex, so those scopes would silently empty
-//     the selection; 'open' is a safe superset there, per
-//     docs/motif-chain-ORCHESTRATOR.md A2 forward-note).
-//   • edge host (flowfield/wave/…): anchorMode 'edge', roles ['edge'], the
-//     requested scope used as-is ('all'/'open'/'closed' are all legal there).
+//     roles from `defaultRolesForHost` (grid/recursive/voronoi → ['crossing'],
+//     SPIRAL → ['edge'] — a default spiral emits no `crossing` hub, so
+//     ['crossing'] would silently empty the selection and no glyphs would show;
+//     same dead-default as addMotif, fixed the same way), scope NEVER
+//     'closed'/'picked' (A2 — those anchors carry no meta.closed/pathIndex, so
+//     those scopes would silently empty the selection; 'open' is a safe superset
+//     there, per docs/motif-chain-ORCHESTRATOR.md A2 forward-note).
+//   • edge host (flowfield/wave/…): anchorMode 'edge', roles ['edge'] (the
+//     `defaultRolesForHost` fallback), the requested scope used as-is
+//     ('all'/'open'/'closed' are all legal there).
 // Every other block (sequence/density/everyN) is host-agnostic authored data
 // — it runs unchanged regardless of which host the chip lands on.
+
+import { defaultRolesForHost, isSemanticHost } from './hostKinds.js';
 //
 // Correctness (proven in starterChips.test.js, the whole job of this data
 // module): every chip's chain is ENGINE-VALID (`runSelectionChain` never
@@ -37,7 +43,7 @@
  * @typedef {{glyphRef?:string, sizeScale?:number, rotationOffset?:number,
  *   flip?:boolean, rotationRandom?:{range:number, spread:'flat'|'bell'},
  *   weight?:number, rest?:boolean}} Slot
- * @typedef {{id:string, label:string, build:(hostIsSemantic:boolean) =>
+ * @typedef {{id:string, label:string, build:(patternType:string) =>
  *   {glyphRef:string, anchorMode:'semantic'|'edge', binding:{chain:Array<object>, placement:object}}}} StarterChip
  */
 
@@ -51,17 +57,20 @@ const PLACEMENT = {
 };
 
 /**
- * Host-aware ROUTE block shared by every chip. `edgeScope` is used verbatim
+ * Host-aware ROUTE block shared by every chip. Roles come from the shared
+ * `defaultRolesForHost` (a role the host actually PRODUCES under default params —
+ * so spiral gets 'edge', not the dead 'crossing'). `edgeScope` is used verbatim
  * on an edge host; on a semantic host it is downgraded to 'all'/'open' only
  * (never 'closed'/'picked' — A2).
- * @param {boolean} hostIsSemantic
+ * @param {string} patternType
  * @param {'all'|'open'|'closed'} edgeScope
  * @returns {{type:'route', roles:string[], pathScope:'all'|'open'|'closed'}}
  */
-function hostAwareRoute(hostIsSemantic, edgeScope = 'all') {
+function hostAwareRoute(patternType, edgeScope = 'all') {
+  const hostIsSemantic = isSemanticHost(patternType);
   return {
     type: 'route',
-    roles: hostIsSemantic ? ['crossing'] : ['edge'],
+    roles: defaultRolesForHost(patternType),
     pathScope: hostIsSemantic ? (edgeScope === 'all' ? 'all' : 'open') : edgeScope,
   };
 }
@@ -71,13 +80,14 @@ export const STARTER_CHIPS = [
   {
     id: 'alternate-xo',
     label: 'Alternate x‑o',
-    build(hostIsSemantic) {
+    build(patternType) {
+      const hostIsSemantic = isSemanticHost(patternType);
       return {
         glyphRef: 'diamond',
         anchorMode: hostIsSemantic ? 'semantic' : 'edge',
         binding: {
           chain: [
-            hostAwareRoute(hostIsSemantic, 'all'),
+            hostAwareRoute(patternType, 'all'),
             {
               type: 'sequence',
               mode: 'cycle',
@@ -92,13 +102,14 @@ export const STARTER_CHIPS = [
   {
     id: 'vine',
     label: 'Vine 🌸‑🌿‑🌿',
-    build(hostIsSemantic) {
+    build(patternType) {
+      const hostIsSemantic = isSemanticHost(patternType);
       return {
         glyphRef: 'rosette',
         anchorMode: hostIsSemantic ? 'semantic' : 'edge',
         binding: {
           chain: [
-            hostAwareRoute(hostIsSemantic, 'all'),
+            hostAwareRoute(patternType, 'all'),
             {
               type: 'sequence',
               mode: 'cycle',
@@ -117,13 +128,14 @@ export const STARTER_CHIPS = [
   {
     id: 'sparse-scatter',
     label: 'Sparse scatter',
-    build(hostIsSemantic) {
+    build(patternType) {
+      const hostIsSemantic = isSemanticHost(patternType);
       return {
         glyphRef: 'dot',
         anchorMode: hostIsSemantic ? 'semantic' : 'edge',
         binding: {
           chain: [
-            hostAwareRoute(hostIsSemantic, 'all'),
+            hostAwareRoute(patternType, 'all'),
             { type: 'density', density: 0.25, seed: 1, rngMode: 'hash' },
           ],
           placement: PLACEMENT,
@@ -134,7 +146,8 @@ export const STARTER_CHIPS = [
   {
     id: 'border-march',
     label: 'Border march',
-    build(hostIsSemantic) {
+    build(patternType) {
+      const hostIsSemantic = isSemanticHost(patternType);
       return {
         glyphRef: 'diamond',
         anchorMode: hostIsSemantic ? 'semantic' : 'edge',
@@ -145,7 +158,7 @@ export const STARTER_CHIPS = [
             // so a 'closed' scope would silently place nothing there. 'open'
             // is the safe, always-populated choice on both host kinds; the
             // everyN rhythm below is what earns the "march" name.
-            hostAwareRoute(hostIsSemantic, 'open'),
+            hostAwareRoute(patternType, 'open'),
             { type: 'everyN', n: 3, offset: 0, continuous: false },
           ],
           placement: PLACEMENT,

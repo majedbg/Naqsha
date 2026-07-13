@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { getSemanticAnchors } from './semanticAnchors.js';
 import { placeMotifs, selectAnchors } from './placementEngine.js';
+import { defaultRolesForHost } from './hostKinds.js';
+import { DEFAULT_PARAMS } from '../../constants.js';
 import Grid from '../patterns/Grid.js';
 import RecursiveGeometry from '../patterns/RecursiveGeometry.js';
 import Spiral from '../patterns/Spiral.js';
@@ -720,6 +722,41 @@ describe('getSemanticAnchors — spiral role taxonomy', () => {
       modulation: { channel: 'distort', field: { type: 'noise' }, amount: 30 },
     });
     expect(getSemanticAnchors('spiral', p, W, H)).toBeNull();
+  });
+
+  // ── Regression: the add-motif DEFAULT role must actually SELECT something on a
+  //    default spiral. The blanket `crossing` default (pre-fix) was dead here —
+  //    a default spiral (innerRadius=5 ⇒ startR≠0) emits NO crossing hub, so the
+  //    selection was empty and nothing rendered. Drive the real selection layer
+  //    (selectAnchors) against the app's ACTUAL default params to pin the bug.
+  it('add-motif default role produces a NON-EMPTY selection on a default spiral', () => {
+    const defaults = DEFAULT_PARAMS.spiral;
+    const anchors = getSemanticAnchors('spiral', defaults, W, H);
+    expect(Array.isArray(anchors)).toBe(true);
+
+    // The role the Inspector assigns on Add Motif for a spiral host.
+    const roles = defaultRolesForHost('spiral');
+    const { survivors } = selectAnchors(anchors, { roles });
+    expect(survivors.length).toBeGreaterThan(0);
+    expect(survivors.every((a) => roles.includes(a.role))).toBe(true);
+
+    // Documents WHY the old blanket default was dead: `crossing` selects nothing
+    // on a default spiral (no shared-origin hub with innerRadius=5).
+    expect(selectAnchors(anchors, { roles: ['crossing'] }).survivors.length).toBe(0);
+  });
+
+  it('grid/recursive/voronoi keep crossing as a live default role', () => {
+    // grid: crossing is always present (lattice intersections).
+    const gridAnchors = getSemanticAnchors('grid', DEFAULT_PARAMS.grid, W, H);
+    expect(defaultRolesForHost('grid')).toEqual(['crossing']);
+    expect(selectAnchors(gridAnchors, { roles: ['crossing'] }).survivors.length)
+      .toBeGreaterThan(0);
+    // recursive/voronoi stay mapped to crossing (voronoi's production is a
+    // separate host-geometry seam — see semanticAnchors.js §voronoi header).
+    expect(defaultRolesForHost('recursive')).toEqual(['crossing']);
+    expect(defaultRolesForHost('voronoi')).toEqual(['crossing']);
+    // Unknown / edge host → generic edge default.
+    expect(defaultRolesForHost('flowfield')).toEqual(['edge']);
   });
 });
 

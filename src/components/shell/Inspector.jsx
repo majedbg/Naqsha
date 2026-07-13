@@ -63,7 +63,11 @@ import { MOTIF_GLYPHS, getGlyph } from "../../lib/motif/glyphs";
 import EtchStackRack from "./EtchStackRack";
 import EtchHighlightHold from "./EtchHighlightHold";
 import EtchPreviewHero from "./EtchPreviewHero";
-import { MOTIF_HOSTS, isSemanticHost } from "../../lib/motif/hostKinds";
+import {
+  MOTIF_HOSTS,
+  isSemanticHost,
+  defaultRolesForHost,
+} from "../../lib/motif/hostKinds";
 import { STARTER_CHIPS } from "../../lib/motif/starterChips";
 import MotifBlockRack from "./MotifBlockRack";
 
@@ -682,11 +686,14 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, 
     onImportFile?.(file, targetId);
   };
 
-  // A SEMANTIC host (grid/voronoi/…) defaults to crossing anchors; an EDGE host
-  // (flowfield/wave/…) has only generic edge anchors, so it must default to
-  // roles:['edge'] AND anchorMode:'edge' — otherwise the crossing-role filter
-  // drops every edge anchor and nothing is placed (resolveMotifHostParams also
-  // forces edge mode, but the SELECTION roles must match here).
+  // Anchor MODE splits on host kind: a SEMANTIC host (grid/voronoi/…) resolves
+  // structural anchors, an EDGE host (flowfield/wave/…) has only generic edge
+  // anchors (resolveMotifHostParams also forces edge mode there). The default
+  // selection ROLE, though, must be a role the specific host actually PRODUCES
+  // under default params — grid/recursive/voronoi emit `crossing`, but a default
+  // spiral does NOT (its only crossing is a hub needing arms that share the
+  // origin), so defaultRolesForHost gives spiral `edge` instead. A blanket
+  // `crossing` here would empty the selection on spiral and nothing would render.
   const hostIsSemantic = isSemanticHost(layer.patternType);
   const addMotif = () =>
     onAddMotif?.(layer.id, {
@@ -694,7 +701,7 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, 
       anchorMode: hostIsSemantic ? "semantic" : "edge",
       binding: {
         selection: {
-          roles: hostIsSemantic ? ["crossing"] : ["edge"],
+          roles: defaultRolesForHost(layer.patternType),
           rate: { n: 1 },
         },
         placement: {
@@ -758,7 +765,7 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, 
           {/* Starter chips (C5, #79) — curated one-tap chain presets, built-in
               glyphs only. Each tap creates a NEW motif via the SAME onAddMotif
               seam as "+ Add Motif" below, pre-populated with the chip's
-              host-aware chain + slots (chip.build(hostIsSemantic) already
+              host-aware chain + slots (chip.build(patternType) already
               returns a chain-form binding — createMotifParams/normalizeBinding
               preserve `.chain` verbatim, C1 — so the rack renders its Blocks
               immediately, no first-edit rewrite needed). */}
@@ -768,7 +775,7 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, 
             </p>
             <div className="flex flex-wrap gap-1.5">
               {STARTER_CHIPS.map((chip) => {
-                const built = chip.build(hostIsSemantic);
+                const built = chip.build(layer.patternType);
                 const previewGlyph = MOTIF_GLYPHS[built.glyphRef];
                 return (
                   <button

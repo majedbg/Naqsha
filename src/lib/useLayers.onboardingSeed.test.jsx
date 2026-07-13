@@ -4,7 +4,7 @@
 // no saved work) so the guest-gating decision lives entirely at the caller
 // (Studio.jsx), not inside this shared hook — MobileStudio.jsx (D23) passes
 // nothing and must be provably unaffected.
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook } from '@testing-library/react';
 import useLayers, { createLayer } from './useLayers';
 
@@ -64,5 +64,17 @@ describe('useLayers — initialSeedLayers (guest onboarding S1)', () => {
     const { result } = renderHook(() => useLayers({ persistToLocal: false, initialSeedLayers: [] }));
     expect(result.current.layers.length).toBe(1);
     expect(result.current.layers[0].id).not.toBe('seed-layer-1');
+  });
+
+  it('(NIT) with saved work present, the seed factory is never invoked (no wasted work building/discarding a seed doc)', () => {
+    const savedLayer = { ...createLayer(0, 'voronoi'), id: 'saved-layer-1' };
+    localStorage.setItem(LAYERS_KEY, JSON.stringify([savedLayer]));
+
+    const factory = vi.fn(() => [seedLayer()]);
+    const { result } = renderHook(() => useLayers({ persistToLocal: true, initialSeedLayers: factory }));
+
+    expect(factory).not.toHaveBeenCalled();
+    expect(result.current.layers.length).toBe(1);
+    expect(result.current.layers[0].id).toBe('saved-layer-1');
   });
 });

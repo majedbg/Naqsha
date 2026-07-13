@@ -244,7 +244,11 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
     // never clobbers it. Only when there's nothing saved does an injected
     // seed apply; absent both, fall back to the pre-existing defaults.
     const savedLayers = persistToLocal ? loadLayers() : null;
-    const seedLayers = resolveInitialSeedLayers(initialSeedLayers);
+    // Only build/resolve the seed doc when there's no saved work to fall back
+    // to — a returning guest's saved work always wins anyway, so resolving
+    // (and immediately discarding) a seed for them wastes work building it
+    // (e.g. the seed factory's genId calls) for nothing.
+    const seedLayers = savedLayers ? null : resolveInitialSeedLayers(initialSeedLayers);
     const baseLayers = savedLayers
       ?? seedLayers
       ?? (persistToLocal ? [createLayer(0), createLayer(1)] : [createLayer(0)]);

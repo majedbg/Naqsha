@@ -365,7 +365,15 @@ export default function Studio({ submitOrg = null } = {}) {
     // createLayer(0). Lazy factory so a signed-in render never builds a seed
     // doc it won't use; useLayers itself stays generic (D23 — MobileStudio.jsx
     // passes nothing and is unaffected) and never clobbers existing guest work.
-    initialSeedLayers: tier === "guest" ? () => getSeedDocument(DEFAULT_SEED_KEY) : undefined,
+    // `!user` guard (review of 9cf0788): `tier` alone isn't a reliable "is this
+    // a guest" signal at init — it's derived from `profile`, which resolves
+    // asynchronously and can still be null (tier reads 'guest') for a
+    // signed-in user, either during the loading flash (StudioRoute holds the
+    // mount for that case) or via AuthContext's 4s loading-timeout fallback,
+    // which can flip loading:false before the profile fetch completes.
+    // `session`/`user` resolves synchronously as soon as the auth event fires
+    // (before the profile fetch), so it's the reliable half of the check.
+    initialSeedLayers: !user && tier === "guest" ? () => getSeedDocument(DEFAULT_SEED_KEY) : undefined,
   });
 
   // Pro-shell Inspector + Object-tree slots (B3 / #6, B2 / #5). Null in the

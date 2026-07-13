@@ -24,6 +24,8 @@ import {
   setOnboardingDismissed,
 } from '../../lib/onboarding/dismissalStore';
 import { emitOnboardingEvent, ONBOARDING_EVENTS } from '../../lib/onboarding/telemetry';
+import { shuffleSeedParams } from '../../lib/onboarding/shuffle';
+import { isTextEntryTarget } from '../../lib/history/typingGuard';
 
 // D16 confidence line — naqsheh metaphor + reversibility. Copy is LOCKED
 // verbatim (BUILD BRIEF). "naqsheh" is metaphor copy only here, never a UI
@@ -76,7 +78,14 @@ function StarterCard({ seedKey, onSelect }) {
   );
 }
 
-export default function GuestOnboarding({ isGuest, onLoadSeed }) {
+// S4 — "Surprise me" / Shuffle (D11). `activeLayer` (the guest's current
+// seed/pattern layer — id + patternType + params + locked) and
+// `onUpdateLayer` (the SAME `updateLayer(id, patch)` setter every other
+// param edit in the app already goes through, from useLayers) are passed
+// down from Studio, matching the existing `onLoadSeed` prop pattern — this
+// component stays the single owner of ALL guest-onboarding UI + telemetry,
+// Studio stays the single owner of layer state.
+export default function GuestOnboarding({ isGuest, onLoadSeed, activeLayer, onUpdateLayer }) {
   // Lazy init reads sessionStorage once on mount (matches the dismissal
   // store's own per-tab semantics) — a fresh page load re-evaluates this and
   // naturally re-shows the chooser (D3).
@@ -102,7 +111,48 @@ export default function GuestOnboarding({ isGuest, onLoadSeed }) {
     [onLoadSeed]
   );
 
+  // S4 — Shuffle / "Surprise me" (D11). Re-rolls ONLY the active seed
+  // layer's params (never switches starters — that's the chooser above),
+  // via the pure `shuffleSeedParams` helper (reuses the app's existing
+  // randomize RNG + honors RANDOMIZE_EXCLUDED_KEYS + clamps the hero param
+  // to its curated golden band). Writes back through the same
+  // `onUpdateLayer` setter every other param edit uses, so
+  // HeroDragCue (S3) sees the hero param change through its normal `params`
+  // prop and retires itself exactly as it would for a manual drag — no
+  // separate aha-reached emit needed here (D11 build note).
+  const handleShuffle = useCallback(() => {
+    if (!activeLayer || activeLayer.locked) return;
+    const newParams = shuffleSeedParams(activeLayer.patternType, activeLayer.params);
+    onUpdateLayer?.(activeLayer.id, { params: newParams });
+    emitOnboardingEvent(ONBOARDING_EVENTS.SHUFFLE_CLICK, {
+      patternType: activeLayer.patternType,
+    });
+  }, [activeLayer, onUpdateLayer]);
+
   const isOpen = isGuest && !dismissed;
+
+  // D12 — `S` keyboard shortcut. Build-time check confirmed no existing
+  // Studio/useCanvas/modal keydown handler binds a bare 's'/'S' anywhere in
+  // the app (only Escape/Enter/arrow-keys/Space/⌘Z/⌘E are bound), so this is
+  // safe to add. Scoped to guests only, active whenever the onboarding
+  // surface is mounted (NOT gated on the chooser being open — Shuffle is
+  // the exploration engine and must keep working after dismissal, same as
+  // the button). Requires no modifier so it never collides with the
+  // browser's own Cmd/Ctrl+S "Save Page", and is ignored while a text-entry
+  // surface has focus (isTextEntryTarget — the same guard ⌘Z/⌘E use in
+  // Studio.jsx) so typing "s" in a layer-name field never fires it.
+  useEffect(() => {
+    if (!isGuest) return undefined;
+    const onKeyDown = (e) => {
+      if (e.key !== 's' && e.key !== 'S') return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (isTextEntryTarget(e.target)) return;
+      e.preventDefault();
+      handleShuffle();
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [isGuest, handleShuffle]);
 
   // Escape reliably dismisses the OPEN chooser via a scoped document-level
   // listener, not a React onKeyDown on the card: nothing autofocuses into
@@ -147,6 +197,23 @@ export default function GuestOnboarding({ isGuest, onLoadSeed }) {
         className="absolute top-3 left-3 z-40 flex h-7 w-7 items-center justify-center rounded-full border border-hairline bg-paper/95 text-xs font-semibold text-ink-soft shadow-pop backdrop-blur-[2px] transition-colors hover:border-violet/60 hover:text-ink"
       >
         ?
+      </button>
+
+      {/* S4 — Shuffle / "Surprise me" (D11, BUILD BRIEF element #3). Sits
+          right next to the "?" affordance so it reads as part of the SAME
+          onboarding row, always available (independent of the chooser's
+          open/dismissed state — it's the post-aha exploration engine, not a
+          first-run-only prompt). Never switches starter/pattern type — only
+          re-rolls the active seed's own params within curated ranges. */}
+      <button
+        type="button"
+        onClick={handleShuffle}
+        aria-label="Surprise me — shuffle this pattern within its curated range"
+        title="Surprise me (S)"
+        className="absolute top-3 left-12 z-40 flex h-7 items-center gap-1 rounded-full border border-hairline bg-paper/95 px-2.5 text-[11px] font-semibold text-ink-soft shadow-pop backdrop-blur-[2px] transition-colors hover:border-violet/60 hover:text-ink"
+      >
+        <span aria-hidden="true">🎲</span>
+        Surprise me
       </button>
 
       {!dismissed && (

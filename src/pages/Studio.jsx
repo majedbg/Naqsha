@@ -2062,7 +2062,18 @@ export default function Studio({ submitOrg = null } = {}) {
             resolved yet. Picking a starter is a genuine document LOAD (drops
             undo history, matches example/cloud/share semantics) — reuses
             `loadDocumentLayers`, NOT the raw `loadLayerSet`. */}
-        <GuestOnboarding isGuest={!user && tier === "guest"} onLoadSeed={loadDocumentLayers} />
+        {/* S4 — `activeLayer` + `onUpdateLayer` power the "Surprise me"
+            Shuffle button/shortcut: same selection fallback
+            (`selectedLayerId` else `layers[0]`) as `selectedLayerId`'s own
+            derivation above, same `updateLayer` setter every other param
+            edit in the app writes through — GuestOnboarding never gets its
+            own parallel layer-state path. */}
+        <GuestOnboarding
+          isGuest={!user && tier === "guest"}
+          onLoadSeed={loadDocumentLayers}
+          activeLayer={layers.find((l) => l.id === selectedLayerId) || layers[0] || null}
+          onUpdateLayer={updateLayer}
+        />
       </div>
 
       {/* Save dialog */}

@@ -115,7 +115,7 @@ function nameRecompute(layer, patch) {
 // changeLayerPattern; a lone moiré layer would be a broken orphan. Unknown/blank
 // requests fall back to the index-cycled default. Defaults/param-defs resolve
 // from the static tables first, then the dynamic registry (AI / built-in extras).
-function createLayer(index, requestedType) {
+export function createLayer(index, requestedType) {
   const types = ['spirograph', 'flowfield', 'phyllotaxis', 'wave', 'voronoi', 'recursive', 'phyllodash', 'grainfield', 'flowhatch', 'feather', 'turing', 'duality', 'radialetch', 'grid', 'spiral', 'modulegrid', 'topographic', 'diffgrowth', 'girih', 'circlepacking', 'dendrite'];
   const valid = typeof requestedType === 'string' && requestedType && requestedType !== 'moire';
   const patternType = valid ? requestedType : types[index % types.length];
@@ -196,7 +196,22 @@ function loadLayers() {
 // a no-op mutation (e.g. add/remove blocked at the tier cap, randomize of a
 // locked layer) still leaves a dead undo step that restores an identical doc —
 // harmless (no corruption), refined later if it proves annoying.
-export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYERS, getDefaultOperationId, recordEdit, recordStructural, optimizations } = {}) {
+// `initialSeedLayers` (guest onboarding S1, D10) is an OPTIONAL array, or a
+// lazy factory `() => layers`, of seed layers to use as the initial document
+// WHEN there is no existing saved work (`loadLayers()` returned null/empty).
+// This hook stays generic — no guest-specific branching lives here; the
+// caller (Studio.jsx) decides whether to pass it, gated on `tier==='guest'`.
+// A returning guest's saved work always wins (never clobbered); a factory
+// lets the caller skip building a fresh seed doc on renders that don't need
+// one. Callers that omit the prop (e.g. MobileStudio.jsx, D23) see byte-
+// identical init behavior to before this prop existed.
+function resolveInitialSeedLayers(initialSeedLayers) {
+  if (!initialSeedLayers) return null;
+  const layers = typeof initialSeedLayers === 'function' ? initialSeedLayers() : initialSeedLayers;
+  return Array.isArray(layers) && layers.length > 0 ? layers : null;
+}
+
+export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYERS, getDefaultOperationId, recordEdit, recordStructural, optimizations, initialSeedLayers } = {}) {
   // Hold the injected recorders in refs (synced in an effect, not during render)
   // so the mutators below stay referentially stable — their existing deps are
   // unchanged and memoized consumers don't churn. The injected fns are already
@@ -225,9 +240,14 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
   // render and no StrictMode double-init hazard.
   const initRef = useRef(null);
   if (initRef.current === null) {
-    const baseLayers = persistToLocal
-      ? (loadLayers() ?? [createLayer(0), createLayer(1)])
-      : [createLayer(0)];
+    // Saved work (guest workshop-override or signed-in) always wins — a seed
+    // never clobbers it. Only when there's nothing saved does an injected
+    // seed apply; absent both, fall back to the pre-existing defaults.
+    const savedLayers = persistToLocal ? loadLayers() : null;
+    const seedLayers = resolveInitialSeedLayers(initialSeedLayers);
+    const baseLayers = savedLayers
+      ?? seedLayers
+      ?? (persistToLocal ? [createLayer(0), createLayer(1)] : [createLayer(0)]);
     const storedPanels = persistToLocal ? loadPanels() : null;
     initRef.current = normalizePanels(storedPanels, baseLayers);
   }

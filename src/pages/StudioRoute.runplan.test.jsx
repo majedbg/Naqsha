@@ -16,6 +16,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, within, fireEvent } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import StudioRoute from "./StudioRoute";
+import { createLayer } from "../lib/useLayers";
 
 // A polyline fully inside a generous Sheet — mirrors the shape wrapSVGSymmetry
 // emits (layer <g> → per-copy <g transform> → <path>), so the extraction yields
@@ -99,6 +100,15 @@ describe("StudioRoute — Run Plan morph + entries (Lane I)", () => {
   });
 
   it("keeps the live pedagogical path: changing an Operation's speed updates the estimate", () => {
+    // Guest onboarding (S1) lands a fresh guest (tier==='guest', no saved
+    // work) on the single-layer, honest engrave-only Phyllotaxis seed (D5/
+    // D15) instead of the old two-layer Cut-role default. This test's premise
+    // is specifically a Cut operation whose speed drives the estimate, so
+    // seed localStorage as a "returning guest" with an existing document
+    // (the no-clobber path — saved work always wins over the seed) to keep
+    // testing the live-recompute wiring itself, independent of the
+    // onboarding default.
+    localStorage.setItem("sonoform-layers", JSON.stringify([createLayer(0), createLayer(1)]));
     renderStudio();
     // Switch to the laser so operations expose a speed parameter to edit.
     const objectTree = screen.getByRole("region", { name: "Object tree" });

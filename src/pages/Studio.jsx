@@ -54,6 +54,7 @@ const RUN_PLAN_PROFILE_LABELS = {
   dragCutter: "Drag cutting",
 };
 import useLayers from "../lib/useLayers";
+import { getSeedDocument, DEFAULT_SEED_KEY } from "../lib/onboarding/seedDocuments";
 import useLayerGroups from "../lib/useLayerGroups";
 import {
   addPanel,
@@ -352,7 +353,20 @@ export default function Studio({ submitOrg = null } = {}) {
     // Run Plan applied Optimizations restored from local storage at mount (ADR
     // 0002) — hydrated into the optimize hook on mount below.
     initialOptimizations,
-  } = useLayers({ persistToLocal: limits.localStorage, maxLayers: limits.maxLayers, getDefaultOperationId, recordEdit, recordStructural, optimizations: serializedOptimizations });
+  } = useLayers({
+    persistToLocal: limits.localStorage,
+    maxLayers: limits.maxLayers,
+    getDefaultOperationId,
+    recordEdit,
+    recordStructural,
+    optimizations: serializedOptimizations,
+    // Guest onboarding S1 (D5, D10): a fresh guest with no saved work lands on
+    // the default Phyllotaxis starter seed instead of the random
+    // createLayer(0). Lazy factory so a signed-in render never builds a seed
+    // doc it won't use; useLayers itself stays generic (D23 — MobileStudio.jsx
+    // passes nothing and is unaffected) and never clobbers existing guest work.
+    initialSeedLayers: tier === "guest" ? () => getSeedDocument(DEFAULT_SEED_KEY) : undefined,
+  });
 
   // Pro-shell Inspector + Object-tree slots (B3 / #6, B2 / #5). Null in the
   // legacy layout (no provider), so the portals below are true no-ops when the

@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import StudioRoute from "./StudioRoute";
+import { createLayer } from "../lib/useLayers";
 
 // Issue #11 (Lane C / C2): the stroke/operation swatch → operation picker, wired
 // end-to-end through the real Studio + pro shell. The swatch (control bar) and
@@ -36,7 +37,19 @@ function renderPro() {
 }
 
 describe("StudioRoute — operation picker wiring (C2)", () => {
-  beforeEach(() => localStorage.clear());
+  // Seed localStorage as a "returning guest" with an existing local document
+  // (2 default layers, top row Cut) BEFORE each render. This suite predates
+  // guest onboarding (S1): with tier==='guest' + no saved work, Studio.jsx now
+  // lands a fresh guest on the honest engrave-only Phyllotaxis starter seed
+  // (D5/D15), not the old two-layer Cut-role default this suite's assertions
+  // are built on. Seeding "existing work" exercises the documented no-clobber
+  // path (a returning guest's saved doc always wins over the seed) and keeps
+  // this suite testing ITS OWN concern (operation-picker wiring) independent
+  // of the onboarding default.
+  beforeEach(() => {
+    localStorage.clear();
+    localStorage.setItem("sonoform-layers", JSON.stringify([createLayer(0), createLayer(1)]));
+  });
 
   it("the control-bar swatch opens the operation picker (operations, not a wheel)", () => {
     renderPro();

@@ -18,6 +18,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, within, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import StudioRoute from "./StudioRoute";
+import { createLayer } from "../lib/useLayers";
 
 vi.mock("../components/RightPanel", () => ({
   default: () => <div data-testid="canvas-surface">canvas</div>,
@@ -409,7 +410,18 @@ describe("StudioRoute — duplicate panel (P7 slice 3)", () => {
 });
 
 describe("StudioRoute — clear all layers on a panel (P7 slice 4)", () => {
-  beforeEach(() => localStorage.clear());
+  // This test's premise is "Panel 1 holds the 2 seeded layers" — the OLD
+  // two-layer createLayer(0/1) default. Guest onboarding (S1) now lands a
+  // fresh guest (no saved work) on the single-layer Phyllotaxis starter
+  // instead (D5). Seed localStorage as a "returning guest" with an existing
+  // 2-layer local document so the no-clobber path (saved work always wins
+  // over the seed) applies and this suite keeps exercising its own concern
+  // (panel-clear/undo across a multi-layer panel) unaffected by the new
+  // onboarding default.
+  beforeEach(() => {
+    localStorage.clear();
+    localStorage.setItem("sonoform-layers", JSON.stringify([createLayer(0), createLayer(1)]));
+  });
 
   const undo = () =>
     fireEvent.keyDown(document.body, { key: "z", metaKey: true });

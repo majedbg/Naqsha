@@ -85,7 +85,27 @@ function StarterCard({ seedKey, onSelect }) {
 // down from Studio, matching the existing `onLoadSeed` prop pattern — this
 // component stays the single owner of ALL guest-onboarding UI + telemetry,
 // Studio stays the single owner of layer state.
-export default function GuestOnboarding({ isGuest, onLoadSeed, activeLayer, onUpdateLayer }) {
+//
+// S5 — Operation lens discoverability tip (D13, D17, BUILD BRIEF element
+// #4). `lensTipUsed` (whether the guest has already engaged the
+// ColorViewControl lens switch OR manually dismissed the tip this session)
+// and `onDismissLensTip` are passed down from Studio, mirroring the
+// activeLayer/onUpdateLayer split above — but reversed: here STUDIO owns the
+// "seen" state + telemetry emission (in its wrapped ColorViewControl
+// `onSetMode` handler), because the actual event source (ColorViewControl)
+// is wired directly in Studio, not nested under this component. This
+// component still owns WHEN the tip is actually visible: only after the
+// "Choose your naqsheh" chooser itself is dismissed (`dismissed`, local
+// state below) — showing the chooser + drag-me cue + lens tip all at once on
+// landing would be exactly the front-loaded "tour fatigue" D17 warns against.
+export default function GuestOnboarding({
+  isGuest,
+  onLoadSeed,
+  activeLayer,
+  onUpdateLayer,
+  lensTipUsed = false,
+  onDismissLensTip = () => {},
+}) {
   // Lazy init reads sessionStorage once on mount (matches the dismissal
   // store's own per-tab semantics) — a fresh page load re-evaluates this and
   // naturally re-shows the chooser (D3).
@@ -130,6 +150,11 @@ export default function GuestOnboarding({ isGuest, onLoadSeed, activeLayer, onUp
   }, [activeLayer, onUpdateLayer]);
 
   const isOpen = isGuest && !dismissed;
+
+  // S5 — the lens tip only makes sense once the guest has actually landed
+  // (chooser dismissed, one way or another) AND hasn't already engaged the
+  // lens or dismissed the tip itself this session.
+  const showLensTip = isGuest && dismissed && !lensTipUsed;
 
   // Shared by the button's `disabled` state and the keydown handler's
   // early-return, so both surfaces agree on when Shuffle is unavailable —
@@ -271,6 +296,49 @@ export default function GuestOnboarding({ isGuest, onLoadSeed, activeLayer, onUp
               <StarterCard key={seedKey} seedKey={seedKey} onSelect={handleSelect} />
             ))}
           </div>
+        </div>
+      )}
+
+      {/* S5 — Operation lens discoverability tip (D13, D17, BUILD BRIEF
+          element #4 "Always-on cut/engrave lens"). Fires only AFTER the
+          starter chooser is dismissed (see comment on the component
+          signature above) so guests never see three "look here" prompts at
+          once. Points at ColorViewControl (bottom-4 left-4, z-20) without
+          touching or rebuilding it (D13 — "surface the existing lens...
+          don't rebuild it"): sits just above it in the same corner, with a
+          small pointer triangle bridging the two. Auto-retires the moment
+          Studio's wrapped ColorViewControl `onSetMode` reports the guest
+          actually used the lens (`lensTipUsed` flips true) — the × here is
+          only for a guest who wants it gone without touching the lens. */}
+      {showLensTip && (
+        <div
+          // Same "no landmark role" reasoning as the chooser card above —
+          // aria-label + data-testid, not `role="dialog"`/`"region"`.
+          aria-label="Operation lens tip"
+          data-testid="guest-lens-tip"
+          className="absolute bottom-16 left-4 z-30 w-64 rounded-lg border border-hairline bg-paper/95 p-2.5 shadow-pop backdrop-blur-[2px]"
+        >
+          <div className="flex items-start justify-between gap-2">
+            <p className="text-[10px] leading-snug text-ink-soft">
+              This is a real fabrication file. The{' '}
+              <span className="font-semibold text-ink">Operation</span> lens below shows exactly
+              what the machine will cut, score, or engrave.
+            </p>
+            <button
+              type="button"
+              onClick={onDismissLensTip}
+              aria-label="Dismiss lens tip"
+              className="-mt-0.5 -mr-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded text-ink-soft transition-colors hover:bg-muted hover:text-ink"
+            >
+              ×
+            </button>
+          </div>
+          {/* Pointer triangle bridging down toward ColorViewControl. Purely
+              decorative. */}
+          <span
+            aria-hidden="true"
+            className="absolute -bottom-1.5 left-6 h-3 w-3 rotate-45 border-b border-r border-hairline bg-paper"
+          />
         </div>
       )}
     </>

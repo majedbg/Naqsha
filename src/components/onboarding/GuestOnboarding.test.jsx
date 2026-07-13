@@ -22,6 +22,7 @@ vi.mock('../../lib/onboarding/telemetry', () => ({
   ONBOARDING_EVENTS: {
     STARTER_SELECTED: 'onboarding:starter-selected',
     SHUFFLE_CLICK: 'onboarding:shuffle-click',
+    LENS_OPENED: 'onboarding:lens-opened',
   },
   emitOnboardingEvent: vi.fn(),
 }));
@@ -407,5 +408,68 @@ describe('GuestOnboarding — S4 "Surprise me" / Shuffle (D11)', () => {
       <GuestOnboarding isGuest onLoadSeed={vi.fn()} activeLayer={null} onUpdateLayer={vi.fn()} />
     );
     expect(SHUFFLE_BUTTON()).toBeDisabled();
+  });
+});
+
+describe('GuestOnboarding — S5 Operation lens discoverability tip (D13/D17)', () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+    vi.clearAllMocks();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const LENS_TIP = () => screen.queryByTestId('guest-lens-tip');
+
+  it('does not show the lens tip while the starter chooser is still open (avoids front-loading, D17)', () => {
+    render(<GuestOnboarding isGuest onLoadSeed={vi.fn()} />);
+    expect(CHOOSER()).toBeInTheDocument(); // chooser starts open
+    expect(LENS_TIP()).not.toBeInTheDocument();
+  });
+
+  it('shows the lens tip once the chooser has been dismissed, for a guest who has not used the lens yet', () => {
+    setOnboardingDismissed(true);
+    render(<GuestOnboarding isGuest onLoadSeed={vi.fn()} lensTipUsed={false} />);
+    expect(LENS_TIP()).toBeInTheDocument();
+    expect(screen.getByText(/real fabrication file/i)).toBeInTheDocument();
+  });
+
+  it('does not show the lens tip once the guest has already used the lens this session (lensTipUsed=true)', () => {
+    setOnboardingDismissed(true);
+    render(<GuestOnboarding isGuest onLoadSeed={vi.fn()} lensTipUsed={true} />);
+    expect(LENS_TIP()).not.toBeInTheDocument();
+  });
+
+  it('never shows the lens tip for a signed-in / non-guest user, even with the chooser dismissed', () => {
+    setOnboardingDismissed(true);
+    render(<GuestOnboarding isGuest={false} onLoadSeed={vi.fn()} lensTipUsed={false} />);
+    expect(LENS_TIP()).not.toBeInTheDocument();
+  });
+
+  it('the tip\'s dismiss (×) button calls onDismissLensTip without touching the chooser/starter state', () => {
+    setOnboardingDismissed(true);
+    const onDismissLensTip = vi.fn();
+    render(
+      <GuestOnboarding
+        isGuest
+        onLoadSeed={vi.fn()}
+        lensTipUsed={false}
+        onDismissLensTip={onDismissLensTip}
+      />
+    );
+    fireEvent.click(screen.getByRole('button', { name: /dismiss lens tip/i }));
+    expect(onDismissLensTip).toHaveBeenCalledTimes(1);
+    // Purely a lens-tip concern — the chooser stays dismissed, no starter load fired.
+    expect(isOnboardingDismissed()).toBe(true);
+  });
+
+  it('defaults lensTipUsed/onDismissLensTip so existing callers that omit them keep working (backward compatible)', () => {
+    setOnboardingDismissed(true);
+    expect(() => render(<GuestOnboarding isGuest onLoadSeed={vi.fn()} />)).not.toThrow();
+    // Default lensTipUsed=false → tip shows; the default no-op dismiss handler must not throw.
+    const dismissBtn = screen.queryByRole('button', { name: /dismiss lens tip/i });
+    expect(dismissBtn).toBeInTheDocument();
+    expect(() => fireEvent.click(dismissBtn)).not.toThrow();
   });
 });

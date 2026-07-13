@@ -56,6 +56,8 @@ const RUN_PLAN_PROFILE_LABELS = {
 import useLayers from "../lib/useLayers";
 import { getSeedDocument, DEFAULT_SEED_KEY } from "../lib/onboarding/seedDocuments";
 import GuestOnboarding from "../components/onboarding/GuestOnboarding";
+import { isLensTipSeen, markLensTipSeen } from "../lib/onboarding/lensTipStore";
+import { emitOnboardingEvent, ONBOARDING_EVENTS } from "../lib/onboarding/telemetry";
 import useLayerGroups from "../lib/useLayerGroups";
 import {
   addPanel,
@@ -913,6 +915,41 @@ export default function Studio({ submitOrg = null } = {}) {
     [layers, panels, operations, activeProfileId],
   );
   const lensEntry = use3DLensEntry({ colorView, threeD, captureDesign });
+
+  // Guest onboarding S5 — Operation lens discoverability tip (D13/D17,
+  // BUILD BRIEF element #4). Lazy-init from the per-tab store so a guest who
+  // already engaged the lens (or dismissed the tip) earlier this session
+  // never sees it flash back on a re-render. Threaded down to
+  // GuestOnboarding (which decides WHEN the tip is visible — only after its
+  // own chooser is dismissed) and consumed here in `handleSetColorViewMode`
+  // below (the actual event source: ColorViewControl is wired directly in
+  // Studio, not nested under GuestOnboarding).
+  const [lensTipUsed, setLensTipUsed] = useState(() => isLensTipSeen());
+
+  // Wraps the real lens-entry coordinator so a guest's FIRST engagement with
+  // the Operation/Material switch — even clicking the already-active
+  // "Operation" button, which doesn't change `colorView.mode` at all — marks
+  // the discoverability tip's job done and fires the `lens-opened` telemetry
+  // (D22) exactly once per session. Hooking at the call site (not diffing
+  // `colorView.mode` after the fact) is deliberate: diffing would miss the
+  // "click the already-active lens" case entirely.
+  const isGuestForLensTip = !user && tier === "guest";
+  const handleSetColorViewMode = useCallback(
+    (mode) => {
+      lensEntry.selectLens(mode);
+      if (isGuestForLensTip && !isLensTipSeen()) {
+        markLensTipSeen();
+        setLensTipUsed(true);
+        emitOnboardingEvent(ONBOARDING_EVENTS.LENS_OPENED, { mode });
+      }
+    },
+    [lensEntry, isGuestForLensTip]
+  );
+
+  const handleDismissLensTip = useCallback(() => {
+    markLensTipSeen();
+    setLensTipUsed(true);
+  }, []);
 
   // Motif-editor mini Preview (WI-P2-5, D5): the live full-canvas render inputs
   // the editor's throttled preview re-stamps through. MIRRORS RightPanel's
@@ -2008,8 +2045,12 @@ export default function Studio({ submitOrg = null } = {}) {
           // Suppress the material auto-prompt while the 3D lens is up.
           needsMaterialChoice={colorView.needsMaterialChoice && lensEntry.activeLens !== "3d"}
           // onSetMode routes through the entry coordinator: picking a 2D lens
-          // while in 3D exits 3D first (D14), then switches the underlying lens.
-          onSetMode={lensEntry.selectLens}
+          // while in 3D exits 3D first (D14), then switches the underlying
+          // lens. Wrapped (not `lensEntry.selectLens` directly) so a guest's
+          // first engagement here also retires the S5 lens discoverability
+          // tip + fires its telemetry (D13/D17/D22) — see
+          // `handleSetColorViewMode` above.
+          onSetMode={handleSetColorViewMode}
           onSelectMaterial={colorView.selectMaterial}
           // Cut/score visibility bias — Material lens only; 0 = accurate.
           markContrast={colorView.markContrast}
@@ -2073,6 +2114,8 @@ export default function Studio({ submitOrg = null } = {}) {
           onLoadSeed={loadDocumentLayers}
           activeLayer={layers.find((l) => l.id === selectedLayerId) || layers[0] || null}
           onUpdateLayer={updateLayer}
+          lensTipUsed={lensTipUsed}
+          onDismissLensTip={handleDismissLensTip}
         />
       </div>
 

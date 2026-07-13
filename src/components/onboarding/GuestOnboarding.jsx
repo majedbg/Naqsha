@@ -242,10 +242,14 @@ export default function GuestOnboarding({
     // 1. Clear every per-tab onboarding store this component doesn't own
     //    directly (dismissal/hero-cue/lens-tip/modulation-nudge) in one call.
     resetAllOnboarding();
-    // 2. Reset the canvas to the DEFAULT seed via the SAME document-load path
-    //    the starter cards above use (`onLoadSeed` === `loadDocumentLayers`)
-    //    — not the previous attendee's work-in-progress.
-    onLoadSeed?.(getSeedDocument(DEFAULT_SEED_KEY));
+    // 2. Reset the canvas to the DEFAULT seed for the next attendee. The FULL
+    //    document reset (layers/panels/glyphs/bg/optimizations/undo-history) +
+    //    the SYNCHRONOUS localStorage flush that closes the P0-C reload race
+    //    (D18) lives in Studio's `onNewSession` handler, which owns the pieces
+    //    spread across useLayers + useOptimizations + history. The seed doc is
+    //    built ONCE here and handed over so the persisted layers match the
+    //    layers loaded into state (no id drift from building it twice).
+    onNewSession?.(getSeedDocument(DEFAULT_SEED_KEY));
     // 3. Resync THIS component's own local state, which was seeded from the
     //    stores above only once at mount and would otherwise stay stale even
     //    though the underlying store is now cleared (a reload wouldn't fix
@@ -256,12 +260,9 @@ export default function GuestOnboarding({
     setNudgeVisible(false);
     paramBaselineRef.current = null;
     changedParamKeysRef.current = new Set();
-    // 4. Resync Studio-owned onboarding state this component can't reach
-    //    (lensTipUsed) — see the component doc comment above.
-    onNewSession?.();
     setConfirmingNewSession(false);
     emitOnboardingEvent(ONBOARDING_EVENTS.NEW_SESSION);
-  }, [onLoadSeed, onNewSession]);
+  }, [onNewSession]);
 
   useEffect(() => {
     if (!isGuest || nudgeSeen || !activeLayer) return;

@@ -106,7 +106,7 @@ import { syncWeightBand, supportsVariableWeight, isBandOperation } from "../lib/
 import { findMoirePartnerA } from "../lib/moirePair";
 import useCanvasSize, { loadCanvasState } from "../lib/hooks/useCanvasSize";
 import useUIState from "../lib/hooks/useUIState";
-import useOptimizations from "../lib/hooks/useOptimizations";
+import useOptimizations, { serializeApplied, hydrateApplied } from "../lib/hooks/useOptimizations";
 import useDesignPersistence from "../lib/hooks/useDesignPersistence";
 import useCloudPersistence from "../lib/hooks/useCloudPersistence";
 import useAutosave from "../lib/hooks/useAutosave";
@@ -328,6 +328,12 @@ export default function Studio({ submitOrg = null } = {}) {
     randomizeAll,
     randomizeAllParams,
     loadLayerSet,
+    // Guest onboarding P0-C (D18): the "New session" full-document reset. Unlike
+    // loadLayerSet/loadDocumentLayers it also resets panels/glyphs/bg AND flushes
+    // a mutually-consistent snapshot to localStorage synchronously (see
+    // handleOnboardingNewSession) so a reload-within-3s can't leak the prior
+    // attendee's doc.
+    resetDocument,
     bgColor,
     setBgColor,
     // Custom-glyph store (WI-3). The document-level map of imported motif glyphs.
@@ -952,16 +958,36 @@ export default function Studio({ submitOrg = null } = {}) {
     setLensTipUsed(true);
   }, []);
 
-  // P0-C — "New session / hand to next person" (D18). `lensTipUsed` above is
-  // seeded from `lensTipStore` only ONCE at mount, so GuestOnboarding's own
-  // `resetAllOnboarding()` clearing that store does not, by itself, make the
-  // lens tip re-eligible to show for the next attendee — this Studio-owned
-  // piece of state must be resynced explicitly. GuestOnboarding calls this
-  // via its `onNewSession` prop as the one hook into onboarding state it
-  // can't reach directly (everything else it owns and resyncs itself).
-  const handleOnboardingNewSession = useCallback(() => {
-    setLensTipUsed(false);
-  }, []);
+  // P0-C — "New session / hand to next person" (D18). GuestOnboarding calls this
+  // (via `onNewSession`) with the fresh default seed document; Studio owns the
+  // full document reset because the pieces live in Studio-owned hooks:
+  //   1. Drop undo history — the prior attendee's edits must not be reachable
+  //      through ⌘Z by the next person (same boundary loadDocumentLayers keeps).
+  //   2. Reset the optimize hook to "none applied" (hydrateOptimizations() with
+  //      no arg = the migration default) — this state lives in useOptimizations,
+  //      NOT useLayers, so useLayers' synchronous write clears the
+  //      `sonoform-optimizations` KEY while this clears the in-memory hook, and
+  //      the two stay in agreement (the rescheduled autosave then writes null).
+  //   3. `resetDocument` swaps layers/panels/glyphs/bg to the seed IN MEMORY and
+  //      flushes a mutually-consistent snapshot to localStorage SYNCHRONOUSLY,
+  //      beating the 3s autosave debounce (the actual P0-C reload-race fix).
+  //   4. Resync `lensTipUsed` — seeded from `lensTipStore` only ONCE at mount, so
+  //      resetAllOnboarding() (GuestOnboarding) clearing the store doesn't, by
+  //      itself, make the lens tip re-eligible for the next attendee.
+  const handleOnboardingNewSession = useCallback(
+    (seedDoc) => {
+      historyRef.current?.clear();
+      hydrateOptimizations();
+      // Pass the canonical "none applied" serialized blob so the synchronous
+      // localStorage flush inside resetDocument writes EXACTLY what the
+      // rescheduled autosave will emit once hydrateOptimizations()'s setState
+      // lands (serializeApplied of the just-hydrated none state) — memory and
+      // disk agree byte-for-byte, no >3s re-leak.
+      resetDocument(seedDoc, {}, serializeApplied(hydrateApplied()));
+      setLensTipUsed(false);
+    },
+    [resetDocument, hydrateOptimizations]
+  );
 
   // Motif-editor mini Preview (WI-P2-5, D5): the live full-canvas render inputs
   // the editor's throttled preview re-stamps through. MIRRORS RightPanel's

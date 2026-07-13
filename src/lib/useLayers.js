@@ -179,6 +179,45 @@ function loadLayers() {
   }
 }
 
+// Guest onboarding P0-C (D18): write a full, mutually-consistent document
+// snapshot to localStorage RIGHT NOW, bypassing the 3s autosave debounce. Used
+// by the "New session / hand to next person" reset so a workshop attendee who
+// reloads within the debounce window can't resurrect the previous attendee's
+// document. ALL sibling keys are written together so none is left dangling:
+// `normalizePanels(null, layers)` seeds a fresh Panel 1 and pins the layer's
+// panelId to it — exactly the pair a clean reload would rebuild — and
+// custom-glyphs / optimizations are cleared to their "fresh document" values
+// (`{}` / `null`) rather than removed (a bare removeItem on `sonoform-layers`
+// alone would orphan these siblings against a now-deleted doc). Returns the
+// normalized snapshot so the caller can mirror the SAME layers+panels into
+// React state, keeping memory and disk byte-identical (so the rescheduled
+// autosave that fires ~3s later writes the same clean state, not a re-leak).
+export function persistDocumentSnapshotNow({ layers, customGlyphs = {}, bgColor = DEFAULT_BG_COLOR, optimizations = null } = {}) {
+  const norm = normalizePanels(null, Array.isArray(layers) ? layers : []);
+  // Layers write is isolated (mirrors the debounced writer): a big source can
+  // throw QuotaExceededError; keep the smaller sibling writes running. For the
+  // reset this write REPLACES a key with a much smaller single-seed value, so it
+  // realistically never throws here — but if it did, the prior layers would
+  // remain on disk against the freshly-seeded panel (the same accepted S1 quota
+  // caveat the debounced writer carries); acceptable given the seed's tiny size.
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(norm.layers));
+  } catch (err) {
+    console.warn('Naqsha: could not persist layers to localStorage (quota exceeded?). Other document state was still saved.', err);
+  }
+  try {
+    localStorage.setItem(BG_STORAGE_KEY, bgColor);
+    savePanels(norm.panels);
+    localStorage.setItem(CUSTOM_GLYPHS_STORAGE_KEY, JSON.stringify(customGlyphs));
+    // `optimizations` is the caller's serialized applied-opts blob (Studio's
+    // useOptimizations owns that state, not this hook). It must MATCH what the
+    // rescheduled debounce writer will emit for the reset in-memory state, so
+    // the two agree byte-for-byte; the caller passes the "none applied" blob.
+    localStorage.setItem(OPTIMIZATIONS_STORAGE_KEY, JSON.stringify(optimizations ?? null));
+  } catch { /* storage full or unavailable */ }
+  return norm;
+}
+
 // randomPatchForDef is imported from ./params/paramOps (canonical single source
 // of truth). The old inline copies had a bug: randomValueForDef branched on
 // `def.type === 'select'` which missed `iconselect` defs (e.g. shape, fillMode)
@@ -970,11 +1009,55 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
     setLayers(newLayers.map((l) => migrateLayer(l)));
   }, []);
 
+  // Guest onboarding P0-C (D18): the "New session / hand to next person" reset.
+  // Unlike loadLayerSet (which only swaps `layers`), this resets the WHOLE
+  // per-tab document to a fresh single-seed default — layers, panels,
+  // custom-glyphs and background all in one shot — AND flushes it to
+  // localStorage SYNCHRONOUSLY (guests persist locally, tierLimits), so a
+  // reload within the 3s autosave-debounce window can't resurrect the previous
+  // attendee's work. The pending debounce is cancelled first so its stale
+  // (previous-attendee) closure can't fire AFTER this write and clobber it; the
+  // in-memory state below is set to the SAME normalized snapshot, so the fresh
+  // debounce this re-render reschedules writes byte-identical clean state.
+  // Optimizations live OUTSIDE this hook (Studio's useOptimizations); the
+  // synchronous write clears `sonoform-optimizations`, and the caller resets the
+  // in-memory optimize hook to "none" so the two stay in agreement.
+  const resetDocument = useCallback((newLayers, newCustomGlyphs = {}, nextOptimizations = null) => {
+    clearTimeout(saveTimer.current);
+    const migrated = (Array.isArray(newLayers) ? newLayers : []).map((l) => migrateLayer(l));
+    // Normalize the layers→panels pair EXACTLY ONCE and use that same snapshot
+    // for BOTH the synchronous disk write and the in-memory state, so memory and
+    // disk hold the identical fresh panel id — genuinely byte-identical, not just
+    // "each internally consistent" (a second normalize would mint a different
+    // Panel-1 id for disk, diverging until the debounce reconciled). When
+    // persisting, persistDocumentSnapshotNow normalizes + writes + returns the
+    // snapshot; otherwise (non-persisting caller) normalize directly for state.
+    const norm = persistToLocal
+      ? persistDocumentSnapshotNow({
+          layers: migrated,
+          customGlyphs: newCustomGlyphs,
+          bgColor: DEFAULT_BG_COLOR,
+          optimizations: nextOptimizations,
+        })
+      : normalizePanels(null, migrated);
+    // Sync nextId (mirror loadLayerSet) so a later addLayer can't collide.
+    let maxNum = 0;
+    for (const l of norm.layers) {
+      const match = l.id.match(/^layer-(\d+)-/);
+      if (match) maxNum = Math.max(maxNum, Number(match[1]));
+    }
+    nextId = maxNum + 1;
+    setLayers(norm.layers);
+    setPanels(norm.panels);
+    setCustomGlyphs(newCustomGlyphs);
+    setBgColor(DEFAULT_BG_COLOR);
+  }, [persistToLocal]);
+
   return {
     layers, addLayer, addImportedLayer, addTextLayer, addMotifLayer, addEtchLayer, duplicateLayer, removeLayer, updateLayer, reorderLayers,
     changeLayerPattern,
     randomizeLayer, randomizeAll, randomizeLayerParams, randomizeAllParams,
-    loadLayerSet, bgColor, setBgColor,
+    loadLayerSet, resetDocument, bgColor, setBgColor,
     // Custom-glyph store (WI-3): the map + additive accessor + bulk setter (the
     // restore/document-load seam). Studio threads customGlyphs into the render
     // (useCanvas), createDocumentIO (undo/redo), and every doc persistence path.

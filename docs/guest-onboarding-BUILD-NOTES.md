@@ -7,6 +7,69 @@ deferred, or otherwise noteworthy build decision. Companion docs:
 
 ---
 
+## FIX 2 — P0-C "New session" reload race: CLOSED (synchronous document flush)
+
+**Status:** FIXED + browser-verified. Was the OVERVIEW §7 item 2 fast-follow.
+
+**The bug (repro):** guests DO persist locally (`tierLimits.js` `guest.localStorage:true`),
+so a guest's edits ride the 3s-debounced `sonoform-layers` autosave (`useLayers.js`
+~L294-325). "New session / hand to next person" loaded the default seed into React
+state via `loadDocumentLayers` but performed NO synchronous localStorage write, so a
+`location.reload()` within ~3s tore down the context before the debounce fired and the
+**previous attendee's document leaked back**. Repro: plant a prior doc → New session →
+reload within ~1s → prior doc reappears.
+
+**The fix:** make the reset persist the document-being-loaded **synchronously**, and
+reset ALL sibling state so any later debounce write is byte-identical.
+- `useLayers.js` — new module fn **`persistDocumentSnapshotNow({layers, customGlyphs,
+  bgColor, optimizations})`**: writes `sonoform-layers` + `sonoform-panels` +
+  `sonoform-custom-glyphs` + `sonoform-optimizations` + `sonoform-bg-color` together,
+  using `normalizePanels(null, layers)` to seed a fresh Panel 1 and pin the seed
+  layer's `panelId` to it (no orphaned/dangling panelId — the HARD hazard). Returns the
+  normalized snapshot.
+- `useLayers.js` — new hook method **`resetDocument(layers, customGlyphs, optimizations)`**:
+  (1) `clearTimeout(saveTimer.current)` so the PRE-EXISTING pending debounce (a stale
+  closure over the previous attendee's state) can't fire after the synchronous write and
+  clobber it; (2) normalizes ONCE via `persistDocumentSnapshotNow` and uses that SAME
+  snapshot for both disk and in-memory `setLayers`/`setPanels`/`setCustomGlyphs`/
+  `setBgColor` (genuinely byte-identical memory↔disk — a naive second normalize would
+  mint a different Panel-1 id for disk; caught by the adversarial reviewer and fixed).
+- `Studio.jsx` — `handleOnboardingNewSession(seedDoc)` now: drops undo history
+  (`historyRef.clear()`), resets the optimize hook to "none applied" (`hydrateOptimizations()`
+  — that state lives in `useOptimizations`, not `useLayers`), calls
+  `resetDocument(seedDoc, {}, serializeApplied(hydrateApplied()))` (the passed opts blob
+  exactly matches what the rescheduled debounce emits post-`hydrateOptimizations`), and
+  resyncs `lensTipUsed`.
+- `GuestOnboarding.jsx` — the reset builds the default seed doc ONCE and routes it through
+  `onNewSession(doc)` (Studio owns the full reset) instead of the starter-card
+  `onLoadSeed` path, so persisted layers match the layers loaded into state (no id drift).
+
+**Scope safety:** `resetDocument` is used ONLY by the New-session path; share-link / cloud /
+draft / example loads still go through `loadDocumentLayers`→`loadLayerSet` untouched (they
+carry their own panels/glyphs — reseeding them would be a regression, deliberately avoided).
+
+**Why not `removeItem`:** a bare `removeItem('sonoform-layers')` would orphan the sibling
+keys against a now-deleted doc (dangling panelId etc.). The fix writes a mutually-consistent
+single-seed snapshot to every key instead.
+
+**Regression tests (leak reproduced then closed):**
+- `StudioRoute.newSession.test.jsx` — plants a rich previous-attendee doc (2 named panels,
+  a custom glyph, an APPLIED optimization, a custom bg), renders Studio as guest, confirms
+  New session, and asserts RIGHT AWAY (no timer advanced) that every key already holds the
+  fresh consistent default seed (no orphaned panelId, no leaked glyphs/opts, bg reset). A
+  second test advances timers 3500ms and re-asserts consistency AND that the panel/layer ids
+  are unchanged (guards the memory↔disk divergence the reviewer found).
+- `useLayers.newSession.test.js` — unit contract for `persistDocumentSnapshotNow`.
+- `GuestOnboarding.test.jsx` — updated: reset now hands the seed to `onNewSession`, not
+  `onLoadSeed`.
+
+**Browser-verified** (Chromium, 1440×900, guest): planted a voronoi prior doc → reloaded
+(app loaded it) → New session + confirm → localStorage synchronously held the phyllotaxis
+seed (consistent panels, glyphs `{}`, none-applied opts, default bg) → reload-immediately
+loaded the phyllotaxis seed, no voronoi leak. `npm test`: full suite green, no test weakened.
+
+---
+
 ## S5 — D14 non-color-only cut/engrave encoding: DEFERRED (safety-critical, needs review)
 
 **Status:** NOT implemented. Documented here per the slice instructions'

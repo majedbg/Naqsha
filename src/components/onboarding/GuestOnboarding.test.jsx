@@ -1104,7 +1104,7 @@ describe('GuestOnboarding — P0-C "New session / hand to next person" (D18)', (
     expect(isLensTipSeen()).toBe(true);
   });
 
-  it('confirming clears every onboarding store, reloads the DEFAULT seed via onLoadSeed, re-opens the chooser, and emits NEW_SESSION telemetry', () => {
+  it('confirming clears every onboarding store, hands the DEFAULT seed to onNewSession (Studio does the full document reset + synchronous persist, P0-C), re-opens the chooser, and emits NEW_SESSION telemetry', () => {
     const onLoadSeed = vi.fn();
     const onNewSession = vi.fn();
     // Arrange every store as "dismissed/seen" — simulating a guest mid-session.
@@ -1127,11 +1127,16 @@ describe('GuestOnboarding — P0-C "New session / hand to next person" (D18)', (
     fireEvent.click(NEW_SESSION_BUTTON());
     fireEvent.click(screen.getByRole('button', { name: /start new session/i }));
 
-    // Canvas reset to the DEFAULT seed via the SAME document-load path S2 uses.
-    expect(onLoadSeed).toHaveBeenCalledTimes(1);
-    expect(withoutIds(onLoadSeed.mock.calls[0][0])).toEqual(
+    // The DEFAULT seed document is built ONCE here and handed to Studio via
+    // onNewSession — Studio owns the full reset (layers/panels/glyphs/bg/opts/
+    // history) AND the SYNCHRONOUS localStorage flush that closes the P0-C
+    // reload race, since those pieces live in Studio-owned hooks. The starter
+    // cards' onLoadSeed path is NOT used for the reset.
+    expect(onNewSession).toHaveBeenCalledTimes(1);
+    expect(withoutIds(onNewSession.mock.calls[0][0])).toEqual(
       withoutIds(getSeedDocument(DEFAULT_SEED_KEY))
     );
+    expect(onLoadSeed).not.toHaveBeenCalled();
 
     // Every per-tab onboarding store cleared.
     expect(isOnboardingDismissed()).toBe(false);
@@ -1142,10 +1147,6 @@ describe('GuestOnboarding — P0-C "New session / hand to next person" (D18)', (
 
     // Chooser re-opened for the next attendee.
     expect(CHOOSER()).toBeInTheDocument();
-
-    // Studio-owned state this component can't reach (lensTipUsed) resynced
-    // via the onNewSession hook.
-    expect(onNewSession).toHaveBeenCalledTimes(1);
 
     // Telemetry emitted.
     expect(emitOnboardingEvent).toHaveBeenCalledWith(ONBOARDING_EVENTS.NEW_SESSION);

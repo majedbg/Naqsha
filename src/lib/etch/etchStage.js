@@ -30,19 +30,29 @@
 
 import { applyToneField, NEUTRAL_LEVELS } from './etchTone.js';
 import { ditherField, DEFAULT_DITHER_MODE } from './etchDither.js';
+import {
+  halftoneField,
+  DEFAULT_HALFTONE_FREQUENCY,
+  DEFAULT_HALFTONE_ANGLE,
+  DEFAULT_HALFTONE_SHAPE,
+} from './etchHalftone.js';
 
 /** Stage `type` discriminator for a Tone Stage (exposure/brightness/contrast + Levels). */
 export const STAGE_TONE = 'tone';
 
-/** Stage `type` discriminator for a Dither Stage (the screening producer, S3). */
+/** Stage `type` discriminator for a Dither Stage (a screening producer — FM dots, S3). */
 export const STAGE_DITHER = 'dither';
+
+/** Stage `type` discriminator for a Halftone Stage (a screening producer — AM dots, S5). */
+export const STAGE_HALFTONE = 'halftone';
 
 /**
  * The set of screening Stage types — the terminal field→bits producers. Dither
- * is the only one this slice; Halftone (S5) joins here and everything downstream
- * (the exactly-one rule, the rack badge) keeps working with no other change.
+ * (S3) and Halftone (S5) are the two; everything downstream (the exactly-one rule,
+ * the rack badge, the Hold clamp) is written against this set, so a future screen
+ * joins with a one-line addition here plus a screenStage case.
  */
-export const SCREENING_STAGE_TYPES = new Set([STAGE_DITHER]);
+export const SCREENING_STAGE_TYPES = new Set([STAGE_DITHER, STAGE_HALFTONE]);
 
 /** True when a Stage screens the field into 1-bit bits (vs transforms the field). */
 export function isScreeningStage(stage) {
@@ -84,11 +94,32 @@ export function createDitherStage() {
   };
 }
 
-/** Build a Stage of the given type (Tone or Dither this slice; S5+ add more). */
+/**
+ * Build a fresh Halftone Stage — the AM screening producer (S5). Defaults to a
+ * round dot at the default frequency (LPI) and the classic 45° angle. Not bypassed
+ * by default, so adding it immediately screens (replacing the plain cut or, per the
+ * exactly-one rule, deferring to an earlier non-bypassed screen).
+ */
+export function createHalftoneStage() {
+  return {
+    id: makeStageId(STAGE_HALFTONE),
+    type: STAGE_HALFTONE,
+    bypassed: false,
+    params: {
+      frequency: DEFAULT_HALFTONE_FREQUENCY,
+      angle: DEFAULT_HALFTONE_ANGLE,
+      shape: DEFAULT_HALFTONE_SHAPE,
+    },
+  };
+}
+
+/** Build a Stage of the given type (Tone / Dither / Halftone; S6+ add more). */
 export function createStage(type = STAGE_TONE) {
   switch (type) {
     case STAGE_DITHER:
       return createDitherStage();
+    case STAGE_HALFTONE:
+      return createHalftoneStage();
     case STAGE_TONE:
     default:
       return createToneStage();
@@ -132,18 +163,21 @@ export function activeScreeningStage(stack) {
 
 /**
  * Screen a field to 1-bit `bits` through a screening Stage (field→bits, the
- * terminal producer). `opts` carries the Etch's threshold/invert. Only Dither
- * exists this slice; Halftone (S5) adds one case.
+ * terminal producer). `opts` carries the Etch's threshold/invert AND the layer's
+ * `dpi` — Halftone needs it to convert its LPI frequency into a device-pixel cell
+ * (Dither's `size` is already device px, so it ignores dpi).
  *
  * @param {{gray:Float64Array, alpha, width:number, height:number}} field
  * @param {{type:string, params?:object}} stage
- * @param {{threshold?:number, invert?:boolean}} [opts]
+ * @param {{threshold?:number, invert?:boolean, dpi?:number}} [opts]
  * @returns {Uint8Array} bits
  */
 export function screenStage(field, stage, opts = {}) {
   switch (stage?.type) {
     case STAGE_DITHER:
       return ditherField(field, stage.params, opts);
+    case STAGE_HALFTONE:
+      return halftoneField(field, stage.params, opts);
     default:
       return null; // not a screening Stage — caller uses the plain fallback
   }

@@ -1,9 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { etchSourceToBitmap, ETCH_THRESHOLD } from './etchProcess.js';
 import { toGrayField, globalMask } from '../extraction/preprocess.js';
-import { createToneStage, createDitherStage, applyFieldStages, screenStage, STAGE_TONE } from './etchStage.js';
+import { createToneStage, createDitherStage, createHalftoneStage, applyFieldStages, screenStage, STAGE_TONE } from './etchStage.js';
 import { NEUTRAL_LEVELS } from './etchTone.js';
 import { DITHER_BAYER_4 } from './etchDither.js';
+import { halftoneField, HALFTONE_ROUND } from './etchHalftone.js';
+import { DEFAULT_ETCH_DPI } from './etchLayer.js';
 
 // Build a tiny RGBA ImageData-like buffer from a 2D array of gray values.
 function grayImage(rows) {
@@ -163,5 +165,78 @@ describe('etchSourceToBitmap — screening semantics (S3, #82)', () => {
     let inkNo = 0;
     for (let j = 0; j < withGain.length; j++) { inkWith += withGain[j]; inkNo += noGain[j]; }
     expect(inkWith).toBeLessThan(inkNo);
+  });
+});
+
+// Halftone screening at the pipeline seam (S5, #84): a Halftone Stage produces the
+// bits exactly as its kernel would, the DPI travels from the process opts into the
+// screen (LPI→cell), and a Dither+Halftone stack still screens exactly once.
+describe('etchSourceToBitmap — Halftone screening + DPI threading (S5, #84)', () => {
+  // A vertical gradient (top dark → bottom light) so the AM dots vary in radius.
+  const img = (() => {
+    const w = 32;
+    const h = 32;
+    const data = new Uint8ClampedArray(w * h * 4);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const v = Math.round((y / (h - 1)) * 255);
+        const i = (y * w + x) * 4;
+        data[i] = data[i + 1] = data[i + 2] = v;
+        data[i + 3] = 255;
+      }
+    }
+    return { data, width: w, height: h };
+  })();
+
+  function halftoneStage(params = {}) {
+    const s = createHalftoneStage();
+    s.params = { frequency: 48, angle: 30, shape: HALFTONE_ROUND, ...params };
+    return s;
+  }
+
+  it('a present Halftone Stage PRODUCES the AM-dot bits, replacing the plain cut', () => {
+    const stack = [halftoneStage()];
+    const { bits } = etchSourceToBitmap(img, { stack, dpi: 254 });
+    const field = applyFieldStages(toGrayField(img), stack);
+    const expected = halftoneField(field, stack[0].params, { threshold: ETCH_THRESHOLD, invert: false, dpi: 254 });
+    expect(Array.from(bits)).toEqual(Array.from(expected));
+    // …and differs from the plain global cut (a genuine dot field, not a block).
+    const fallback = globalMask(toGrayField(img), ETCH_THRESHOLD, false);
+    expect(Array.from(bits)).not.toEqual(Array.from(fallback));
+  });
+
+  it('threads DPI from the process opts into the screen (LPI→device-px cell)', () => {
+    // cell = dpi/frequency, so a DPI change alters the screened bits. Two distinct
+    // DPIs must produce two distinct bitmaps for the SAME Halftone Stage.
+    const stack = [halftoneStage({ frequency: 48 })];
+    const hi = etchSourceToBitmap(img, { stack, dpi: 254 }).bits;
+    const lo = etchSourceToBitmap(img, { stack, dpi: 96 }).bits;
+    expect(Array.from(hi)).not.toEqual(Array.from(lo));
+    // Each matches its kernel run at the same DPI — the value truly flows through.
+    const field = applyFieldStages(toGrayField(img), stack);
+    expect(Array.from(hi)).toEqual(Array.from(halftoneField(field, stack[0].params, { threshold: ETCH_THRESHOLD, invert: false, dpi: 254 })));
+    expect(Array.from(lo)).toEqual(Array.from(halftoneField(field, stack[0].params, { threshold: ETCH_THRESHOLD, invert: false, dpi: 96 })));
+  });
+
+  it('defaults DPI to DEFAULT_ETCH_DPI (254) when opts omit it', () => {
+    const stack = [halftoneStage()];
+    const omitted = etchSourceToBitmap(img, { stack }).bits;
+    const explicit = etchSourceToBitmap(img, { stack, dpi: DEFAULT_ETCH_DPI }).bits;
+    expect(Array.from(omitted)).toEqual(Array.from(explicit));
+  });
+
+  it('Dither + Halftone in one stack → the FIRST non-bypassed screens (exactly one)', () => {
+    const dither = createDitherStage();
+    const halftone = halftoneStage();
+    // Halftone first → it screens; the Dither is inactive (would differ if it won).
+    const hFirst = etchSourceToBitmap(img, { stack: [halftone, dither], dpi: 254 }).bits;
+    const onlyH = etchSourceToBitmap(img, { stack: [halftone], dpi: 254 }).bits;
+    expect(Array.from(hFirst)).toEqual(Array.from(onlyH));
+    // Dither first → it screens; swapping order swaps the active screen (clean swap).
+    const dFirst = etchSourceToBitmap(img, { stack: [dither, halftone], dpi: 254 }).bits;
+    const onlyD = etchSourceToBitmap(img, { stack: [dither], dpi: 254 }).bits;
+    expect(Array.from(dFirst)).toEqual(Array.from(onlyD));
+    // The two active screens genuinely differ (proves the swap changed something).
+    expect(Array.from(hFirst)).not.toEqual(Array.from(dFirst));
   });
 });

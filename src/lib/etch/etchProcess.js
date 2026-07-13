@@ -34,6 +34,7 @@
 import { toGrayField, globalMask } from '../extraction/preprocess.js';
 import { applyFieldStages, activeScreeningStage, screenStage } from './etchStage.js';
 import { applyHighlightHold } from './etchHold.js';
+import { DEFAULT_ETCH_DPI } from './etchLayer.js';
 
 /**
  * The plain global cut screening applies at the TAIL. Luma < ETCH_THRESHOLD
@@ -60,11 +61,16 @@ export const ETCH_THRESHOLD = 128;
  * tests green. The `stack` config is plain data, so it travels unchanged to the
  * Web Worker where the heavy pixel work runs.
  *
+ * `dpi` is the Etch layer's engrave resolution — a screening Stage that measures
+ * its cell in physical units (Halftone's LPI frequency) needs it to convert to
+ * device pixels (cell = dpi/frequency); it defaults to DEFAULT_ETCH_DPI and is
+ * inert for screens already in device px (Dither's `size`, the plain cut).
+ *
  * @param {{data: Uint8ClampedArray, width: number, height: number}} imageData
- * @param {{ threshold?: number, invert?: boolean, stack?: Array, hold?: {enabled?:boolean, cutoff?:number} }} [opts]
+ * @param {{ threshold?: number, invert?: boolean, stack?: Array, hold?: {enabled?:boolean, cutoff?:number}, dpi?: number }} [opts]
  * @returns {EtchBitmap & { held: Uint8Array }}
  */
-export function etchSourceToBitmap(imageData, { threshold = ETCH_THRESHOLD, invert = false, stack, hold } = {}) {
+export function etchSourceToBitmap(imageData, { threshold = ETCH_THRESHOLD, invert = false, stack, hold, dpi = DEFAULT_ETCH_DPI } = {}) {
   // Capture the SOURCE luma up front — Highlight Hold clamps on THIS, not the
   // field the Stages shape. applyFieldStages / applyToneField / globalMask never
   // mutate this array in place (Tone returns new fields; globalMask reads only),
@@ -75,7 +81,7 @@ export function etchSourceToBitmap(imageData, { threshold = ETCH_THRESHOLD, inve
   // global cut. Either way `bits` is materialized once — the single-source buffer.
   const screen = activeScreeningStage(stack);
   const bits = screen
-    ? screenStage(field, screen, { threshold, invert })
+    ? screenStage(field, screen, { threshold, invert, dpi })
     : globalMask(field, threshold, invert);
   // Highlight Hold — the fixed terminal clamp (never a Stage), applied AFTER
   // screening on the SOURCE luma. Returns the held mask for the preview overlay;

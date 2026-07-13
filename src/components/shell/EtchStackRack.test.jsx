@@ -15,6 +15,9 @@ function toneStack() {
 function ditherStage(id = 'd1', bypassed = false) {
   return { id, type: 'dither', bypassed, params: { mode: 'floyd-steinberg', size: 1 } };
 }
+function halftoneStage(id = 'h1', bypassed = false) {
+  return { id, type: 'halftone', bypassed, params: { frequency: 30, angle: 45, shape: 'round' } };
+}
 
 describe('EtchStackRack', () => {
   it('self-hides for a non-Etch layer', () => {
@@ -151,5 +154,61 @@ describe('EtchStackRack', () => {
     expect(within(rows[0]).queryByTestId('stage-inactive')).toBeNull(); // Tone above the screen: active
     expect(within(rows[1]).queryByTestId('stage-inactive')).toBeNull(); // the active screen itself
     expect(within(rows[2]).getByTestId('stage-inactive')).toBeInTheDocument(); // Tone below: inactive
+  });
+
+  // ── Halftone Stage (S5, #84) ──────────────────────────────────────────────
+  it('adds a Halftone Stage through the canonical params write', () => {
+    const onUpdateLayer = vi.fn();
+    render(<EtchStackRack layer={etchLayer([])} onUpdateLayer={onUpdateLayer} />);
+    fireEvent.click(screen.getByTestId('etch-stack-add-halftone'));
+    const patch = onUpdateLayer.mock.calls[0][1];
+    expect(patch.params.stack).toHaveLength(1);
+    expect(patch.params.stack[0].type).toBe('halftone');
+    expect(patch.params.stack[0].params.frequency).toBe(30);
+    expect(patch.params.stack[0].params.angle).toBe(45);
+    expect(patch.params.stack[0].params.shape).toBe('round');
+  });
+
+  it('labels a Halftone Stage "Halftone" and never leaks a forbidden motif word', () => {
+    render(<EtchStackRack layer={etchLayer([halftoneStage()])} onUpdateLayer={() => {}} />);
+    const rack = screen.getByTestId('etch-stack-rack');
+    expect(rack).toHaveTextContent(/Halftone/);
+    expect(rack.textContent).not.toMatch(/\b(Chain|Block|effect|filter|device|pass)\b/i);
+  });
+
+  it('the Halftone body exposes frequency, angle, and shape (round/diamond) controls', () => {
+    render(<EtchStackRack layer={etchLayer([halftoneStage()])} onUpdateLayer={() => {}} />);
+    fireEvent.click(screen.getByTestId('etch-stage-expand'));
+    const body = screen.getByTestId('etch-halftone-body');
+    expect(within(body).getByTestId('halftone-frequency')).toBeInTheDocument();
+    expect(within(body).getByTestId('halftone-angle')).toBeInTheDocument();
+    const shape = within(body).getByTestId('halftone-shape');
+    const values = Array.from(shape.querySelectorAll('option')).map((o) => o.value);
+    expect(values).toEqual(['round', 'diamond']);
+  });
+
+  it('changing frequency / angle / shape patches only that param', () => {
+    const onUpdateLayer = vi.fn();
+    render(<EtchStackRack layer={etchLayer([halftoneStage()])} onUpdateLayer={onUpdateLayer} />);
+    fireEvent.click(screen.getByTestId('etch-stage-expand'));
+    fireEvent.change(screen.getByTestId('halftone-frequency'), { target: { value: '60' } });
+    expect(onUpdateLayer.mock.calls[0][1].params.stack[0].params.frequency).toBe(60);
+    fireEvent.change(screen.getByTestId('halftone-angle'), { target: { value: '15' } });
+    expect(onUpdateLayer.mock.calls[1][1].params.stack[0].params.angle).toBe(15);
+    fireEvent.change(screen.getByTestId('halftone-shape'), { target: { value: 'diamond' } });
+    expect(onUpdateLayer.mock.calls[2][1].params.stack[0].params.shape).toBe('diamond');
+  });
+
+  it('a Halftone below an active Dither is badged inactive (Halftone recognised as a screen)', () => {
+    // The exactly-one rule: a Dither screens first, so the Halftone below it is a
+    // non-winning screen. Regression guard for the tooltip/label treating Halftone
+    // as a screening Stage (isScreeningStage), not falling to the post-screen text.
+    render(<EtchStackRack layer={etchLayer([ditherStage('d1'), halftoneStage('h1')])} onUpdateLayer={() => {}} />);
+    const rows = screen.getAllByTestId('etch-stage-row');
+    expect(within(rows[0]).queryByTestId('stage-inactive')).toBeNull(); // Dither is the active screen
+    const badge = within(rows[1]).getByTestId('stage-inactive'); // Halftone is inactive
+    expect(badge).toBeInTheDocument();
+    // The tooltip must read as "another screen already screens", not "post-screen".
+    expect(badge.getAttribute('title')).toMatch(/screen/i);
   });
 });

@@ -104,5 +104,7 @@ export async function resolveEtchBitmap(layer, canvasW, canvasH, bridgeOpts = {}
   // the worker where the heavy per-pixel Stage work runs, then screening cuts the
   // shaped field and the Hold clamps the highlights. `bits` stays the ONE buffer
   // both canvas and export read; `held` rides alongside for the preview overlay.
-  return computeEtchBitmap(imageData, { stack, hold }, bridgeOpts);
+  // `dpi` rides in the options too: a screening Stage measured in physical units
+  // (Halftone's LPI frequency, S5) converts to device px via cell = dpi/frequency.
+  return computeEtchBitmap(imageData, { stack, hold, dpi }, bridgeOpts);
 }

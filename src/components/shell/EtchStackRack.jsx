@@ -19,11 +19,15 @@ import { isEtchLayer } from '../../lib/etch/etchLayer';
 import {
   createToneStage,
   createDitherStage,
+  createHalftoneStage,
   STAGE_TONE,
   STAGE_DITHER,
+  STAGE_HALFTONE,
+  isScreeningStage,
   activeScreeningIndex,
 } from '../../lib/etch/etchStage';
 import { DITHER_MODES } from '../../lib/etch/etchDither';
+import { HALFTONE_SHAPES } from '../../lib/etch/etchHalftone';
 import { lumaHistogram } from '../../lib/etch/etchTone';
 import {
   addStage,
@@ -33,12 +37,20 @@ import {
   patchStageParams,
 } from '../../lib/etch/etchStackEditor';
 
-const STAGE_LABEL = { [STAGE_TONE]: 'Tone', [STAGE_DITHER]: 'Dither' };
+const STAGE_LABEL = { [STAGE_TONE]: 'Tone', [STAGE_DITHER]: 'Dither', [STAGE_HALFTONE]: 'Halftone' };
 
 // The device-pixels-per-dither-cell range for the size slider (matches the
 // reference "size" control): 1 = full-resolution dots, up to a coarse ceiling.
 const DITHER_SIZE_MIN = 1;
 const DITHER_SIZE_MAX = 8;
+
+// Halftone screen ranges: frequency in LINES/INCH (coarse verifiable dots → fine),
+// and angle in DEGREES (a full turn; the lattice repeats every 90°, but exposing
+// 0–90 keeps the control obvious).
+const HALFTONE_FREQ_MIN = 10;
+const HALFTONE_FREQ_MAX = 120;
+const HALFTONE_ANGLE_MIN = 0;
+const HALFTONE_ANGLE_MAX = 90;
 
 // Shared gamma range for BOTH the Tone gamma slider and the Levels midtone
 // handle (both bound to the one levels.gamma). Kept in sync so a handle-set
@@ -269,6 +281,62 @@ function DitherStageBody({ stage, onPatch }) {
   );
 }
 
+// The Halftone Stage body: the AM screen's FREQUENCY (lines/inch → cell size via
+// the Etch DPI), ANGLE (degrees), and dot SHAPE (round / diamond). A Halftone
+// Stage is the screening producer — an alternative to Dither — so its controls
+// choose HOW the tonal gradient becomes a regular lattice of radius-modulated dots.
+function HalftoneStageBody({ stage, onPatch }) {
+  const p = stage.params || {};
+  const frequency = p.frequency ?? HALFTONE_FREQ_MIN;
+  const angle = p.angle ?? 0;
+  const shape = p.shape ?? HALFTONE_SHAPES[0].value;
+  return (
+    <div className="space-y-1.5 pt-1" data-testid="etch-halftone-body">
+      <label className="flex items-center gap-2 text-[11px] text-ink-soft">
+        <span className="w-16 shrink-0">Frequency</span>
+        <input
+          type="range"
+          min={HALFTONE_FREQ_MIN}
+          max={HALFTONE_FREQ_MAX}
+          step={1}
+          value={frequency}
+          data-testid="halftone-frequency"
+          onChange={(e) => onPatch({ frequency: Number(e.target.value) })}
+          className="h-1 flex-1 accent-violet"
+        />
+        <span className="w-12 shrink-0 text-right tabular-nums text-ink num">{frequency} lpi</span>
+      </label>
+      <label className="flex items-center gap-2 text-[11px] text-ink-soft">
+        <span className="w-16 shrink-0">Angle</span>
+        <input
+          type="range"
+          min={HALFTONE_ANGLE_MIN}
+          max={HALFTONE_ANGLE_MAX}
+          step={1}
+          value={angle}
+          data-testid="halftone-angle"
+          onChange={(e) => onPatch({ angle: Number(e.target.value) })}
+          className="h-1 flex-1 accent-violet"
+        />
+        <span className="w-12 shrink-0 text-right tabular-nums text-ink num">{angle}°</span>
+      </label>
+      <label className="flex items-center gap-2 text-[11px] text-ink-soft">
+        <span className="w-16 shrink-0">Shape</span>
+        <select
+          data-testid="halftone-shape"
+          value={shape}
+          onChange={(e) => onPatch({ shape: e.target.value })}
+          className="flex-1 rounded-xs border border-hairline bg-paper-warm px-1 py-0.5 text-[11px] text-ink"
+        >
+          {HALFTONE_SHAPES.map((s) => (
+            <option key={s.value} value={s.value}>{s.label}</option>
+          ))}
+        </select>
+      </label>
+    </div>
+  );
+}
+
 /**
  * The Etch Stack rack. Self-hides for non-Etch layers so the Inspector can drop
  * it in unconditionally.
@@ -297,6 +365,11 @@ export default function EtchStackRack({ layer, onUpdateLayer }) {
   };
   const onAddDither = () => {
     const stage = createDitherStage();
+    writeStack(addStage(stack, stage));
+    setExpanded((s) => new Set(s).add(stage.id));
+  };
+  const onAddHalftone = () => {
+    const stage = createHalftoneStage();
     writeStack(addStage(stack, stage));
     setExpanded((s) => new Set(s).add(stage.id));
   };
@@ -376,7 +449,7 @@ export default function EtchStackRack({ layer, onUpdateLayer }) {
                       <span
                         data-testid="stage-inactive"
                         title={
-                          stage.type === STAGE_DITHER
+                          isScreeningStage(stage)
                             ? 'A screening Stage above this one already screens — only one screens at a time'
                             : 'This Stage is below the active screen (post-screen) — it does not run yet'
                         }
@@ -415,6 +488,9 @@ export default function EtchStackRack({ layer, onUpdateLayer }) {
                   {isOpen && stage.type === STAGE_DITHER && (
                     <DitherStageBody stage={stage} onPatch={(patch) => onPatch(stage.id, patch)} />
                   )}
+                  {isOpen && stage.type === STAGE_HALFTONE && (
+                    <HalftoneStageBody stage={stage} onPatch={(patch) => onPatch(stage.id, patch)} />
+                  )}
                 </li>
               );
             })}
@@ -436,6 +512,14 @@ export default function EtchStackRack({ layer, onUpdateLayer }) {
               className="flex-1 rounded-xs border border-hairline bg-paper-warm px-2 py-1 text-[11px] font-medium text-ink-soft transition-colors hover:border-violet hover:text-ink"
             >
               + Dither Stage
+            </button>
+            <button
+              type="button"
+              data-testid="etch-stack-add-halftone"
+              onClick={onAddHalftone}
+              className="flex-1 rounded-xs border border-hairline bg-paper-warm px-2 py-1 text-[11px] font-medium text-ink-soft transition-colors hover:border-violet hover:text-ink"
+            >
+              + Halftone Stage
             </button>
           </div>
         </>

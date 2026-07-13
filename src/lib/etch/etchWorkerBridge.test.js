@@ -1,8 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
 import { computeEtchBitmap } from './etchWorkerBridge.js';
 import { etchSourceToBitmap } from './etchProcess.js';
-import { createToneStage, createDitherStage } from './etchStage.js';
+import { createToneStage, createDitherStage, createHalftoneStage } from './etchStage.js';
 import { DITHER_BAYER_4 } from './etchDither.js';
+import { HALFTONE_ROUND } from './etchHalftone.js';
 
 function grayImage(rows) {
   const height = rows.length;
@@ -166,6 +167,60 @@ describe('worker-path Dither Stage parity (S3, #82)', () => {
   });
 
   it('computeEtchBitmap forwards a Dither Stage across a structured-clone boundary', async () => {
+    class CloningWorker {
+      postMessage(msg) {
+        const clone = structuredClone(msg);
+        const { bits, width, height } = etchSourceToBitmap(clone.image, clone.options);
+        const back = structuredClone({ type: 'result', id: clone.id, bits, width, height });
+        queueMicrotask(() => this.onmessage({ data: back }));
+      }
+      terminate() {}
+    }
+    const viaWorker = await computeEtchBitmap(source, options, { workerFactory: () => new CloningWorker() });
+    const inline = etchSourceToBitmap(source, options);
+    expect(Array.from(viaWorker.bits)).toEqual(Array.from(inline.bits));
+  });
+});
+
+// A Halftone Stage AND its `dpi` travel main→worker inside `options` (S5, #84).
+// The DPI is what converts the LPI frequency into the device-pixel cell, so if the
+// worker path dropped `options.dpi` the halftone would screen at the wrong (or
+// default) frequency and diverge from inline. These pin BOTH the stack and the dpi
+// crossing the structured-clone boundary.
+describe('worker-path Halftone Stage parity (S5, #84)', () => {
+  const source = grayImage([
+    [0, 255, 60, 200, 32, 220, 96, 160],
+    [40, 90, 160, 210, 128, 64, 192, 16],
+    [130, 120, 128, 127, 200, 30, 150, 90],
+    [10, 245, 133, 122, 70, 205, 118, 48],
+  ]);
+  const stage = createHalftoneStage();
+  stage.params = { frequency: 96, angle: 30, shape: HALFTONE_ROUND };
+  // A NON-default dpi so a dropped-dpi regression shows: inline defaults to 254,
+  // so if the worker lost dp:120 it would produce the 254 bits and mismatch.
+  const options = { stack: [stage], dpi: 120 };
+
+  it('the REAL etch.worker.js screens a Halftone Stack+dpi identically to the inline path', async () => {
+    const posted = [];
+    const prevSelf = globalThis.self;
+    globalThis.self = { onmessage: null, postMessage: (msg) => posted.push(msg) };
+    try {
+      vi.resetModules();
+      await import('./etch.worker.js');
+      const payload = structuredClone({ type: 'etch', id: 21, image: source, options });
+      globalThis.self.onmessage({ data: payload });
+    } finally {
+      globalThis.self = prevSelf;
+    }
+    const result = posted.find((m) => m.type === 'result' && m.id === 21);
+    const inline = etchSourceToBitmap(source, options);
+    expect(result).toBeTruthy();
+    expect(Array.from(result.bits)).toEqual(Array.from(inline.bits));
+    // Guard: the dpi genuinely mattered — the same stack at 254 differs from at 120.
+    expect(Array.from(inline.bits)).not.toEqual(Array.from(etchSourceToBitmap(source, { stack: [stage], dpi: 254 }).bits));
+  });
+
+  it('computeEtchBitmap forwards a Halftone Stage + dpi across a structured-clone boundary', async () => {
     class CloningWorker {
       postMessage(msg) {
         const clone = structuredClone(msg);

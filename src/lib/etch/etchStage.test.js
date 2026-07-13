@@ -3,8 +3,10 @@ import { globalMask } from '../extraction/preprocess.js';
 import {
   STAGE_TONE,
   STAGE_DITHER,
+  STAGE_HALFTONE,
   createToneStage,
   createDitherStage,
+  createHalftoneStage,
   createStage,
   applyStage,
   applyFieldStages,
@@ -15,6 +17,13 @@ import {
 } from './etchStage.js';
 import { applyToneField, NEUTRAL_LEVELS } from './etchTone.js';
 import { DITHER_FS, DITHER_BAYER_4, orderedBayerBits, BAYER_4 } from './etchDither.js';
+import {
+  HALFTONE_ROUND,
+  DEFAULT_HALFTONE_FREQUENCY,
+  DEFAULT_HALFTONE_ANGLE,
+  DEFAULT_HALFTONE_SHAPE,
+  halftoneField,
+} from './etchHalftone.js';
 
 function field(rows) {
   const height = rows.length;
@@ -202,5 +211,71 @@ describe('screenStage — dispatch a screening Stage to its kernel', () => {
     stage.params = { mode: DITHER_BAYER_4, size: 1 };
     const bits = screenStage(f, stage, { threshold: 128, invert: false });
     expect(Array.from(bits)).toEqual(Array.from(orderedBayerBits(f, { matrix: BAYER_4, invert: false })));
+  });
+
+  it('a Halftone Stage produces the AM-dot bits its params imply, threading DPI from opts', () => {
+    const rows = Array.from({ length: 16 }, (_, y) => Array.from({ length: 16 }, (_, x) => (x * 16 + y) % 256));
+    const f = field(rows);
+    const stage = createHalftoneStage();
+    stage.params = { frequency: 48, angle: 30, shape: HALFTONE_ROUND };
+    const bits = screenStage(f, stage, { threshold: 128, invert: false, dpi: 254 });
+    expect(Array.from(bits)).toEqual(Array.from(halftoneField(f, stage.params, { threshold: 128, invert: false, dpi: 254 })));
+  });
+});
+
+// ── Halftone Stage (S5, #84) — the AM screening alternative to Dither ─────────
+// A Halftone Stage screens the field into 1-bit dots too, so it is a SCREENING
+// Stage under the identical S3 rule: exactly one active at a time. These pin that
+// the seam treats Halftone as a screen and that a Dither↔Halftone swap is a clean
+// single-active-screen switch (no code beyond the type set + a screenStage case).
+describe('the Halftone Stage model', () => {
+  it('createHalftoneStage is a non-bypassed screening Stage with neutral defaults', () => {
+    const s = createHalftoneStage();
+    expect(s.type).toBe(STAGE_HALFTONE);
+    expect(s.bypassed).toBe(false);
+    expect(typeof s.id).toBe('string');
+    expect(s.params.frequency).toBe(DEFAULT_HALFTONE_FREQUENCY);
+    expect(s.params.angle).toBe(DEFAULT_HALFTONE_ANGLE);
+    expect(s.params.shape).toBe(DEFAULT_HALFTONE_SHAPE);
+  });
+
+  it('createStage dispatches to the halftone builder', () => {
+    expect(createStage(STAGE_HALFTONE).type).toBe(STAGE_HALFTONE);
+  });
+
+  it('a Halftone Stage passed to applyStage is a field no-op (screening runs at the terminal)', () => {
+    const f = field([[10, 200]]);
+    expect(applyStage(f, createHalftoneStage())).toBe(f);
+  });
+
+  it('isScreeningStage is true for halftone (it screens the field into bits)', () => {
+    expect(isScreeningStage(createHalftoneStage())).toBe(true);
+  });
+});
+
+describe('Dither ↔ Halftone — exactly ONE active screen (clean swap)', () => {
+  it('a Halftone before a Dither is the active screen; the Dither is inactive', () => {
+    const halftone = createHalftoneStage();
+    const dither = createDitherStage();
+    const stack = [halftone, dither];
+    expect(activeScreeningStage(stack)).toBe(halftone); // first non-bypassed wins
+    expect(activeScreeningIndex(stack)).toBe(0);
+  });
+
+  it('bypassing the winning Halftone hands the screen to the Dither below it (swap)', () => {
+    const halftone = createHalftoneStage();
+    const dither = createDitherStage();
+    const stack = [halftone, dither];
+    halftone.bypassed = true;
+    expect(activeScreeningStage(stack)).toBe(dither);
+    expect(activeScreeningIndex(stack)).toBe(1);
+  });
+
+  it('with a Dither AND a Halftone present, exactly one screens — never both', () => {
+    const dither = createDitherStage();
+    const halftone = createHalftoneStage();
+    // Whichever is first non-bypassed is THE screen; the other is inactive.
+    expect(activeScreeningStage([dither, halftone])).toBe(dither);
+    expect(activeScreeningStage([halftone, dither])).toBe(halftone);
   });
 });

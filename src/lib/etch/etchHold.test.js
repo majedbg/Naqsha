@@ -10,13 +10,14 @@ import {
 import { etchSourceToBitmap } from './etchProcess.js';
 import { toGrayField } from '../extraction/preprocess.js';
 import { encodeEtchPNG } from './etchBitmap.js';
-import { createDitherStage } from './etchStage.js';
+import { createDitherStage, createHalftoneStage } from './etchStage.js';
 import {
   DITHER_FS,
   DITHER_BAYER_2,
   DITHER_BAYER_4,
   DITHER_BAYER_8,
 } from './etchDither.js';
+import { HALFTONE_ROUND, HALFTONE_DIAMOND } from './etchHalftone.js';
 
 // A flat RGBA image of one gray value, every pixel opaque. Near-white sources are
 // the mirror-danger case: a Dither Stage renders any sub-255 luma as proportional
@@ -78,6 +79,31 @@ describe('Highlight Hold — the post-screening white guarantee (decision 5)', (
 
       // (b) GUARANTEE: Hold ON forces ZERO ink anywhere source luma ≥ cutoff.
       const on = etchSourceToBitmap(img, { stack, hold: { enabled: true, cutoff: CUTOFF } });
+      for (let i = 0; i < on.bits.length; i++) {
+        if (gray.gray[i] >= CUTOFF) expect(on.bits[i]).toBe(0);
+      }
+    });
+  }
+
+  // The Hold clamp is generic + terminal, so it must guarantee the held band above
+  // an AM Halftone screen exactly as it does above Dither (S5, #84). Same recipe:
+  // prove the threat (Hold OFF scatters dots into the highlight) then the guarantee
+  // (Hold ON → zero dots above the cutoff). A dot screen renders sub-255 luma as a
+  // proportional-radius dot, so luma 210 places small dots even in a highlight.
+  for (const shape of [HALFTONE_ROUND, HALFTONE_DIAMOND]) {
+    it(`Halftone ${shape}: dots land above the cutoff with Hold OFF, ZERO with Hold ON`, () => {
+      const img = flatGrayImage(210, 32, 32);
+      const gray = toGrayField(img);
+      const stage = createHalftoneStage();
+      stage.params = { frequency: 96, angle: 45, shape }; // fine screen → many dot centres
+      const stack = [stage];
+
+      // (a) THREAT: Hold OFF must place at least one ink dot above the cutoff.
+      const off = etchSourceToBitmap(img, { stack, dpi: 254, hold: { enabled: false, cutoff: CUTOFF } });
+      expect(off.bits.reduce((n, b) => n + b, 0)).toBeGreaterThan(0);
+
+      // (b) GUARANTEE: Hold ON forces ZERO ink anywhere source luma ≥ cutoff.
+      const on = etchSourceToBitmap(img, { stack, dpi: 254, hold: { enabled: true, cutoff: CUTOFF } });
       for (let i = 0; i < on.bits.length; i++) {
         if (gray.gray[i] >= CUTOFF) expect(on.bits[i]).toBe(0);
       }

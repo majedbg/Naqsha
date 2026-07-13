@@ -332,4 +332,80 @@ describe('GuestOnboarding — S4 "Surprise me" / Shuffle (D11)', () => {
     fireEvent.keyDown(document, { key: 's' });
     expect(onUpdateLayer).not.toHaveBeenCalled();
   });
+
+  // Opus review of 1784d89 (S4 Shuffle) — FIX 1 (SHOULD-FIX): holding "S"
+  // fires auto-repeat keydowns (~30/sec), flooding telemetry + canvas regen.
+  it('D12 — an auto-repeat "S" keydown (holding the key) does not trigger Shuffle or telemetry', () => {
+    const onUpdateLayer = vi.fn();
+    render(
+      <GuestOnboarding
+        isGuest
+        onLoadSeed={vi.fn()}
+        activeLayer={ACTIVE_LAYER}
+        onUpdateLayer={onUpdateLayer}
+      />
+    );
+    fireEvent.keyDown(document, { key: 's', repeat: true });
+    expect(onUpdateLayer).not.toHaveBeenCalled();
+    expect(emitOnboardingEvent).not.toHaveBeenCalled();
+
+    // A genuine (non-repeat) press still works right after.
+    fireEvent.keyDown(document, { key: 's' });
+    expect(onUpdateLayer).toHaveBeenCalledTimes(1);
+  });
+
+  // FIX 2 (NIT): isTextEntryTarget deliberately excludes <select> (no native
+  // text cursor/undo — see typingGuard.js), but a focused <select> still has
+  // browser type-ahead: pressing "s" there should not also fire Shuffle.
+  it('D12 — the "S" shortcut is ignored while a native <select> is focused (type-ahead)', () => {
+    const onUpdateLayer = vi.fn();
+    render(
+      <div>
+        <select data-testid="select-field">
+          <option value="a">a</option>
+          <option value="s">s</option>
+        </select>
+        <GuestOnboarding
+          isGuest
+          onLoadSeed={vi.fn()}
+          activeLayer={ACTIVE_LAYER}
+          onUpdateLayer={onUpdateLayer}
+        />
+      </div>
+    );
+    const select = screen.getByTestId('select-field');
+    select.focus();
+    fireEvent.keyDown(select, { key: 's' });
+    expect(onUpdateLayer).not.toHaveBeenCalled();
+  });
+
+  // FIX 3 (NIT): the button silently no-op'd when locked but stayed enabled
+  // with no feedback. It must now be disabled (with a11y `disabled`
+  // attribute) and the shortcut must remain a no-op, for both a locked
+  // active layer and no active layer at all.
+  it('the Shuffle button is disabled (a11y) and the "S" shortcut is a no-op when the active layer is locked', () => {
+    const onUpdateLayer = vi.fn();
+    const lockedLayer = { ...ACTIVE_LAYER, locked: true };
+    render(
+      <GuestOnboarding
+        isGuest
+        onLoadSeed={vi.fn()}
+        activeLayer={lockedLayer}
+        onUpdateLayer={onUpdateLayer}
+      />
+    );
+    const btn = SHUFFLE_BUTTON();
+    expect(btn).toBeDisabled();
+
+    fireEvent.keyDown(document, { key: 's' });
+    expect(onUpdateLayer).not.toHaveBeenCalled();
+    expect(emitOnboardingEvent).not.toHaveBeenCalled();
+  });
+
+  it('the Shuffle button is disabled (a11y) when there is no active layer', () => {
+    render(
+      <GuestOnboarding isGuest onLoadSeed={vi.fn()} activeLayer={null} onUpdateLayer={vi.fn()} />
+    );
+    expect(SHUFFLE_BUTTON()).toBeDisabled();
+  });
 });

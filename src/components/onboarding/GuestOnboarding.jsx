@@ -131,6 +131,12 @@ export default function GuestOnboarding({ isGuest, onLoadSeed, activeLayer, onUp
 
   const isOpen = isGuest && !dismissed;
 
+  // Shared by the button's `disabled` state and the keydown handler's
+  // early-return, so both surfaces agree on when Shuffle is unavailable —
+  // silently no-op'ing on a locked layer with no visual feedback was itself
+  // a review finding.
+  const shuffleDisabled = !activeLayer || activeLayer.locked;
+
   // D12 — `S` keyboard shortcut. Build-time check confirmed no existing
   // Studio/useCanvas/modal keydown handler binds a bare 's'/'S' anywhere in
   // the app (only Escape/Enter/arrow-keys/Space/⌘Z/⌘E are bound), so this is
@@ -144,15 +150,25 @@ export default function GuestOnboarding({ isGuest, onLoadSeed, activeLayer, onUp
   useEffect(() => {
     if (!isGuest) return undefined;
     const onKeyDown = (e) => {
+      // Auto-repeat guard (Opus review of 1784d89, FIX 1) — holding the key
+      // down fires ~30 keydowns/sec with `repeat: true`, flooding telemetry
+      // + canvas regen. Matches how useActiveTool ignores auto-repeat.
+      if (e.repeat) return;
       if (e.key !== 's' && e.key !== 'S') return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       if (isTextEntryTarget(e.target)) return;
+      // isTextEntryTarget deliberately excludes <select> (no native text
+      // cursor/undo — see typingGuard.js's own comment, shared with ⌘Z),
+      // but a focused <select> still has native browser type-ahead, so "s"
+      // there should pick an option, not also fire Shuffle (FIX 2, nit).
+      if (e.target?.tagName === 'SELECT') return;
+      if (shuffleDisabled) return;
       e.preventDefault();
       handleShuffle();
     };
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [isGuest, handleShuffle]);
+  }, [isGuest, handleShuffle, shuffleDisabled]);
 
   // Escape reliably dismisses the OPEN chooser via a scoped document-level
   // listener, not a React onKeyDown on the card: nothing autofocuses into
@@ -208,9 +224,10 @@ export default function GuestOnboarding({ isGuest, onLoadSeed, activeLayer, onUp
       <button
         type="button"
         onClick={handleShuffle}
+        disabled={shuffleDisabled}
         aria-label="Surprise me — shuffle this pattern within its curated range"
         title="Surprise me (S)"
-        className="absolute top-3 left-12 z-40 flex h-7 items-center gap-1 rounded-full border border-hairline bg-paper/95 px-2.5 text-[11px] font-semibold text-ink-soft shadow-pop backdrop-blur-[2px] transition-colors hover:border-violet/60 hover:text-ink"
+        className="absolute top-3 left-12 z-40 flex h-7 items-center gap-1 rounded-full border border-hairline bg-paper/95 px-2.5 text-[11px] font-semibold text-ink-soft shadow-pop backdrop-blur-[2px] transition-colors hover:border-violet/60 hover:text-ink disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-hairline disabled:hover:text-ink-soft"
       >
         <span aria-hidden="true">🎲</span>
         Surprise me

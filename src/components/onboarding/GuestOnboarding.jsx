@@ -39,13 +39,19 @@ import ConfirmDialog from '../ui/ConfirmDialog';
 const CONFIDENCE_LINE =
   "This is your naqsheh — the sheet the machine weaves. Nudge anything; ⌘Z undoes it. You can't break it.";
 
-// S6 — D17a modulation nudge copy. The seeds are STATIC (D9-fallback — no
-// live modulation runs on any starter yet, see seedDocuments.js), so this
-// must NOT claim a running effect ("that glow follows your pattern") — there
-// is no glow. It invites discovery of the feature instead.
+// S6 — D17a modulation nudge copy. Modulation is a SPATIAL relationship, not
+// animation: one pattern's field warps another's geometry — its peaks pull
+// vertices uphill toward them and its valleys push them away (see
+// stackWarpDisplacement in lib/fields/warp.js). The seeds are STATIC
+// (D9-fallback — no live modulation runs on any starter yet, see
+// seedDocuments.js), so this must NOT claim a running effect ("that glow
+// follows your pattern", "your pattern moves on its own") — nothing is moving.
+// It INVITES trying the feature instead. Direction is left neutral ("push and
+// pull") on purpose: warp v1 attracts toward peaks, but the density channel has
+// a polarity/invert control, so a general nudge shouldn't hard-commit.
 // TODO(user): tune nudge copy
 const MODULATION_NUDGE_LINE =
-  "Want your pattern to move on its own? Route it into another layer — that's modulation, the thing that makes this more than a drawing.";
+  "Route this pattern into another layer, where one's peaks and valleys push and pull the other's lines — that's modulation, one pattern reshaping another.";
 
 // Static v1 copy per starter (BUILD BRIEF "three starters", D6). No live
 // thumbnail render in v1 — a static glyph + one-word character label + a

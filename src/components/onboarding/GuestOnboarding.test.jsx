@@ -602,7 +602,10 @@ describe('GuestOnboarding — S6 modulation nudge (D17a/D22)', () => {
     // The banned claim from an earlier draft of the copy (there is no live
     // modulation running on a static seed, D9-fallback).
     expect(screen.queryByText(/glow follows your pattern/i)).not.toBeInTheDocument();
-    expect(screen.getByText(/route it into another layer/i)).toBeInTheDocument();
+    // ...and never frames modulation as animation/self-movement (it's a spatial
+    // warp between patterns, not motion on a static seed).
+    expect(screen.queryByText(/move on its own/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/push and pull the other's lines/i)).toBeInTheDocument();
   });
 
   it('the nudge is a real, accessibly-named, dismissable <button> (no telemetry re-fire, chooser untouched)', () => {

@@ -98,11 +98,36 @@ describe('GuestOnboarding (S2)', () => {
     expect(CHOOSER()).not.toBeInTheDocument();
   });
 
-  it('Escape closes the chooser like the skip button', () => {
+  it('Escape closes the chooser like the skip button, even from cold focus (document-level listener)', () => {
     render(<GuestOnboarding isGuest onLoadSeed={vi.fn()} />);
-    fireEvent.keyDown(CHOOSER(), { key: 'Escape' });
+    // Nothing inside the card has focus (no autofocus-on-open, by design —
+    // this is a non-modal surface over a live canvas). Dispatching on
+    // `document` itself (not the card div) exercises the real path: a
+    // scoped document-level keydown listener, not React's bubble-phase
+    // onKeyDown on the card.
+    fireEvent.keyDown(document, { key: 'Escape' });
     expect(isOnboardingDismissed()).toBe(true);
     expect(CHOOSER()).not.toBeInTheDocument();
+  });
+
+  it('does not attach an Escape listener when there is no open chooser to dismiss (not a guest)', () => {
+    render(<GuestOnboarding isGuest={false} onLoadSeed={vi.fn()} />);
+    fireEvent.keyDown(document, { key: 'Escape' });
+    // No chooser was ever open, so nothing should have been marked dismissed.
+    expect(isOnboardingDismissed()).toBe(false);
+  });
+
+  it('stops attending to Escape once the chooser is dismissed or the component unmounts (no leaked listener)', () => {
+    const { unmount } = render(<GuestOnboarding isGuest onLoadSeed={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: /skip starter chooser/i }));
+    expect(CHOOSER()).not.toBeInTheDocument();
+
+    // A second Escape after dismissal should be a harmless no-op (no error,
+    // dismissal store already true, nothing left to close).
+    expect(() => fireEvent.keyDown(document, { key: 'Escape' })).not.toThrow();
+
+    unmount();
+    expect(() => fireEvent.keyDown(document, { key: 'Escape' })).not.toThrow();
   });
 
   it('the "?" reopen affordance clears dismissal and re-shows the chooser', () => {

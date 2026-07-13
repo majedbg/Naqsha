@@ -28,8 +28,22 @@ vi.mock('../Studio', () => ({
   ),
 }));
 
+// AUTH-LOADING GATE (Opus review of d460702, FIX 1): mirrors StudioRoute's
+// `if (loading) return <Loading/>` gate. Without it, Studio (and useLayers'
+// one-shot guest-seed init, S1) can mount while auth is still resolving —
+// during that flash a signed-in org member transiently reads as
+// `!user && tier === 'guest'`, flashing the guest chooser and risking a
+// permanent phyllotaxis-seed capture for a signed-in user. Mocked via
+// vi.hoisted so the mock factory (evaluated before imports) can see it.
+const { mockUseAuth } = vi.hoisted(() => ({ mockUseAuth: vi.fn() }));
+vi.mock('../../lib/AuthContext', () => ({
+  useAuth: mockUseAuth,
+  AuthProvider: ({ children }) => children,
+}));
+
 beforeEach(() => {
   vi.clearAllMocks();
+  mockUseAuth.mockReturnValue({ loading: false, user: { id: 'u1' } });
 });
 
 describe('OrgCreatePage', () => {
@@ -43,5 +57,17 @@ describe('OrgCreatePage', () => {
 
     // the org from context is threaded down so the guest submit modal can open.
     expect(studio).toHaveTextContent('submitOrg:org-7');
+  });
+
+  it('does not mount Studio while auth is still loading (avoids the guest-chooser/seed flash for a signed-in org member)', () => {
+    mockUseAuth.mockReturnValue({ loading: true, user: null });
+    render(<OrgCreatePage />);
+    expect(screen.queryByTestId('studio')).not.toBeInTheDocument();
+  });
+
+  it('mounts Studio once auth resolves', () => {
+    mockUseAuth.mockReturnValue({ loading: false, user: { id: 'u1' } });
+    render(<OrgCreatePage />);
+    expect(screen.getByTestId('studio')).toBeInTheDocument();
   });
 });

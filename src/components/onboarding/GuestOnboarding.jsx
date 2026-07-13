@@ -13,7 +13,7 @@
 // the same `!user && tier === 'guest'` guard S1 uses for the seed default, to
 // avoid a loading-flash chooser for a signed-in user — see seedDocuments
 // wiring in Studio.jsx) — this component just trusts it.
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   DEFAULT_SEED_KEY,
   SEED_KEYS,
@@ -102,17 +102,28 @@ export default function GuestOnboarding({ isGuest, onLoadSeed }) {
     [onLoadSeed]
   );
 
-  const handleKeyDown = useCallback(
-    (e) => {
-      // Escape closes the chooser. Scoped to this component's own subtree
-      // (not a global window listener) so it can never race or double-fire
-      // against Studio's existing Escape handling (e.g. the armed-placement
-      // Esc-to-cancel) — it only ever sees keydowns that bubble from inside
-      // this card.
-      if (e.key === 'Escape') handleDismiss();
-    },
-    [handleDismiss]
-  );
+  const isOpen = isGuest && !dismissed;
+
+  // Escape reliably dismisses the OPEN chooser via a scoped document-level
+  // listener, not a React onKeyDown on the card: nothing autofocuses into
+  // the card on open (D2 — this is a non-modal surface floating over a live,
+  // still-interactable canvas, so it must never steal focus), so an
+  // onKeyDown handler on the card div would never see an Escape pressed
+  // from cold focus (e.g. the canvas, or nothing at all). The listener is
+  // only attached while the chooser is actually open, and torn down on
+  // dismiss/unmount, so it never leaks or lingers once there is nothing
+  // left to close. `stopPropagation` keeps the keydown from also reaching
+  // Studio's own Escape handling (e.g. the armed-placement Esc-to-cancel).
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    const onKeyDown = (e) => {
+      if (e.key !== 'Escape') return;
+      e.stopPropagation();
+      handleDismiss();
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [isOpen, handleDismiss]);
 
   if (!isGuest) return null;
 
@@ -120,9 +131,9 @@ export default function GuestOnboarding({ isGuest, onLoadSeed }) {
     <>
       {/* Persistent re-open affordance (D4). Always present for guests, even
           after dismissal, so the chooser is recoverable. Small + unobtrusive
-          — bottom-right of the canvas region, out of the way of the
-          cut/engrave lens (bottom-left) and the panels export button
-          (top-right). */}
+          — top-left of the canvas region (see placement rationale below),
+          out of the way of the cut/engrave lens (bottom-left) and the
+          panels export button (top-right). */}
       <button
         type="button"
         onClick={handleReopen}
@@ -152,7 +163,6 @@ export default function GuestOnboarding({ isGuest, onLoadSeed }) {
           // landmark.
           aria-label="Choose your naqsheh"
           data-testid="guest-onboarding-chooser"
-          onKeyDown={handleKeyDown}
           // Non-blocking (D2): a floating card, not a full-screen gate. No
           // inset-0 backdrop — the canvas underneath stays live and
           // interactable everywhere outside the card's own bounds. Anchored

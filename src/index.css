@@ -250,10 +250,27 @@ input[type="range"].mod-range-min::-moz-range-thumb     { background: rgb(17, 10
   animation: naqsha-reveal-rows var(--motion-medium) var(--ease-out-quart);
 }
 
+/* === Guest onboarding S3 — "drag me" hero-control cue ===
+ * One gentle, non-frantic pulse loop on the active guest seed's hero param
+ * control (HeroDragCue.jsx, D6/D21). JS already picks the reduced-motion
+ * branch at render time (this class is only applied when motion is allowed),
+ * but the media-query override below is belt-and-suspenders, matching the
+ * gallery-card/picker-panel pattern above — a stale/cached render can never
+ * ship an infinite animation to a reduced-motion user. */
+@keyframes naqsha-hero-cue-pulse {
+  0%, 100% { opacity: 0.35; transform: scale(1); }
+  50%      { opacity: 0.9;  transform: scale(1.02); }
+}
+
+.anim-hero-cue-pulse {
+  animation: naqsha-hero-cue-pulse 1.8s var(--ease-out-quart) infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .gallery-card-enter,
   .picker-panel-enter,
-  .anim-reveal-rows {
+  .anim-reveal-rows,
+  .anim-hero-cue-pulse {
     animation: none;
   }
 }

@@ -1,4 +1,5 @@
 import ParamControl from "./ParamControl";
+import HeroDragCue from "./HeroDragCue";
 import { isRowDefault } from "../../lib/params/paramOps";
 import { useLayerParams } from "../../lib/useLayerParams";
 
@@ -43,10 +44,13 @@ export default function ParamRow({ def }) {
   const isDefault = isRowDefault(def, params, defaults);
 
   return (
-    <div className="flex items-start gap-1.5">
-      {/* Param control */}
+    <div className="flex items-start gap-1.5" data-testid={`param-row-${def.key}`}>
+      {/* Param control — S3: wrapped in HeroDragCue, a no-op passthrough
+          unless this row is the active guest seed's hero control (D6). */}
       <div className="flex-1 min-w-0">
-        <ParamControl def={def} params={params} onChange={onChange} />
+        <HeroDragCue def={def}>
+          <ParamControl def={def} params={params} onChange={onChange} />
+        </HeroDragCue>
       </div>
 
       {/* Per-param reset */}

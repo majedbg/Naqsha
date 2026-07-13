@@ -4,9 +4,11 @@ import {
   STAGE_TONE,
   STAGE_DITHER,
   STAGE_HALFTONE,
+  STAGE_PAPER,
   createToneStage,
   createDitherStage,
   createHalftoneStage,
+  createPaperStage,
   createStage,
   applyStage,
   applyFieldStages,
@@ -16,6 +18,7 @@ import {
   screenStage,
 } from './etchStage.js';
 import { applyToneField, NEUTRAL_LEVELS } from './etchTone.js';
+import { applyPaperField, DEFAULT_PAPER_SCALE } from './etchPaper.js';
 import { DITHER_FS, DITHER_BAYER_4, orderedBayerBits, BAYER_4 } from './etchDither.js';
 import {
   HALFTONE_ROUND,
@@ -279,3 +282,108 @@ describe('Dither ↔ Halftone — exactly ONE active screen (clean swap)', () =>
     expect(activeScreeningStage([halftone, dither])).toBe(halftone);
   });
 });
+
+// ── Paper Stage (S6, #85) — the seeded grain FIELD Stage before screening ─────
+// A Paper Stage textures the luma field (field→field, gray→gray) BEFORE the cut,
+// exactly like Tone — it is NOT a screen (it never produces bits). These pin that
+// the seam treats Paper as a field Stage (not in SCREENING_STAGE_TYPES), that its
+// seed makes it deterministic, and — the acceptance-criterion heart — that placing
+// Paper ABOVE vs BELOW the active screen produces DIFFERENT, correct output.
+
+// Mid-gray fixtures clustered near the 128 cut so grain genuinely FLIPS bits (a
+// field of pure blacks/whites would never cross the threshold — the reorder tests
+// would pass vacuously). 8×8 to hold several grain cells.
+function midImageField(v = 128) {
+  const rows = Array.from({ length: 8 }, () => Array.from({ length: 8 }, () => v));
+  return field(rows);
+}
+
+const LOUD_PAPER = { grain: 90, scale: 3, seed: 4242 };
+
+describe('the Paper Stage model', () => {
+  it('createPaperStage is a non-bypassed FIELD Stage with neutral grain + a stable seed', () => {
+    const s = createPaperStage();
+    expect(s.type).toBe(STAGE_PAPER);
+    expect(s.bypassed).toBe(false);
+    expect(typeof s.id).toBe('string');
+    expect(s.params.grain).toBe(0); // neutral: added but changes nothing
+    expect(s.params.scale).toBe(DEFAULT_PAPER_SCALE);
+    expect(Number.isFinite(s.params.seed)).toBe(true); // seeded off the layer
+  });
+
+  it('gives every Paper Stage its own seed (per-layer grain)', () => {
+    expect(createPaperStage().params.seed).not.toBe(createPaperStage().params.seed);
+  });
+
+  it('createStage dispatches to the paper builder', () => {
+    expect(createStage(STAGE_PAPER).type).toBe(STAGE_PAPER);
+  });
+
+  it('is NOT a screening Stage — it textures the field, it does not screen', () => {
+    expect(isScreeningStage(createPaperStage())).toBe(false);
+    // With only a Paper Stage present, no screen is active (plain-cut fallback).
+    expect(activeScreeningStage([createPaperStage()])).toBe(null);
+  });
+
+  it('applyStage runs the Paper field math (equals applyPaperField)', () => {
+    const f = midImageField();
+    const stage = { type: STAGE_PAPER, params: LOUD_PAPER };
+    const out = applyStage(f, stage);
+    expect(Array.from(out.gray)).toEqual(Array.from(applyPaperField(f, LOUD_PAPER).gray));
+  });
+
+  it('a neutral (grain 0) Paper Stage is a pixel-exact field no-op', () => {
+    const f = midImageField();
+    expect(applyStage(f, createPaperStage())).toBe(f);
+  });
+});
+
+describe('Paper Stage — placement relative to the screen is meaningful (#85)', () => {
+  it('Paper ABOVE the screen textures the dithered field; BELOW it is inert', () => {
+    const f = midImageField();
+    const paper = { type: STAGE_PAPER, bypassed: false, params: LOUD_PAPER };
+    const above = applyFieldStages(f, [paper, createDitherStage()]);
+    const below = applyFieldStages(f, [createDitherStage(), paper]);
+    // Above: the grain runs and transforms the field feeding the screen.
+    expect(Array.from(above.gray)).not.toEqual(Array.from(f.gray));
+    // Below: post-screen, NOT run as a field op → the field reaches the screen bare.
+    expect(below).toBe(f);
+  });
+
+  it('BELOW-screen Paper leaves the SCREENED bits untouched; ABOVE changes them', () => {
+    // This is the acceptance criterion at the bits level: a real Dither present,
+    // Paper before vs after it yields different, correct output.
+    const f = midImageField();
+    const paper = { type: STAGE_PAPER, bypassed: false, params: LOUD_PAPER };
+    const dither = createDitherStage();
+    const bare = globalMaskAfterScreen(f, [dither]);
+    const below = globalMaskAfterScreen(f, [dither, paper]);
+    const above = globalMaskAfterScreen(f, [paper, dither]);
+    expect(Array.from(below)).toEqual(Array.from(bare)); // below-screen = inert
+    expect(Array.from(above)).not.toEqual(Array.from(bare)); // above-screen = meaningful
+  });
+
+  it('Paper-then-Tone ≠ Tone-then-Paper (field order matters)', () => {
+    const f = midImageField();
+    const paper = { type: STAGE_PAPER, bypassed: false, params: LOUD_PAPER };
+    const tone = { type: STAGE_TONE, bypassed: false, params: { exposure: 40, brightness: 0, contrast: 0, levels: NEUTRAL_LEVELS } };
+    const paperThenTone = applyFieldStages(f, [paper, tone]);
+    const toneThenPaper = applyFieldStages(f, [tone, paper]);
+    expect(Array.from(paperThenTone.gray)).not.toEqual(Array.from(toneThenPaper.gray));
+  });
+
+  it('a BYPASSED Paper Stage is a pixel-exact identity (same field object)', () => {
+    const f = midImageField();
+    const paper = { type: STAGE_PAPER, bypassed: true, params: LOUD_PAPER };
+    expect(applyFieldStages(f, [paper])).toBe(f);
+  });
+});
+
+// Screen a field through the active Dither Stage in the stack, applying the field
+// Stages above it first — the etchProcess seam in miniature, for a bits-level
+// reorder assertion without decoding a PNG.
+function globalMaskAfterScreen(f, stack) {
+  const shaped = applyFieldStages(f, stack);
+  const screen = activeScreeningStage(stack);
+  return screenStage(shaped, screen, { threshold: 128, invert: false });
+}

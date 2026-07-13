@@ -29,6 +29,7 @@
 // under vitest identically.
 
 import { applyToneField, NEUTRAL_LEVELS } from './etchTone.js';
+import { applyPaperField, DEFAULT_PAPER_GRAIN, DEFAULT_PAPER_SCALE } from './etchPaper.js';
 import { ditherField, DEFAULT_DITHER_MODE } from './etchDither.js';
 import {
   halftoneField,
@@ -45,6 +46,9 @@ export const STAGE_DITHER = 'dither';
 
 /** Stage `type` discriminator for a Halftone Stage (a screening producer — AM dots, S5). */
 export const STAGE_HALFTONE = 'halftone';
+
+/** Stage `type` discriminator for a Paper Stage (a FIELD Stage — seeded grain/tooth, S6). */
+export const STAGE_PAPER = 'paper';
 
 /**
  * The set of screening Stage types — the terminal field→bits producers. Dither
@@ -113,13 +117,39 @@ export function createHalftoneStage() {
   };
 }
 
-/** Build a Stage of the given type (Tone / Dither / Halftone; S6+ add more). */
+/**
+ * Build a fresh Paper Stage — a FIELD Stage (gray→gray grain, NOT a screen). Grain
+ * defaults to NEUTRAL (0), so adding it changes nothing until grain moves (the
+ * default-params identity guard lives in applyPaperField), mirroring Tone. It gets
+ * a stable per-layer `seed` minted ONCE here (plain data): the grain is a
+ * deterministic function of it, so it is pixel-identical across reloads and across
+ * the worker/inline boundary. Not derived from Math.random at render time — only
+ * the one-time seed is (like makeStageId's suffix).
+ */
+export function createPaperStage() {
+  return {
+    id: makeStageId(STAGE_PAPER),
+    type: STAGE_PAPER,
+    bypassed: false,
+    params: { grain: DEFAULT_PAPER_GRAIN, scale: DEFAULT_PAPER_SCALE, seed: makePaperSeed() },
+  };
+}
+
+/** A stable, positive 31-bit grain seed, minted once per Paper Stage. Random at
+ * CREATION only — the render never calls Math.random; it hashes this stored seed. */
+function makePaperSeed() {
+  return Math.floor(Math.random() * 0x7fffffff);
+}
+
+/** Build a Stage of the given type (Tone / Dither / Halftone / Paper; S7+ add more). */
 export function createStage(type = STAGE_TONE) {
   switch (type) {
     case STAGE_DITHER:
       return createDitherStage();
     case STAGE_HALFTONE:
       return createHalftoneStage();
+    case STAGE_PAPER:
+      return createPaperStage();
     case STAGE_TONE:
     default:
       return createToneStage();
@@ -136,6 +166,8 @@ export function applyStage(field, stage) {
   switch (stage?.type) {
     case STAGE_TONE:
       return applyToneField(field, stage.params);
+    case STAGE_PAPER:
+      return applyPaperField(field, stage.params);
     default:
       return field;
   }

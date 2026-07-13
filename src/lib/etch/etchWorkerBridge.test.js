@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { computeEtchBitmap } from './etchWorkerBridge.js';
 import { etchSourceToBitmap } from './etchProcess.js';
-import { createToneStage, createDitherStage, createHalftoneStage } from './etchStage.js';
+import { createToneStage, createDitherStage, createHalftoneStage, STAGE_PAPER } from './etchStage.js';
 import { DITHER_BAYER_4 } from './etchDither.js';
 import { HALFTONE_ROUND } from './etchHalftone.js';
 
@@ -221,6 +221,67 @@ describe('worker-path Halftone Stage parity (S5, #84)', () => {
   });
 
   it('computeEtchBitmap forwards a Halftone Stage + dpi across a structured-clone boundary', async () => {
+    class CloningWorker {
+      postMessage(msg) {
+        const clone = structuredClone(msg);
+        const { bits, width, height } = etchSourceToBitmap(clone.image, clone.options);
+        const back = structuredClone({ type: 'result', id: clone.id, bits, width, height });
+        queueMicrotask(() => this.onmessage({ data: back }));
+      }
+      terminate() {}
+    }
+    const viaWorker = await computeEtchBitmap(source, options, { workerFactory: () => new CloningWorker() });
+    const inline = etchSourceToBitmap(source, options);
+    expect(Array.from(viaWorker.bits)).toEqual(Array.from(inline.bits));
+  });
+});
+
+// A Paper Stage's SEED travels main→worker inside `options.stack` as plain data
+// (S6, #85). DETERMINISM is the whole point: the worker must texture the field with
+// the SAME seed the main thread stored, so worker bits == inline bits — pixel-
+// identical grain across the boundary. If the seed were dropped/renamed (or the
+// grain re-seeded per side) these would diverge. Fixtures cluster near the 128 cut
+// (with a Dither present) so the grain genuinely flips screened bits.
+describe('worker-path Paper Stage parity + determinism (S6, #85)', () => {
+  const source = grayImage([
+    [120, 132, 126, 130, 118, 138, 124, 134],
+    [128, 122, 136, 116, 140, 126, 130, 120],
+    [134, 118, 128, 132, 122, 136, 116, 138],
+    [124, 130, 120, 126, 132, 118, 134, 128],
+  ]);
+  // A LOUD Paper Stage above a Dither screen: grain textures the field the screen
+  // dithers. A fixed seed makes the expectation exact (not just "some grain").
+  const paper = { id: 'p1', type: STAGE_PAPER, bypassed: false, params: { grain: 90, scale: 3, seed: 987654 } };
+  const options = { stack: [paper, createDitherStage()] };
+
+  it('the SAME seed yields byte-identical grain across two independent inline runs', () => {
+    const a = etchSourceToBitmap(source, options);
+    const b = etchSourceToBitmap(source, options);
+    expect(Array.from(a.bits)).toEqual(Array.from(b.bits));
+  });
+
+  it('the REAL etch.worker.js textures a Paper Stack identically to the inline path', async () => {
+    const posted = [];
+    const prevSelf = globalThis.self;
+    globalThis.self = { onmessage: null, postMessage: (msg) => posted.push(msg) };
+    try {
+      vi.resetModules();
+      await import('./etch.worker.js');
+      const payload = structuredClone({ type: 'etch', id: 31, image: source, options });
+      globalThis.self.onmessage({ data: payload });
+    } finally {
+      globalThis.self = prevSelf;
+    }
+    const result = posted.find((m) => m.type === 'result' && m.id === 31);
+    const inline = etchSourceToBitmap(source, options);
+    expect(result).toBeTruthy();
+    expect(Array.from(result.bits)).toEqual(Array.from(inline.bits));
+    // Guard: the grain genuinely moved bits vs the bare Dither (not a hidden no-op).
+    const bareDither = etchSourceToBitmap(source, { stack: [createDitherStage()] });
+    expect(Array.from(inline.bits)).not.toEqual(Array.from(bareDither.bits));
+  });
+
+  it('computeEtchBitmap forwards a Paper Stage seed across a structured-clone boundary', async () => {
     class CloningWorker {
       postMessage(msg) {
         const clone = structuredClone(msg);

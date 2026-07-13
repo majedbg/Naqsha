@@ -20,9 +20,11 @@ import {
   createToneStage,
   createDitherStage,
   createHalftoneStage,
+  createPaperStage,
   STAGE_TONE,
   STAGE_DITHER,
   STAGE_HALFTONE,
+  STAGE_PAPER,
   isScreeningStage,
   activeScreeningIndex,
 } from '../../lib/etch/etchStage';
@@ -37,7 +39,7 @@ import {
   patchStageParams,
 } from '../../lib/etch/etchStackEditor';
 
-const STAGE_LABEL = { [STAGE_TONE]: 'Tone', [STAGE_DITHER]: 'Dither', [STAGE_HALFTONE]: 'Halftone' };
+const STAGE_LABEL = { [STAGE_TONE]: 'Tone', [STAGE_DITHER]: 'Dither', [STAGE_HALFTONE]: 'Halftone', [STAGE_PAPER]: 'Paper' };
 
 // The device-pixels-per-dither-cell range for the size slider (matches the
 // reference "size" control): 1 = full-resolution dots, up to a coarse ceiling.
@@ -51,6 +53,14 @@ const HALFTONE_FREQ_MIN = 10;
 const HALFTONE_FREQ_MAX = 120;
 const HALFTONE_ANGLE_MIN = 0;
 const HALFTONE_ANGLE_MAX = 90;
+
+// Paper grain ranges: grain AMOUNT 0..100 (0 = neutral/no tooth → strong tooth),
+// and grain SCALE = feature size in device px (1 = fine per-pixel speckle → coarse
+// fibre). Scale ceiling kept modest so the grain stays paper-tooth, not blotches.
+const PAPER_GRAIN_MIN = 0;
+const PAPER_GRAIN_MAX_CTRL = 100;
+const PAPER_SCALE_MIN = 1;
+const PAPER_SCALE_MAX = 16;
 
 // Shared gamma range for BOTH the Tone gamma slider and the Levels midtone
 // handle (both bound to the one levels.gamma). Kept in sync so a handle-set
@@ -337,6 +347,24 @@ function HalftoneStageBody({ stage, onPatch }) {
   );
 }
 
+// The Paper Stage body: grain AMOUNT (how much tooth) and grain SCALE (feature
+// size). A Paper Stage is a FIELD Stage — it textures the luma field with seeded
+// grain BEFORE screening, giving the etch tooth — so its controls choose HOW MUCH
+// and HOW COARSE the grain is, not how the field screens. The seed is per-layer
+// document state (set at creation), so it is deliberately NOT a control here: the
+// grain stays stable across reloads.
+function PaperStageBody({ stage, onPatch }) {
+  const p = stage.params || {};
+  const grain = p.grain ?? 0;
+  const scale = p.scale ?? PAPER_SCALE_MIN;
+  return (
+    <div className="space-y-1.5 pt-1" data-testid="etch-paper-body">
+      <ToneSlider label="Grain" testid="paper-grain" value={grain} min={PAPER_GRAIN_MIN} max={PAPER_GRAIN_MAX_CTRL} onChange={(v) => onPatch({ grain: v })} />
+      <ToneSlider label="Scale" testid="paper-scale" value={scale} min={PAPER_SCALE_MIN} max={PAPER_SCALE_MAX} onChange={(v) => onPatch({ scale: v })} />
+    </div>
+  );
+}
+
 /**
  * The Etch Stack rack. Self-hides for non-Etch layers so the Inspector can drop
  * it in unconditionally.
@@ -370,6 +398,11 @@ export default function EtchStackRack({ layer, onUpdateLayer }) {
   };
   const onAddHalftone = () => {
     const stage = createHalftoneStage();
+    writeStack(addStage(stack, stage));
+    setExpanded((s) => new Set(s).add(stage.id));
+  };
+  const onAddPaper = () => {
+    const stage = createPaperStage();
     writeStack(addStage(stack, stage));
     setExpanded((s) => new Set(s).add(stage.id));
   };
@@ -491,6 +524,9 @@ export default function EtchStackRack({ layer, onUpdateLayer }) {
                   {isOpen && stage.type === STAGE_HALFTONE && (
                     <HalftoneStageBody stage={stage} onPatch={(patch) => onPatch(stage.id, patch)} />
                   )}
+                  {isOpen && stage.type === STAGE_PAPER && (
+                    <PaperStageBody stage={stage} onPatch={(patch) => onPatch(stage.id, patch)} />
+                  )}
                 </li>
               );
             })}
@@ -520,6 +556,14 @@ export default function EtchStackRack({ layer, onUpdateLayer }) {
               className="flex-1 rounded-xs border border-hairline bg-paper-warm px-2 py-1 text-[11px] font-medium text-ink-soft transition-colors hover:border-violet hover:text-ink"
             >
               + Halftone Stage
+            </button>
+            <button
+              type="button"
+              data-testid="etch-stack-add-paper"
+              onClick={onAddPaper}
+              className="flex-1 rounded-xs border border-hairline bg-paper-warm px-2 py-1 text-[11px] font-medium text-ink-soft transition-colors hover:border-violet hover:text-ink"
+            >
+              + Paper Stage
             </button>
           </div>
         </>

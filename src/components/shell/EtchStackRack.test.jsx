@@ -18,6 +18,9 @@ function ditherStage(id = 'd1', bypassed = false) {
 function halftoneStage(id = 'h1', bypassed = false) {
   return { id, type: 'halftone', bypassed, params: { frequency: 30, angle: 45, shape: 'round' } };
 }
+function paperStage(id = 'pp1', bypassed = false) {
+  return { id, type: 'paper', bypassed, params: { grain: 40, scale: 4, seed: 12345 } };
+}
 
 describe('EtchStackRack', () => {
   it('self-hides for a non-Etch layer', () => {
@@ -210,5 +213,56 @@ describe('EtchStackRack', () => {
     expect(badge).toBeInTheDocument();
     // The tooltip must read as "another screen already screens", not "post-screen".
     expect(badge.getAttribute('title')).toMatch(/screen/i);
+  });
+
+  // ── Paper Stage (S6, #85) ─────────────────────────────────────────────────
+  it('adds a Paper Stage (grain 0 neutral + a stable seed) through the canonical write', () => {
+    const onUpdateLayer = vi.fn();
+    render(<EtchStackRack layer={etchLayer([])} onUpdateLayer={onUpdateLayer} />);
+    fireEvent.click(screen.getByTestId('etch-stack-add-paper'));
+    const patch = onUpdateLayer.mock.calls[0][1];
+    expect(patch.params.stack).toHaveLength(1);
+    expect(patch.params.stack[0].type).toBe('paper');
+    expect(patch.params.stack[0].params.grain).toBe(0); // neutral on add
+    expect(Number.isFinite(patch.params.stack[0].params.seed)).toBe(true); // seeded
+  });
+
+  it('labels a Paper Stage "Paper" and never leaks a forbidden motif word', () => {
+    render(<EtchStackRack layer={etchLayer([paperStage()])} onUpdateLayer={() => {}} />);
+    const rack = screen.getByTestId('etch-stack-rack');
+    expect(rack).toHaveTextContent(/Paper/);
+    expect(rack.textContent).not.toMatch(/\b(Chain|Block|effect|filter|device|pass)\b/i);
+  });
+
+  it('the Paper body exposes grain + scale controls (no seed control — it is stable doc state)', () => {
+    render(<EtchStackRack layer={etchLayer([paperStage()])} onUpdateLayer={() => {}} />);
+    fireEvent.click(screen.getByTestId('etch-stage-expand'));
+    const body = screen.getByTestId('etch-paper-body');
+    expect(within(body).getByTestId('paper-grain')).toBeInTheDocument();
+    expect(within(body).getByTestId('paper-scale')).toBeInTheDocument();
+    expect(within(body).queryByTestId('paper-seed')).toBeNull();
+  });
+
+  it('changing grain / scale patches only that param, preserving the seed', () => {
+    const onUpdateLayer = vi.fn();
+    render(<EtchStackRack layer={etchLayer([paperStage()])} onUpdateLayer={onUpdateLayer} />);
+    fireEvent.click(screen.getByTestId('etch-stage-expand'));
+    fireEvent.change(screen.getByTestId('paper-grain'), { target: { value: '75' } });
+    let stage = onUpdateLayer.mock.calls[0][1].params.stack[0];
+    expect(stage.params.grain).toBe(75);
+    expect(stage.params.seed).toBe(12345); // seed untouched → grain stays stable
+    fireEvent.change(screen.getByTestId('paper-scale'), { target: { value: '8' } });
+    stage = onUpdateLayer.mock.calls[1][1].params.stack[0];
+    expect(stage.params.scale).toBe(8);
+    expect(stage.params.seed).toBe(12345);
+  });
+
+  it('a Paper Stage is NOT a screen — a screen below it stays the active screen', () => {
+    // Paper is a field Stage; placing it first must NOT make the Dither below it
+    // inactive (Paper never screens, so the Dither is still the active screen).
+    render(<EtchStackRack layer={etchLayer([paperStage('pp1'), ditherStage('d1')])} onUpdateLayer={() => {}} />);
+    const rows = screen.getAllByTestId('etch-stage-row');
+    expect(within(rows[0]).queryByTestId('stage-inactive')).toBeNull(); // Paper: field Stage above the screen
+    expect(within(rows[1]).queryByTestId('stage-inactive')).toBeNull(); // Dither: the active screen
   });
 });

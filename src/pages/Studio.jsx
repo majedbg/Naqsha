@@ -55,6 +55,7 @@ const RUN_PLAN_PROFILE_LABELS = {
 };
 import useLayers from "../lib/useLayers";
 import { getSeedDocument, DEFAULT_SEED_KEY } from "../lib/onboarding/seedDocuments";
+import GuestOnboarding from "../components/onboarding/GuestOnboarding";
 import useLayerGroups from "../lib/useLayerGroups";
 import {
   addPanel,
@@ -2050,6 +2051,18 @@ export default function Studio({ submitOrg = null } = {}) {
             />
           </div>
         )}
+
+        {/* Guest onboarding S2 — "Choose your naqsheh" starter chooser
+            (D1/D2/D4). Floating, non-blocking; the canvas above is already
+            alive on the default seed (S1's initialSeedLayers guest branch),
+            so this never gates anything — it's a dismissable/re-openable
+            card. `!user && tier === "guest"` mirrors the exact guard S1 uses
+            for the seed default itself (see initialSeedLayers below), so the
+            chooser never flashes for a signed-in user whose profile hasn't
+            resolved yet. Picking a starter is a genuine document LOAD (drops
+            undo history, matches example/cloud/share semantics) — reuses
+            `loadDocumentLayers`, NOT the raw `loadLayerSet`. */}
+        <GuestOnboarding isGuest={!user && tier === "guest"} onLoadSeed={loadDocumentLayers} />
       </div>
 
       {/* Save dialog */}

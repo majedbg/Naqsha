@@ -17,6 +17,9 @@ export const ONBOARDING_EVENTS = Object.freeze({
   EXPORT_REACHED: 'onboarding:export-reached',
   SECOND_PARAM_CHANGE: 'onboarding:second-param-change',
   SIGNUP_AFTER_VALUE: 'onboarding:signup-after-value',
+  // S2 — a guest picked one of the three "Choose your naqsheh" starter cards
+  // (as opposed to dismissing the chooser and keeping the default seed).
+  STARTER_SELECTED: 'onboarding:starter-selected',
 });
 
 // Emit an onboarding event. Never throws — a broken instrumentation call must

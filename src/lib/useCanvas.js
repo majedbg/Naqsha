@@ -136,8 +136,17 @@ export default function useCanvas(
   }, [transforms, selectedNodeId]);
 
   const renderAll = useCallback(() => {
-    if (!p5Ref.current) return;
+    // Renderer-readiness guard (mobile first-paint race). `new p5(sketch, el)`
+    // RETURNS before `p.setup` runs, so p5Ref.current can be set while the
+    // renderer (built inside setup by createCanvas) doesn't exist yet — calling
+    // p.clear() then throws "Cannot read properties of undefined (reading
+    // 'clear')". On desktop the 50ms first-paint timeout always loses this race;
+    // on slow/WebKit devices setup can miss it → blank canvas. We gate on a flag
+    // WE set at the end of p.setup (below), which implies the renderer exists
+    // WITHOUT coupling to a private p5 field. Not-ready → bail (no throw); the
+    // setup-completion trigger repaints the instant it IS ready.
     const p = p5Ref.current;
+    if (!p || !p._naqshaReady) return;
     const nodeTransforms = transformsRef.current || {};
     p.clear();
     p.background(sheetBackground(colorView, bgColor));
@@ -645,13 +654,26 @@ export default function useCanvas(
         p.createCanvas(canvasW, canvasH);
         p.pixelDensity(1);
         p.noLoop();
+        // Mark the renderer ready (createCanvas has built it) so renderAll's
+        // guard passes, then drive the FIRST paint from setup completion rather
+        // than a fixed timeout. This is the real fix for the mobile blank-canvas
+        // race: on slow/WebKit devices setup can run after the 50ms timeout AND
+        // the render trigger already fired-and-bailed; keying first paint on
+        // setup itself makes it deterministic regardless of device speed.
+        // renderAllRef holds the latest renderAll (its effect runs before this
+        // init effect on mount, so it's populated by the time setup fires).
+        p._naqshaReady = true;
+        renderAllRef.current?.();
       };
       p.draw = () => {};
     };
 
     p5Ref.current = new p5(sketch, containerRef.current);
 
-    // Give p5 a frame to set up, then render
+    // Redundant fallback ONLY: if setup somehow hasn't run yet this repaints;
+    // once setup has run it already painted and this is a harmless idempotent
+    // re-render (noLoop + seed-deterministic). First paint no longer DEPENDS on
+    // this 50ms guess — the setup-completion trigger above is the primary path.
     const timer = setTimeout(() => renderAll(), 50);
     return () => {
       clearTimeout(timer);

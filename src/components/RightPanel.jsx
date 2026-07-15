@@ -66,6 +66,14 @@ const BG_PRESETS = [
 
 const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 5;
+// Positive floor for the fit-to-container scale. On iOS the dvh flex container
+// can momentarily report a 0 client size, which makes the raw fit math go
+// NEGATIVE ((0 - padding) / canvas) → transform: scale(negative) collapses the
+// canvas with no resize event to recover from. Clamping to a small positive
+// value keeps the canvas visible through that one transient frame; the
+// ResizeObserver then corrects it the instant the real size lands. finalScale
+// floor = MIN_FIT_SCALE * MIN_ZOOM (0.0125) — still strictly positive.
+const MIN_FIT_SCALE = 0.05;
 // One wheel step multiplies zoom by this. Deliberately shallow (~1.1^(1/3), a
 // third of the old 1.1-per-step rate) so scroll/trackpad zooming stays
 // controllable.
@@ -409,21 +417,38 @@ export default function RightPanel({
     }
   }, [canvasContainerRef]);
 
-  // Calculate fit scale
+  // Calculate fit scale. Driven by a ResizeObserver on the wrapper (mirrors the
+  // InspectorShelf / LayerTree measurement seam) rather than a mount-once +
+  // window-resize read: a phone at rest fires no resize, so the observer is what
+  // recovers the scale when the dvh flex container transitions from a transient
+  // 0 size to its real size. The clamp to MIN_FIT_SCALE guarantees the one frame
+  // before the observer corrects can never produce a negative/zero scale that
+  // collapses the canvas. The window-resize listener is kept as a cheap fallback
+  // for environments without ResizeObserver (jsdom guards the same way).
   useEffect(() => {
+    const el = wrapperRef.current;
     const calcScale = () => {
-      if (!wrapperRef.current) return;
+      const wrap = wrapperRef.current;
+      if (!wrap) return;
       const padding = 48;
-      const availW = wrapperRef.current.clientWidth - padding * 2;
-      const availH = wrapperRef.current.clientHeight - padding * 2;
+      const availW = wrap.clientWidth - padding * 2;
+      const availH = wrap.clientHeight - padding * 2;
       const scaleX = availW / canvasW;
       const scaleY = availH / canvasH;
-      setFitScale(Math.min(scaleX, scaleY, 1));
+      setFitScale(Math.max(MIN_FIT_SCALE, Math.min(scaleX, scaleY, 1)));
     };
 
     calcScale();
+    let ro;
+    if (el && typeof ResizeObserver !== "undefined") {
+      ro = new ResizeObserver(calcScale);
+      ro.observe(el);
+    }
     window.addEventListener("resize", calcScale);
-    return () => window.removeEventListener("resize", calcScale);
+    return () => {
+      if (ro) ro.disconnect();
+      window.removeEventListener("resize", calcScale);
+    };
   }, [canvasW, canvasH]);
 
   // --- Pan-recenter glide (shell-pan path only) ----------------------------

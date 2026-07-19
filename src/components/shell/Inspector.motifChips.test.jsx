@@ -27,9 +27,10 @@ function hostLayer(id = "host1", patternType = "grid") {
   };
 }
 
+// The device is OPEN by default (motif-shell D — the audit's discoverability
+// fix), so rendering is enough; clicking the toggle would now CLOSE it.
 function openMotifDevice(props) {
   render(<Inspector {...props} />);
-  fireEvent.click(screen.getByTestId("motif-toggle"));
 }
 
 describe("Motif device — starter chips", () => {

@@ -5,6 +5,13 @@ import Inspector from "../components/shell/Inspector";
 import LayerTree from "../components/shell/LayerTree";
 import MenuBar from "../components/shell/MenuBar";
 import ToolStrip from "../components/shell/ToolStrip";
+// Motif-shell (D, docs/motif-flow-audit-2026-07.md): the left rail becomes a
+// surface switcher (Layers / Motifs), the tools re-home to a tab over the
+// canvas, and the Motifs surface is the app-level library with drag-apply.
+import LeftRailNav from "../components/shell/LeftRailNav";
+import MotifLibraryPanel from "../components/shell/MotifLibraryPanel";
+import MotifDropLayer from "../components/canvas/MotifDropLayer";
+import { importMotif } from "../lib/motif/importMotif";
 import ControlBar from "../components/shell/ControlBar";
 import StatusBar from "../components/shell/StatusBar";
 import OperationsPanel from "../components/shell/OperationsPanel";
@@ -39,7 +46,9 @@ import StudioSubmitModal from "../components/org/StudioSubmitModal";
 import MotifEditorModal from "../components/motif-editor/MotifEditorModal";
 import MaterialEvaluationDialog from "../components/evaluation/MaterialEvaluationDialog";
 import { parseDToAnchors, anchorsToD } from "../lib/motif/pathModel";
-import { applyPickedPathToggle } from "../lib/motif/motifLayer";
+import { applyPickedPathToggle, isMotifLayer } from "../lib/motif/motifLayer";
+import { isMotifHost } from "../lib/motif/hostKinds";
+import { defaultMotifAddOpts } from "../lib/motif/defaultBinding";
 import useMotifEditorSession from "../lib/hooks/useMotifEditorSession";
 import useGlyphCommits from "../lib/hooks/useGlyphCommits";
 
@@ -129,8 +138,12 @@ export default function Studio({ submitOrg = null } = {}) {
   // motifs (empty when logged-out/offline) and exposes `promote` for "Save to my
   // library". The premium entitlement is a scaffold that ships ON-for-all
   // (canUseGlobalLibrary → true); the LOGIN gate is enforced at the button.
-  const { motifs: libraryMotifs, promote: promoteMotif } =
-    useGlobalMotifLibrary(user);
+  const {
+    motifs: libraryMotifs,
+    promote: promoteMotif,
+    remove: removeLibraryMotif,
+    error: libraryError,
+  } = useGlobalMotifLibrary(user);
   const canSaveToLibrary = canUseGlobalLibrary({ user, tier });
   // Admin entry point, relocated into the MenuBar now that TopNav no longer
   // renders over the studio route (the standalone Naqsha bar was dropped).
@@ -347,9 +360,12 @@ export default function Studio({ submitOrg = null } = {}) {
     setCustomGlyphs,
     // Pen-editor Save seam (WI-P2-2). `updateCustomGlyph` (Save → all N layers
     // restamp via the render seam) lands in WI-P2-1b; optional-chained below so
-    // this slice works before that store WI merges. (`deleteCustomGlyph` also
-    // ships there, but this WI has no Delete affordance, so it's not pulled in.)
+    // this slice works before that store WI merges.
     updateCustomGlyph,
+    // Motif-shell (D): the library panel's guarded delete — its only caller.
+    // The panel disables delete while glyphUseCount > 0, so this can never
+    // create a dangling glyphRef.
+    deleteCustomGlyph,
     // Naqsha Panels (WI-6). The panel array + setter are owned by useLayers (it
     // also persists `panels` to `sonoform-panels` and each `layer.panelId` to
     // `sonoform-layers` automatically). Studio threads them into cloud
@@ -1235,6 +1251,155 @@ export default function Studio({ submitOrg = null } = {}) {
     customGlyphs,
   });
 
+  // ── Motif-shell (D, docs/motif-flow-audit-2026-07.md) ────────────────────
+  // Which surface the left column shows: 'layers' (the object tree) or
+  // 'motifs' (the library panel). Persisted per device; `\` toggles.
+  const [leftSurface, setLeftSurface] = useState(() => {
+    try {
+      return localStorage.getItem("sonoform-left-surface") === "motifs"
+        ? "motifs"
+        : "layers";
+    } catch {
+      return "layers";
+    }
+  });
+  const changeLeftSurface = useCallback((surface) => {
+    setLeftSurface(surface);
+    try {
+      localStorage.setItem("sonoform-left-surface", surface);
+    } catch {
+      /* private mode — session-only is fine */
+    }
+  }, []);
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key !== "\\" || e.metaKey || e.ctrlKey || e.altKey) return;
+      const t = e.target;
+      if (
+        t instanceof HTMLElement &&
+        (t.tagName === "INPUT" ||
+          t.tagName === "TEXTAREA" ||
+          t.tagName === "SELECT" ||
+          t.isContentEditable)
+      )
+        return;
+      setLeftSurface((s) => {
+        const next = s === "layers" ? "motifs" : "layers";
+        try {
+          localStorage.setItem("sonoform-left-surface", next);
+        } catch {
+          /* private mode */
+        }
+        return next;
+      });
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  // Live library drag (payload | null), the canvas badge under the cursor
+  // (mirrored into the panel's mini tree — the two-way validation), and the
+  // apply confirmation/error toast (auto-clears).
+  const [motifDrag, setMotifDrag] = useState(null);
+  const [dragHoverHostId, setDragHoverHostId] = useState(null);
+  const [motifToast, setMotifToast] = useState(null);
+  useEffect(() => {
+    if (!motifToast) return undefined;
+    const t = setTimeout(() => setMotifToast(null), 2600);
+    return () => clearTimeout(t);
+  }, [motifToast]);
+
+  // Apply a dragged library entry to a host as ONE undo entry. A library
+  // glyph needs its document copy first (idempotent), so copy + add-layer are
+  // folded into one recordBatch window; built-in/custom glyphs are already in
+  // reach and addMotifLayer records its own single structural entry. Defaults
+  // come from the SAME defaultMotifAddOpts the device's "+ Add Motif" uses.
+  const applyGlyphToHost = useCallback(
+    (payload, hostLayerId) => {
+      const host = layers.find((l) => l.id === hostLayerId);
+      if (!host) return;
+      let res = { ok: false };
+      const opts = defaultMotifAddOpts(host.patternType, payload.glyphId);
+      if (payload.kind === "library") {
+        recordBatch(() => {
+          glyphCommits.copyGlyphToDoc(payload.glyph);
+          res = addMotifLayer(hostLayerId, opts);
+        });
+      } else {
+        res = addMotifLayer(hostLayerId, opts);
+      }
+      setMotifToast(
+        res.ok
+          ? {
+              kind: "ok",
+              text: `${payload.glyph?.name || "Motif"} → ${host.name || host.patternType}`,
+            }
+          : { kind: "error", text: res.error || "Couldn't add motif." }
+      );
+      setMotifDrag(null);
+      setDragHoverHostId(null);
+    },
+    [layers, recordBatch, glyphCommits, addMotifLayer]
+  );
+
+  // Canvas drop = apply to the SELECTED host (the agreed disambiguation rule);
+  // a non-host selection gets an explanatory error instead of a silent no-op.
+  const handleMotifCanvasDrop = useCallback(() => {
+    if (!motifDrag) return;
+    const selected = layers.find((l) => l.id === selectedLayerId) || null;
+    if (selected && isMotifHost(selected.patternType) && !isMotifLayer(selected)) {
+      applyGlyphToHost(motifDrag, selected.id);
+    } else {
+      setMotifToast({
+        kind: "error",
+        text: "Not applied — select a grid / spiral / recursive layer first.",
+      });
+      setMotifDrag(null);
+      setDragHoverHostId(null);
+    }
+  }, [motifDrag, layers, selectedLayerId, applyGlyphToHost]);
+
+  // Library-panel SVG import: parse → document glyph store, no layer bind
+  // (that's what dragging is for). Same importMotif parser as the device row
+  // path; errors surface in the same toast the apply paths use.
+  const importSvgToLibrary = useCallback(
+    async (file) => {
+      let text;
+      try {
+        text = await file.text();
+      } catch {
+        setMotifToast({ kind: "error", text: "Could not read that file." });
+        return;
+      }
+      const result = importMotif(text);
+      if (!result.ok) {
+        setMotifToast({
+          kind: "error",
+          text: result.error || "Could not import this SVG.",
+        });
+        return;
+      }
+      const name =
+        result.glyph.name || file.name.replace(/\.svg$/i, "") || "Imported motif";
+      addCustomGlyph({ ...result.glyph, name });
+      setMotifToast({ kind: "ok", text: `Imported "${name}" — drag it onto a host.` });
+    },
+    [addCustomGlyph]
+  );
+
+  // Cap-aware wrapper for every device add path (audit 2026-07 bug 8: chips
+  // and "+ Add Motif" ignored the {ok:false} return, so at the layer cap a
+  // tap did nothing with zero explanation).
+  const handleAddMotif = useCallback(
+    (hostLayerId, opts) => {
+      const res = addMotifLayer(hostLayerId, opts);
+      if (!res.ok)
+        setMotifToast({ kind: "error", text: res.error || "Couldn't add motif." });
+      return res;
+    },
+    [addMotifLayer]
+  );
+
   // Motif Edit Session (Wave 2, #77) — owns the pen-editor lifecycle (open's
   // fork decision, openNew, importFromFile, Save/Save-as-copy/Cancel) that used
   // to be split across this component's own state + a modal-rendering IIFE and
@@ -1982,6 +2147,31 @@ export default function Studio({ submitOrg = null } = {}) {
             </button>
           </div>
         )}
+        {/* Motif-shell (D): the real ToolStrip re-homed as a rounded tab
+            protruding from the left panel edge onto the canvas — same
+            activeTool state, so hotkeys and the control bar are unchanged.
+            Pro shell only (legacy layout keeps no strip, as before). The
+            canvas's left ~48px is reserved chrome space: nothing else may
+            float there (the color-view control sits bottom-left below it). */}
+        {toolStripSlot && (
+          <div className="absolute left-0 top-12 z-30 rounded-r-cell border border-l-0 border-hairline bg-paper shadow-sm">
+            <ToolStrip activeTool={activeTool} onToolChange={setActiveTool} />
+          </div>
+        )}
+        {/* Motif-shell (D): canvas half of the library drag-apply — the
+            full-surface drop zone (applies to the SELECTED host), the per-host
+            badge stack (hover mirrors into the panel's mini tree), and the
+            apply toast. Inert while no drag is live and no toast is showing. */}
+        <MotifDropLayer
+          motifDrag={motifDrag}
+          layers={layers}
+          selectedLayerId={selectedLayerId}
+          hoverHostId={dragHoverHostId}
+          onHoverHost={setDragHoverHostId}
+          onDropOnHost={(hostId) => motifDrag && applyGlyphToHost(motifDrag, hostId)}
+          onDropOnCanvas={handleMotifCanvasDrop}
+          toast={motifToast}
+        />
         <RightPanel
           layers={layers}
           // Operation library + active profile → canvas strokes match export
@@ -2361,13 +2551,15 @@ export default function Studio({ submitOrg = null } = {}) {
           menuSlot
         )}
 
-      {/* Pro-shell tool strip (B6 / #9). Portaled into the shell's Tool strip
-          region when the slot is present; renders nothing in the legacy layout
-          (slot is null → no-op). Active-tool state is owned by Studio so it also
-          drives the contextual control bar below. */}
+      {/* Pro-shell left rail (motif-shell, D — supersedes the B6 tool strip in
+          this region). The w-12 rail now switches the left column's SURFACE
+          (Layers / Motifs, Ableton-browser style); the tools themselves render
+          as a tab protruding onto the canvas (see the canvas region below), so
+          they stay one glance away without costing a full-height column.
+          Renders nothing in the legacy layout (slot null → no-op). */}
       {toolStripSlot &&
         createPortal(
-          <ToolStrip activeTool={activeTool} onToolChange={setActiveTool} />,
+          <LeftRailNav surface={leftSurface} onSurfaceChange={changeLeftSurface} />,
           toolStripSlot
         )}
 
@@ -2467,7 +2659,7 @@ export default function Studio({ submitOrg = null } = {}) {
             // Motif device (host Inspector) — add a motif adorning the selected
             // host, and remove a motif via the same delete handler the object
             // tree uses (removeLayer / onDeleteLayer).
-            onAddMotif={addMotifLayer}
+            onAddMotif={handleAddMotif}
             onRemoveLayer={removeLayer}
             // WI-5: the Motif device lists imported glyphs (customGlyphs) in its
             // picker (read-only prop — writes route through the session/commits
@@ -2502,6 +2694,9 @@ export default function Studio({ submitOrg = null } = {}) {
             // the ephemeral pick target shared with the canvas overlay.
             motifPick={motifPick}
             onMotifPick={setMotifPick}
+            // Motif-shell (D): the glyph-picker flyout's "Manage library…"
+            // jumps the left column to the Motifs surface.
+            onOpenLibrary={() => changeLeftSurface("motifs")}
           />
           ),
           inspectorSlot
@@ -2512,7 +2707,31 @@ export default function Studio({ submitOrg = null } = {}) {
           renders nothing in the legacy layout (slot null → no-op). Drives live
           selection (consumed by the Inspector above) and the document profile /
           operation-library remap. */}
+      {/* Motif-shell (D): the left column's content follows the rail —
+          'motifs' swaps the tree for the library panel (compact read-only
+          drop-tree + thumbnail grid); 'layers' renders the untouched tree. */}
       {objectTreeSlot &&
+        leftSurface === "motifs" &&
+        createPortal(
+          <MotifLibraryPanel
+            layers={layers}
+            selectedLayerId={selectedLayerId}
+            onUpdateLayer={updateLayer}
+            customGlyphs={customGlyphs}
+            libraryMotifs={libraryMotifs}
+            libraryError={libraryError}
+            motifDrag={motifDrag}
+            onMotifDragChange={setMotifDrag}
+            dragHoverHostId={dragHoverHostId}
+            onApplyToHost={applyGlyphToHost}
+            onImportSvg={importSvgToLibrary}
+            onDeleteCustomGlyph={deleteCustomGlyph}
+            onDeleteLibraryMotif={removeLibraryMotif}
+          />,
+          objectTreeSlot
+        )}
+      {objectTreeSlot &&
+        leftSurface === "layers" &&
         createPortal(
           <LayerTree
             layers={layers}

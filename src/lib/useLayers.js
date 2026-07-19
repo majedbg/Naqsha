@@ -8,7 +8,7 @@ import { autoLayerName } from './autoLayerName';
 import { operationIdForRole } from './operations';
 import { parseSVGImport } from './svgImport';
 import { defaultTextParams } from './text/textLayer';
-import { MOTIF_TYPE, createMotifParams, motifAutoName } from './motif/motifLayer';
+import { MOTIF_TYPE, createMotifParams, motifAutoName, isMotifLayer, motifHostId } from './motif/motifLayer';
 import { ETCH_TYPE, createEtchParams } from './etch/etchLayer';
 import { getGlyph, MOTIF_GLYPHS } from './motif/glyphs';
 import { normalizePanels, loadPanels, savePanels } from './panels';
@@ -667,6 +667,19 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
         return prev.filter((l) => !groupIds.has(l.id));
       }
 
+      // Motif HOST → cascade-remove its adorning motif layers with it. An
+      // orphaned motif renders nothing, shows no warning anywhere, and can't
+      // be re-homed (audit 2026-07 bug 2), so it goes with its host — one
+      // structural entry, one ⌘Z restores both.
+      const adorned = prev
+        .filter((l) => isMotifLayer(l) && motifHostId(l) === id)
+        .map((l) => l.id);
+      if (adorned.length > 0) {
+        const ids = new Set([id, ...adorned]);
+        if (prev.length - ids.size < 1) return prev;
+        return prev.filter((l) => !ids.has(l.id));
+      }
+
       if (prev.length <= 1) return prev;
       return prev.filter((l) => l.id !== id);
     });
@@ -708,6 +721,11 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
   const changeLayerPattern = useCallback((id, patch) => {
     const active = layers.find((l) => l.id === id);
     if (!active) return { ok: false, blocked: false };
+    // Motif layers are adornments, not patterns: their `type` stays 'motif'
+    // through any patch, so a patternType swap would leave a half-motif that
+    // renders as the new pattern with junk params while the host's device
+    // still lists it (audit 2026-07 bug 1). Refuse outright.
+    if (isMotifLayer(active)) return { ok: false, blocked: false };
     const toMoire = patch.patternType === 'moire';
     const activeIsMember = isMoireMember(active);
 

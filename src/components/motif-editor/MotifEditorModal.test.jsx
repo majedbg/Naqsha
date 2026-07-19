@@ -198,11 +198,13 @@ describe('MotifEditorModal — render', () => {
 
 // ── Slice 4: used-by-N badge ────────────────────────────────────────────────
 describe('MotifEditorModal — used-by-N badge', () => {
+  // usedByCount now delegates to the shared glyphUsage counter (motif-shell
+  // D), which counts MOTIF layers only — glyphRef on anything else is noise.
   const layersFixture = [
-    { id: 'a', params: { glyphRef: 'cg-1' } },
-    { id: 'b', params: { glyphRef: 'cg-1' } },
-    { id: 'c', params: { glyphRef: 'other' } },
-    { id: 'd', params: {} },
+    { id: 'a', type: 'motif', params: { glyphRef: 'cg-1' } },
+    { id: 'b', type: 'motif', params: { glyphRef: 'cg-1' } },
+    { id: 'c', type: 'motif', params: { glyphRef: 'other' } },
+    { id: 'd', type: 'motif', params: {} },
   ];
 
   it('counts only layers referencing this glyphId', () => {

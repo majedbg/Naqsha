@@ -31,3 +31,6 @@ scripts-out
 .vercel
 .env*.local
 docs/material-references/
+
+# Playwright MCP session debris (committed verification screenshots stay tracked)
+.playwright-mcp/

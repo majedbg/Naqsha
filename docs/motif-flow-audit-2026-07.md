@@ -150,3 +150,71 @@ placementEngine order; prototype proved the interaction), motif rows nesting
 under hosts in trees, Extract "motif" terminology collision, onboarding
 coverage, and whether the Motifs surface should also take the Operations
 region.
+
+## 6. Post-crash hardening (2026-07-19)
+
+Two defects surfaced after the motif-shell landed. A user swapped a
+motif-bearing host to a dense pattern (topographic / dendrite class) and the
+tab **hard-crashed**: edge hosts sample an anchor every 24px of drawn geometry
+with no upper bound, so a dense host yielded tens of thousands of placements.
+Separately, one motif ate a full tier pattern slot, so a guest with 2 patterns
++ 1 motif could not motif the second pattern. Both fixed test-first.
+
+### Fix 1 — placement budget (tab-crash P0)
+
+- **`MAX_PLACEMENTS = 2000`** (exported from `placementEngine.js`).
+  `resolvePlacements` truncates its survivor list to the leading 2000 **in
+  sequence order** *before* `dealSlots` and the acceptance loop. Truncating the
+  INPUT (not the output list) also bounds the O(n²) empty-circle work — the loop
+  runs at most 2000 iterations, not tens of thousands. Keeping the first N is
+  deterministic and matches the "placement order = toolpath order" mental model.
+- **`MIN_EDGE_SPACING = 4`px** (exported from `anchors.js`). `sampleEdgeAnchors`
+  clamps a requested spacing up to this floor (effective = `max(requested, 4)`)
+  so a pathological sub-pixel spacing can't reintroduce the explosion at the
+  source. Applied only in the motif-specific sampler, never in the shared
+  `resampleByArcLength` (non-motif callers must honor tiny spacings verbatim).
+- **No silent cap.** `resolvePlacements` returns `placementStats {total, placed}`
+  (`total` = pre-truncation candidate count, `placed` = `min(total, 2000)`).
+  `MotifPattern.generate` stashes it as `instance.lastPlacementStats`; `useCanvas`
+  reads it after generate and surfaces a truncated-only, churn-guarded map up
+  through RightPanel → Studio → Inspector — the **same seam as `etchBitmaps`**.
+  `MotifDevice` renders an amber warning row on the affected motif card:
+  *"Showing 2,000 of N placements — reduce density or host complexity."* The map
+  is rebuilt fresh each render (entries drop when a layer stops truncating), so a
+  stale warning never lingers after the user lowers density.
+- Tests: `placementEngine.test.js` (>2000 → exactly 2000, order-preserving;
+  ≤2000 untouched; stats reported), `anchors.test.js` (spacing floor clamps
+  sub-floor, leaves above-floor untouched), `Inspector.motif.test.jsx` (warning
+  renders when truncated, hidden otherwise).
+
+### Fix 2 — motifs exempt from the tier layer cap (per-host motif budget)
+
+- **`MAX_MOTIFS_PER_HOST = 4`** (exported from `useLayers.js`). Motifs are
+  adornments, not patterns, so they **no longer count against the tier cap**
+  (Guest 3 / signed-in 6). `addMotifLayer` refuses only when the host already has
+  4 adorning motifs (`'Motif limit reached for this layer (4).'`).
+- **Every other creator** (`addLayer`, `addTextLayer`, `addImportedLayer`,
+  `addEtchLayer`, `duplicateLayer`, and the moiré pair-spawn in
+  `changeLayerPattern`) now counts **only non-motif layers** against the tier cap
+  (`nonMotifCount`), so existing motifs never consume a pattern slot. The mounted
+  "+ New" gate (`Studio.jsx addDisabled`) and `canDuplicatePanel` (`panels.js`)
+  count non-motif too; `tierLimits.checkGate('layers')` gained a comment noting
+  callers must pass a non-motif count. (`LayersSection.jsx` is dead code — the
+  legacy tabbed shell was removed in #16 — so its gate was left untouched.)
+- **Absolute backstop.** Every creator also enforces `layers.length >= MAX_LAYERS`
+  (still 6) with a distinct `'Document layer limit reached.'` message, so the
+  document total (patterns + motifs) can never exceed MAX_LAYERS. NOTE: because
+  MAX_LAYERS (6) equals the signed-in tier cap (6), the motif exemption only buys
+  real headroom in the gap between a tier's cap and MAX_LAYERS — a guest (cap 3)
+  gets up to 3 motif slots, but a signed-in user at 6 patterns has none. Raising
+  MAX_LAYERS would give signed-in users motif headroom **without** touching any
+  tier cap (`cap = min(tierMax, MAX_LAYERS)`, tierMax is 3/6) — flagged for Majed.
+- Tests: `useLayers.test.js` — the old "no-ops at the tier cap" motif test was
+  rewritten to assert the exemption (motif adds at maxLayers:1); added 5th-motif
+  refusal, motifs-don't-block-a-pattern-at-cap-1, and the MAX_LAYERS backstop.
+
+### Chosen numbers
+
+- **2000** placements per motif layer (deterministic leading prefix).
+- **4** motifs per host.
+- **4px** edge-spacing floor.

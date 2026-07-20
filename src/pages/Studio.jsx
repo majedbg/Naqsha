@@ -2775,7 +2775,14 @@ export default function Studio({ submitOrg = null } = {}) {
               setPendingPanelId(panelId);
               setUI("showPatternPicker", true);
             }}
-            addDisabled={layers.length >= (limits.maxLayers ?? Infinity)}
+            // Fix 2 (docs §6): motifs are exempt from the tier cap, so the "+ New"
+            // add-pattern row only greys out when NON-motif layers hit the cap —
+            // otherwise a host with adorning motifs would falsely block adding a
+            // pattern. Mirrors useLayers.addLayer's non-motif count.
+            addDisabled={
+              layers.filter((l) => !isMotifLayer(l)).length >=
+              (limits.maxLayers ?? Infinity)
+            }
             // Naqsha Panels grouped tier (WI-6, spec §5) — LASER-ONLY. Passing []
             // in plotter/dragCutter makes LayerTree render the flat list (its
             // grouped tier renders only when panels.length > 0), so non-laser

@@ -1190,3 +1190,53 @@ describe("Route card path scope + canvas-pick (C4)", () => {
     expect(onMotifPick).toHaveBeenCalledWith(null);
   });
 });
+
+// Placement-budget "no silent cap" warning (2026-07-19 post-crash hardening,
+// docs §6). MAX_PLACEMENTS truncation is surfaced up (useCanvas → RightPanel →
+// Studio → Inspector) as `motifPlacementStats[layerId] = {total, placed}`; the
+// affected motif card shows an amber warning. Absent/equal stats → no warning.
+describe("MotifDevice — placement-budget warning", () => {
+  const openDevice = (ui) => {
+    const r = render(ui);
+    fireEvent.click(screen.getByTestId("motif-toggle"));
+    return r;
+  };
+
+  it("renders the amber warning on a truncated motif card", () => {
+    const motif = motifLayer("m1", "host1", defaultBinding);
+    openDevice(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+        motifPlacementStats={{ m1: { total: 12345, placed: 2000 } }}
+      />
+    );
+    const warning = screen.getByTestId("motif-placement-warning");
+    expect(warning).toBeInTheDocument();
+    // Localized counts + guidance copy.
+    expect(warning).toHaveTextContent("Showing 2,000 of 12,345 placements");
+    expect(warning).toHaveTextContent("reduce density or host complexity");
+    // Styled like the existing amber warnings.
+    expect(warning.className).toContain("border-amber-400/50");
+    expect(warning.className).toContain("bg-amber-50");
+    expect(warning.className).toContain("text-amber-800");
+  });
+
+  it("hides the warning when no stats are supplied for the motif", () => {
+    const motif = motifLayer("m1", "host1", defaultBinding);
+    openDevice(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+        // No entry for m1 → not truncated → no warning.
+        motifPlacementStats={{}}
+      />
+    );
+    expect(screen.getByTestId("motif-row")).toBeInTheDocument();
+    expect(screen.queryByTestId("motif-placement-warning")).toBeNull();
+  });
+});

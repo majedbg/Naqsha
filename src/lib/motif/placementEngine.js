@@ -196,6 +196,20 @@ export function selectAnchors(anchors, rules = {}, opts = {}) {
  * @typedef {{anchorId:string, reason:'junction-skip'|'below-floor'|'no-fit'|'rest'}} Rejection
  */
 
+// Placement budget (2026-07-19 post-crash hardening, docs §6). A motif-bearing
+// host swapped to a dense pattern (topographic / dendrite class) samples tens of
+// thousands of survivor anchors; the acceptance loop below runs an O(n)
+// empty-circle test against the growing `placed` list per survivor (so the loop
+// is O(n²)) AND emits one drawn instance per accepted survivor — the tab hard-
+// crashed. We cap the survivors PROCESSED at MAX_PLACEMENTS, keeping the FIRST N
+// in sequence order (placement order = toolpath order, so the kept set is the
+// deterministic leading prefix). Truncating the INPUT (not the output list)
+// bounds the O(n²) work too, not just the instance count. The cap is surfaced —
+// resolvePlacements returns `placementStats {total, placed}` so the render seam
+// (useCanvas → Inspector) can show a "no silent cap" warning; there is no hidden
+// truncation.
+export const MAX_PLACEMENTS = 2000;
+
 const PLACEMENT_DEFAULTS = {
   sequence: ['A'],
   flip: false,
@@ -252,11 +266,21 @@ function resolveOrientation(base, role) {
  *   junction?: 'center'|'skip',
  * }} [config]
  * @param {{boundary?: null|{type:'rect',width:number,height:number}|{type:'polygon',points:{x:number,y:number}[]}}} [opts]
- * @returns {{placements: Placement[], rejected: Rejection[]}}
+ * @returns {{placements: Placement[], rejected: Rejection[], placementStats: {total:number, placed:number}}}
  */
 export function resolvePlacements(survivors, config = {}, opts = {}) {
-  const list = Array.isArray(survivors) ? survivors : [];
+  const rawList = Array.isArray(survivors) ? survivors : [];
   const cfg = config || {};
+
+  // Placement budget: keep the leading MAX_PLACEMENTS survivors in sequence
+  // order. Truncate HERE — before dealSlots and the acceptance loop — so slot
+  // assignment stays aligned with the kept survivors and the expensive
+  // empty-circle work is bounded to the cap. `placementStats.total` is the
+  // pre-truncation candidate count (what the warning reports as "N"); `placed`
+  // is min(total, cap). truncated ⇔ total > placed.
+  const total = rawList.length;
+  const list = total > MAX_PLACEMENTS ? rawList.slice(0, MAX_PLACEMENTS) : rawList;
+  const placementStats = { total, placed: list.length };
 
   const sequence =
     Array.isArray(cfg.sequence) && cfg.sequence.length > 0
@@ -414,7 +438,7 @@ export function resolvePlacements(survivors, config = {}, opts = {}) {
     placements.push(placement);
   });
 
-  return { placements, rejected };
+  return { placements, rejected, placementStats };
 }
 
 /**
@@ -425,11 +449,11 @@ export function resolvePlacements(survivors, config = {}, opts = {}) {
  * @param {Anchor[]} anchors
  * @param {{selection?: object, placement?: object}} [binding]
  * @param {{canvasW?:number, canvasH?:number, boundary?:object|null}} [opts]
- * @returns {{placements: Placement[], orphans: OverrideRef[], rejected: Rejection[]}}
+ * @returns {{placements: Placement[], orphans: OverrideRef[], rejected: Rejection[], placementStats: {total:number, placed:number}}}
  */
 export function placeMotifs(anchors, binding = {}, opts = {}) {
   const b = binding || {};
   const { survivors, orphans } = selectAnchors(anchors, b.selection || {}, opts);
-  const { placements, rejected } = resolvePlacements(survivors, b.placement || {}, opts);
-  return { placements, orphans, rejected };
+  const { placements, rejected, placementStats } = resolvePlacements(survivors, b.placement || {}, opts);
+  return { placements, orphans, rejected, placementStats };
 }

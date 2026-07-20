@@ -140,6 +140,11 @@ export default function RightPanel({
   // parent for the Inspector's 1:1 "what etches" preview hero (Raster Etch S9,
   // #88). Optional — legacy/test callers that don't pass it skip the hero.
   onEtchBitmapsChange,
+  // Surfaces per-motif-layer placement-budget stats (layerId → {total, placed})
+  // for the Inspector's MotifDevice "no silent cap" warning (2026-07-19, docs
+  // §6). Only truncated motif layers appear. Optional — legacy/test callers that
+  // omit it skip the warning.
+  onMotifPlacementStatsChange,
   bgColor,
   onBgColorChange,
   unit = 'mm',
@@ -279,7 +284,7 @@ export default function RightPanel({
   // useCanvas so text layers can render their outlines.
   const { font: textFont } = useFont();
 
-  const { patternInstances, etchBitmaps } = useCanvas(
+  const { patternInstances, etchBitmaps, motifPlacementStats } = useCanvas(
     containerRef,
     layers,
     canvasW,
@@ -409,6 +414,13 @@ export default function RightPanel({
   useEffect(() => {
     if (onEtchBitmapsChange) onEtchBitmapsChange(etchBitmaps);
   }, [etchBitmaps, onEtchBitmapsChange]);
+
+  // Surface per-motif-layer placement-budget stats to the parent so the
+  // Inspector's MotifDevice can show a "no silent cap" warning (2026-07-19).
+  // Mirrors the etch surfacing above.
+  useEffect(() => {
+    if (onMotifPlacementStatsChange) onMotifPlacementStatsChange(motifPlacementStats);
+  }, [motifPlacementStats, onMotifPlacementStatsChange]);
 
   // Expose canvas container so parent can grab thumbnails
   useEffect(() => {

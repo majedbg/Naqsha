@@ -12,6 +12,13 @@
 
 const EPS = 1e-6;
 
+// Minimum effective edge-sampling spacing (px). sampleEdgeAnchors clamps a
+// requested spacing up to this floor so a pathological tiny value can't sample a
+// runaway anchor count and reintroduce the placement explosion (2026-07-19
+// post-crash hardening, docs §6). 4px is comfortably below any legitimate motif
+// spacing (the default is 24px) yet far above the sub-pixel values that blow up.
+export const MIN_EDGE_SPACING = 4;
+
 /**
  * Build the segment list for a polyline. Zero-length segments (coincident
  * consecutive points) are dropped so degenerate input never divides by zero
@@ -247,7 +254,16 @@ function normalizePath(path) {
  */
 export function sampleEdgeAnchors(paths, opts = {}) {
   if (!paths || paths.length === 0) return [];
-  const { spacing, count, includeEndpoints = true, idPrefix = 'edge' } = opts;
+  const { spacing: requestedSpacing, count, includeEndpoints = true, idPrefix = 'edge' } = opts;
+  // Spacing FLOOR (2026-07-19 post-crash hardening, docs §6). Effective spacing =
+  // max(requested, MIN_EDGE_SPACING). A pathological small spacing (e.g. 0.1px on
+  // a long, dense host) would arc-length-resample tens of thousands of anchors
+  // per path and reintroduce the placement explosion the MAX_PLACEMENTS cap
+  // guards downstream — this stops it at the SOURCE. Clamped here (the motif-
+  // specific sampler) rather than in resampleByArcLength, which is shared with
+  // non-motif callers that must honor tiny spacings verbatim.
+  const spacing =
+    requestedSpacing != null ? Math.max(requestedSpacing, MIN_EDGE_SPACING) : requestedSpacing;
 
   const anchors = [];
 

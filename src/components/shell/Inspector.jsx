@@ -578,7 +578,7 @@ function ModulatorDevice({
 // placement binding. Every write re-spreads the whole params.binding via
 // deepMergeBinding so a partial patch never clobbers another branch — same
 // re-spread invariant as ModulatorDevice, extended to a nested schema.
-function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, customGlyphs, onEditGlyph, onNewMotif, onImportFile, libraryMotifs, onCopyLibraryGlyph, onUseLibraryGlyph, motifPick, onMotifPick, onOpenLibrary }) {
+function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, customGlyphs, onEditGlyph, onNewMotif, onImportFile, libraryMotifs, onCopyLibraryGlyph, onUseLibraryGlyph, motifPick, onMotifPick, onOpenLibrary, motifPlacementStats }) {
   // OPEN by default, and the state survives selection changes (motif-shell,
   // D). The audit's top discoverability finding: SelectedLayerInspector is
   // keyed by layer.id, so this component REMOUNTS on every selection — a
@@ -826,6 +826,9 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, 
         const chain = readChain(m.params?.binding);
         const size = m.params?.binding?.placement?.sizing?.size ?? 18;
         const flip = m.params?.binding?.placement?.flip === true;
+        // Placement budget (2026-07-19, docs §6): present only when THIS motif's
+        // placements were truncated by MAX_PLACEMENTS. No silent cap — surface it.
+        const budget = motifPlacementStats?.[m.id];
 
         return (
           <div
@@ -833,6 +836,16 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, 
             data-testid="motif-row"
             className="space-y-2 rounded-cell border border-hairline bg-paper-warm p-2"
           >
+            {budget && (
+              <p
+                data-testid="motif-placement-warning"
+                className="rounded-xs border border-amber-400/50 bg-amber-50 px-2 py-1 text-[11px] text-amber-800"
+              >
+                Showing {budget.placed.toLocaleString()} of{" "}
+                {budget.total.toLocaleString()} placements — reduce density or
+                host complexity.
+              </p>
+            )}
             {/* Glyph picker chip + remove (motif-shell, D). The chip replaces
                 the old native <select>: the applied glyph's THUMBNAIL is the
                 value, and clicking it opens the flyout picker (search / recents
@@ -987,7 +1000,7 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, 
 // The param-editing body for one selected layer. Split into its own component so
 // usePatternCache (a hook) is only called when a layer is actually selected —
 // hooks can't be called conditionally inside Inspector itself.
-function SelectedLayerInspector({ layer, layers, panels, colorView, etchBitmap, unit, profileId, onUpdateLayer, onChangeLayerPattern, onVariableWeightChange, onPreviewField, onClosePreview, threeDSubMode, threeDFocusLayerId, onAddMotif, onRemoveLayer, customGlyphs, onEditGlyph, onNewMotif, onImportFile, libraryMotifs, onCopyLibraryGlyph, onUseLibraryGlyph, motifPick, onMotifPick, onOpenLibrary }) {
+function SelectedLayerInspector({ layer, layers, panels, colorView, etchBitmap, unit, profileId, onUpdateLayer, onChangeLayerPattern, onVariableWeightChange, onPreviewField, onClosePreview, threeDSubMode, threeDFocusLayerId, onAddMotif, onRemoveLayer, customGlyphs, onEditGlyph, onNewMotif, onImportFile, libraryMotifs, onCopyLibraryGlyph, onUseLibraryGlyph, motifPick, onMotifPick, onOpenLibrary, motifPlacementStats }) {
   // Pattern swap: route through the same cache machine LayerCard uses, applied via
   // the pair-aware onChangeLayerPattern when present (falls back to a plain param
   // update so the component works standalone / in tests without a router).
@@ -1062,6 +1075,7 @@ function SelectedLayerInspector({ layer, layers, panels, colorView, etchBitmap, 
         motifPick={motifPick}
         onMotifPick={onMotifPick}
         onOpenLibrary={onOpenLibrary}
+        motifPlacementStats={motifPlacementStats}
       />
 
       {/* Etch Stack rack (Raster Etch S2, #81) — the ordered, reorderable,
@@ -1224,6 +1238,11 @@ export default function Inspector({
   // the left column to the Motifs surface. Optional — standalone Inspectors
   // simply hide the link.
   onOpenLibrary,
+  // Placement-budget stats (layerId → {total, placed}) for the MotifDevice
+  // "no silent cap" warning (2026-07-19 post-crash hardening, docs §6). Only
+  // truncated motif layers appear; keyed by the MOTIF child's id (the device
+  // renders on the host and lists its children). Optional → no warning.
+  motifPlacementStats,
 }) {
   // Resolved font for the text-properties readouts (cap-height / engrave
   // warnings). May be null on first paint before useFont resolves — the panel's
@@ -1322,6 +1341,7 @@ export default function Inspector({
       motifPick={motifPick}
       onMotifPick={onMotifPick}
       onOpenLibrary={onOpenLibrary}
+      motifPlacementStats={motifPlacementStats}
     />
   );
 }

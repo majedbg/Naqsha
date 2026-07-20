@@ -47,6 +47,22 @@ function applyNodeTransform(p, t, cx, cy) {
   p.translate(-cx, -cy);
 }
 
+// Value-equality for the surfaced motif placement-budget map (2026-07-19). Keyed
+// by layer id → {total, placed}. Used to churn-guard setMotifPlacementStats so a
+// motif layer that keeps truncating at the same counts never forces a re-render
+// (mirrors the etchBitmaps prune's reference guard).
+function motifStatsEqual(a, b) {
+  const ak = Object.keys(a);
+  const bk = Object.keys(b);
+  if (ak.length !== bk.length) return false;
+  for (const k of ak) {
+    const av = a[k];
+    const bv = b[k];
+    if (!bv || av.total !== bv.total || av.placed !== bv.placed) return false;
+  }
+  return true;
+}
+
 export default function useCanvas(
   containerRef,
   layers,
@@ -123,6 +139,13 @@ export default function useCanvas(
   // and registered via makeEtchInstance for export, never a second resolve — so
   // the hero shows bit-for-bit what exports (grilled decision 4).
   const [etchBitmaps, setEtchBitmaps] = useState({});
+  // Motif placement-budget stats (2026-07-19 post-crash hardening): layerId →
+  // {total, placed} for every motif layer whose placements were TRUNCATED by
+  // MAX_PLACEMENTS. Surfaced as STATE (like etchBitmaps) so the Inspector's
+  // MotifDevice can render a "no silent cap" warning on the affected card. Only
+  // truncated layers appear; the map is rebuilt fresh each render and churn-
+  // guarded (motifStatsEqual) so it never triggers a redundant re-render.
+  const [motifPlacementStats, setMotifPlacementStats] = useState({});
   const renderAllRef = useRef(null);
   // Live transform/selection read inside renderAll WITHOUT entering its dep
   // array — keeps renderAll's identity stable so the 150ms param-debounce
@@ -519,6 +542,25 @@ export default function useCanvas(
 
     instancesRef.current = newInstances;
     setPatternInstances(newInstances);
+
+    // Motif placement-budget stats (2026-07-19, docs §6). Each MotifPattern
+    // instance stashes `lastPlacementStats {total, placed}` during generate()
+    // (both the visible and hidden/export paths run it). Rebuild the truncated-
+    // only map fresh each render and surface it up as state; churn-guarded so an
+    // unchanged truncation never re-renders (mirror etchBitmaps). Entries drop
+    // automatically when a layer stops truncating (built fresh, not merged), so
+    // a stale amber warning can't persist after the user lowers density.
+    const nextMotifStats = {};
+    for (const layer of layers) {
+      if (!isMotifLayer(layer)) continue;
+      const st = newInstances[layer.id]?.lastPlacementStats;
+      if (st && st.total > st.placed) {
+        nextMotifStats[layer.id] = { total: st.total, placed: st.placed };
+      }
+    }
+    setMotifPlacementStats((prev) =>
+      motifStatsEqual(prev, nextMotifStats) ? prev : nextMotifStats
+    );
     // `font` resolves asynchronously (null → Font); it's in the deps so when it
     // arrives renderAll gets a new identity, the debounce effect re-fires, and
     // text actually paints. Changes once, so it doesn't churn the param-debounce.
@@ -740,5 +782,5 @@ export default function useCanvas(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [transforms, selectedNodeId]);
 
-  return { patternInstances, etchBitmaps };
+  return { patternInstances, etchBitmaps, motifPlacementStats };
 }

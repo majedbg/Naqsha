@@ -1122,6 +1122,11 @@ export default function Studio({ submitOrg = null } = {}) {
   // 1:1 "what etches" preview hero (Raster Etch S9, #88) re-renders when a bitmap
   // resolves async — it reads the SAME buffer that exports (grilled decision 4).
   const [etchBitmaps, setEtchBitmaps] = useState({});
+  // Per-motif-layer placement-budget stats (layerId → {total, placed}) for the
+  // Inspector's MotifDevice "no silent cap" warning (2026-07-19 post-crash
+  // hardening, docs §6). Only truncated motif layers appear. Surfaced up from
+  // useCanvas via RightPanel, mirroring etchBitmaps.
+  const [motifPlacementStats, setMotifPlacementStats] = useState({});
 
   // === Run Plan (Wave-3 Lane I, PRD #73) ===
   // The plan is a shell-morph: AppShell provides the open/closed state around the
@@ -2216,6 +2221,9 @@ export default function Studio({ submitOrg = null } = {}) {
           // Surfaces the resolved single-source Etch bitmaps for the Inspector's
           // 1:1 "what etches" preview hero (#88) — same buffer that exports.
           onEtchBitmapsChange={setEtchBitmaps}
+          // Per-motif-layer placement-budget stats for the MotifDevice "no
+          // silent cap" warning (2026-07-19, docs §6).
+          onMotifPlacementStatsChange={setMotifPlacementStats}
           canvasContainerRef={canvasContainerRef}
           bgColor={bgColor}
           onBgColorChange={handleBgColorChange}
@@ -2631,6 +2639,11 @@ export default function Studio({ submitOrg = null } = {}) {
             // hero (#88) — the SAME buffer that exports (no second resolve). Null
             // while resolving / for non-Etch layers → the hero self-hides.
             etchBitmap={etchBitmaps[inspectorTargetId] ?? null}
+            // Placement-budget stats (layerId → {total, placed}) for the
+            // MotifDevice "no silent cap" warning (2026-07-19, docs §6). The
+            // WHOLE map is threaded (not just the selected id) because the
+            // device renders on the HOST and lists its adorning motif children.
+            motifPlacementStats={motifPlacementStats}
             // Active document unit (#13) — length-tagged params display/convert
             // in this unit; values stay px in layer state.
             unit={unit}

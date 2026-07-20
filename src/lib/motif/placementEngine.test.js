@@ -346,7 +346,7 @@ describe('selectAnchors — master determinism', () => {
 // ========================================================================
 // resolvePlacements + placeMotifs — TRANSFORM + ACCEPTANCE half.
 // ========================================================================
-import { resolvePlacements, placeMotifs } from './placementEngine.js';
+import { resolvePlacements, placeMotifs, MAX_PLACEMENTS } from './placementEngine.js';
 import { mulberry32 } from '../patterns/rng.js';
 
 // Anchor factory that lets us set tangent/normal/junction explicitly.
@@ -959,5 +959,49 @@ describe('resolvePlacements — Sequencer determinism + rotationRandom fold', ()
     expect(plain.placements[0].rotation).toBeCloseTo(0, 9);
     expect(randomized.placements[0].rotation).not.toBeCloseTo(0, 6);
     expect(Math.abs(randomized.placements[0].rotation)).toBeLessThanOrEqual(40);
+  });
+});
+
+// ========================================================================
+// Placement BUDGET (2026-07-19 post-crash hardening, docs §6). A dense host can
+// yield tens of thousands of survivors → O(n²) empty-circle work + one instance
+// each → tab crash. resolvePlacements caps the survivors it processes at
+// MAX_PLACEMENTS, keeping the FIRST N in sequence order, and returns
+// placementStats {total, placed} so the render seam can surface the truncation.
+// ========================================================================
+describe('resolvePlacements — placement budget (MAX_PLACEMENTS)', () => {
+  // Far-apart fixed footprints so every KEPT survivor is accepted (no no-fit),
+  // isolating truncation from acceptance so the counts are exact.
+  const spread = (n) => Array.from({ length: n }, (_, i) => mkA(`a${i}`, i * 5, 0));
+  const fixedTiny = { sizing: { mode: 'fixed', size: 1 } };
+
+  it('truncates >MAX_PLACEMENTS candidate survivors to exactly MAX_PLACEMENTS, order-preserving', () => {
+    const n = MAX_PLACEMENTS + 500;
+    const anchors = spread(n);
+    const { placements, placementStats } = resolvePlacements(anchors, fixedTiny);
+
+    expect(placements.length).toBe(MAX_PLACEMENTS);
+    // The kept placements are the LEADING prefix, in input (= sequence) order.
+    expect(placements.map((p) => p.anchorId)).toEqual(
+      anchors.slice(0, MAX_PLACEMENTS).map((a) => a.id)
+    );
+    expect(placementStats).toEqual({ total: n, placed: MAX_PLACEMENTS });
+  });
+
+  it('leaves exactly MAX_PLACEMENTS survivors untouched (placed === total, no warning)', () => {
+    const n = MAX_PLACEMENTS;
+    const anchors = spread(n);
+    const { placements, placementStats } = resolvePlacements(anchors, fixedTiny);
+
+    expect(placements.length).toBe(n);
+    expect(placements.map((p) => p.anchorId)).toEqual(anchors.map((a) => a.id));
+    expect(placementStats).toEqual({ total: n, placed: n });
+    // total === placed ⇒ the "no silent cap" warning stays hidden.
+    expect(placementStats.total > placementStats.placed).toBe(false);
+  });
+
+  it('reports placementStats for a small unbudgeted run (total === placed)', () => {
+    const { placementStats } = resolvePlacements(spread(3), fixedTiny);
+    expect(placementStats).toEqual({ total: 3, placed: 3 });
   });
 });

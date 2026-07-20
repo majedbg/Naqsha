@@ -20,17 +20,21 @@
 // this slice to its landing).
 
 import { useState, useCallback, useRef } from 'react';
+import { glyphUsedByLayerCount } from '../../lib/motif/glyphUsage';
 
 /** Default root for glyphs (e.g. built-ins) that carry none: origin, no angle. */
 export const DEFAULT_ROOT = { x: 0, y: 0, angle: 0 };
 
 /**
- * Layers referencing this glyph by id (a motif layer binds via params.glyphRef).
- * Drives the modal's "used by N layers" badge. Pure — lives here (not in the
- * component file) so the modal stays a components-only module (react-refresh).
+ * Layers referencing this glyph by id. Drives the modal's "used by N layers"
+ * badge. Delegates to the shared glyphUsage counter so SEQUENCER-SLOT refs
+ * count too — the old base-ref-only filter told the user an in-place Save was
+ * isolated while it silently restamped slots sharing the id (audit 2026-07
+ * bug 3). Pure — lives here (not in the component file) so the modal stays a
+ * components-only module (react-refresh).
  */
 export function usedByCount(layers, glyphId) {
-  return (layers || []).filter((l) => l?.params?.glyphRef === glyphId).length;
+  return glyphUsedByLayerCount(layers, glyphId);
 }
 
 /**

@@ -13,6 +13,7 @@
 
 import { PATTERN_SYMBOLS } from '../constants';
 import { autoLayerName } from './autoLayerName';
+import { isMotifLayer } from './motif/motifLayer';
 
 export const MAX_PANELS = 3;
 export const SUBSTRATE_KINDS = ['acrylic', 'plywood', 'mdf', 'cardstock', 'other'];
@@ -180,10 +181,15 @@ export function duplicatePanel(panels, layers, id) {
 // Gate for the "Duplicate panel" action. False when we're at the panel cap
 // (`!canAddPanel`) OR when copying this panel's layers would push the document
 // past the tier layer `cap` (all-or-nothing — no half copies). Else true.
+// Fix 2 (docs §6): motifs are EXEMPT from the tier cap, so only NON-motif layers
+// count — both the document total and the copied set. A panel full of motifs
+// therefore never blocks its own duplicate on the pattern-slot budget.
 export function canDuplicatePanel(panels, layers, id, cap) {
   if (!canAddPanel(panels)) return false;
-  const srcCount = layersForPanel(layers || [], id).length;
-  if ((layers || []).length + srcCount > cap) return false;
+  const all = layers || [];
+  const nonMotifTotal = all.filter((l) => !isMotifLayer(l)).length;
+  const srcCount = layersForPanel(all, id).filter((l) => !isMotifLayer(l)).length;
+  if (nonMotifTotal + srcCount > cap) return false;
   return true;
 }
 

@@ -8,7 +8,7 @@ import { autoLayerName } from './autoLayerName';
 import { operationIdForRole } from './operations';
 import { parseSVGImport } from './svgImport';
 import { defaultTextParams } from './text/textLayer';
-import { MOTIF_TYPE, createMotifParams, motifAutoName } from './motif/motifLayer';
+import { MOTIF_TYPE, createMotifParams, motifAutoName, isMotifLayer, motifHostId } from './motif/motifLayer';
 import { ETCH_TYPE, createEtchParams } from './etch/etchLayer';
 import { getGlyph, MOTIF_GLYPHS } from './motif/glyphs';
 import { normalizePanels, loadPanels, savePanels } from './panels';
@@ -44,6 +44,26 @@ const DEFAULT_BG_COLOR = '#0a1628';
 let nextId = 1;
 function genId() {
   return `layer-${nextId++}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+// Motif budget (2026-07-19 post-crash hardening / Fix 2, docs §6). Motifs are
+// ADORNMENTS, not patterns: they no longer count against the tier layer cap
+// (Guest 3 / signed-in 6), so one motif never eats a pattern slot. Instead each
+// HOST gets its own budget of adorning motifs, and the document as a whole is
+// still bounded by the absolute MAX_LAYERS backstop (imported above) enforced on
+// every creator. Approved by Majed.
+export const MAX_MOTIFS_PER_HOST = 4;
+
+// Count of layers that consume a TIER PATTERN slot — i.e. everything EXCEPT
+// motifs. Every tier-cap check counts these (not raw layers.length) so existing
+// motifs don't block adding/duplicating a real pattern layer at the cap.
+function nonMotifCount(list) {
+  return (list || []).filter((l) => !isMotifLayer(l)).length;
+}
+
+// How many motifs currently adorn `hostId` — the per-host budget denominator.
+function motifsOnHost(list, hostId) {
+  return (list || []).filter((l) => isMotifLayer(l) && motifHostId(l) === hostId).length;
 }
 
 // Custom-glyph id scheme (WI-3). Mirrors genId: a monotonic counter plus a
@@ -380,7 +400,9 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
     const defaultOpId = typeof getDefaultOperationId === 'function' ? getDefaultOperationId() : undefined;
     recordStructuralFn(); // history: discrete structural entry (capture-before)
     setLayers((prev) => {
-      if (prev.length >= cap) return prev;
+      // Count only non-motif layers against the tier cap (Fix 2 — motifs are
+      // exempt); the absolute MAX_LAYERS backstop still bounds the whole document.
+      if (nonMotifCount(prev) >= cap || prev.length >= MAX_LAYERS) return prev;
       const layer = createLayer(prev.length, requested);
       const withOp = defaultOpId ? { ...layer, operationId: defaultOpId } : layer;
       return [...prev, panelId !== undefined ? { ...withOp, panelId } : withOp];
@@ -403,14 +425,16 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
     if (!parsed.ok) return { ok: false, error: parsed.error };
     // Capacity decided synchronously off live `layers` (setLayers is async),
     // mirroring changeLayerPattern's pattern, so the returned outcome is exact.
-    if (layers.length >= cap) return { ok: false, error: 'Layer limit reached.' };
+    // Non-motif count vs the tier cap (Fix 2); MAX_LAYERS is the doc backstop.
+    if (nonMotifCount(layers) >= cap) return { ok: false, error: 'Layer limit reached.' };
+    if (layers.length >= MAX_LAYERS) return { ok: false, error: 'Document layer limit reached.' };
 
     recordStructuralFn(); // history: past the cap guard, this will mutate
     // Generate the id once, outside the updater, so it survives StrictMode's
     // double-invoke and can be returned to the caller for selection.
     const id = genId();
     setLayers((prev) => {
-      if (prev.length >= cap) return prev; // re-check against live state
+      if (nonMotifCount(prev) >= cap || prev.length >= MAX_LAYERS) return prev; // re-check
       const index = prev.length;
       const layer = {
         id,
@@ -450,12 +474,14 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
   // the initial string; `opts.params` overrides persisted defaults; an optional
   // `opts.transform` seeds the committed transform (used by pointer-create).
   const addTextLayer = useCallback((opts = {}) => {
-    if (layers.length >= cap) return { ok: false, error: 'Layer limit reached.' };
+    // Non-motif count vs the tier cap (Fix 2); MAX_LAYERS is the doc backstop.
+    if (nonMotifCount(layers) >= cap) return { ok: false, error: 'Layer limit reached.' };
+    if (layers.length >= MAX_LAYERS) return { ok: false, error: 'Document layer limit reached.' };
 
     recordStructuralFn(); // history: past the cap guard, this will mutate
     const id = genId();
     setLayers((prev) => {
-      if (prev.length >= cap) return prev; // re-check against live state
+      if (nonMotifCount(prev) >= cap || prev.length >= MAX_LAYERS) return prev; // re-check
       const index = prev.length;
       const layer = {
         id,
@@ -493,13 +519,25 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
   // read off live `layers` for the host (null-safe). `opts` selects the glyph,
   // anchor mode (default 'semantic'), and placement binding.
   const addMotifLayer = useCallback((hostLayerId, opts = {}) => {
-    if (layers.length >= cap) return { ok: false, error: 'Layer limit reached.' };
+    // Fix 2 (docs §6): motifs are EXEMPT from the tier layer cap — they get their
+    // OWN per-host budget instead, so a guest with 2 patterns + 1 motif can still
+    // motif the second pattern. Refuse only when THIS host is already fully
+    // adorned, and keep an absolute document backstop (MAX_LAYERS) with a distinct
+    // message. Decided off live `layers` (setLayers is async), re-checked below.
+    if (motifsOnHost(layers, hostLayerId) >= MAX_MOTIFS_PER_HOST) {
+      return { ok: false, error: `Motif limit reached for this layer (${MAX_MOTIFS_PER_HOST}).` };
+    }
+    if (layers.length >= MAX_LAYERS) return { ok: false, error: 'Document layer limit reached.' };
 
     recordStructuralFn(); // history: past the cap guard, this will mutate
     const id = genId();
     const host = layers.find((l) => l.id === hostLayerId) || null;
     setLayers((prev) => {
-      if (prev.length >= cap) return prev; // re-check against live state
+      // Re-check against live state (both the per-host budget and the doc backstop).
+      if (
+        motifsOnHost(prev, hostLayerId) >= MAX_MOTIFS_PER_HOST ||
+        prev.length >= MAX_LAYERS
+      ) return prev;
       const index = prev.length;
       const layer = {
         id,
@@ -533,7 +571,9 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
       return [...prev, layer];
     });
     return { ok: true, id };
-  }, [cap, layers, customGlyphs, recordStructuralFn]);
+    // `cap` dropped from deps (Fix 2): addMotifLayer no longer reads the tier cap
+    // — motifs are exempt (per-host budget + MAX_LAYERS backstop instead).
+  }, [layers, customGlyphs, recordStructuralFn]);
 
   // Create an ETCH layer — the raster counterpart to the vector layers (Raster
   // Etch S1, issue #80). Mirrors addImportedLayer/addTextLayer EXACTLY: id
@@ -546,12 +586,14 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
   // caller (Studio) decodes + downscales before calling. `opts.transform` seeds
   // the committed transform (used by pointer-place), like the sibling creators.
   const addEtchLayer = useCallback((opts = {}) => {
-    if (layers.length >= cap) return { ok: false, error: 'Layer limit reached.' };
+    // Non-motif count vs the tier cap (Fix 2); MAX_LAYERS is the doc backstop.
+    if (nonMotifCount(layers) >= cap) return { ok: false, error: 'Layer limit reached.' };
+    if (layers.length >= MAX_LAYERS) return { ok: false, error: 'Document layer limit reached.' };
 
     recordStructuralFn(); // history: past the cap guard, this will mutate
     const id = genId();
     setLayers((prev) => {
-      if (prev.length >= cap) return prev; // re-check against live state
+      if (nonMotifCount(prev) >= cap || prev.length >= MAX_LAYERS) return prev; // re-check
       const index = prev.length;
       const layer = {
         id,
@@ -621,7 +663,7 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
         if (!a || !b) {
           // Degenerate pair (orphan) — fall through to single-layer clone so we
           // never silently drop the duplicate; the clone clears its role below.
-          if (prev.length >= cap) return prev;
+          if (nonMotifCount(prev) >= cap || prev.length >= MAX_LAYERS) return prev;
           const copy = cloneLayer(source);
           delete copy.moireRole;
           delete copy.moireGroupId;
@@ -629,7 +671,8 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
           next.splice(idx + 1, 0, copy);
           return next;
         }
-        if (prev.length + 2 > cap) return prev; // need 2 free slots
+        // Need 2 free non-motif slots under the tier cap AND under the doc backstop.
+        if (nonMotifCount(prev) + 2 > cap || prev.length + 2 > MAX_LAYERS) return prev;
         const newGroupId = genMoireGroupId();
         const copyA = { ...cloneLayer(a), moireRole: 'A', moireGroupId: newGroupId };
         const copyB = { ...cloneLayer(b), moireRole: 'B', moireGroupId: newGroupId };
@@ -641,7 +684,7 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
         return next;
       }
 
-      if (prev.length >= cap) return prev;
+      if (nonMotifCount(prev) >= cap || prev.length >= MAX_LAYERS) return prev;
       const copy = cloneLayer(source);
       const next = [...prev];
       next.splice(idx + 1, 0, copy);
@@ -665,6 +708,19 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
         // Respect the min-1 rule on the POST-removal count.
         if (prev.length - groupIds.size < 1) return prev;
         return prev.filter((l) => !groupIds.has(l.id));
+      }
+
+      // Motif HOST → cascade-remove its adorning motif layers with it. An
+      // orphaned motif renders nothing, shows no warning anywhere, and can't
+      // be re-homed (audit 2026-07 bug 2), so it goes with its host — one
+      // structural entry, one ⌘Z restores both.
+      const adorned = prev
+        .filter((l) => isMotifLayer(l) && motifHostId(l) === id)
+        .map((l) => l.id);
+      if (adorned.length > 0) {
+        const ids = new Set([id, ...adorned]);
+        if (prev.length - ids.size < 1) return prev;
+        return prev.filter((l) => !ids.has(l.id));
       }
 
       if (prev.length <= 1) return prev;
@@ -708,6 +764,11 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
   const changeLayerPattern = useCallback((id, patch) => {
     const active = layers.find((l) => l.id === id);
     if (!active) return { ok: false, blocked: false };
+    // Motif layers are adornments, not patterns: their `type` stays 'motif'
+    // through any patch, so a patternType swap would leave a half-motif that
+    // renders as the new pattern with junk params while the host's device
+    // still lists it (audit 2026-07 bug 1). Refuse outright.
+    if (isMotifLayer(active)) return { ok: false, blocked: false };
     const toMoire = patch.patternType === 'moire';
     const activeIsMember = isMoireMember(active);
 
@@ -716,9 +777,11 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
       return { ok: true, blocked: false };
     }
 
-    // Case 2: spawn a new pair. Need exactly ONE free slot under the cap.
+    // Case 2: spawn a new pair. Need ONE free non-motif slot under the tier cap
+    // (the active layer is already a non-motif pattern; B is the +1) AND room
+    // under the absolute MAX_LAYERS backstop.
     if (toMoire && !activeIsMember) {
-      if (layers.length + 1 > cap) {
+      if (nonMotifCount(layers) + 1 > cap || layers.length + 1 > MAX_LAYERS) {
         return { ok: false, blocked: true };
       }
       recordStructuralFn(); // history: pair-spawn pattern switch
@@ -726,7 +789,7 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
       setLayers((prev) => {
         const idx = prev.findIndex((l) => l.id === id);
         if (idx === -1) return prev;
-        if (prev.length + 1 > cap) return prev; // re-check against live state
+        if (nonMotifCount(prev) + 1 > cap || prev.length + 1 > MAX_LAYERS) return prev; // re-check
         const src = prev[idx];
         const layerA = {
           ...src,

@@ -46,6 +46,11 @@ export default class MotifPattern extends Pattern {
    */
   generate(ctx, seed, params, canvasW, canvasH, color, opacity) {
     this.svgElements = [];
+    // Placement-budget stats for the render seam's "no silent cap" warning
+    // (2026-07-19, docs §6). Reset to null every generate; set from
+    // resolvePlacements below whenever we actually place. An early return (no
+    // resolvable glyph / no anchors) leaves it null → no warning.
+    this.lastPlacementStats = null;
 
     const p = params || {};
     // Glyph resolution (WI-3 + B1 multi-glyph). Two injected sources, both from
@@ -118,7 +123,11 @@ export default class MotifPattern extends Pattern {
     // `boundary` from opts, so passing just `{boundary}` is byte-identical.
     const placementConfig = { ...(binding.placement || {}) };
     if (sequence) placementConfig.sequence = sequence;
-    const { placements } = resolvePlacements(survivors, placementConfig, { boundary });
+    const { placements, placementStats } = resolvePlacements(survivors, placementConfig, { boundary });
+    // Surface the budget stats so useCanvas can read `instance.lastPlacementStats`
+    // after generate() and mirror truncation up to the Inspector (etchBitmaps
+    // seam). placementStats is always present from resolvePlacements.
+    this.lastPlacementStats = placementStats || null;
 
     // Canvas style — mirror ImportedPath: one resolved color, alpha from opacity.
     const alpha = Math.round((Math.max(0, Math.min(100, opacity ?? 100)) / 100) * 255);

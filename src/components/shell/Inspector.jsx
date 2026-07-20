@@ -59,17 +59,18 @@ import {
   readChain,
   ensureChainForm,
 } from "../../lib/motif/motifLayer";
-import { MOTIF_GLYPHS, getGlyph } from "../../lib/motif/glyphs";
+import { MOTIF_GLYPHS } from "../../lib/motif/glyphs";
 import EtchStackRack from "./EtchStackRack";
 import EtchHighlightHold from "./EtchHighlightHold";
 import EtchPreviewHero from "./EtchPreviewHero";
 import {
   MOTIF_HOSTS,
   isSemanticHost,
-  defaultRolesForHost,
 } from "../../lib/motif/hostKinds";
+import { defaultMotifAddOpts } from "../../lib/motif/defaultBinding";
 import { STARTER_CHIPS } from "../../lib/motif/starterChips";
 import MotifBlockRack from "./MotifBlockRack";
+import GlyphPickerChip from "./GlyphPickerChip";
 
 // Modulation-scoped param control: the Grid's `warpNodes` slider (2–24). Reuses
 // the file's `accent-violet` range styling. Rendered INSIDE a <ModulationParamBox>
@@ -577,13 +578,30 @@ function ModulatorDevice({
 // placement binding. Every write re-spreads the whole params.binding via
 // deepMergeBinding so a partial patch never clobbers another branch — same
 // re-spread invariant as ModulatorDevice, extended to a nested schema.
-function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, customGlyphs, onEditGlyph, onNewMotif, onImportFile, libraryMotifs, onCopyLibraryGlyph, onUseLibraryGlyph, motifPick, onMotifPick }) {
-  // Collapsed by default (mobile discoverability: the device sits at the TOP of
-  // the Inspector for a host layer but stays folded until the user opens it).
-  // Declared BEFORE the self-hide early return — the component renders
-  // unconditionally and hides itself, so the hook must run every render
-  // (Rules of Hooks).
-  const [open, setOpen] = useState(false);
+function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, customGlyphs, onEditGlyph, onNewMotif, onImportFile, libraryMotifs, onCopyLibraryGlyph, onUseLibraryGlyph, motifPick, onMotifPick, onOpenLibrary, motifPlacementStats }) {
+  // OPEN by default, and the state survives selection changes (motif-shell,
+  // D). The audit's top discoverability finding: SelectedLayerInspector is
+  // keyed by layer.id, so this component REMOUNTS on every selection — a
+  // plain useState(false) re-collapsed the device every time and the feature
+  // was effectively invisible. The disclosure stays (vertical space still
+  // matters) but the default flips to open and the choice persists per
+  // device via localStorage, surviving both remounts and sessions.
+  // Declared BEFORE the self-hide early return (Rules of Hooks).
+  const [open, setOpen] = useState(() => {
+    try {
+      return localStorage.getItem("sonoform-motif-device-open") !== "0";
+    } catch {
+      return true;
+    }
+  });
+  const setOpenPersistent = (next) => {
+    setOpen(next);
+    try {
+      localStorage.setItem("sonoform-motif-device-open", next ? "1" : "0");
+    } catch {
+      /* private mode — session-only is fine */
+    }
+  };
 
   // Import-SVG-as-motif plumbing (WI-5). A single device-level hidden file input
   // is shared by every row's "Import" button; the row that opened it is tracked
@@ -601,19 +619,11 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, 
     (l) => isMotifLayer(l) && motifHostId(l) === layer.id
   );
 
-  // Imported motif glyphs (WI-5) — listed in the picker under a "Custom"
-  // optgroup, alongside the read-only built-ins. Optional/undefined-safe so the
-  // device still renders standalone (legacy callers / tests without a store).
-  //
-  // P4: a third "My library" optgroup lists the user's GLOBAL library motifs.
-  // A placed library motif is COPIED into customGlyphs keyed by its uuid, so it
-  // would otherwise appear in BOTH groups — dedupe it out of "Custom" so each id
-  // shows exactly once (under "My library" if it's a library motif).
+  // The user's GLOBAL library motifs (P4), threaded into every row's
+  // GlyphPickerChip. Set grouping + the copied-library-motif dedupe now live
+  // in buildGlyphEntries (shared with MotifLibraryPanel) rather than inline
+  // optgroups here.
   const library = libraryMotifs || [];
-  const libraryIds = new Set(library.map((m) => m.id));
-  const customList = Object.values(customGlyphs || {}).filter(
-    (g) => !libraryIds.has(g.id)
-  );
 
   // Rebuild params.binding whole on every write (deep-merge the patch), then
   // re-spread params (onUpdateLayer shallow-merges the top level). Used ONLY for
@@ -695,22 +705,10 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, 
   // origin), so defaultRolesForHost gives spiral `edge` instead. A blanket
   // `crossing` here would empty the selection on spiral and nothing would render.
   const hostIsSemantic = isSemanticHost(layer.patternType);
+  // Shared with the library panel's drag-apply (motif-shell, D) so the two
+  // add paths can never drift on anchor mode / roles / placement defaults.
   const addMotif = () =>
-    onAddMotif?.(layer.id, {
-      glyphRef: "leaf",
-      anchorMode: hostIsSemantic ? "semantic" : "edge",
-      binding: {
-        selection: {
-          roles: defaultRolesForHost(layer.patternType),
-          rate: { n: 1 },
-        },
-        placement: {
-          sizing: { mode: "proportional", size: 18, min: 3, margin: 0.85 },
-          orientation: { policy: "path", useNormal: true },
-          flip: false,
-        },
-      },
-    });
+    onAddMotif?.(layer.id, defaultMotifAddOpts(layer.patternType, "leaf"));
 
   // Role scoping (semantic hosts expose crossing/tip/cell; edge hosts only Edges)
   // now lives inside MotifBlockRack's Route card, driven by hostIsSemantic.
@@ -726,7 +724,7 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, 
         aria-expanded={open}
         onClick={() => {
           const next = !open;
-          setOpen(next);
+          setOpenPersistent(next);
           // Disarm canvas-pick on card COLLAPSE (C4 disarm event): the arm button
           // lives inside {open && …}, so collapsing would otherwise strand the
           // ephemeral motifPick with the overlay still armed and no visible
@@ -817,7 +815,6 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, 
 
           {motifs.map((m) => {
         const glyphRef = m.params?.glyphRef;
-        const glyph = getGlyph(glyphRef, customGlyphs);
         // Custom glyphs edit in place; built-ins are read-only → "Duplicate to
         // edit" (the Edit button forks a copy first). WI-P2-2.
         const isCustomGlyph =
@@ -829,6 +826,9 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, 
         const chain = readChain(m.params?.binding);
         const size = m.params?.binding?.placement?.sizing?.size ?? 18;
         const flip = m.params?.binding?.placement?.flip === true;
+        // Placement budget (2026-07-19, docs §6): present only when THIS motif's
+        // placements were truncated by MAX_PLACEMENTS. No silent cap — surface it.
+        const budget = motifPlacementStats?.[m.id];
 
         return (
           <div
@@ -836,74 +836,41 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, 
             data-testid="motif-row"
             className="space-y-2 rounded-cell border border-hairline bg-paper-warm p-2"
           >
-            {/* Glyph select + swatch + remove */}
+            {budget && (
+              <p
+                data-testid="motif-placement-warning"
+                className="rounded-xs border border-amber-400/50 bg-amber-50 px-2 py-1 text-[11px] text-amber-800"
+              >
+                Showing {budget.placed.toLocaleString()} of{" "}
+                {budget.total.toLocaleString()} placements — reduce density or
+                host complexity.
+              </p>
+            )}
+            {/* Glyph picker chip + remove (motif-shell, D). The chip replaces
+                the old native <select>: the applied glyph's THUMBNAIL is the
+                value, and clicking it opens the flyout picker (search / recents
+                / set tabs / thumbnail grid). Commit routing is unchanged:
+                COPY-on-use (P4) for a library pick — copy + rebind fold into
+                ONE undo entry via the onUseLibraryGlyph seam (P5-2), with the
+                legacy two-call fallback when Studio hasn't wired it. */}
             <div className="flex items-center gap-2">
-              <span className="shrink-0 text-ink-soft" aria-hidden="true">
-                <svg width="18" height="18" viewBox="-12 -12 24 24">
-                  {glyph?.paths?.[0]?.d && (
-                    <path
-                      d={glyph.paths[0].d}
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.5"
-                    />
-                  )}
-                </svg>
-              </span>
-              <select
-                data-testid="motif-glyph"
-                aria-label="Glyph"
-                value={glyphRef ?? ""}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  // COPY-on-use (P4): selecting a global-library motif copies its
-                  // glyph into the document's customGlyphs keyed by uuid (unless
-                  // already present — idempotent), THEN rebinds the row. The doc
-                  // stays self-contained (share links carry the copy).
-                  const lib = library.find((x) => x.id === val);
-                  const params = { ...m.params, glyphRef: val };
-                  // P5-2: a library select is copy + rebind = TWO document
-                  // mutations. Route them through the single `onUseLibraryGlyph`
-                  // seam so Studio folds them into ONE undo entry (recordBatch) —
-                  // a single ⌘Z reverts the whole placement. Fall back to the
-                  // legacy two-call path only when Studio hasn't wired the seam.
-                  if (lib && onUseLibraryGlyph) {
-                    onUseLibraryGlyph(lib.glyph, m.id, params);
+              <GlyphPickerChip
+                glyphRef={glyphRef}
+                customGlyphs={customGlyphs}
+                libraryMotifs={library}
+                onManageLibrary={onOpenLibrary}
+                onPick={(picked) => {
+                  const params = { ...m.params, glyphRef: picked.glyphId };
+                  if (picked.kind === "library" && onUseLibraryGlyph) {
+                    onUseLibraryGlyph(picked.glyph, m.id, params);
                     return;
                   }
-                  if (lib && !customGlyphs?.[val]) {
-                    onCopyLibraryGlyph?.(lib.glyph);
+                  if (picked.kind === "library" && !customGlyphs?.[picked.glyphId]) {
+                    onCopyLibraryGlyph?.(picked.glyph);
                   }
                   onUpdateLayer(m.id, { params });
                 }}
-                className="flex-1 rounded-xs border border-hairline bg-paper px-1 py-0.5 text-[11px] text-ink outline-none focus:border-violet"
-              >
-                <optgroup label="Built-in">
-                  {Object.values(MOTIF_GLYPHS).map((g) => (
-                    <option key={g.id} value={g.id}>
-                      {g.name}
-                    </option>
-                  ))}
-                </optgroup>
-                {library.length > 0 && (
-                  <optgroup label="My library">
-                    {library.map((lm) => (
-                      <option key={lm.id} value={lm.id}>
-                        {lm.name}
-                      </option>
-                    ))}
-                  </optgroup>
-                )}
-                {customList.length > 0 && (
-                  <optgroup label="Custom">
-                    {customList.map((g) => (
-                      <option key={g.id} value={g.id}>
-                        {g.name}
-                      </option>
-                    ))}
-                  </optgroup>
-                )}
-              </select>
+              />
               <button
                 type="button"
                 data-testid="motif-remove"
@@ -1033,7 +1000,7 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, 
 // The param-editing body for one selected layer. Split into its own component so
 // usePatternCache (a hook) is only called when a layer is actually selected —
 // hooks can't be called conditionally inside Inspector itself.
-function SelectedLayerInspector({ layer, layers, panels, colorView, etchBitmap, unit, profileId, onUpdateLayer, onChangeLayerPattern, onVariableWeightChange, onPreviewField, onClosePreview, threeDSubMode, threeDFocusLayerId, onAddMotif, onRemoveLayer, customGlyphs, onEditGlyph, onNewMotif, onImportFile, libraryMotifs, onCopyLibraryGlyph, onUseLibraryGlyph, motifPick, onMotifPick }) {
+function SelectedLayerInspector({ layer, layers, panels, colorView, etchBitmap, unit, profileId, onUpdateLayer, onChangeLayerPattern, onVariableWeightChange, onPreviewField, onClosePreview, threeDSubMode, threeDFocusLayerId, onAddMotif, onRemoveLayer, customGlyphs, onEditGlyph, onNewMotif, onImportFile, libraryMotifs, onCopyLibraryGlyph, onUseLibraryGlyph, motifPick, onMotifPick, onOpenLibrary, motifPlacementStats }) {
   // Pattern swap: route through the same cache machine LayerCard uses, applied via
   // the pair-aware onChangeLayerPattern when present (falls back to a plain param
   // update so the component works standalone / in tests without a router).
@@ -1058,13 +1025,34 @@ function SelectedLayerInspector({ layer, layers, panels, colorView, etchBitmap, 
   return (
     <div className="flex flex-col gap-3 p-3" data-testid="inspector-params">
       <DockToggle />
-      {/* Pattern type + swap control, pinned at the top. */}
-      <div className="space-y-1.5">
-        <h3 className="text-xs font-semibold text-ink-soft uppercase tracking-wider">
-          Pattern
-        </h3>
-        <PatternSelect active={layer.patternType} onChange={handlePatternChange} />
-      </div>
+      {isMotifLayer(layer) ? (
+        /* A motif layer is an adornment, not a pattern: no swap control
+           (changeLayerPattern refuses motif layers — audit 2026-07 bug 1;
+           the old live PatternSelect here silently corrupted the layer).
+           Point at the owning host instead. */
+        <div className="space-y-1.5" data-testid="motif-layer-info">
+          <h3 className="text-xs font-semibold text-ink-soft uppercase tracking-wider">
+            Motif
+          </h3>
+          <p className="rounded-cell border border-hairline bg-paper-warm px-2 py-1.5 text-[11px] text-ink-soft">
+            Adorns{" "}
+            <span className="font-medium text-ink">
+              {layers?.find((l) => l.id === motifHostId(layer))?.name ||
+                "a deleted layer"}
+            </span>
+            . Select the host layer to edit this motif&apos;s glyph, blocks,
+            and placement.
+          </p>
+        </div>
+      ) : (
+        /* Pattern type + swap control, pinned at the top. */
+        <div className="space-y-1.5">
+          <h3 className="text-xs font-semibold text-ink-soft uppercase tracking-wider">
+            Pattern
+          </h3>
+          <PatternSelect active={layer.patternType} onChange={handlePatternChange} />
+        </div>
+      )}
 
       {/* Motif device — add/edit/remove motifs adorning this host. Collapsed by
           default and pinned ABOVE the pattern params so it's the first thing a
@@ -1086,6 +1074,8 @@ function SelectedLayerInspector({ layer, layers, panels, colorView, etchBitmap, 
         onUseLibraryGlyph={onUseLibraryGlyph}
         motifPick={motifPick}
         onMotifPick={onMotifPick}
+        onOpenLibrary={onOpenLibrary}
+        motifPlacementStats={motifPlacementStats}
       />
 
       {/* Etch Stack rack (Raster Etch S2, #81) — the ordered, reorderable,
@@ -1244,6 +1234,15 @@ export default function Inspector({
   // "Pick on canvas" affordance doing anything.
   motifPick,
   onMotifPick,
+  // Motif-shell (D): "Manage library…" in the glyph-picker flyout switches
+  // the left column to the Motifs surface. Optional — standalone Inspectors
+  // simply hide the link.
+  onOpenLibrary,
+  // Placement-budget stats (layerId → {total, placed}) for the MotifDevice
+  // "no silent cap" warning (2026-07-19 post-crash hardening, docs §6). Only
+  // truncated motif layers appear; keyed by the MOTIF child's id (the device
+  // renders on the host and lists its children). Optional → no warning.
+  motifPlacementStats,
 }) {
   // Resolved font for the text-properties readouts (cap-height / engrave
   // warnings). May be null on first paint before useFont resolves — the panel's
@@ -1341,6 +1340,8 @@ export default function Inspector({
       onUseLibraryGlyph={onUseLibraryGlyph}
       motifPick={motifPick}
       onMotifPick={onMotifPick}
+      onOpenLibrary={onOpenLibrary}
+      motifPlacementStats={motifPlacementStats}
     />
   );
 }

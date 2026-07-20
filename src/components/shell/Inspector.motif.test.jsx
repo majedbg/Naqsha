@@ -3,7 +3,7 @@
 // (grid/recursive/spiral/voronoi). Exercises the device through the public <Inspector>,
 // plus the exported deepMergeBinding helper's partial-patch invariant.
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, within } from "@testing-library/react";
 import Inspector from "./Inspector";
 import { InspectorDockProvider } from "./inspectorDockContext";
@@ -18,6 +18,15 @@ import { reorderChain } from "../../lib/motif/chainEditor";
 vi.mock("../../lib/AuthContext", () => ({
   useAuth: () => ({ tier: "studio" }),
 }));
+
+// The device now defaults OPEN and persists its disclosure per device via
+// localStorage (motif-shell D — the audit's re-collapse-on-remount fix).
+// These UI-seam tests predate that and drive the device through an explicit
+// open click, so start each one collapsed; the default itself is covered by
+// its own test below.
+beforeEach(() => {
+  localStorage.setItem("sonoform-motif-device-open", "0");
+});
 
 function hostLayer(id = "host1", patternType = "grid") {
   return {
@@ -124,26 +133,31 @@ describe("MotifDevice", () => {
     expect(screen.getAllByTestId("motif-row")).toHaveLength(1);
   });
 
-  it("is collapsed by default and reveals its body when the toggle is clicked", () => {
+  it("defaults OPEN with no stored preference; a collapse persists across remounts (motif-shell D)", () => {
+    // No stored preference — the fresh-device default.
+    localStorage.removeItem("sonoform-motif-device-open");
     const motif = motifLayer("m1", "host1", defaultBinding);
-    render(
-      <Inspector
-        layers={[hostLayer("host1", "grid"), motif]}
-        selectedLayerId="host1"
-        onUpdateLayer={() => {}}
-        onChangeLayerPattern={() => {}}
-      />
-    );
-    // Device (with its toggle) is present, but the body is hidden.
+    const props = {
+      layers: [hostLayer("host1", "grid"), motif],
+      selectedLayerId: "host1",
+      onUpdateLayer: () => {},
+      onChangeLayerPattern: () => {},
+    };
+    const { unmount } = render(<Inspector {...props} />);
     const toggle = screen.getByTestId("motif-toggle");
-    expect(toggle).toHaveAttribute("aria-expanded", "false");
-    expect(screen.queryByTestId("motif-row")).toBeNull();
-    expect(screen.queryByTestId("motif-add")).toBeNull();
-    // Expanding reveals the body.
-    fireEvent.click(toggle);
     expect(toggle).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByTestId("motif-add")).toBeInTheDocument();
     expect(screen.getAllByTestId("motif-row")).toHaveLength(1);
+    // Collapse, then remount (SelectedLayerInspector remounts on every
+    // selection change — the old useState(false) re-collapsed each time;
+    // now the user's choice survives the remount instead).
+    fireEvent.click(toggle);
+    expect(screen.queryByTestId("motif-row")).toBeNull();
+    unmount();
+    render(<Inspector {...props} />);
+    expect(screen.getByTestId("motif-toggle")).toHaveAttribute(
+      "aria-expanded",
+      "false"
+    );
   });
 
   it("Add Motif calls onAddMotif with the host id and a sensible default binding", () => {
@@ -261,19 +275,18 @@ describe("MotifDevice", () => {
       />
     );
     fireEvent.click(screen.getByTestId("motif-toggle"));
-    // Built-in AND custom both selectable.
-    expect(screen.getByRole("option", { name: "Leaf" })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "My Vine" })).toBeInTheDocument();
+    // The chip opens the flyout picker; built-in AND custom both offered.
+    fireEvent.click(screen.getByTestId("motif-glyph"));
+    expect(screen.getByTestId("glyph-option-leaf")).toBeInTheDocument();
+    expect(screen.getByTestId("glyph-option-cg-1")).toBeInTheDocument();
 
-    fireEvent.change(screen.getByTestId("motif-glyph"), {
-      target: { value: "cg-1" },
-    });
+    fireEvent.click(screen.getByTestId("glyph-option-cg-1"));
     const [id, patch] = onUpdateLayer.mock.calls.at(-1);
     expect(id).toBe("m1");
     expect(patch.params.glyphRef).toBe("cg-1");
   });
 
-  it("resolves a CUSTOM glyphRef for the row (select value + swatch path)", () => {
+  it("resolves a CUSTOM glyphRef for the row (chip value + thumbnail path)", () => {
     const customGlyphs = { "cg-9": customGlyph("cg-9", "Custom Fern") };
     const motif = motifLayer("m1", "host1", defaultBinding);
     motif.params.glyphRef = "cg-9"; // this motif points at the custom glyph
@@ -287,10 +300,14 @@ describe("MotifDevice", () => {
       />
     );
     fireEvent.click(screen.getByTestId("motif-toggle"));
-    // The select holds the custom id (option exists) and shows its name.
-    expect(screen.getByTestId("motif-glyph")).toHaveValue("cg-9");
-    expect(screen.getByRole("option", { name: "Custom Fern" })).toBeInTheDocument();
-    // getGlyph(glyphRef, customGlyphs) resolved → swatch draws the custom `d`.
+    // The chip carries the custom id and shows its resolved name.
+    expect(screen.getByTestId("motif-glyph")).toHaveAttribute(
+      "data-glyph",
+      "cg-9"
+    );
+    expect(screen.getByTestId("motif-glyph")).toHaveTextContent("Custom Fern");
+    // getGlyph(glyphRef, customGlyphs) resolved → the thumbnail draws the
+    // custom `d`.
     const row = screen.getByTestId("motif-row");
     expect(row.querySelector('path[d="M0,0 L4,4"]')).not.toBeNull();
   });
@@ -398,13 +415,12 @@ describe("MotifDevice", () => {
       />
     );
     fireEvent.click(screen.getByTestId("motif-toggle"));
-    // The library motif is offered as an option.
-    expect(
-      screen.getByRole("option", { name: "Saved Vine" })
-    ).toBeInTheDocument();
-    fireEvent.change(screen.getByTestId("motif-glyph"), {
-      target: { value: "lib-uuid-1" },
-    });
+    // The library motif is offered in the flyout picker.
+    fireEvent.click(screen.getByTestId("motif-glyph"));
+    expect(screen.getByTestId("glyph-option-lib-uuid-1")).toHaveTextContent(
+      "Saved Vine"
+    );
+    fireEvent.click(screen.getByTestId("glyph-option-lib-uuid-1"));
     // COPY-on-use: the library glyph is copied into the document keyed by uuid…
     expect(onCopyLibraryGlyph).toHaveBeenCalledTimes(1);
     expect(onCopyLibraryGlyph.mock.calls[0][0].id).toBe("lib-uuid-1");
@@ -414,7 +430,7 @@ describe("MotifDevice", () => {
     expect(patch.params.glyphRef).toBe("lib-uuid-1");
   });
 
-  it('hides the "My library" optgroup when the library is empty', () => {
+  it("an empty library contributes no options to the picker", () => {
     const motif = motifLayer("m1", "host1", defaultBinding);
     render(
       <Inspector
@@ -426,7 +442,11 @@ describe("MotifDevice", () => {
       />
     );
     fireEvent.click(screen.getByTestId("motif-toggle"));
-    expect(screen.queryByText("My library")).toBeNull();
+    fireEvent.click(screen.getByTestId("motif-glyph"));
+    // Filtering to the (empty) My-library set shows the empty state, not
+    // phantom rows.
+    fireEvent.click(screen.getByRole("button", { name: "My library" }));
+    expect(screen.getByText("No matches")).toBeInTheDocument();
   });
 
   it("P5-2: when onUseLibraryGlyph is wired, a library select routes through the ONE batched callback (single undo), not the two-call path", () => {
@@ -447,9 +467,8 @@ describe("MotifDevice", () => {
       />
     );
     fireEvent.click(screen.getByTestId("motif-toggle"));
-    fireEvent.change(screen.getByTestId("motif-glyph"), {
-      target: { value: "lib-uuid-1" },
-    });
+    fireEvent.click(screen.getByTestId("motif-glyph"));
+    fireEvent.click(screen.getByTestId("glyph-option-lib-uuid-1"));
     // Single batched seam: exactly one call, carrying glyph + layer + params.
     expect(onUseLibraryGlyph).toHaveBeenCalledTimes(1);
     const [glyph, layerId, params] = onUseLibraryGlyph.mock.calls[0];
@@ -477,9 +496,8 @@ describe("MotifDevice", () => {
       />
     );
     fireEvent.click(screen.getByTestId("motif-toggle"));
-    fireEvent.change(screen.getByTestId("motif-glyph"), {
-      target: { value: "lib-uuid-2" },
-    });
+    fireEvent.click(screen.getByTestId("motif-glyph"));
+    fireEvent.click(screen.getByTestId("glyph-option-lib-uuid-2"));
     // Already in the doc → no redundant copy (just a rebind).
     expect(onCopyLibraryGlyph).not.toHaveBeenCalled();
   });
@@ -673,6 +691,9 @@ describe("MotifBlockRack (C2)", () => {
     );
     unmount();
 
+    // Re-seed collapsed: the first expand persisted the disclosure OPEN
+    // (motif-shell D), so without this the click below would close it.
+    localStorage.setItem("sonoform-motif-device-open", "0");
     // Bottom shelf → horizontal.
     render(
       <InspectorDockProvider value={{ dockPosition: "bottom" }}>
@@ -816,6 +837,9 @@ describe("Sequencer card (C3)", () => {
     );
     expect(screen.queryByTestId("motif-slot-weight")).toBeNull();
     unmount();
+    // Re-seed collapsed: the first expand persisted the disclosure OPEN
+    // (motif-shell D), so the helper's open-click would otherwise close it.
+    localStorage.setItem("sonoform-motif-device-open", "0");
     // Random → a weight slider per slot, INCLUDING the rest.
     expandSeq(
       <Inspector
@@ -1164,5 +1188,55 @@ describe("Route card path scope + canvas-pick (C4)", () => {
     );
     fireEvent.click(screen.getByTestId("motif-route-scope-all"));
     expect(onMotifPick).toHaveBeenCalledWith(null);
+  });
+});
+
+// Placement-budget "no silent cap" warning (2026-07-19 post-crash hardening,
+// docs §6). MAX_PLACEMENTS truncation is surfaced up (useCanvas → RightPanel →
+// Studio → Inspector) as `motifPlacementStats[layerId] = {total, placed}`; the
+// affected motif card shows an amber warning. Absent/equal stats → no warning.
+describe("MotifDevice — placement-budget warning", () => {
+  const openDevice = (ui) => {
+    const r = render(ui);
+    fireEvent.click(screen.getByTestId("motif-toggle"));
+    return r;
+  };
+
+  it("renders the amber warning on a truncated motif card", () => {
+    const motif = motifLayer("m1", "host1", defaultBinding);
+    openDevice(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+        motifPlacementStats={{ m1: { total: 12345, placed: 2000 } }}
+      />
+    );
+    const warning = screen.getByTestId("motif-placement-warning");
+    expect(warning).toBeInTheDocument();
+    // Localized counts + guidance copy.
+    expect(warning).toHaveTextContent("Showing 2,000 of 12,345 placements");
+    expect(warning).toHaveTextContent("reduce density or host complexity");
+    // Styled like the existing amber warnings.
+    expect(warning.className).toContain("border-amber-400/50");
+    expect(warning.className).toContain("bg-amber-50");
+    expect(warning.className).toContain("text-amber-800");
+  });
+
+  it("hides the warning when no stats are supplied for the motif", () => {
+    const motif = motifLayer("m1", "host1", defaultBinding);
+    openDevice(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+        // No entry for m1 → not truncated → no warning.
+        motifPlacementStats={{}}
+      />
+    );
+    expect(screen.getByTestId("motif-row")).toBeInTheDocument();
+    expect(screen.queryByTestId("motif-placement-warning")).toBeNull();
   });
 });

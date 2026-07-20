@@ -67,7 +67,15 @@ export const PATTERN_TYPES = [
   { id: 'dendrite', label: 'Dendrite' },
 ];
 
-export const MAX_LAYERS = 6;
+// Absolute DOCUMENT layer bound — the hard backstop every layer creator
+// enforces, motifs included. Distinct from the TIER caps (tierLimits.js
+// maxLayers: guest 3 / signed-in 6), which count only NON-motif layers since
+// the motif-budget split (motif-shell, 2026-07): patterns are bounded by
+// tier, motifs by MAX_MOTIFS_PER_HOST (4, useLayers.js), and this constant
+// bounds the total. It must sit ABOVE the largest tier cap or a full-tier
+// document has zero motif headroom (the flag that raised it from 6): at 12,
+// a signed-in user gets 6 patterns + up to 6 motifs.
+export const MAX_LAYERS = 12;
 
 export const DEFAULT_PARAMS = {
   spirograph: {

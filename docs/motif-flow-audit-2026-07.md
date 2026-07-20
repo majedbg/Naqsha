@@ -202,13 +202,13 @@ Separately, one motif ate a full tier pattern slot, so a guest with 2 patterns
   callers must pass a non-motif count. (`LayersSection.jsx` is dead code — the
   legacy tabbed shell was removed in #16 — so its gate was left untouched.)
 - **Absolute backstop.** Every creator also enforces `layers.length >= MAX_LAYERS`
-  (still 6) with a distinct `'Document layer limit reached.'` message, so the
-  document total (patterns + motifs) can never exceed MAX_LAYERS. NOTE: because
-  MAX_LAYERS (6) equals the signed-in tier cap (6), the motif exemption only buys
-  real headroom in the gap between a tier's cap and MAX_LAYERS — a guest (cap 3)
-  gets up to 3 motif slots, but a signed-in user at 6 patterns has none. Raising
-  MAX_LAYERS would give signed-in users motif headroom **without** touching any
-  tier cap (`cap = min(tierMax, MAX_LAYERS)`, tierMax is 3/6) — flagged for Majed.
+  with a distinct `'Document layer limit reached.'` message, so the document
+  total (patterns + motifs) can never exceed MAX_LAYERS. MAX_LAYERS was then
+  **raised 6 → 12** (follow-up commit): at 6 it equaled the signed-in tier cap,
+  so a full-tier document had zero motif headroom, defeating the exemption. At
+  12, tier caps are untouched (`cap = min(tierMax, MAX_LAYERS)`, tierMax 3/6):
+  a guest gets 3 patterns + up to 9 layers of headroom, a signed-in user 6
+  patterns + up to 6 motifs, per-host budget still 4.
 - Tests: `useLayers.test.js` — the old "no-ops at the tier cap" motif test was
   rewritten to assert the exemption (motif adds at maxLayers:1); added 5th-motif
   refusal, motifs-don't-block-a-pattern-at-cap-1, and the MAX_LAYERS backstop.

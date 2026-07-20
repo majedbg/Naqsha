@@ -6,6 +6,7 @@
 import { describe, it, expect } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import useLayers from './useLayers.js';
+import { MAX_LAYERS } from '../constants';
 
 describe('useLayers.addLayer panel assignment', () => {
   it('assigns the new layer to opts.panelId when provided', () => {
@@ -155,33 +156,37 @@ describe('useLayers.addMotifLayer', () => {
   });
 
   it('enforces the absolute MAX_LAYERS document backstop with a distinct error (Fix 2)', () => {
-    // maxLayers defaults to MAX_LAYERS (6). Fill the document to 6 layers with 2
-    // patterns + 4 motifs SPREAD across two hosts (2 each) so NEITHER host is at
-    // its per-host budget (4) — isolating the DOCUMENT backstop as the blocker.
+    // Fill the document to exactly MAX_LAYERS total, spreading motifs across
+    // hosts so the LAST host stays UNDER its per-host budget (4) — isolating
+    // the DOCUMENT backstop as the blocker (not the per-host message).
     const { result } = renderHook(() => useLayers({ persistToLocal: false }));
-    const host1 = result.current.layers[0]; // seed pattern
+    // 3 pattern hosts: the seed + 2 more.
     act(() => {
       result.current.addLayer('grid');
     });
-    const host2 = result.current.layers[result.current.layers.length - 1];
-    // 2 non-motif layers so far. Add 2 motifs per host → 6 total layers.
-    for (const h of [host1, host2]) {
-      for (let i = 0; i < 2; i += 1) {
-        act(() => {
-          result.current.addMotifLayer(h.id, { glyphRef: 'leaf' });
-        });
-      }
+    act(() => {
+      result.current.addLayer('grid');
+    });
+    const hosts = result.current.layers.slice(0, 3);
+    // Round-robin motifs (≤3 per host, below the per-host budget) until full.
+    let i = 0;
+    while (result.current.layers.length < MAX_LAYERS) {
+      const h = hosts[i % hosts.length];
+      i += 1;
+      act(() => {
+        result.current.addMotifLayer(h.id, { glyphRef: 'leaf' });
+      });
     }
-    expect(result.current.layers.length).toBe(6); // == MAX_LAYERS
-
-    // host1 has only 2 motifs (< per-host budget 4), but the DOCUMENT is full →
-    // the distinct doc-backstop error, not the per-host message.
+    expect(result.current.layers.length).toBe(MAX_LAYERS);
+    // The least-loaded host is under its per-host budget, but the DOCUMENT is
+    // full → the distinct doc-backstop error.
+    const target = hosts[i % hosts.length];
     let ret;
     act(() => {
-      ret = result.current.addMotifLayer(host1.id, { glyphRef: 'leaf' });
+      ret = result.current.addMotifLayer(target.id, { glyphRef: 'leaf' });
     });
     expect(ret.ok).toBe(false);
     expect(ret.error).toBe('Document layer limit reached.');
-    expect(result.current.layers.length).toBe(6);
+    expect(result.current.layers.length).toBe(MAX_LAYERS);
   });
 });

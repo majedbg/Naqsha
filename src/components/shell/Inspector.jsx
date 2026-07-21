@@ -26,6 +26,7 @@ import { useMemo, useState, useRef } from "react";
 import PatternSelect from "../PatternSelect";
 import PatternParams from "../PatternParams";
 import DockToggle from "./DockToggle";
+import { useInspectorDockContext } from "./inspectorDockContext";
 import SheetInspector from "./SheetInspector";
 import usePatternCache from "../../lib/usePatternCache";
 import {
@@ -40,10 +41,7 @@ import {
 import { isTextLayer, textNodeFromLayer } from "../../lib/text/textLayer";
 import { useFont } from "../../lib/text/fontRegistry";
 import TextPropertiesPanel from "../TextPropertiesPanel";
-import {
-  canProduceField,
-  fieldForLayer,
-} from "../../lib/fields/fieldRegistry";
+import { canProduceField, fieldForLayer } from "../../lib/fields/fieldRegistry";
 import { previewButtonState } from "../../lib/three3d/previewButtonState";
 import FieldOverlay from "../FieldOverlay";
 import ShapeCurve from "../ui/ShapeCurve";
@@ -64,10 +62,7 @@ import { MOTIF_GLYPHS } from "../../lib/motif/glyphs";
 import EtchStackRack from "./EtchStackRack";
 import EtchHighlightHold from "./EtchHighlightHold";
 import EtchPreviewHero from "./EtchPreviewHero";
-import {
-  MOTIF_HOSTS,
-  isSemanticHost,
-} from "../../lib/motif/hostKinds";
+import { MOTIF_HOSTS, isSemanticHost } from "../../lib/motif/hostKinds";
 import { defaultMotifAddOpts } from "../../lib/motif/defaultBinding";
 import { getSemanticAnchors } from "../../lib/motif/semanticAnchors";
 import { STARTER_CHIPS } from "../../lib/motif/starterChips";
@@ -115,7 +110,10 @@ function WarpNodesControl({ value, onChange, testidSuffix = "" }) {
 function VariableWeightControls({ layer, profileId, onVariableWeightChange }) {
   // Capability gate: the PATTERN must emit weight variation AND the active
   // machine profile must support banding. Drag-cutter fails the second check.
-  if (!hasVariableWeight(layer.patternType) || !supportsVariableWeight(profileId)) {
+  if (
+    !hasVariableWeight(layer.patternType) ||
+    !supportsVariableWeight(profileId)
+  ) {
     return null;
   }
   const vw = layer.variableWeight || {};
@@ -133,9 +131,7 @@ function VariableWeightControls({ layer, profileId, onVariableWeightChange }) {
           type="checkbox"
           data-testid="variable-weight-toggle"
           checked={enabled}
-          onChange={(e) =>
-            emit({ enabled: e.target.checked, n })
-          }
+          onChange={(e) => emit({ enabled: e.target.checked, n })}
         />
         <span>Vary line weight by band</span>
       </label>
@@ -154,7 +150,8 @@ function VariableWeightControls({ layer, profileId, onVariableWeightChange }) {
               value={n}
               onChange={(e) => {
                 const raw = Number(e.target.value);
-                const next = Number.isFinite(raw) && raw >= 1 ? Math.round(raw) : 1;
+                const next =
+                  Number.isFinite(raw) && raw >= 1 ? Math.round(raw) : 1;
                 emit({ enabled: true, n: next });
               }}
               className="w-14 rounded-xs border border-hairline bg-paper-warm px-1 py-0.5 text-[11px] text-ink outline-none focus:border-violet num"
@@ -166,7 +163,8 @@ function VariableWeightControls({ layer, profileId, onVariableWeightChange }) {
           >
             Advanced — manual machine setup required. Each band is a separate
             operation; step through them by hand while cutting (laser: read
-            &quot;orange = speed&quot;; plotter: swap to the band&apos;s pen slot).
+            &quot;orange = speed&quot;; plotter: swap to the band&apos;s pen
+            slot).
           </p>
         </>
       )}
@@ -309,169 +307,174 @@ function ModulatorDevice({
       {isLatticeGuide ? (
         <p className="text-[11px] text-ink-soft/80">
           Stamps the motif at every grid node — the grid's spacing, jitter, and
-          symmetry place and duplicate the copies. Adjust those on the grid layer.
+          symmetry place and duplicate the copies. Adjust those on the grid
+          layer.
         </p>
       ) : (
         <>
-      {/* Range slider (left) + field plot (right). The two-thumb vertical slider
+          {/* Range slider (left) + field plot (right). The two-thumb vertical slider
           sets modulator.range = {min,max}; the field plot recolors live as the
           thumbs move (its values are remapped through the same range). */}
-      <div className="flex items-stretch gap-2">
-        {/* Two-thumb vertical range slider, spanning −1…1. Implemented as two
+          <div className="flex items-stretch gap-2">
+            {/* Two-thumb vertical range slider, spanning −1…1. Implemented as two
             native range inputs (testable via fireEvent.change) overlaid on a
             gradient track that matches the field plot's colormap anchors. */}
-        <div
-          className="flex shrink-0 flex-col items-center justify-between text-[9px] text-ink-soft"
-          data-testid="modulator-range"
-        >
-          {/* Track ends are a fixed +1 / −1 axis — NOT "max"/"min" — because the
+            <div
+              className="flex shrink-0 flex-col items-center justify-between text-[9px] text-ink-soft"
+              data-testid="modulator-range"
+            >
+              {/* Track ends are a fixed +1 / −1 axis — NOT "max"/"min" — because the
               thumbs can cross (max may sit below min). Thumb COLOR carries the
               min/max identity instead (garnet = max, sapphire = min). */}
-          <span className="num">+1</span>
-          <div
-            className="relative my-1 w-2 flex-1 rounded-xs border border-hairline"
-            style={{
-              background: `linear-gradient(to top, ${ANCHOR_NEG}, ${ANCHOR_MID} 50%, ${ANCHOR_POS})`,
-            }}
-          >
-            <span className="pointer-events-none absolute left-full top-1/2 ml-2 -translate-y-1/2 whitespace-nowrap text-[8px] text-ink-soft">
-              neutral
-            </span>
-            {/* Two vertical inputs stacked over the track. They are pointer-
+              <span className="num">+1</span>
+              <div
+                className="relative my-1 w-2 flex-1 rounded-xs border border-hairline"
+                style={{
+                  background: `linear-gradient(to top, ${ANCHOR_NEG}, ${ANCHOR_MID} 50%, ${ANCHOR_POS})`,
+                }}
+              >
+                <span className="pointer-events-none absolute left-full top-1/2 ml-2 -translate-y-1/2 whitespace-nowrap text-[8px] text-ink-soft">
+                  neutral
+                </span>
+                {/* Two vertical inputs stacked over the track. They are pointer-
                 transparent (.mod-range) so only the triangle thumbs are grabbable
                 — each can be dragged independently and past the other. min/max
                 bounds let jsdom fireEvent.change drive them in tests. */}
-            <input
-              type="range"
-              aria-label="Modulation range max"
-              data-testid="modulator-range-max"
-              min={-1}
-              max={1}
-              step={0.05}
-              value={range.max}
-              onChange={(e) => setRangeMax(Number(e.target.value))}
-              className="mod-range mod-range-max absolute inset-0 h-full w-full"
-              style={{ writingMode: "vertical-lr", direction: "rtl" }}
-            />
-            <input
-              type="range"
-              aria-label="Modulation range min"
-              data-testid="modulator-range-min"
-              min={-1}
-              max={1}
-              step={0.05}
-              value={range.min}
-              onChange={(e) => setRangeMin(Number(e.target.value))}
-              className="mod-range mod-range-min absolute inset-0 h-full w-full"
-              style={{ writingMode: "vertical-lr", direction: "rtl" }}
-            />
-          </div>
-          <span className="num">−1</span>
-        </div>
+                <input
+                  type="range"
+                  aria-label="Modulation range max"
+                  data-testid="modulator-range-max"
+                  min={-1}
+                  max={1}
+                  step={0.05}
+                  value={range.max}
+                  onChange={(e) => setRangeMax(Number(e.target.value))}
+                  className="mod-range mod-range-max absolute inset-0 h-full w-full"
+                  style={{ writingMode: "vertical-lr", direction: "rtl" }}
+                />
+                <input
+                  type="range"
+                  aria-label="Modulation range min"
+                  data-testid="modulator-range-min"
+                  min={-1}
+                  max={1}
+                  step={0.05}
+                  value={range.min}
+                  onChange={(e) => setRangeMin(Number(e.target.value))}
+                  className="mod-range mod-range-min absolute inset-0 h-full w-full"
+                  style={{ writingMode: "vertical-lr", direction: "rtl" }}
+                />
+              </div>
+              <span className="num">−1</span>
+            </div>
 
-        {/* Field "waveform" readout — the guide's scalar field. The box is
+            {/* Field "waveform" readout — the guide's scalar field. The box is
             relatively-positioned so FieldOverlay (absolute inset-0) fills it. */}
-        <div
-          className="relative aspect-square w-full max-w-[140px] overflow-hidden rounded-cell border border-hairline bg-paper"
-          data-testid="modulator-display"
-        >
-          <FieldOverlay
-            field={fieldForLayer(layer)}
-            canvasW={140}
-            canvasH={140}
-            opacity={1}
-            range={range}
-            offset={transferActive ? offset : 0}
-            shape={transferActive ? shape : 0}
-            steps={transferActive ? steps : 0}
-          />
-        </div>
-      </div>
+            <div
+              className="relative aspect-square w-full max-w-[140px] overflow-hidden rounded-cell border border-hairline bg-paper"
+              data-testid="modulator-display"
+            >
+              <FieldOverlay
+                field={fieldForLayer(layer)}
+                canvasW={140}
+                canvasH={140}
+                opacity={1}
+                range={range}
+                offset={transferActive ? offset : 0}
+                shape={transferActive ? shape : 0}
+                steps={transferActive ? steps : 0}
+              />
+            </div>
+          </div>
 
-      {/* Preview in 3D (S8, PRD D2/D5) — opens Surface B (the modulation
+          {/* Preview in 3D (S8, PRD D2/D5) — opens Surface B (the modulation
           height-surface) focused on THIS guide's field. The relief shows the RAW
           field (the cause); the device range above is a 2D-readout remap and is
           deliberately NOT applied to the relief (§3.4). Acts as a TOGGLE: while
           THIS guide's preview is open the button reads "Close preview" and closes
           it (so there's a way out of Surface B, which is launched here, not from
           the lens). previewButtonState is the pure (tested) decision. */}
-      {(() => {
-        const pv = previewButtonState({
-          subMode: threeDSubMode,
-          focusLayerId: threeDFocusLayerId,
-          layerId: layer.id,
-        });
-        return (
-          <button
-            type="button"
-            data-testid="modulator-preview-3d"
-            aria-pressed={pv.previewingThis}
-            onClick={() =>
-              pv.action === "close"
-                ? onClosePreview?.()
-                : onPreviewField?.(layer.id)
-            }
-            className={`w-full rounded-xs border px-2 py-1 text-[11px] font-medium transition-colors ${
-              pv.previewingThis
-                ? "border-violet bg-violet/10 text-ink"
-                : "border-hairline bg-paper-warm text-ink-soft hover:border-violet hover:text-ink"
-            }`}
-          >
-            {pv.label}
-          </button>
-        );
-      })()}
+          {(() => {
+            const pv = previewButtonState({
+              subMode: threeDSubMode,
+              focusLayerId: threeDFocusLayerId,
+              layerId: layer.id,
+            });
+            return (
+              <button
+                type="button"
+                data-testid="modulator-preview-3d"
+                aria-pressed={pv.previewingThis}
+                onClick={() =>
+                  pv.action === "close"
+                    ? onClosePreview?.()
+                    : onPreviewField?.(layer.id)
+                }
+                className={`w-full rounded-xs border px-2 py-1 text-[11px] font-medium transition-colors ${
+                  pv.previewingThis
+                    ? "border-violet bg-violet/10 text-ink"
+                    : "border-hairline bg-paper-warm text-ink-soft hover:border-violet hover:text-ink"
+                }`}
+              >
+                {pv.label}
+              </button>
+            );
+          })()}
 
-      {/* Device controls — offset / shape / steps, shared across all maps. All
+          {/* Device controls — offset / shape / steps, shared across all maps. All
           three run through modulationTransfer, so they're shown together only
           when at least one mapped target consumes that chain (density / distort);
           on warp/lattice/no-target they do nothing, so we hide the whole block
           rather than leave dead controls. */}
-      {transferActive && (
-      <div className="space-y-2">
-        <label className="flex items-center gap-2 text-[11px] text-ink-soft">
-          <span className="w-12 whitespace-nowrap">Offset</span>
-          <input
-            type="range"
-            data-testid="modulator-offset"
-            aria-label="Offset"
-            min={-1}
-            max={1}
-            step={0.05}
-            value={offset}
-            onChange={(e) => patchModulator({ offset: Number(e.target.value) })}
-            className="flex-1 accent-violet"
-          />
-          <span className="w-9 text-right tabular-nums text-ink num">
-            {offset.toFixed(2)}
-          </span>
-        </label>
+          {transferActive && (
+            <div className="space-y-2">
+              <label className="flex items-center gap-2 text-[11px] text-ink-soft">
+                <span className="w-12 whitespace-nowrap">Offset</span>
+                <input
+                  type="range"
+                  data-testid="modulator-offset"
+                  aria-label="Offset"
+                  min={-1}
+                  max={1}
+                  step={0.05}
+                  value={offset}
+                  onChange={(e) =>
+                    patchModulator({ offset: Number(e.target.value) })
+                  }
+                  className="flex-1 accent-violet"
+                />
+                <span className="w-9 text-right tabular-nums text-ink num">
+                  {offset.toFixed(2)}
+                </span>
+              </label>
 
-        <ShapeCurve
-          label="Shape"
-          value={shape}
-          onChange={(v) => patchModulator({ shape: v })}
-        />
+              <ShapeCurve
+                label="Shape"
+                value={shape}
+                onChange={(v) => patchModulator({ shape: v })}
+              />
 
-        <label className="flex items-center gap-2 text-[11px] text-ink-soft">
-          <span className="w-12 whitespace-nowrap">Steps</span>
-          <input
-            type="range"
-            data-testid="modulator-steps"
-            aria-label="Steps"
-            min={0}
-            max={24}
-            step={1}
-            value={steps}
-            onChange={(e) => patchModulator({ steps: Number(e.target.value) })}
-            className="flex-1 accent-violet"
-          />
-          <span className="w-9 text-right tabular-nums text-ink num">
-            {steps}
-          </span>
-        </label>
-      </div>
-      )}
+              <label className="flex items-center gap-2 text-[11px] text-ink-soft">
+                <span className="w-12 whitespace-nowrap">Steps</span>
+                <input
+                  type="range"
+                  data-testid="modulator-steps"
+                  aria-label="Steps"
+                  min={0}
+                  max={24}
+                  step={1}
+                  value={steps}
+                  onChange={(e) =>
+                    patchModulator({ steps: Number(e.target.value) })
+                  }
+                  className="flex-1 accent-violet"
+                />
+                <span className="w-9 text-right tabular-nums text-ink num">
+                  {steps}
+                </span>
+              </label>
+            </div>
+          )}
         </>
       )}
 
@@ -492,7 +495,10 @@ function ModulatorDevice({
             className="space-y-1 rounded-cell border border-hairline bg-paper-warm p-2"
           >
             <div className="flex items-center justify-between gap-2">
-              <span className="truncate text-xs text-ink" title={nameFor(m.targetLayerId)}>
+              <span
+                className="truncate text-xs text-ink"
+                title={nameFor(m.targetLayerId)}
+              >
                 {nameFor(m.targetLayerId)}
               </span>
               <button
@@ -523,7 +529,9 @@ function ModulatorDevice({
                   step={0.1}
                   value={m.amount ?? 1}
                   onChange={(e) =>
-                    patchMap(m.targetLayerId, { amount: Number(e.target.value) })
+                    patchMap(m.targetLayerId, {
+                      amount: Number(e.target.value),
+                    })
                   }
                   className="flex-1 accent-violet"
                 />
@@ -544,7 +552,9 @@ function ModulatorDevice({
               const targetLayer = (layers || []).find(
                 (l) => l.id === m.targetLayerId
               );
-              if (!(m.channel === "warp" && targetLayer?.patternType === "grid"))
+              if (
+                !(m.channel === "warp" && targetLayer?.patternType === "grid")
+              )
                 return null;
               return (
                 <ModulationParamBox owner="Grid layer">
@@ -722,7 +732,11 @@ function MotifModeColumn({
                 motif is being traced — the strip reads the rehearsal in sync with
                 the canvas marks. */}
             {!row.custom && lit && (
-              <RhythmStrip chain={row.chain} size={14} markerFrac={markerFrac} />
+              <RhythmStrip
+                chain={row.chain}
+                size={14}
+                markerFrac={markerFrac}
+              />
             )}
           </button>
         );
@@ -734,7 +748,14 @@ function MotifModeColumn({
 // Per-row wrapper: derives the LIT mode from the motif's own chain (memoized on
 // [chain, host]) so the column stays a pure presentational radiogroup. Lives as
 // its own component so the useMemo hook is legal inside the motifs.map loop.
-function MotifRowModeColumn({ binding, hostPatternType, modeChips, hostKind, onApply, markerFrac = null }) {
+function MotifRowModeColumn({
+  binding,
+  hostPatternType,
+  modeChips,
+  hostKind,
+  onApply,
+  markerFrac = null,
+}) {
   const litModeId = useMemo(
     () => modeForMotif(binding, hostPatternType),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -759,7 +780,27 @@ function MotifRowModeColumn({ binding, hostPatternType, modeChips, hostKind, onA
 // placement binding. Every write re-spreads the whole params.binding via
 // deepMergeBinding so a partial patch never clobbers another branch — same
 // re-spread invariant as ModulatorDevice, extended to a nested schema.
-function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, customGlyphs, onEditGlyph, onNewMotif, onImportFile, libraryMotifs, onCopyLibraryGlyph, onUseLibraryGlyph, motifPick, onMotifPick, onOpenLibrary, motifPlacementStats, trace, canvasW, canvasH }) {
+function MotifDevice({
+  layer,
+  layers,
+  onUpdateLayer,
+  onAddMotif,
+  onRemoveLayer,
+  customGlyphs,
+  onEditGlyph,
+  onNewMotif,
+  onImportFile,
+  libraryMotifs,
+  onCopyLibraryGlyph,
+  onUseLibraryGlyph,
+  motifPick,
+  onMotifPick,
+  onOpenLibrary,
+  motifPlacementStats,
+  trace,
+  canvasW,
+  canvasH,
+}) {
   // OPEN by default, and the state survives selection changes (motif-shell,
   // D). The audit's top discoverability finding: SelectedLayerInspector is
   // keyed by layer.id, so this component REMOUNTS on every selection — a
@@ -992,7 +1033,11 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, 
           // lives inside {open && …}, so collapsing would otherwise strand the
           // ephemeral motifPick with the overlay still armed and no visible
           // off-switch. Only clear when THIS device owns the armed motif.
-          if (!next && motifPick && motifs.some((m) => m.id === motifPick.layerId)) {
+          if (
+            !next &&
+            motifPick &&
+            motifs.some((m) => m.id === motifPick.layerId)
+          ) {
             onMotifPick?.(null);
           }
         }}
@@ -1045,261 +1090,282 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, 
           )}
 
           {motifs.map((m) => {
-        const glyphRef = m.params?.glyphRef;
-        // Custom glyphs edit in place; built-ins are read-only → "Duplicate to
-        // edit" (the Edit button forks a copy first). WI-P2-2.
-        const isCustomGlyph =
-          !!glyphRef && !MOTIF_GLYPHS[glyphRef] && !!customGlyphs?.[glyphRef];
-        // The effective Block chain for DISPLAY — readChain lazy-compiles a legacy
-        // binding on the fly so a not-yet-rewritten motif still shows its Blocks.
-        // Edit indices line up because editChain applies to ensureChainForm(old),
-        // which produces the same compiled chain.
-        const chain = readChain(m.params?.binding);
-        const size = m.params?.binding?.placement?.sizing?.size ?? 18;
-        const flip = m.params?.binding?.placement?.flip === true;
-        // Placement budget (2026-07-19, docs §6): present only when THIS motif's
-        // placements were truncated by MAX_PLACEMENTS. No silent cap — surface it.
-        const budget = motifPlacementStats?.[m.id];
-        // Trace sweep (issue #91): is THIS motif the one being traced right now?
-        // The Trace affordance self-hides when no controller is wired (isolated
-        // tests / legacy callers pass no `trace`).
-        const isTracing = !!trace && trace.activeMotifId === m.id;
+            const glyphRef = m.params?.glyphRef;
+            // Custom glyphs edit in place; built-ins are read-only → "Duplicate to
+            // edit" (the Edit button forks a copy first). WI-P2-2.
+            const isCustomGlyph =
+              !!glyphRef &&
+              !MOTIF_GLYPHS[glyphRef] &&
+              !!customGlyphs?.[glyphRef];
+            // The effective Block chain for DISPLAY — readChain lazy-compiles a legacy
+            // binding on the fly so a not-yet-rewritten motif still shows its Blocks.
+            // Edit indices line up because editChain applies to ensureChainForm(old),
+            // which produces the same compiled chain.
+            const chain = readChain(m.params?.binding);
+            const size = m.params?.binding?.placement?.sizing?.size ?? 18;
+            const flip = m.params?.binding?.placement?.flip === true;
+            // Placement budget (2026-07-19, docs §6): present only when THIS motif's
+            // placements were truncated by MAX_PLACEMENTS. No silent cap — surface it.
+            const budget = motifPlacementStats?.[m.id];
+            // Trace sweep (issue #91): is THIS motif the one being traced right now?
+            // The Trace affordance self-hides when no controller is wired (isolated
+            // tests / legacy callers pass no `trace`).
+            const isTracing = !!trace && trace.activeMotifId === m.id;
 
-        return (
-          <div
-            key={m.id}
-            data-testid="motif-row"
-            className="space-y-2 rounded-cell border border-hairline bg-paper-warm p-2"
-          >
-            {budget && (
-              <p
-                data-testid="motif-placement-warning"
-                className="rounded-xs border border-tone-mild/40 bg-tone-mild/10 px-2 py-1 text-xs text-tone-mild"
+            return (
+              <div
+                key={m.id}
+                data-testid="motif-row"
+                className="space-y-2 rounded-cell border border-hairline bg-paper-warm p-2"
               >
-                Showing {budget.placed.toLocaleString()} of{" "}
-                {budget.total.toLocaleString()} placements — reduce density or
-                host complexity.
-              </p>
-            )}
-            {/* Glyph picker chip + remove (motif-shell, D). The chip replaces
+                {budget && (
+                  <p
+                    data-testid="motif-placement-warning"
+                    className="rounded-xs border border-tone-mild/40 bg-tone-mild/10 px-2 py-1 text-xs text-tone-mild"
+                  >
+                    Showing {budget.placed.toLocaleString()} of{" "}
+                    {budget.total.toLocaleString()} placements — reduce density
+                    or host complexity.
+                  </p>
+                )}
+                {/* Glyph picker chip + remove (motif-shell, D). The chip replaces
                 the old native <select>: the applied glyph's THUMBNAIL is the
                 value, and clicking it opens the flyout picker (search / recents
                 / set tabs / thumbnail grid). Commit routing is unchanged:
                 COPY-on-use (P4) for a library pick — copy + rebind fold into
                 ONE undo entry via the onUseLibraryGlyph seam (P5-2), with the
                 legacy two-call fallback when Studio hasn't wired it. */}
-            <div className="flex items-center gap-2">
-              <GlyphPickerChip
-                glyphRef={glyphRef}
-                customGlyphs={customGlyphs}
-                libraryMotifs={library}
-                onManageLibrary={onOpenLibrary}
-                onPick={(picked) => {
-                  const params = { ...m.params, glyphRef: picked.glyphId };
-                  if (picked.kind === "library" && onUseLibraryGlyph) {
-                    onUseLibraryGlyph(picked.glyph, m.id, params);
-                    return;
-                  }
-                  if (picked.kind === "library" && !customGlyphs?.[picked.glyphId]) {
-                    onCopyLibraryGlyph?.(picked.glyph);
-                  }
-                  onUpdateLayer(m.id, { params });
-                }}
-              />
-              {/* Trace placement order (issue #91) — rehearse this motif's
+                <div className="flex items-center gap-2">
+                  <GlyphPickerChip
+                    glyphRef={glyphRef}
+                    customGlyphs={customGlyphs}
+                    libraryMotifs={library}
+                    onManageLibrary={onOpenLibrary}
+                    onPick={(picked) => {
+                      const params = { ...m.params, glyphRef: picked.glyphId };
+                      if (picked.kind === "library" && onUseLibraryGlyph) {
+                        onUseLibraryGlyph(picked.glyph, m.id, params);
+                        return;
+                      }
+                      if (
+                        picked.kind === "library" &&
+                        !customGlyphs?.[picked.glyphId]
+                      ) {
+                        onCopyLibraryGlyph?.(picked.glyph);
+                      }
+                      onUpdateLayer(m.id, { params });
+                    }}
+                  />
+                  {/* Trace placement order (issue #91) — rehearse this motif's
                   toolpath on the real canvas. Icon-play, pressed while active
                   (saffron — the load-bearing accent WHILE tracing). Self-hides
                   without a wired controller. 44px effective hit area. */}
-              {trace && (
-                <button
-                  type="button"
-                  data-testid="motif-trace"
-                  aria-label="Trace placement order"
-                  aria-pressed={isTracing}
-                  title="Trace placement order"
-                  onClick={() => trace.toggle(m.id)}
-                  className={[
-                    "flex h-11 w-11 shrink-0 items-center justify-center rounded-xs outline-none transition-colors duration-fast focus-visible:ring-2 focus-visible:ring-violet",
-                    isTracing
-                      ? "text-saffron"
-                      : "text-ink-soft hover:text-ink",
-                  ].join(" ")}
-                >
-                  <span aria-hidden="true">
-                    {isTracing ? (
-                      // Stop square while a trace is running/laid down.
-                      <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
-                        <rect x="2" y="2" width="8" height="8" rx="1" />
-                      </svg>
-                    ) : (
-                      // Play triangle at rest.
-                      <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
-                        <path d="M3 2 L10 6 L3 10 Z" />
-                      </svg>
-                    )}
-                  </span>
-                </button>
-              )}
-              <button
-                type="button"
-                data-testid="motif-remove"
-                aria-label="Remove motif"
-                onClick={() => onRemoveLayer?.(m.id)}
-                className="shrink-0 rounded-xs px-1 text-xs text-ink-soft hover:text-ink"
-              >
-                ×
-              </button>
-            </div>
+                  {trace && (
+                    <button
+                      type="button"
+                      data-testid="motif-trace"
+                      aria-label="Trace placement order"
+                      aria-pressed={isTracing}
+                      title="Trace placement order"
+                      onClick={() => trace.toggle(m.id)}
+                      className={[
+                        "flex h-11 w-11 shrink-0 items-center justify-center rounded-xs outline-none transition-colors duration-fast focus-visible:ring-2 focus-visible:ring-violet",
+                        isTracing
+                          ? "text-saffron"
+                          : "text-ink-soft hover:text-ink",
+                      ].join(" ")}
+                    >
+                      <span aria-hidden="true">
+                        {isTracing ? (
+                          // Stop square while a trace is running/laid down.
+                          <svg
+                            width="12"
+                            height="12"
+                            viewBox="0 0 12 12"
+                            fill="currentColor"
+                          >
+                            <rect x="2" y="2" width="8" height="8" rx="1" />
+                          </svg>
+                        ) : (
+                          // Play triangle at rest.
+                          <svg
+                            width="12"
+                            height="12"
+                            viewBox="0 0 12 12"
+                            fill="currentColor"
+                          >
+                            <path d="M3 2 L10 6 L3 10 Z" />
+                          </svg>
+                        )}
+                      </span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    data-testid="motif-remove"
+                    aria-label="Remove motif"
+                    onClick={() => onRemoveLayer?.(m.id)}
+                    className="shrink-0 rounded-xs px-1 text-xs text-ink-soft hover:text-ink"
+                  >
+                    ×
+                  </button>
+                </div>
 
-            {/* prefers-reduced-motion: Trace does NOT autoplay — pressing it
+                {/* prefers-reduced-motion: Trace does NOT autoplay — pressing it
                 reveals this scrubber, which hand-scrubs the accumulation (drives
                 progressIndex directly). Shown only for the actively-traced motif in
                 manual mode. */}
-            {isTracing && trace.mode === "manual" && (
-              <input
-                type="range"
-                data-testid="motif-trace-scrubber"
-                aria-label="Trace position"
-                min={0}
-                max={trace.activeCount}
-                value={trace.progressIndex}
-                onChange={(e) => trace.scrub(Number(e.target.value))}
-                className="w-full accent-saffron"
-              />
-            )}
+                {isTracing && trace.mode === "manual" && (
+                  <input
+                    type="range"
+                    data-testid="motif-trace-scrubber"
+                    aria-label="Trace position"
+                    min={0}
+                    max={trace.activeCount}
+                    value={trace.progressIndex}
+                    onChange={(e) => trace.scrub(Number(e.target.value))}
+                    className="w-full accent-saffron"
+                  />
+                )}
 
-            {/* Import SVG as motif — replaces THIS row's glyph with an imported
+                {/* Import SVG as motif — replaces THIS row's glyph with an imported
                 one. Built-ins above stay read-only (P1); only the selection
                 changes here, never the built-in geometry. Edit opens the pen
                 editor (custom → in place; built-in → duplicate-to-edit). */}
-            <div className="flex items-center gap-1.5">
-              <button
-                type="button"
-                data-testid="motif-import"
-                onClick={() => openImportFor(m.id)}
-                className="flex-1 rounded-xs border border-hairline bg-paper px-2 py-0.5 text-xs text-ink-soft outline-none transition-colors hover:border-violet hover:text-ink focus-visible:ring-2 focus-visible:ring-violet"
-              >
-                Import SVG as motif…
-              </button>
-              <button
-                type="button"
-                data-testid="motif-new"
-                aria-label="New motif"
-                title="Draw a new motif from scratch"
-                onClick={() => onNewMotif?.(m.id)}
-                className="shrink-0 rounded-xs border border-hairline bg-paper px-2 py-0.5 text-xs text-ink-soft outline-none transition-colors hover:border-violet hover:text-ink focus-visible:ring-2 focus-visible:ring-violet"
-              >
-                New…
-              </button>
-              <button
-                type="button"
-                data-testid="motif-edit"
-                aria-label={isCustomGlyph ? "Edit motif" : "Duplicate to edit"}
-                title={isCustomGlyph ? "Edit motif" : "Duplicate to edit"}
-                onClick={() => openEditorFor(m)}
-                className="shrink-0 rounded-xs border border-hairline bg-paper px-2 py-0.5 text-xs text-ink-soft outline-none transition-colors hover:border-violet hover:text-ink focus-visible:ring-2 focus-visible:ring-violet"
-              >
-                <span aria-hidden="true">✎</span>
-              </button>
-            </div>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    data-testid="motif-import"
+                    onClick={() => openImportFor(m.id)}
+                    className="flex-1 rounded-xs border border-hairline bg-paper px-2 py-0.5 text-xs text-ink-soft outline-none transition-colors hover:border-violet hover:text-ink focus-visible:ring-2 focus-visible:ring-violet"
+                  >
+                    Import SVG as motif…
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="motif-new"
+                    aria-label="New motif"
+                    title="Draw a new motif from scratch"
+                    onClick={() => onNewMotif?.(m.id)}
+                    className="shrink-0 rounded-xs border border-hairline bg-paper px-2 py-0.5 text-xs text-ink-soft outline-none transition-colors hover:border-violet hover:text-ink focus-visible:ring-2 focus-visible:ring-violet"
+                  >
+                    New…
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="motif-edit"
+                    aria-label={
+                      isCustomGlyph ? "Edit motif" : "Duplicate to edit"
+                    }
+                    title={isCustomGlyph ? "Edit motif" : "Duplicate to edit"}
+                    onClick={() => openEditorFor(m)}
+                    className="shrink-0 rounded-xs border border-hairline bg-paper px-2 py-0.5 text-xs text-ink-soft outline-none transition-colors hover:border-violet hover:text-ink focus-visible:ring-2 focus-visible:ring-violet"
+                  >
+                    <span aria-hidden="true">✎</span>
+                  </button>
+                </div>
 
-            {/* Variant D: the exclusive MODE column (left) beside the Block rack
+                {/* Variant D: the exclusive MODE column (left) beside the Block rack
                 (right). The column lights the preset the motif's chain matches
                 (or Custom on divergence); picking a preset rewrites the chain in
                 one undo entry. The rack keeps min-w-0 so it never overflows a
                 narrow inspector, and the column holds a fixed narrow width. */}
-            <div className="flex gap-2">
-              <MotifRowModeColumn
-                binding={m.params?.binding}
-                hostPatternType={layer.patternType}
-                modeChips={modeChips}
-                hostKind={hostKind}
-                onApply={(modeId) => applyMode(m, modeId)}
-                // Lit-row RhythmStrip marker scrubs to the Trace progress fraction
-                // while this motif is tracing; null otherwise (no marker).
-                markerFrac={isTracing ? trace.frac : null}
-              />
-              <div className="min-w-0 flex-1">
-                {/* The Block stack (C2) — the selection CHAIN as reorderable Block
+                <div className="flex gap-2">
+                  <MotifRowModeColumn
+                    binding={m.params?.binding}
+                    hostPatternType={layer.patternType}
+                    modeChips={modeChips}
+                    hostKind={hostKind}
+                    onApply={(modeId) => applyMode(m, modeId)}
+                    // Lit-row RhythmStrip marker scrubs to the Trace progress fraction
+                    // while this motif is tracing; null otherwise (no marker).
+                    markerFrac={isTracing ? trace.frac : null}
+                  />
+                  <div className="min-w-0 flex-1">
+                    {/* The Block stack (C2) — the selection CHAIN as reorderable Block
                     cards (route/everyN/skip/density/field + the terminal
                     Sequencer). Every edit routes through editChain (first-edit
                     rewrite as one undo entry + no-op guard) — which is exactly why
                     editing any block re-derives modeForMotif and slides the mode
                     column to Custom with no extra wiring. */}
-                <MotifBlockRack
-                  chain={chain}
-                  hostIsSemantic={hostIsSemantic}
-                  hostKind={hostKind}
-                  anchors={hostAnchors}
-                  overrides={m.params?.binding?.overrides}
-                  onEditChain={(mutate) => editChain(m, mutate)}
-                  // Canvas-pick arm state (C4): this row is armed only when the
-                  // Studio-level pick target names THIS motif; onArmRoute reports
-                  // the route block index back up (ephemeral, one armed at a time).
-                  armedRouteIndex={
-                    motifPick?.layerId === m.id ? motifPick.blockIndex : null
-                  }
-                  onArmRoute={(idx) =>
-                    onMotifPick?.(
-                      idx == null ? null : { layerId: m.id, blockIndex: idx }
-                    )
-                  }
-                  customGlyphs={customGlyphs}
-                  baseGlyphRef={glyphRef}
-                  onEditSlotGlyph={(seqIndex, slotIndex, slotGlyphRef) =>
-                    openSlotEditorFor(m, seqIndex, slotIndex, slotGlyphRef)
-                  }
-                />
-              </div>
-            </div>
+                    <MotifBlockRack
+                      chain={chain}
+                      hostIsSemantic={hostIsSemantic}
+                      hostKind={hostKind}
+                      anchors={hostAnchors}
+                      overrides={m.params?.binding?.overrides}
+                      onEditChain={(mutate) => editChain(m, mutate)}
+                      // Canvas-pick arm state (C4): this row is armed only when the
+                      // Studio-level pick target names THIS motif; onArmRoute reports
+                      // the route block index back up (ephemeral, one armed at a time).
+                      armedRouteIndex={
+                        motifPick?.layerId === m.id
+                          ? motifPick.blockIndex
+                          : null
+                      }
+                      onArmRoute={(idx) =>
+                        onMotifPick?.(
+                          idx == null
+                            ? null
+                            : { layerId: m.id, blockIndex: idx }
+                        )
+                      }
+                      customGlyphs={customGlyphs}
+                      baseGlyphRef={glyphRef}
+                      onEditSlotGlyph={(seqIndex, slotIndex, slotGlyphRef) =>
+                        openSlotEditorFor(m, seqIndex, slotIndex, slotGlyphRef)
+                      }
+                    />
+                  </div>
+                </div>
 
-            {/* Placement (fixed tail, ADR-0004 — NOT a chain block): Size + Flip.
+                {/* Placement (fixed tail, ADR-0004 — NOT a chain block): Size + Flip.
                 Kept as fixed controls so authoring them never regresses. */}
-            <div className="space-y-1.5 border-t border-hairline/60 pt-2">
-              <label className="flex items-center gap-1.5 text-xs text-ink-soft">
-                <span className="whitespace-nowrap">Size</span>
-                <input
-                  type="number"
-                  data-testid="motif-size"
-                  aria-label="Size"
-                  min={1}
-                  step={1}
-                  value={size}
-                  onChange={(e) => {
-                    const raw = Number(e.target.value);
-                    const next = Number.isFinite(raw) && raw >= 1 ? raw : 1;
-                    patchMotif(m, {
-                      placement: { sizing: { size: next } },
-                    });
-                  }}
-                  className="w-14 rounded-xs border border-hairline bg-paper px-1 py-0.5 text-xs text-ink outline-none focus:border-violet num"
-                />
-              </label>
-              <label className="flex items-center gap-1.5 text-xs text-ink-soft">
-                <input
-                  type="checkbox"
-                  data-testid="motif-flip"
-                  aria-label="Flip"
-                  checked={flip}
-                  onChange={(e) =>
-                    patchMotif(m, { placement: { flip: e.target.checked } })
-                  }
-                />
-                <span>Flip</span>
-              </label>
-            </div>
-          </div>
-        );
-      })}
+                <div className="space-y-1.5 border-t border-hairline/60 pt-2">
+                  <label className="flex items-center gap-1.5 text-xs text-ink-soft">
+                    <span className="whitespace-nowrap">Size</span>
+                    <input
+                      type="number"
+                      data-testid="motif-size"
+                      aria-label="Size"
+                      min={1}
+                      step={1}
+                      value={size}
+                      onChange={(e) => {
+                        const raw = Number(e.target.value);
+                        const next = Number.isFinite(raw) && raw >= 1 ? raw : 1;
+                        patchMotif(m, {
+                          placement: { sizing: { size: next } },
+                        });
+                      }}
+                      className="w-14 rounded-xs border border-hairline bg-paper px-1 py-0.5 text-xs text-ink outline-none focus:border-violet num"
+                    />
+                  </label>
+                  <label className="flex items-center gap-1.5 text-xs text-ink-soft">
+                    <input
+                      type="checkbox"
+                      data-testid="motif-flip"
+                      aria-label="Flip"
+                      checked={flip}
+                      onChange={(e) =>
+                        patchMotif(m, { placement: { flip: e.target.checked } })
+                      }
+                    />
+                    <span>Flip</span>
+                  </label>
+                </div>
+              </div>
+            );
+          })}
 
-      <button
-        type="button"
-        data-testid="motif-add"
-        onClick={addMotif}
-        className="w-full rounded-xs border border-hairline bg-paper-warm px-2 py-1 text-xs font-medium text-ink-soft outline-none transition-colors hover:border-violet hover:text-ink focus-visible:ring-2 focus-visible:ring-violet"
-      >
-        + Add Motif
-      </button>
+          <button
+            type="button"
+            data-testid="motif-add"
+            onClick={addMotif}
+            className="w-full rounded-xs border border-hairline bg-paper-warm px-2 py-1 text-xs font-medium text-ink-soft outline-none transition-colors hover:border-violet hover:text-ink focus-visible:ring-2 focus-visible:ring-violet"
+          >
+            + Add Motif
+          </button>
         </>
       )}
     </div>
@@ -1309,7 +1375,38 @@ function MotifDevice({ layer, layers, onUpdateLayer, onAddMotif, onRemoveLayer, 
 // The param-editing body for one selected layer. Split into its own component so
 // usePatternCache (a hook) is only called when a layer is actually selected —
 // hooks can't be called conditionally inside Inspector itself.
-function SelectedLayerInspector({ layer, layers, panels, colorView, etchBitmap, unit, profileId, onUpdateLayer, onChangeLayerPattern, onVariableWeightChange, onPreviewField, onClosePreview, threeDSubMode, threeDFocusLayerId, onAddMotif, onRemoveLayer, customGlyphs, onEditGlyph, onNewMotif, onImportFile, libraryMotifs, onCopyLibraryGlyph, onUseLibraryGlyph, motifPick, onMotifPick, onOpenLibrary, motifPlacementStats, trace, canvasW, canvasH }) {
+function SelectedLayerInspector({
+  layer,
+  layers,
+  panels,
+  colorView,
+  etchBitmap,
+  unit,
+  profileId,
+  onUpdateLayer,
+  onChangeLayerPattern,
+  onVariableWeightChange,
+  onPreviewField,
+  onClosePreview,
+  threeDSubMode,
+  threeDFocusLayerId,
+  onAddMotif,
+  onRemoveLayer,
+  customGlyphs,
+  onEditGlyph,
+  onNewMotif,
+  onImportFile,
+  libraryMotifs,
+  onCopyLibraryGlyph,
+  onUseLibraryGlyph,
+  motifPick,
+  onMotifPick,
+  onOpenLibrary,
+  motifPlacementStats,
+  trace,
+  canvasW,
+  canvasH,
+}) {
   // Pattern swap: route through the same cache machine LayerCard uses, applied via
   // the pair-aware onChangeLayerPattern when present (falls back to a plain param
   // update so the component works standalone / in tests without a router).
@@ -1317,6 +1414,17 @@ function SelectedLayerInspector({ layer, layers, panels, colorView, etchBitmap, 
     ? (patch) => onChangeLayerPattern(layer.id, patch)
     : (patch) => onUpdateLayer(layer.id, patch);
   const { handlePatternChange } = usePatternCache(layer, applyPatternPatch);
+
+  // Dock orientation flows through the portal (WI-4). When docked to the bottom
+  // shelf the top-level modules read left→right as a chain of "effects" (Pattern
+  // swap → Motif → Etch → param categories → Modulator), so they flow in a
+  // wrapping row of equal-width columns; the right rail keeps its vertical stack.
+  // null (legacy / no provider) ⇒ isBottom=false ⇒ byte-unchanged column layout.
+  const dock = useInspectorDockContext();
+  const isBottom = dock?.dockPosition === "bottom";
+  const modulesClass = isBottom
+    ? "flex flex-row flex-wrap items-start gap-4 [&>*]:min-w-[16rem] [&>*]:flex-1"
+    : "flex flex-col gap-3";
 
   // Param context value — identical wiring to LayerCard's boundary, bound to the
   // selected layer's id so edits patch the right layer.
@@ -1333,130 +1441,149 @@ function SelectedLayerInspector({ layer, layers, panels, colorView, etchBitmap, 
 
   return (
     <div className="flex flex-col gap-3 p-3" data-testid="inspector-params">
-      <DockToggle />
-      {isMotifLayer(layer) ? (
-        /* A motif layer is an adornment, not a pattern: no swap control
-           (changeLayerPattern refuses motif layers — audit 2026-07 bug 1;
-           the old live PatternSelect here silently corrupted the layer).
-           Point at the owning host instead. */
-        <div className="space-y-1.5" data-testid="motif-layer-info">
-          <h3 className="text-xs font-semibold text-ink-soft uppercase tracking-wider">
-            Motif
-          </h3>
-          <p className="rounded-cell border border-hairline bg-paper-warm px-2 py-1.5 text-xs text-ink-soft">
-            Adorns{" "}
-            <span className="font-medium text-ink">
-              {layers?.find((l) => l.id === motifHostId(layer))?.name ||
-                "a deleted layer"}
-            </span>
-            . Select the host layer to edit this motif&apos;s glyph, blocks,
-            and placement.
-          </p>
-        </div>
-      ) : (
-        /* Pattern type + swap control, pinned at the top. */
-        <div className="space-y-1.5">
-          <h3 className="text-xs font-semibold text-ink-soft uppercase tracking-wider">
-            Pattern
-          </h3>
-          <PatternSelect active={layer.patternType} onChange={handlePatternChange} />
-        </div>
-      )}
+      {/* Pattern/motif header shares the top row with the dock toggle. The
+          pattern type describes the WHOLE layer, so it stays pinned above the
+          module chain rather than taking a full column inside it. */}
+      <div className="flex w-full items-start justify-between gap-2">
+        {isMotifLayer(layer) ? (
+          /* A motif layer is an adornment, not a pattern: no swap control
+        (changeLayerPattern refuses motif layers — audit 2026-07 bug 1;
+        the old live PatternSelect here silently corrupted the layer).
+        Point at the owning host instead. */
+          <div className="space-y-1.5" data-testid="motif-layer-info">
+            <h3 className="text-xs font-semibold text-ink-soft uppercase tracking-wider">
+              Motif
+            </h3>
+            <p className="rounded-cell border border-hairline bg-paper-warm px-2 py-1.5 text-xs text-ink-soft">
+              Adorns{" "}
+              <span className="font-medium text-ink">
+                {layers?.find((l) => l.id === motifHostId(layer))?.name ||
+                  "a deleted layer"}
+              </span>
+              . Select the host layer to edit this motif&apos;s glyph, blocks,
+              and placement.
+            </p>
+          </div>
+        ) : (
+          /* Pattern type + swap control. The label sits INLINE with the trigger
+             (not stacked above it) — the pattern names the whole layer, and
+             inline reclaims the scarce vertical space for the module chain. */
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <PatternSelect
+              active={layer.patternType}
+              onChange={handlePatternChange}
+            />
+            <h3 className="shrink-0 text-xs font-semibold text-ink-soft/50 uppercase tracking-wider">
+              Pattern
+            </h3>
+          </div>
+        )}
+        <DockToggle />
+      </div>
 
-      {/* Motif device — add/edit/remove motifs adorning this host. Collapsed by
+      {/* The module chain. Vertical stack on the right rail; a wrapping,
+          left→right row on the bottom shelf (see modulesClass). */}
+      <div className={modulesClass}>
+        {/* Motif device — add/edit/remove motifs adorning this host. Collapsed by
           default and pinned ABOVE the pattern params so it's the first thing a
           user sees for a host layer (mobile discoverability). Self-hides unless
           the selected layer is an eligible host (grid/recursive/spiral) → renders
           nothing, leaving no empty gap for non-host layers. */}
-      <MotifDevice
-        layer={layer}
-        layers={layers}
-        onUpdateLayer={onUpdateLayer}
-        onAddMotif={onAddMotif}
-        onRemoveLayer={onRemoveLayer}
-        customGlyphs={customGlyphs}
-        onEditGlyph={onEditGlyph}
-        onNewMotif={onNewMotif}
-        onImportFile={onImportFile}
-        libraryMotifs={libraryMotifs}
-        onCopyLibraryGlyph={onCopyLibraryGlyph}
-        onUseLibraryGlyph={onUseLibraryGlyph}
-        motifPick={motifPick}
-        onMotifPick={onMotifPick}
-        onOpenLibrary={onOpenLibrary}
-        motifPlacementStats={motifPlacementStats}
-        trace={trace}
-        canvasW={canvasW}
-        canvasH={canvasH}
-      />
+        <MotifDevice
+          layer={layer}
+          layers={layers}
+          onUpdateLayer={onUpdateLayer}
+          onAddMotif={onAddMotif}
+          onRemoveLayer={onRemoveLayer}
+          customGlyphs={customGlyphs}
+          onEditGlyph={onEditGlyph}
+          onNewMotif={onNewMotif}
+          onImportFile={onImportFile}
+          libraryMotifs={libraryMotifs}
+          onCopyLibraryGlyph={onCopyLibraryGlyph}
+          onUseLibraryGlyph={onUseLibraryGlyph}
+          motifPick={motifPick}
+          onMotifPick={onMotifPick}
+          onOpenLibrary={onOpenLibrary}
+          motifPlacementStats={motifPlacementStats}
+          trace={trace}
+          canvasW={canvasW}
+          canvasH={canvasH}
+        />
 
-      {/* Etch Stack rack (Raster Etch S2, #81) — the ordered, reorderable,
+        {/* Etch Stack rack (Raster Etch S2, #81) — the ordered, reorderable,
           bypassable stack of Stages an Etch's luma field flows through before
           screening, with the Tone Stage controls. Self-hides for non-Etch
           layers, so it costs nothing for vector layers. */}
-      <EtchStackRack layer={layer} onUpdateLayer={onUpdateLayer} />
+        <EtchStackRack layer={layer} onUpdateLayer={onUpdateLayer} />
 
-      {/* Highlight Hold (Raster Etch S4, #83) — the FIXED TERMINAL clamp that
+        {/* Highlight Hold (Raster Etch S4, #83) — the FIXED TERMINAL clamp that
           guarantees no dot etches above the cutoff, rendered as its OWN control
           BELOW the Stack (never a Stage: it can't be dragged into the Stack,
           reordered, or bypassed). Material-aware default (mirror → on) resolved
           from the layer's panel material. Self-hides for non-Etch layers. */}
-      <EtchHighlightHold layer={layer} panels={panels} colorView={colorView} onUpdateLayer={onUpdateLayer} />
+        <EtchHighlightHold
+          layer={layer}
+          panels={panels}
+          colorView={colorView}
+          onUpdateLayer={onUpdateLayer}
+        />
 
-      {/* 1:1 "what etches" preview hero (Raster Etch S9, #88) — a pixel-accurate
+        {/* 1:1 "what etches" preview hero (Raster Etch S9, #88) — a pixel-accurate
           verification view of the Etch's exported 1-bit output (the held band
           shaded), so the maker can inspect the true dot density before an
           irreversible mirror cut. Reads the SAME single-source `etchBitmap` the
           canvas draws + svgExport embeds (grilled decision 4) — never a second
           resolve. Self-hides for non-Etch layers / while the bitmap resolves. */}
-      <EtchPreviewHero layer={layer} bitmap={etchBitmap} />
+        <EtchPreviewHero layer={layer} bitmap={etchBitmap} />
 
-      {/* Collapsible, grouped param controls (Structure / Scale / Variation /
+        {/* Collapsible, grouped param controls (Structure / Scale / Variation /
           Stroke / Transform — the existing PARAM_GROUPS). */}
-      {layerParamsValue && (
-        <LayerParamsProvider value={layerParamsValue}>
-          <PatternParams />
-        </LayerParamsProvider>
-      )}
+        {layerParamsValue && (
+          <LayerParamsProvider value={layerParamsValue}>
+            <PatternParams />
+          </LayerParamsProvider>
+        )}
 
-      {/* Modulation-scoped param (§5) — the Grid's `warpNodes`, shown in the grid
+        {/* Modulation-scoped param (§5) — the Grid's `warpNodes`, shown in the grid
           panel ONLY while the grid is an active 'warp' target (a modulator maps a
           warp channel to it and can produce a field). Owner label "Modulation".
           Same canonical write as the modulator-row site; the `...layer.params`
           spread is REQUIRED (shallow top-level merge). */}
-      {layer.patternType === "grid" &&
-        resolveModulationForTarget(layer, layers) !== null && (
-          <ModulationParamBox owner="Modulation">
-            <WarpNodesControl
-              testidSuffix="-panel"
-              value={layer.params?.warpNodes ?? 6}
-              onChange={(v) =>
-                onUpdateLayer(layer.id, {
-                  params: { ...layer.params, warpNodes: Number(v) },
-                })
-              }
-            />
-          </ModulationParamBox>
-        )}
+        {layer.patternType === "grid" &&
+          resolveModulationForTarget(layer, layers) !== null && (
+            <ModulationParamBox owner="Modulation">
+              <WarpNodesControl
+                testidSuffix="-panel"
+                value={layer.params?.warpNodes ?? 6}
+                onChange={(v) =>
+                  onUpdateLayer(layer.id, {
+                    params: { ...layer.params, warpNodes: Number(v) },
+                  })
+                }
+              />
+            </ModulationParamBox>
+          )}
 
-      {/* Variable line-weight UI (#17, C8) — capability-gated, OFF by default. */}
-      <VariableWeightControls
-        layer={layer}
-        profileId={profileId}
-        onVariableWeightChange={onVariableWeightChange}
-      />
+        {/* Variable line-weight UI (#17, C8) — capability-gated, OFF by default. */}
+        <VariableWeightControls
+          layer={layer}
+          profileId={profileId}
+          onVariableWeightChange={onVariableWeightChange}
+        />
 
-      {/* Modulator device (pattern modulation, modulator-centric) — shown only
+        {/* Modulator device (pattern modulation, modulator-centric) — shown only
           for a layer that can produce a field (the guide / Chladni). */}
-      <ModulatorDevice
-        layer={layer}
-        layers={layers}
-        onUpdateLayer={onUpdateLayer}
-        onPreviewField={onPreviewField}
-        onClosePreview={onClosePreview}
-        threeDSubMode={threeDSubMode}
-        threeDFocusLayerId={threeDFocusLayerId}
-      />
+        <ModulatorDevice
+          layer={layer}
+          layers={layers}
+          onUpdateLayer={onUpdateLayer}
+          onPreviewField={onPreviewField}
+          onClosePreview={onClosePreview}
+          threeDSubMode={threeDSubMode}
+          threeDFocusLayerId={threeDFocusLayerId}
+        />
+      </div>
     </div>
   );
 }

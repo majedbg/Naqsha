@@ -60,7 +60,6 @@ import { resolveActiveTargets } from "../lib/three3d/drape";
 const IDENTITY = { x: 0, y: 0, rotation: 0, scale: 1 };
 
 const BG_PRESETS = [
-  { color: "#0a1628", label: "Dark Blue" },
   { color: "#ffffff", label: "White" },
   { color: "#000000", label: "Black" },
 ];

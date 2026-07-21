@@ -39,7 +39,7 @@ function moirePairOf(layer, allLayers) {
 }
 
 const BG_STORAGE_KEY = 'sonoform-bg-color';
-const DEFAULT_BG_COLOR = '#0a1628';
+const DEFAULT_BG_COLOR = '#ffffff';
 
 let nextId = 1;
 function genId() {

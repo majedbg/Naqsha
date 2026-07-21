@@ -53,7 +53,7 @@ export default function PatternSelect({ active, onChange }) {
         type="button"
         onClick={() => setOpen(true)}
         title={`${label} — click to change pattern`}
-        className="group flex w-full items-center gap-2 rounded-xs border border-hairline bg-paper-warm px-2 py-1.5 text-left transition-colors duration-fast ease-out-quart hover:border-violet hover:bg-muted"
+        className="group flex w-auto items-center gap-2 rounded-xs border border-hairline bg-paper-warm px-2 py-1.5 text-left transition-colors duration-fast ease-out-quart hover:border-violet hover:bg-muted"
       >
         {/* Family-colour swatch + element symbol — the picker-card visual
             language, shrunk to a single chip. */}

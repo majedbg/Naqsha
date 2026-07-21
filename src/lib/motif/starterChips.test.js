@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { STARTER_CHIPS } from './starterChips.js';
 import { runSelectionChain } from './chain.js';
+import { resolvePlacements } from './placementEngine.js';
 import { hasSequence, sequenceIndex } from './chainEditor.js';
 import { getGlyph, MOTIF_GLYPHS } from './glyphs.js';
 import { createMotifParams } from './motifLayer.js';
@@ -58,6 +59,20 @@ describe('STARTER_CHIPS — curated set', () => {
     expect(ids.has('vine')).toBe(true);
     expect(ids.has('sparse-scatter')).toBe(true);
     expect(ids.has('border-march')).toBe(true);
+  });
+
+  it('labels are plain names — no emoji (Variant D: notation carries the meaning)', () => {
+    // The mode-selector rows show the label as a plain name; the RhythmStrip
+    // carries the glyph notation, and the naqsheh brief bans emoji in chrome.
+    const byId = Object.fromEntries(STARTER_CHIPS.map((c) => [c.id, c.label]));
+    expect(byId.vine).toBe('Vine');
+    // Alternate keeps its notation-free name (the hyphenated x‑o is not emoji).
+    expect(byId['alternate-xo']).toBe('Alternate x‑o');
+    // No chip label carries a pictographic/emoji code point.
+    const emoji = /\p{Extended_Pictographic}/u;
+    for (const chip of STARTER_CHIPS) {
+      expect(emoji.test(chip.label)).toBe(false);
+    }
   });
 });
 
@@ -189,6 +204,39 @@ describe('vine chip', () => {
     const seq = binding.chain.find((b) => b.type === 'sequence');
     expect(seq.mode).toBe('cycle');
     expect(seq.slots.map((s) => s.glyphRef)).toEqual(['rosette', 'leaf', 'leaf']);
+  });
+
+  // Vine alternation (design 2026-07): consecutive leaves alternate sides of the
+  // host line — the SECOND leaf is turned 180° so the vine reads leaf-above,
+  // leaf-below. `rotationOffset` is in DEGREES (placementEngine adds it to the
+  // degree-valued rotation; see placementEngine.test.js "path policy uses normal
+  // (rotation = deg(normal) + offset)"), so a half-turn is exactly 180.
+  it('turns the SECOND leaf slot 180° (first leaf unrotated)', () => {
+    const { binding } = STARTER_CHIPS.find((c) => c.id === 'vine').build('grid');
+    const seq = binding.chain.find((b) => b.type === 'sequence');
+    // slots = [rosette, leaf, leaf-180]; the two leaves are slots[1] and slots[2].
+    expect(seq.slots[1].glyphRef).toBe('leaf');
+    expect(seq.slots[1].rotationOffset ?? 0).toBe(0); // first leaf: no turn
+    expect(seq.slots[2].glyphRef).toBe('leaf');
+    expect(seq.slots[2].rotationOffset).toBe(180); // second leaf: half-turn
+  });
+
+  it('integration: the two placed leaves rotate a half-turn (π) apart on a host line', () => {
+    // Run the vine chain through the SELECT → RESOLVE seam (the real placement
+    // path) and confirm the alternation survives to concrete placement rotations.
+    // Three crossing anchors (grid route roles=['crossing']) on one path, spaced
+    // wide so proportional sizing places all three: cycle deals rosette, leaf,
+    // leaf-180 in order.
+    const { binding } = STARTER_CHIPS.find((c) => c.id === 'vine').build('grid');
+    const anchors = [0, 100, 200].map((x, i) => mkAnchor('crossing', x, 0, `c${i}`));
+    const { survivors, sequence } = runSelectionChain(anchors, binding.chain);
+    const { placements } = resolvePlacements(survivors, { ...binding.placement, sequence });
+
+    const leaves = placements.filter((p) => p.glyphRef === 'leaf');
+    expect(leaves).toHaveLength(2);
+    // Rotations differ by π (180°), mod 2π (360°): leaf-above vs leaf-below.
+    const diff = (((leaves[1].rotation - leaves[0].rotation) % 360) + 360) % 360;
+    expect(diff).toBeCloseTo(180, 9);
   });
 });
 

@@ -187,6 +187,20 @@ describe("ModulatorDevice — two-thumb range slider (WI-6)", () => {
     expect(screen.getByTestId("modulator-amount")).toBeInTheDocument();
   });
 
+  // A11y G (contrast): the "neutral" track label used text-gray-400 (fails
+  // WCAG AA on paper); it now uses the token text-ink-soft.
+  it("labels the neutral midpoint with the ink-soft token, not low-contrast gray", () => {
+    render(
+      <Harness
+        initialLayers={guideAndTarget({ maps: [{ targetLayerId: "t", channel: "density", amount: 1 }] })}
+        initialSelectedId="g"
+      />
+    );
+    const label = screen.getByText("neutral");
+    expect(label.className).toContain("text-ink-soft");
+    expect(label.className).not.toContain("text-gray-400");
+  });
+
   it("threads the current range into FieldOverlay for live recolor", () => {
     render(
       <Harness
@@ -199,5 +213,26 @@ describe("ModulatorDevice — two-thumb range slider (WI-6)", () => {
     );
     const last = fieldOverlayProps.at(-1);
     expect(last.range).toEqual({ min: 0, max: 1 });
+  });
+
+  // Responsive: the field readout was a hard 140×140 px box that overflowed the
+  // w-72 inspector inside the narrow mobile drawer. It now sizes fluidly, capped
+  // at 140px, staying square.
+  it("the field readout sizes fluidly (w-full, capped at 140px, square) instead of a fixed 140px box", () => {
+    render(
+      <Harness
+        initialLayers={guideAndTarget({
+          maps: [{ targetLayerId: "t", channel: "density", amount: 1 }],
+        })}
+        initialSelectedId="g"
+      />
+    );
+    const display = screen.getByTestId("modulator-display");
+    expect(display.className).toContain("w-full");
+    expect(display.className).toContain("max-w-[140px]");
+    expect(display.className).toContain("aspect-square");
+    // No leftover hard-pixel inline sizing.
+    expect(display.style.width).toBe("");
+    expect(display.style.height).toBe("");
   });
 });

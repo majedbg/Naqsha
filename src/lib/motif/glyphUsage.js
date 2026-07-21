@@ -11,6 +11,30 @@
 import { isMotifLayer } from './motifLayer';
 
 /**
+ * Visit every glyph-reference OCCURRENCE in the document — a motif layer's base
+ * `params.glyphRef` plus every Sequencer-slot `glyphRef` — once. `visit` is
+ * called with each truthy ref (rest/empty slots and missing base refs are
+ * skipped, so no falsy id ever reaches the callback). Shared by glyphUseCount
+ * and glyphUsageMap so the two can never drift on WHAT counts as a reference.
+ * @param {Array} layers the document's layers
+ * @param {(glyphId: string) => void} visit
+ */
+function eachGlyphRef(layers, visit) {
+  for (const l of layers || []) {
+    if (!isMotifLayer(l)) continue;
+    if (l.params?.glyphRef) visit(l.params.glyphRef);
+    const chain = l.params?.binding?.chain;
+    if (!Array.isArray(chain)) continue;
+    for (const block of chain) {
+      const slots = Array.isArray(block?.slots) ? block.slots : [];
+      for (const slot of slots) {
+        if (slot?.glyphRef) visit(slot.glyphRef);
+      }
+    }
+  }
+}
+
+/**
  * @param {Array} layers   the document's layers
  * @param {string} glyphId the glyph id to count references to
  * @returns {number} total reference count (base refs + sequencer-slot refs)
@@ -18,19 +42,28 @@ import { isMotifLayer } from './motifLayer';
 export function glyphUseCount(layers, glyphId) {
   if (!glyphId) return 0;
   let n = 0;
-  for (const l of layers || []) {
-    if (!isMotifLayer(l)) continue;
-    if (l.params?.glyphRef === glyphId) n += 1;
-    const chain = l.params?.binding?.chain;
-    if (!Array.isArray(chain)) continue;
-    for (const block of chain) {
-      const slots = Array.isArray(block?.slots) ? block.slots : [];
-      for (const slot of slots) {
-        if (slot?.glyphRef === glyphId) n += 1;
-      }
-    }
-  }
+  eachGlyphRef(layers, (id) => {
+    if (id === glyphId) n += 1;
+  });
   return n;
+}
+
+/**
+ * Reference count for EVERY glyph in ONE pass — the map form of glyphUseCount,
+ * so a render can count all glyphs without an O(glyphs × layers × blocks ×
+ * slots) nested scan (one glyphUseCount call per entry). Contract: the returned
+ * Map holds ONLY referenced ids — an unused glyph is ABSENT (callers read
+ * `map.get(id) ?? 0`), never keyed to 0 — and each value equals the glyph's
+ * glyphUseCount. No falsy id is ever a key.
+ * @param {Array} layers the document's layers
+ * @returns {Map<string, number>} glyphId → reference count
+ */
+export function glyphUsageMap(layers) {
+  const counts = new Map();
+  eachGlyphRef(layers, (id) => {
+    counts.set(id, (counts.get(id) || 0) + 1);
+  });
+  return counts;
 }
 
 /**

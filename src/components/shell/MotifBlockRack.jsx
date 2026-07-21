@@ -22,6 +22,7 @@
 // C4. sequence is a minimal shell — its slot strip is C3. A `field` block has no
 // source picker yet (deferred), so it is inert until C3/C4/a later slice wires one.
 
+import { useState, useMemo } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import {
@@ -54,6 +55,10 @@ import {
   setSlot,
 } from "../../lib/motif/chainEditor";
 import { getGlyph, MOTIF_GLYPHS } from "../../lib/motif/glyphs.js";
+import { sieveCounts } from "../../lib/motif/sieveCounts.js";
+import ScrubNumeral from "../ui/ScrubNumeral";
+import CadenceStripControl from "../ui/CadenceStripControl";
+import RoleGlyphToggles from "../ui/RoleGlyphToggles";
 
 // Human labels for each block type (add-menu + card header).
 const BLOCK_LABELS = {
@@ -67,6 +72,20 @@ const BLOCK_LABELS = {
 
 // Add-menu order. Sequencer last (it is the terminal block).
 const ADDABLE_TYPES = ["route", "everyN", "skip", "density", "field", "sequence"];
+
+// Blocks that COLLAPSE to a one-line row (Variant D): grip · chevron+name ·
+// inline summary control · anchor chip · power. The chevron unfolds the SAME
+// detail card body beneath. Skip/Field stay as full cards (no compact summary
+// vocabulary is specified for them); the Sequencer is always expanded — it is the
+// payload — but carries an "N placed" chip in its header.
+const COLLAPSIBLE_TYPES = new Set(["route", "everyN", "density"]);
+
+// The RoleBadge visual family fallback when the rack isn't told the host kind
+// (tests / legacy callers): semantic hosts read as a lattice, edge hosts a stroke.
+// The real device threads the exact badgeKindForHost(patternType) in.
+function fallbackHostKind(hostIsSemantic) {
+  return hostIsSemantic ? "lattice" : "stroke";
+}
 
 const ROLE_OPTIONS_SEMANTIC = [
   { key: "crossing", label: "Crossings" },
@@ -136,7 +155,7 @@ function RouteCardBody({
         {roleOptions.map((r) => (
           <label
             key={r.key}
-            className="flex items-center gap-1 text-[11px] text-ink-soft"
+            className="flex items-center gap-1 text-xs text-ink-soft"
           >
             <input
               type="checkbox"
@@ -164,7 +183,7 @@ function RouteCardBody({
               data-testid={`motif-route-scope-${o.key}`}
               aria-pressed={active}
               onClick={() => setScope(o.key)}
-              className={`rounded-xs border px-2 py-0.5 text-[10px] font-medium transition-colors ${
+              className={`rounded-xs border px-2 py-0.5 text-2xs font-medium transition-colors ${
                 active
                   ? "border-violet bg-violet/15 text-ink"
                   : "border-hairline bg-paper text-ink-soft hover:border-violet"
@@ -193,7 +212,7 @@ function RouteCardBody({
               aria-pressed={armed}
               aria-label="Pick paths on canvas"
               onClick={() => onSetArmed(!armed)}
-              className={`rounded-xs border px-2 py-0.5 text-[10px] font-medium transition-colors ${
+              className={`rounded-xs border px-2 py-0.5 text-2xs font-medium transition-colors ${
                 armed
                   ? "border-violet bg-violet/15 text-ink"
                   : "border-hairline bg-paper text-ink-soft hover:border-violet"
@@ -204,7 +223,7 @@ function RouteCardBody({
           )}
           <span
             data-testid="motif-route-picked-summary"
-            className="text-[10px] tabular-nums text-ink-soft num"
+            className="text-2xs tabular-nums text-ink-soft num"
           >
             {picked.length} picked
           </span>
@@ -213,7 +232,7 @@ function RouteCardBody({
               type="button"
               data-testid="motif-route-picked-clear"
               onClick={() => onPatch({ pickedPaths: [] })}
-              className="text-[10px] text-ink-soft underline hover:text-ink"
+              className="text-2xs text-ink-soft underline hover:text-ink"
             >
               Clear
             </button>
@@ -229,8 +248,20 @@ function EveryNCardBody({ block, onPatch }) {
   const offset = block.offset ?? 0;
   return (
     <div className="space-y-1.5">
+      {/* The SAME cadence component as the collapsed summary, larger — clicking a
+          beat shifts the OFFSET onto that beat (n unchanged). */}
+      <div className="space-y-1">
+        <p className="text-2xs text-ink-soft/70">Cadence — tap a beat to shift the offset</p>
+        <CadenceStripControl
+          n={n}
+          offset={offset}
+          beats={12}
+          size="lg"
+          onCommit={(off) => onPatch({ offset: off })}
+        />
+      </div>
       <div className="flex flex-wrap items-center gap-3">
-        <label className="flex items-center gap-1.5 text-[11px] text-ink-soft">
+        <label className="flex items-center gap-1.5 text-xs text-ink-soft">
           <span className="whitespace-nowrap">Every</span>
           <input
             type="number"
@@ -244,10 +275,10 @@ function EveryNCardBody({ block, onPatch }) {
               const next = Number.isFinite(raw) && raw >= 1 ? Math.round(raw) : 1;
               onPatch({ n: next });
             }}
-            className="w-12 rounded-xs border border-hairline bg-paper px-1 py-0.5 text-[11px] text-ink outline-none focus:border-violet num"
+            className="w-12 rounded-xs border border-hairline bg-paper px-1 py-0.5 text-xs text-ink outline-none focus:border-violet num"
           />
         </label>
-        <label className="flex items-center gap-1.5 text-[11px] text-ink-soft">
+        <label className="flex items-center gap-1.5 text-xs text-ink-soft">
           <span className="whitespace-nowrap">Offset</span>
           <input
             type="number"
@@ -261,11 +292,11 @@ function EveryNCardBody({ block, onPatch }) {
               const next = Number.isFinite(raw) && raw >= 0 ? Math.round(raw) : 0;
               onPatch({ offset: next });
             }}
-            className="w-12 rounded-xs border border-hairline bg-paper px-1 py-0.5 text-[11px] text-ink outline-none focus:border-violet num"
+            className="w-12 rounded-xs border border-hairline bg-paper px-1 py-0.5 text-xs text-ink outline-none focus:border-violet num"
           />
         </label>
       </div>
-      <label className="flex items-center gap-1.5 text-[11px] text-ink-soft">
+      <label className="flex items-center gap-1.5 text-xs text-ink-soft">
         <input
           type="checkbox"
           data-testid="motif-block-continuous"
@@ -299,7 +330,7 @@ function SkipCardBody({ block, onPatch }) {
             aria-label={`Step ${i + 1} ${on ? "skip" : "keep"}`}
             aria-pressed={on}
             onClick={() => setStep(i, !on)}
-            className={`h-6 w-6 rounded-xs border text-[10px] font-medium transition-colors ${
+            className={`h-6 w-6 rounded-xs border text-2xs font-medium transition-colors ${
               on
                 ? "border-violet bg-violet/15 text-ink"
                 : "border-hairline bg-paper text-ink-soft hover:border-violet"
@@ -313,7 +344,7 @@ function SkipCardBody({ block, onPatch }) {
           data-testid="motif-block-skip-add"
           aria-label="Add step"
           onClick={addStep}
-          className="h-6 w-6 rounded-xs border border-hairline bg-paper text-[11px] text-ink-soft hover:border-violet hover:text-ink"
+          className="h-6 w-6 rounded-xs border border-hairline bg-paper text-xs text-ink-soft hover:border-violet hover:text-ink"
         >
           +
         </button>
@@ -323,13 +354,13 @@ function SkipCardBody({ block, onPatch }) {
             data-testid="motif-block-skip-remove"
             aria-label="Remove step"
             onClick={removeStep}
-            className="h-6 w-6 rounded-xs border border-hairline bg-paper text-[11px] text-ink-soft hover:border-violet hover:text-ink"
+            className="h-6 w-6 rounded-xs border border-hairline bg-paper text-xs text-ink-soft hover:border-violet hover:text-ink"
           >
             −
           </button>
         )}
       </div>
-      <p className="text-[10px] text-ink-soft/60">× skip · • keep (cycles)</p>
+      <p className="text-2xs text-ink-soft/60">× skip · • keep (cycles)</p>
     </div>
   );
 }
@@ -340,7 +371,7 @@ function DensityCardBody({ block, onPatch }) {
   const rngMode = block.rngMode || "hash";
   return (
     <div className="space-y-1.5">
-      <label className="flex items-center gap-2 text-[11px] text-ink-soft">
+      <label className="flex items-center gap-2 text-xs text-ink-soft">
         <span className="w-12 whitespace-nowrap">Density</span>
         <input
           type="range"
@@ -358,7 +389,7 @@ function DensityCardBody({ block, onPatch }) {
         </span>
       </label>
       <div className="flex flex-wrap items-center gap-3">
-        <label className="flex items-center gap-1.5 text-[11px] text-ink-soft">
+        <label className="flex items-center gap-1.5 text-xs text-ink-soft">
           <span className="whitespace-nowrap">Seed</span>
           <input
             type="number"
@@ -370,17 +401,17 @@ function DensityCardBody({ block, onPatch }) {
               const raw = Number(e.target.value);
               onPatch({ seed: Number.isFinite(raw) ? Math.round(raw) : 1 });
             }}
-            className="w-16 rounded-xs border border-hairline bg-paper px-1 py-0.5 text-[11px] text-ink outline-none focus:border-violet num"
+            className="w-16 rounded-xs border border-hairline bg-paper px-1 py-0.5 text-xs text-ink outline-none focus:border-violet num"
           />
         </label>
-        <label className="flex items-center gap-1.5 text-[11px] text-ink-soft">
+        <label className="flex items-center gap-1.5 text-xs text-ink-soft">
           <span className="whitespace-nowrap">RNG</span>
           <select
             data-testid="motif-block-rngmode"
             aria-label="RNG mode"
             value={rngMode}
             onChange={(e) => onPatch({ rngMode: e.target.value })}
-            className="rounded-xs border border-hairline bg-paper px-1 py-0.5 text-[11px] text-ink outline-none focus:border-violet"
+            className="rounded-xs border border-hairline bg-paper px-1 py-0.5 text-xs text-ink outline-none focus:border-violet"
           >
             <option value="hash">Hash (stable)</option>
             <option value="sequential">Sequential</option>
@@ -395,7 +426,7 @@ function FieldCardBody({ block, onPatch }) {
   const threshold = block.threshold ?? 0.5;
   return (
     <div className="space-y-1.5">
-      <label className="flex items-center gap-2 text-[11px] text-ink-soft">
+      <label className="flex items-center gap-2 text-xs text-ink-soft">
         <span className="w-14 whitespace-nowrap">Threshold</span>
         <input
           type="range"
@@ -412,7 +443,7 @@ function FieldCardBody({ block, onPatch }) {
           {Number(threshold).toFixed(2)}
         </span>
       </label>
-      <label className="flex items-center gap-1.5 text-[11px] text-ink-soft">
+      <label className="flex items-center gap-1.5 text-xs text-ink-soft">
         <input
           type="checkbox"
           data-testid="motif-block-invert"
@@ -422,7 +453,7 @@ function FieldCardBody({ block, onPatch }) {
         />
         <span>Invert</span>
       </label>
-      <p className="text-[10px] text-ink-soft/60">Field source · deferred</p>
+      <p className="text-2xs text-ink-soft/60">Field source · deferred</p>
     </div>
   );
 }
@@ -485,7 +516,7 @@ function SortableSlotChip({
           type="button"
           data-testid="motif-slot-grip"
           aria-label="Drag to reorder slot"
-          className="cursor-grab touch-none text-[10px] text-ink-soft/60 hover:text-ink"
+          className="cursor-grab touch-none text-2xs text-ink-soft/60 hover:text-ink"
           {...attributes}
           {...listeners}
         >
@@ -506,7 +537,7 @@ function SortableSlotChip({
       {isRest ? (
         <div
           data-testid="motif-slot-rest"
-          className="flex h-10 items-center justify-center rounded-xs border border-dashed border-hairline text-[10px] font-medium uppercase tracking-wider text-ink-soft/70"
+          className="flex h-10 items-center justify-center rounded-xs border border-dashed border-hairline text-2xs font-medium uppercase tracking-wider text-ink-soft/70"
         >
           Rest
         </div>
@@ -531,7 +562,7 @@ function SortableSlotChip({
 
       {/* Weight — Random mode only (positional in Cycle). Rests carry a weight too. */}
       {isRandom && (
-        <label className="flex items-center gap-1 text-[9px] text-ink-soft">
+        <label className="flex items-center gap-1 text-2xs text-ink-soft">
           <span className="shrink-0">wt</span>
           <input
             type="range"
@@ -552,7 +583,7 @@ function SortableSlotChip({
 
       {/* Angle randomization — glyph slots only (a Rest has no rotation). */}
       {!isRest && (
-        <label className="flex items-center gap-1 text-[9px] text-ink-soft">
+        <label className="flex items-center gap-1 text-2xs text-ink-soft">
           <input
             type="checkbox"
             data-testid="motif-slot-anglerand"
@@ -571,7 +602,7 @@ function SortableSlotChip({
       )}
       {!isRest && angleOn && (
         <div className="space-y-1">
-          <label className="flex items-center gap-1 text-[9px] text-ink-soft">
+          <label className="flex items-center gap-1 text-2xs text-ink-soft">
             <span className="shrink-0">±°</span>
             <input
               type="range"
@@ -599,7 +630,7 @@ function SortableSlotChip({
             onChange={(e) =>
               onPatch({ rotationRandom: { ...rr, spread: e.target.value } })
             }
-            className="w-full rounded-xs border border-hairline bg-paper px-1 py-0.5 text-[9px] text-ink outline-none focus:border-violet"
+            className="w-full rounded-xs border border-hairline bg-paper px-1 py-0.5 text-2xs text-ink outline-none focus:border-violet"
           >
             {SPREAD_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>
@@ -657,7 +688,7 @@ function SequenceCardBody({
               data-testid={`motif-seq-mode-${m}`}
               aria-pressed={active}
               onClick={() => setMode(m)}
-              className={`rounded-xs border px-2 py-0.5 text-[10px] font-medium capitalize transition-colors ${
+              className={`rounded-xs border px-2 py-0.5 text-2xs font-medium capitalize transition-colors ${
                 active
                   ? "border-violet bg-violet/15 text-ink"
                   : "border-hairline bg-paper text-ink-soft hover:border-violet"
@@ -669,7 +700,7 @@ function SequenceCardBody({
         })}
         {/* Continuous — a CYCLE-mode control (documented no-op in Random, D10). */}
         {!isRandom && (
-          <label className="ml-1 flex items-center gap-1 text-[10px] text-ink-soft">
+          <label className="ml-1 flex items-center gap-1 text-2xs text-ink-soft">
             <input
               type="checkbox"
               data-testid="motif-seq-continuous"
@@ -696,7 +727,7 @@ function SequenceCardBody({
             className="flex flex-nowrap items-start gap-1.5 overflow-x-auto pb-1"
           >
             {slots.length === 0 && (
-              <p className="py-2 text-[10px] text-ink-soft/60">
+              <p className="py-2 text-2xs text-ink-soft/60">
                 No slots — add a glyph or a rest.
               </p>
             )}
@@ -728,7 +759,7 @@ function SequenceCardBody({
           onClick={() =>
             onEditChain((c) => addSlot(c, seqIndex, { glyphRef: baseGlyphRef }))
           }
-          className="rounded-xs border border-hairline bg-paper px-2 py-0.5 text-[10px] text-ink-soft hover:border-violet hover:text-ink"
+          className="rounded-xs border border-hairline bg-paper px-2 py-0.5 text-2xs text-ink-soft hover:border-violet hover:text-ink"
         >
           + Glyph
         </button>
@@ -737,7 +768,7 @@ function SequenceCardBody({
           data-testid="motif-slot-add-rest"
           aria-label="Add rest"
           onClick={() => onEditChain((c) => addSlot(c, seqIndex, { rest: true }))}
-          className="rounded-xs border border-hairline bg-paper px-2 py-0.5 text-[10px] text-ink-soft hover:border-violet hover:text-ink"
+          className="rounded-xs border border-hairline bg-paper px-2 py-0.5 text-2xs text-ink-soft hover:border-violet hover:text-ink"
         >
           + Rest
         </button>
@@ -795,6 +826,91 @@ function BlockCardBody({
   }
 }
 
+// ── anchor-count chip ────────────────────────────────────────────────────────
+//
+// Per-block `in→out`: how many anchors ENTER this stage vs SURVIVE it, read from
+// sieveCounts (the engine's real stage semantics). PRE-CAP by construction — the
+// downstream MAX_PLACEMENTS truncation stays the truth of the placement-budget
+// warning, never this chip (docs §6). A DROP (out < in) is normal (no tone), but
+// a DEAD block (in > 0, out === 0 — nothing survives) reads tone-mild: it is the
+// honest answer to "why is nothing showing?".
+function AnchorCountChip({ inCount, outCount }) {
+  const dead = inCount > 0 && outCount === 0;
+  return (
+    <span
+      data-testid="motif-block-anchor-chip"
+      title={`${inCount} anchors in · ${outCount} kept`}
+      className={`shrink-0 rounded-xs px-1 text-2xs tabular-nums num ${
+        dead ? "text-tone-mild" : "text-ink-soft"
+      }`}
+    >
+      {inCount}
+      <span aria-hidden="true">→</span>
+      {outCount}
+    </span>
+  );
+}
+
+// The inline EDITABLE summary shown on a collapsed row — the compact-control
+// vocabulary wired to the SAME onPatch (editChain) seam the unfolded detail uses,
+// so a collapsed edit and an unfolded edit are indistinguishable to the model.
+function BlockSummaryControl({ block, roleOptions, hostKind, onPatch }) {
+  switch (block.type) {
+    case "route": {
+      const roles = Array.isArray(block.roles) ? block.roles : [];
+      const toggleRole = (key) => {
+        const next = roles.includes(key)
+          ? roles.filter((r) => r !== key)
+          : [...roles, key];
+        onPatch({ roles: next.length ? next : null });
+      };
+      return (
+        <RoleGlyphToggles
+          hostKind={hostKind}
+          options={roleOptions}
+          roles={roles}
+          onToggle={toggleRole}
+        />
+      );
+    }
+    case "everyN":
+      return (
+        <div className="flex items-center gap-1.5">
+          <CadenceStripControl
+            n={block.n ?? 1}
+            offset={block.offset ?? 0}
+            beats={12}
+            onCommit={(offset) => onPatch({ offset })}
+          />
+          <ScrubNumeral
+            value={block.n ?? 1}
+            min={1}
+            max={12}
+            step={1}
+            label="Every Nth"
+            testId="motif-summary-n"
+            onCommit={(n) => onPatch({ n })}
+          />
+        </div>
+      );
+    case "density":
+      return (
+        <ScrubNumeral
+          value={block.density ?? 1}
+          min={0}
+          max={1}
+          step={0.05}
+          label="Density"
+          testId="motif-summary-density"
+          format={(v) => Number(v).toFixed(2)}
+          onCommit={(density) => onPatch({ density })}
+        />
+      );
+    default:
+      return null;
+  }
+}
+
 // ── one sortable Block card ──────────────────────────────────────────────────
 //
 // The drag listeners ride ONLY the grip handle (not the whole card) so the card's
@@ -808,6 +924,7 @@ function SortableBlockCard({
   index,
   roleOptions,
   hostIsSemantic,
+  hostKind,
   armed,
   onSetArmed,
   onPatch,
@@ -817,6 +934,11 @@ function SortableBlockCard({
   customGlyphs,
   baseGlyphRef,
   onEditSlotGlyph,
+  // Anchor-sieve numbers for THIS block (nullable — only when host anchors were
+  // resolvable). `stage` is {inCount, outCount}; `placedCount` is the terminal
+  // Sequencer's non-rest placement count for its header chip.
+  stage = null,
+  placedCount = null,
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id });
@@ -826,6 +948,123 @@ function SortableBlockCard({
     ...(isDragging ? { zIndex: 10, opacity: 0.85 } : null),
   };
   const bypassed = !!block.bypass;
+  const collapsible = COLLAPSIBLE_TYPES.has(block.type);
+  // Disclosure state is per-block component state (default collapsed). The rack
+  // doesn't persist disclosure anywhere else, so component state is the match.
+  const [open, setOpen] = useState(false);
+
+  const grip = (
+    <button
+      type="button"
+      data-testid="motif-block-grip"
+      aria-label="Drag to reorder"
+      className="cursor-grab touch-none text-ink-soft/60 hover:text-ink"
+      {...attributes}
+      {...listeners}
+    >
+      <span aria-hidden="true">⠿</span>
+    </button>
+  );
+  const power = (
+    <button
+      type="button"
+      data-testid="motif-block-bypass"
+      aria-label={bypassed ? "Enable block" : "Bypass block"}
+      aria-pressed={bypassed}
+      title={bypassed ? "Enable block" : "Bypass block"}
+      onClick={onBypass}
+      className={`shrink-0 rounded-xs px-1 text-xs ${
+        bypassed ? "text-ink-soft/50" : "text-ink-soft hover:text-ink"
+      }`}
+    >
+      <span aria-hidden="true">⏻</span>
+    </button>
+  );
+  const remove = (
+    <button
+      type="button"
+      data-testid="motif-block-remove"
+      aria-label="Remove block"
+      onClick={onRemove}
+      className="shrink-0 rounded-xs px-1 text-xs text-ink-soft hover:text-ink"
+    >
+      ×
+    </button>
+  );
+  const body = (
+    <BlockCardBody
+      block={block}
+      index={index}
+      roleOptions={roleOptions}
+      hostIsSemantic={hostIsSemantic}
+      armed={armed}
+      onSetArmed={onSetArmed}
+      onPatch={onPatch}
+      onEditChain={onEditChain}
+      customGlyphs={customGlyphs}
+      baseGlyphRef={baseGlyphRef}
+      onEditSlotGlyph={onEditSlotGlyph}
+    />
+  );
+
+  // ── collapsible one-line row (route / everyN / density) ────────────────────
+  if (collapsible) {
+    return (
+      <div
+        ref={setNodeRef}
+        style={style}
+        data-testid="motif-block"
+        data-block-type={block.type}
+        className={`shrink-0 rounded-cell border ${
+          bypassed ? "border-hairline bg-paper/60 opacity-60" : "border-hairline bg-paper"
+        } min-w-[160px]`}
+      >
+        {/* ~28-32px one-line row. Height-free unfold below (no height animation). */}
+        <div className="flex min-h-[28px] items-center gap-1.5 px-2 py-1">
+          {grip}
+          <button
+            type="button"
+            data-testid="motif-block-disclosure"
+            aria-expanded={open}
+            aria-label={open ? "Fold block" : "Unfold block"}
+            title={open ? "Fold block" : "Unfold block"}
+            onClick={() => setOpen((o) => !o)}
+            // Negative-margin hit-area pad (branch convention) so the chevron/name
+            // tap target clears ~44px effective without growing the row.
+            className="-my-1.5 flex shrink-0 items-center gap-1 rounded-xs py-1.5 outline-none focus-visible:ring-2 focus-visible:ring-violet"
+          >
+            <span
+              aria-hidden="true"
+              className="inline-block text-2xs leading-none text-ink-soft transition-transform duration-fast"
+              style={{ transform: open ? "rotate(90deg)" : "rotate(0deg)" }}
+            >
+              ▸
+            </span>
+            <span className="text-xs font-medium text-ink">
+              {BLOCK_LABELS[block.type] || block.type}
+            </span>
+          </button>
+          <div className="flex min-w-0 flex-1 items-center justify-end">
+            <BlockSummaryControl
+              block={block}
+              roleOptions={roleOptions}
+              hostKind={hostKind}
+              onPatch={onPatch}
+            />
+          </div>
+          {stage && (
+            <AnchorCountChip inCount={stage.inCount} outCount={stage.outCount} />
+          )}
+          {power}
+          {remove}
+        </div>
+        {open && <div className="border-t border-hairline px-2 py-2">{body}</div>}
+      </div>
+    );
+  }
+
+  // ── full card (skip / field / sequence — always expanded) ──────────────────
+  const isSequence = block.type === "sequence";
   return (
     <div
       ref={setNodeRef}
@@ -837,55 +1076,22 @@ function SortableBlockCard({
       } min-w-[160px]`}
     >
       <div className="mb-1.5 flex items-center gap-1.5">
-        <button
-          type="button"
-          data-testid="motif-block-grip"
-          aria-label="Drag to reorder"
-          className="cursor-grab touch-none text-ink-soft/60 hover:text-ink"
-          {...attributes}
-          {...listeners}
-        >
-          <span aria-hidden="true">⠿</span>
-        </button>
-        <span className="flex-1 truncate text-[11px] font-semibold uppercase tracking-wider text-ink-soft">
+        {grip}
+        <span className="flex-1 truncate text-xs font-semibold uppercase tracking-wider text-ink-soft">
           {BLOCK_LABELS[block.type] || block.type}
         </span>
-        <button
-          type="button"
-          data-testid="motif-block-bypass"
-          aria-label={bypassed ? "Enable block" : "Bypass block"}
-          aria-pressed={bypassed}
-          title={bypassed ? "Enable block" : "Bypass block"}
-          onClick={onBypass}
-          className={`shrink-0 rounded-xs px-1 text-xs ${
-            bypassed ? "text-ink-soft/50" : "text-ink-soft hover:text-ink"
-          }`}
-        >
-          <span aria-hidden="true">⏻</span>
-        </button>
-        <button
-          type="button"
-          data-testid="motif-block-remove"
-          aria-label="Remove block"
-          onClick={onRemove}
-          className="shrink-0 rounded-xs px-1 text-xs text-ink-soft hover:text-ink"
-        >
-          ×
-        </button>
+        {isSequence && placedCount != null && (
+          <span
+            data-testid="motif-seq-placed"
+            className="shrink-0 text-2xs tabular-nums text-ink-soft num"
+          >
+            {placedCount} placed
+          </span>
+        )}
+        {power}
+        {remove}
       </div>
-      <BlockCardBody
-        block={block}
-        index={index}
-        roleOptions={roleOptions}
-        hostIsSemantic={hostIsSemantic}
-        armed={armed}
-        onSetArmed={onSetArmed}
-        onPatch={onPatch}
-        onEditChain={onEditChain}
-        customGlyphs={customGlyphs}
-        baseGlyphRef={baseGlyphRef}
-        onEditSlotGlyph={onEditSlotGlyph}
-      />
+      {body}
     </div>
   );
 }
@@ -896,6 +1102,21 @@ export default function MotifBlockRack({
   chain,
   onEditChain,
   hostIsSemantic = true,
+  // RoleBadge visual family for the host (badgeKindForHost — 'lattice'|'stroke').
+  // Threaded from MotifDevice so the Route summary's role marks match the mode
+  // column's; a bare caller falls back to the semantic/edge split.
+  hostKind,
+  // Resolved host anchors (nullable) for the per-block sieve chips. When present,
+  // sieveCounts replays the engine's stage semantics to show each block's
+  // in→out; when null (edge/voronoi hosts whose geometry is render-captured, or
+  // no host), the rack simply shows no chips. PRE-CAP — the placement-budget
+  // warning stays the truth about MAX_PLACEMENTS (docs §6).
+  anchors = null,
+  // The motif's post-chain include/exclude overrides (ADR-0004), threaded verbatim
+  // to sieveCounts so the Sequencer's "N placed" matches the canvas's POST-override
+  // survivor set. Per-stage chips stay PRE-override (sieveCounts only applies
+  // overrides to selected/placed) — the correct split per the chip contract.
+  overrides = null,
   // Canvas-pick arm state (C4): the block index (in this chain) whose route card
   // is armed as the active pick target, or null. Ephemeral (Studio component
   // state, never persisted). `onArmRoute(indexOrNull)` sets/clears it — passing
@@ -914,8 +1135,27 @@ export default function MotifBlockRack({
   const roleOptions = hostIsSemantic
     ? ROLE_OPTIONS_SEMANTIC
     : ROLE_OPTIONS_SEMANTIC.filter((r) => r.key === "edge");
+  const badgeKind = hostKind || fallbackHostKind(hostIsSemantic);
 
   const blocks = Array.isArray(chain) ? chain : [];
+
+  // Per-block anchor sieve (nullable). Memoized on [chain, anchors]; a bad/empty
+  // anchor set degrades to no chips rather than throwing. `stageByIndex` maps a
+  // block's chain index to its {inCount, outCount}; `placed` is the terminal
+  // Sequencer's non-rest placement count.
+  const sieve = useMemo(() => {
+    if (!Array.isArray(anchors)) return null;
+    try {
+      return sieveCounts(chain, anchors, overrides ? { overrides } : {});
+    } catch {
+      return null;
+    }
+  }, [chain, anchors, overrides]);
+  const stageByIndex = useMemo(() => {
+    const map = new Map();
+    if (sieve) for (const s of sieve.stages) map.set(s.blockIndex, s);
+    return map;
+  }, [sieve]);
   // Stable ids for the sortable set (positional — the chain has no block ids and
   // never mutates mid-drag).
   const ids = blocks.map((_, i) => `block-${i}`);
@@ -975,6 +1215,11 @@ export default function MotifBlockRack({
                 index={i}
                 roleOptions={roleOptions}
                 hostIsSemantic={hostIsSemantic}
+                hostKind={badgeKind}
+                stage={stageByIndex.get(i) || null}
+                placedCount={
+                  block.type === "sequence" && sieve ? sieve.placed : null
+                }
                 armed={armedRouteIndex === i}
                 onSetArmed={
                   onArmRoute ? (next) => onArmRoute(next ? i : null) : undefined
@@ -1006,7 +1251,7 @@ export default function MotifBlockRack({
           onEditChain((c) => addBlock(c, makeBlock(type)));
           e.target.value = "";
         }}
-        className="w-full rounded-xs border border-hairline bg-paper-warm px-1 py-0.5 text-[11px] text-ink outline-none focus:border-violet"
+        className="w-full rounded-xs border border-hairline bg-paper-warm px-1 py-0.5 text-xs text-ink outline-none focus:border-violet"
       >
         <option value="">+ Add block</option>
         {addTypes.map((t) => (

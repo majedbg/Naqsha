@@ -230,8 +230,8 @@ describe('MotifPattern dual-emit parity', () => {
     // WI-2's root pre-transform must default to a no-op ⇒ byte-identical output.
     const { inst } = run(baseParams());
     expect(inst.svgElements).toEqual([
-      '<g transform="matrix(-0.693242 0.693242 -0.693242 -0.693242 100 100)"><path d="M0,-10 L7,-4 L8,5 L2,10 L-6,6 L-7,-2 L-2,-8 Z" fill="none"/></g>',
-      '<g transform="matrix(-0.693242 0.693242 -0.693242 -0.693242 300 300)"><path d="M0,-10 L7,-4 L8,5 L2,10 L-6,6 L-7,-2 L-2,-8 Z" fill="none"/></g>',
+      '<g transform="matrix(-0.351794 0.351794 -0.351794 -0.351794 100 100)"><path d="M0,0 L6,-6 L14,-5 L20,-0.5 L18,3 L11,4.5 L4,3 Z" fill="none"/></g>',
+      '<g transform="matrix(-0.351794 0.351794 -0.351794 -0.351794 300 300)"><path d="M0,0 L6,-6 L14,-5 L20,-0.5 L18,3 L11,4.5 L4,3 Z" fill="none"/></g>',
     ]);
   });
 
@@ -254,10 +254,15 @@ describe('MotifPattern dual-emit parity', () => {
       const insts = svgInstances(inst.svgElements);
       expect(insts.length).toBe(2);
       insts.forEach(({ matrix }, i) => {
-        // The root point maps onto the anchor…
+        // The root point maps onto the anchor. Tolerance is 5 dp: the matrix is
+        // serialized to 6 decimals (matrixToSVG), and the base-at-origin leaf's
+        // larger viewRadius (20.1) shrinks the matrix scale, so reconstructing the
+        // root landing from the rounded a/c entries drifts a few micro-units — a
+        // serialization artifact, not a wiring shift (the raw-translation check
+        // below still proves the pre-transform applied).
         const [rx, ry] = localApply(ROOT.x, ROOT.y, matrix);
-        expect(rx).toBeCloseTo(anchors[i][0], 6);
-        expect(ry).toBeCloseTo(anchors[i][1], 6);
+        expect(rx).toBeCloseTo(anchors[i][0], 5);
+        expect(ry).toBeCloseTo(anchors[i][1], 5);
         // …and the raw translation (local-origin landing) has SHIFTED off the
         // anchor, proving the root pre-transform actually applied (not a no-op).
         expect(Math.hypot(matrix[4] - anchors[i][0], matrix[5] - anchors[i][1])).toBeGreaterThan(1);
@@ -305,19 +310,45 @@ describe('MotifPattern dual-emit parity', () => {
       // the injected object must be what renders.
       const { inst } = run(baseParams({ glyphRef: 'leaf', glyph: CUSTOM_GLYPH }));
       expect(inst.svgElements.every((el) => el.includes('M0,-6 L6,0 L0,6 L-6,0 Z'))).toBe(true);
-      expect(inst.svgElements.some((el) => el.includes('M0,-10'))).toBe(false);
+      expect(inst.svgElements.some((el) => el.includes(LEAF_D))).toBe(false);
     });
 
     it('falls back to the built-in when no glyph is injected (back-compat)', () => {
       const { inst } = run(baseParams({ glyphRef: 'leaf' }));
       expect(inst.svgElements.length).toBe(2);
-      expect(inst.svgElements.every((el) => el.includes('M0,-10'))).toBe(true);
+      expect(inst.svgElements.every((el) => el.includes(LEAF_D))).toBe(true);
     });
 
     it('graceful degrade: missing glyph AND none injected → renders nothing (stripped-glyph failure mode)', () => {
       const { inst, ctx } = run(baseParams({ glyphRef: 'cg-missing' }));
       expect(inst.svgElements).toEqual([]);
       expect(ctx.calls.filter((c) => c.op === 'vertex').length).toBe(0);
+    });
+  });
+
+  // --- Trace sweep positions seam (issue #91) ------------------------------------
+  // The Trace overlay lights placed instances in placement order; MotifPattern
+  // surfaces the ORDERED, post-cap positions the draw loop stamps so the overlay's
+  // marks land on exactly what's drawn (no second placement resolve).
+  describe('lastPlacementPositions (Trace sweep seam)', () => {
+    it('surfaces ordered x/y/radius matching the drawn placements', () => {
+      const params = baseParams();
+      const placements = expectedPlacements(params);
+      expect(placements.length).toBe(2);
+      const { inst } = run(params);
+      expect(inst.lastPlacementPositions).toHaveLength(placements.length);
+      inst.lastPlacementPositions.forEach((pos, i) => {
+        expect(pos.x).toBeCloseTo(placements[i].x, 6);
+        expect(pos.y).toBeCloseTo(placements[i].y, 6);
+        expect(pos.radius).toBeCloseTo(placements[i].radius, 6);
+        // Only x/y/radius are surfaced — a ring per instance needs nothing else.
+        expect(Object.keys(pos).sort()).toEqual(['radius', 'x', 'y']);
+      });
+    });
+
+    it('is null when nothing places (early return leaves no trace data)', () => {
+      const { inst } = run(baseParams({ glyphRef: 'cg-missing' }));
+      expect(inst.lastPlacementPositions).toBe(null);
     });
   });
 });
@@ -525,7 +556,9 @@ describe('MotifPattern voronoi drawn-geometry (GEOMETRY-IN) semantic path', () =
 // Verbatim built-in glyph `d` strings (mirror glyphs.js) — asserting the RIGHT
 // glyph reached the RIGHT slot, which the canvas/SVG parity check alone cannot
 // catch (a wrong-glyph bug is identical on both emitters).
-const LEAF_D = 'M0,-10 L7,-4 L8,5 L2,10 L-6,6 L-7,-2 L-2,-8 Z';
+// Verbatim copy of the built-in leaf `d` (glyphs.js) used as a render oracle.
+// Updated for the base-at-origin hanging-blade redesign (2026-07).
+const LEAF_D = 'M0,0 L6,-6 L14,-5 L20,-0.5 L18,3 L11,4.5 L4,3 Z';
 const DOT_D =
   'M3,0 L2.1213,2.1213 L0,3 L-2.1213,2.1213 L-3,0 L-2.1213,-2.1213 L0,-3 L2.1213,-2.1213 Z';
 
@@ -670,7 +703,7 @@ describe('MotifPattern B1 — chain-consuming multi-glyph dual-emit', () => {
   });
 
   it('per-slot glyph uses the RESOLVED glyph viewRadius (not the base) — dot scale differs from leaf scale', () => {
-    // leaf viewRadius 10.2, dot viewRadius 3. For the SAME placement radius the
+    // leaf viewRadius 20.1, dot viewRadius 3. For the SAME placement radius the
     // matrix scale = radius/viewRadius differs, so if the impl reused the base
     // glyph's viewRadius for the dot slot the dot matrix would be wrong. Compare
     // the dot instance's matrix scale against an independent recompute.
@@ -685,7 +718,7 @@ describe('MotifPattern B1 — chain-consuming multi-glyph dual-emit', () => {
     const scaleOf = (m) => Math.hypot(m[0], m[1]); // sqrt(a^2+b^2) = |scale|
     const leafScale = scaleOf(insts[0].matrix);
     const dotScale = scaleOf(insts[1].matrix);
-    // Same placement footprint radius but /3 vs /10.2 ⇒ dot scale strictly larger.
+    // Same placement footprint radius but /3 vs /20.1 ⇒ dot scale strictly larger.
     expect(dotScale).toBeGreaterThan(leafScale);
   });
 

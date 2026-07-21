@@ -205,31 +205,59 @@ function applyField(stage, block, opts) {
  * the fixed post-chain overrides, and pass the terminal Sequencer block through
  * untouched. See the module header for the full pipeline-order contract.
  *
+ * ── Optional trace hook (`opts.onStage`) ────────────────────────────────────
+ * When present, `onStage` is invoked once per FILTER block (route/everyN/skip/
+ * density/field and any unknown non-sequence block) in ORIGINAL chain order —
+ * INCLUDING bypassed blocks (a bypass is reported as a pass-through, inCount ===
+ * outCount, `bypassed:true`) — with `{blockIndex, block, type, inCount, outCount,
+ * bypassed}`. `blockIndex` is the block's index in the ORIGINAL `chain` array
+ * (stable across the partitioned-out sequence block). The terminal `sequence`
+ * block is NOT a filter and is never traced. The hook is a pure observer: it is
+ * called synchronously between stages and MUST NOT mutate anything; a run with no
+ * `onStage` is byte-identical to one with it (this is `sieveCounts.js`'s seam).
+ *
  * @param {Anchor[]} anchors  input order is contractual and preserved in survivors.
  * @param {Array<RouteBlock|EveryNBlock|SkipBlock|DensityBlock|FieldBlock|SequenceBlock>} chain
- * @param {{canvasW?:number, canvasH?:number, overrides?:{include?:OverrideRef[], exclude?:OverrideRef[], tolerance?:number}}} [opts]
+ * @param {{canvasW?:number, canvasH?:number, overrides?:{include?:OverrideRef[], exclude?:OverrideRef[], tolerance?:number}, onStage?:(entry:{blockIndex:number, block:object, type:string, inCount:number, outCount:number, bypassed:boolean})=>void}} [opts]
  * @returns {{survivors: Anchor[], orphans: OverrideRef[], sequence: SequenceBlock|null}}
  */
 export function runSelectionChain(anchors, chain, opts = {}) {
   const list = Array.isArray(anchors) ? anchors : [];
   const blocks = Array.isArray(chain) ? chain : [];
+  const onStage = typeof opts.onStage === 'function' ? opts.onStage : null;
 
   // 0. Partition out the terminal sequence block (at-most-one; first wins;
-  //    passed through by reference, never executed here).
+  //    passed through by reference, never executed here). Filters keep their
+  //    ORIGINAL chain index so the trace hook can report a stable blockIndex.
   let sequence = null;
   const filters = [];
-  for (const block of blocks) {
+  blocks.forEach((block, index) => {
     if (block && block.type === 'sequence') {
       if (sequence === null) sequence = block;
-      continue; // additional sequence blocks are ignored (UI enforces one).
+      return; // additional sequence blocks are ignored (UI enforces one).
     }
-    filters.push(block);
-  }
+    filters.push({ block, index });
+  });
 
   // 1. Run selection filters in stored order; skip bypassed blocks.
   let stage = list.slice();
-  for (const block of filters) {
-    if (!block || block.bypass) continue;
+  for (const { block, index } of filters) {
+    const inCount = stage.length;
+    if (!block || block.bypass) {
+      // Bypassed / falsy blocks pass through untouched. Trace them as a
+      // no-narrowing pass-through so the UI can chip every rack block.
+      if (onStage) {
+        onStage({
+          blockIndex: index,
+          block,
+          type: block ? block.type : undefined,
+          inCount,
+          outCount: inCount,
+          bypassed: true,
+        });
+      }
+      continue;
+    }
     switch (block.type) {
       case 'route':
         stage = applyRoute(stage, block);
@@ -248,6 +276,16 @@ export function runSelectionChain(anchors, chain, opts = {}) {
         break;
       default:
         break; // unknown block type: no-op (lenient).
+    }
+    if (onStage) {
+      onStage({
+        blockIndex: index,
+        block,
+        type: block.type,
+        inCount,
+        outCount: stage.length,
+        bypassed: false,
+      });
     }
   }
 

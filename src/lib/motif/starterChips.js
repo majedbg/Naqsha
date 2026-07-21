@@ -101,7 +101,7 @@ export const STARTER_CHIPS = [
   },
   {
     id: 'vine',
-    label: 'Vine 🌸‑🌿‑🌿',
+    label: 'Vine',
     build(patternType) {
       const hostIsSemantic = isSemanticHost(patternType);
       return {
@@ -113,10 +113,18 @@ export const STARTER_CHIPS = [
             {
               type: 'sequence',
               mode: 'cycle',
+              // Vine alternation: consecutive leaves alternate sides of the host
+              // line. The base-at-origin leaf hangs off ONE side of the line
+              // (glyphs.js), so turning the SECOND leaf 180° (`rotationOffset` in
+              // DEGREES — placementEngine adds it to the degree-valued rotation)
+              // swings its blade to the OTHER side: the vine reads leaf-above,
+              // leaf-below. A 180° turn (not `flip`) is deliberate — flip is a
+              // pure x-mirror, whereas the leaf's midrib asymmetry makes the
+              // half-turn visibly distinct (see glyphs.js LEAF_D comment).
               slots: [
                 { glyphRef: 'rosette' },
                 { glyphRef: 'leaf' },
-                { glyphRef: 'leaf' },
+                { glyphRef: 'leaf', rotationOffset: 180 },
               ],
             },
           ],

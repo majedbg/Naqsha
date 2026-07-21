@@ -28,6 +28,7 @@ import useActiveTool from "../lib/hooks/useActiveTool";
 import useShowAdmin from "../lib/hooks/useShowAdmin";
 import useCanvasView from "../lib/hooks/useCanvasView";
 import useColorView from "../lib/hooks/useColorView";
+import useTraceSweep from "../lib/hooks/useTraceSweep";
 import { use3DPreview } from "../lib/three3d/use3DPreview";
 import { use3DLensEntry } from "../lib/three3d/use3DLensEntry";
 import { selectedMaterialForScene } from "../lib/three3d/selectedMaterial";
@@ -40,6 +41,9 @@ import DocumentSetupDialog from "../components/shell/DocumentSetupDialog";
 import { EXAMPLES } from "../examples";
 import ExamplesGallery from "../components/sidebar/ExamplesGallery";
 import RightPanel from "../components/RightPanel";
+// PROTOTYPE (throwaway) — motif-DEVICE layout variants. DEV-only, inert
+// without ?variant=A|B|C. Delete together with motif-prototypes/.
+import MotifPrototypeOverlay from "../components/shell/motif-prototypes/MotifPrototypeOverlay";
 import LayerGroupModal from "../components/LayerGroupModal";
 import CloudSaveModal from "../components/CloudSaveModal";
 import PatternPickerModal from "../components/PatternPickerModal";
@@ -1129,6 +1133,20 @@ export default function Studio({ submitOrg = null } = {}) {
   // hardening, docs §6). Only truncated motif layers appear. Surfaced up from
   // useCanvas via RightPanel, mirroring etchBitmaps.
   const [motifPlacementStats, setMotifPlacementStats] = useState({});
+  // Per-motif-layer placement POSITIONS (layerId → ordered [{x,y,radius}]) for the
+  // Trace sweep (issue #91). Surfaced up from useCanvas via RightPanel; feeds both
+  // the in-canvas TraceOverlay and useTraceSweep's per-motif count.
+  const [motifPlacements, setMotifPlacements] = useState({});
+  // Trace sweep controller (issue #91). Owns {activeMotifId, progressIndex,
+  // playing, mode}; advances the lit prefix at a constant ~15/sec, one trace at a
+  // time, and honors prefers-reduced-motion (manual scrubber, no autoplay). Count
+  // per motif is read live off motifPlacements at press time. Lives at Studio
+  // level because BOTH the canvas overlay (via RightPanel) and the Inspector row
+  // (Trace button + lit-row RhythmStrip marker) consume it.
+  const trace = useTraceSweep({
+    getCount: (id) => motifPlacements[id]?.length ?? 0,
+    prefersReducedMotion,
+  });
 
   // === Run Plan (Wave-3 Lane I, PRD #73) ===
   // The plan is a shell-morph: AppShell provides the open/closed state around the
@@ -2260,7 +2278,10 @@ export default function Studio({ submitOrg = null } = {}) {
             canvas's left ~48px is reserved chrome space: nothing else may
             float there (the color-view control sits bottom-left below it). */}
         {toolStripSlot && (
-          <div className="absolute left-0 top-12 z-30 rounded-r-cell border border-l-0 border-hairline bg-paper shadow-sm">
+          <div
+            data-testid="canvas-toolstrip-tab"
+            className="absolute left-0 top-12 z-30 max-h-[calc(100%-3.5rem)] overflow-y-auto rounded-r-cell border border-l-0 border-hairline bg-paper shadow-sm"
+          >
             <ToolStrip activeTool={activeTool} onToolChange={setActiveTool} />
           </div>
         )}
@@ -2278,6 +2299,9 @@ export default function Studio({ submitOrg = null } = {}) {
           onDropOnCanvas={handleMotifCanvasDrop}
           toast={motifToast}
         />
+        {/* PROTOTYPE (throwaway) — motif-device layout variants + A/B/C
+            switcher over the canvas. Inert without ?variant=A|B|C (DEV). */}
+        <MotifPrototypeOverlay />
         <RightPanel
           layers={layers}
           // Operation library + active profile → canvas strokes match export
@@ -2325,6 +2349,11 @@ export default function Studio({ submitOrg = null } = {}) {
           // Per-motif-layer placement-budget stats for the MotifDevice "no
           // silent cap" warning (2026-07-19, docs §6).
           onMotifPlacementStatsChange={setMotifPlacementStats}
+          // Trace sweep (issue #91): positions flow UP for useTraceSweep's count;
+          // the active motif + lit prefix flow DOWN to drive the in-canvas overlay.
+          onMotifPlacementsChange={setMotifPlacements}
+          traceActiveMotifId={trace.activeMotifId}
+          traceProgressIndex={trace.progressIndex}
           canvasContainerRef={canvasContainerRef}
           bgColor={bgColor}
           onBgColorChange={handleBgColorChange}
@@ -2747,6 +2776,10 @@ export default function Studio({ submitOrg = null } = {}) {
             // WHOLE map is threaded (not just the selected id) because the
             // device renders on the HOST and lists its adorning motif children.
             motifPlacementStats={motifPlacementStats}
+            // Trace sweep (issue #91): the controller the MotifDevice rows read —
+            // per-row Trace button (toggle), the lit-row RhythmStrip marker (frac),
+            // and the reduced-motion scrubber (mode/scrub). null-safe downstream.
+            trace={trace}
             // Active document unit (#13) — length-tagged params display/convert
             // in this unit; values stay px in layer state.
             unit={unit}

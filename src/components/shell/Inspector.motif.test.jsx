@@ -215,7 +215,13 @@ describe("MotifDevice", () => {
       />
     );
     fireEvent.click(screen.getByTestId("motif-toggle"));
-    // Add 'edge' (crossing already on, from the compiled Route block).
+    // Route collapses to a one-line row (Variant D) — unfold it to reach the
+    // detail role checkboxes. Add 'edge' (crossing already on, from the compiled
+    // Route block).
+    const routeCard = screen
+      .getAllByTestId("motif-block")
+      .find((c) => c.getAttribute("data-block-type") === "route");
+    fireEvent.click(within(routeCard).getByTestId("motif-block-disclosure"));
     fireEvent.click(screen.getByTestId("motif-block-role-edge"));
     expect(onUpdateLayer).toHaveBeenCalledTimes(1);
     const [, patch] = onUpdateLayer.mock.calls[0];
@@ -240,6 +246,12 @@ describe("MotifDevice", () => {
       />
     );
     fireEvent.click(screen.getByTestId("motif-toggle"));
+    // Every N collapses to a one-line row (Variant D) — unfold it to reach the
+    // detail number input.
+    const everyNCard = screen
+      .getAllByTestId("motif-block")
+      .find((c) => c.getAttribute("data-block-type") === "everyN");
+    fireEvent.click(within(everyNCard).getByTestId("motif-block-disclosure"));
     fireEvent.change(screen.getByTestId("motif-block-n"), {
       target: { value: "4" },
     });
@@ -1025,6 +1037,14 @@ describe("Route card path scope + canvas-pick (C4)", () => {
   function expand(ui) {
     const r = render(ui);
     fireEvent.click(screen.getByTestId("motif-toggle"));
+    // Route collapses to a one-line row (Variant D); its path-scope + canvas-pick
+    // detail these C4 tests drive live in the unfolded body — open it.
+    const routeCard = screen
+      .getAllByTestId("motif-block")
+      .find((c) => c.getAttribute("data-block-type") === "route");
+    if (routeCard) {
+      fireEvent.click(within(routeCard).getByTestId("motif-block-disclosure"));
+    }
     return r;
   }
 
@@ -1218,10 +1238,12 @@ describe("MotifDevice — placement-budget warning", () => {
     // Localized counts + guidance copy.
     expect(warning).toHaveTextContent("Showing 2,000 of 12,345 placements");
     expect(warning).toHaveTextContent("reduce density or host complexity");
-    // Styled like the existing amber warnings.
-    expect(warning.className).toContain("border-amber-400/50");
-    expect(warning.className).toContain("bg-amber-50");
-    expect(warning.className).toContain("text-amber-800");
+    // Color-token contract: tone-mild tokens so dark mode inverts (raw
+    // amber-* would stay light and glow on the indigo dark paper).
+    expect(warning.className).toContain("border-tone-mild/40");
+    expect(warning.className).toContain("bg-tone-mild/10");
+    expect(warning.className).toContain("text-tone-mild");
+    expect(warning.className).not.toContain("amber");
   });
 
   it("hides the warning when no stats are supplied for the motif", () => {
@@ -1238,5 +1260,140 @@ describe("MotifDevice — placement-budget warning", () => {
     );
     expect(screen.getByTestId("motif-row")).toBeInTheDocument();
     expect(screen.queryByTestId("motif-placement-warning")).toBeNull();
+  });
+});
+
+// Typography pass — the motif device region must ride the sanctioned type scale
+// (text-2xs / text-xs), not ad-hoc text-[Npx] literals, and its small secondary
+// text must be full-opacity ink-soft (not /70) for contrast. Scoped to the motif
+// subtree so ModulatorDevice / other Inspector regions (deliberately left alone)
+// don't leak into the sweep.
+describe("MotifDevice — type scale (typography pass)", () => {
+  const openHost = (extraProps = {}) => {
+    const motif = motifLayer("m1", "host1", defaultBinding);
+    const r = render(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+        {...extraProps}
+      />
+    );
+    fireEvent.click(screen.getByTestId("motif-toggle"));
+    return r;
+  };
+
+  it("empty-host Start-with label rides text-2xs at full-opacity ink-soft (not /70)", () => {
+    // The "Quick start" chip row was replaced by the Variant-D mode column; on an
+    // empty host that column is introduced by a "Start with" label.
+    render(
+      <Inspector
+        layers={[hostLayer("host1", "grid")]}
+        selectedLayerId="host1"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    fireEvent.click(screen.getByTestId("motif-toggle"));
+    const label = screen.getByText("Start with");
+    expect(label.className).toContain("text-2xs");
+    expect(label.className).toContain("text-ink-soft");
+    expect(label.className).not.toContain("text-ink-soft/");
+  });
+
+  it("+ Add Motif and Size/Flip controls ride text-xs (11px sanctioned step)", () => {
+    openHost();
+    expect(screen.getByTestId("motif-add").className).toContain("text-xs");
+    // Size row label + numeric input.
+    const sizeLabel = screen.getByText("Size").closest("label");
+    expect(sizeLabel.className).toContain("text-xs");
+    expect(screen.getByTestId("motif-size").className).toContain("text-xs");
+    expect(screen.getByText("Flip").closest("label").className).toContain("text-xs");
+  });
+
+  it("the row action buttons (import / new / edit) ride text-xs", () => {
+    openHost();
+    for (const id of ["motif-import", "motif-new", "motif-edit"]) {
+      const btn = screen.getByTestId(id);
+      expect(btn.className).toContain("text-xs");
+      expect(btn.className).not.toMatch(/text-\[\d+px\]/);
+    }
+  });
+
+  it("placement-budget warning rides text-xs, not an arbitrary px size", () => {
+    openHost({ motifPlacementStats: { m1: { total: 12345, placed: 2000 } } });
+    const warning = screen.getByTestId("motif-placement-warning");
+    expect(warning.className).toContain("text-xs");
+    expect(warning.className).not.toMatch(/text-\[\d+px\]/);
+  });
+
+  it("the empty-host hint is full-opacity ink-soft at text-xs (contrast)", () => {
+    // A host with no motifs → the "No motifs on this host." line renders.
+    render(
+      <Inspector
+        layers={[hostLayer("host1", "grid")]}
+        selectedLayerId="host1"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    fireEvent.click(screen.getByTestId("motif-toggle"));
+    const hint = screen.getByText("No motifs on this host.");
+    expect(hint.className).toContain("text-xs");
+    expect(hint.className).toContain("text-ink-soft");
+    expect(hint.className).not.toContain("text-ink-soft/");
+  });
+
+  it("the collapsed count badge is full-opacity ink-soft (not /70)", () => {
+    // Collapsed (beforeEach stores "0") + a motif → the "· 1" count shows.
+    render(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motifLayer("m1", "host1", defaultBinding)]}
+        selectedLayerId="host1"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    // Not expanded → no rows, but the toggle's count badge is present.
+    expect(screen.queryByTestId("motif-row")).toBeNull();
+    const device = screen.getByTestId("motif-device");
+    expect(device.innerHTML).not.toContain("text-ink-soft/");
+  });
+
+  it("renders no arbitrary text-[Npx] font-size class in the Inspector-owned motif chrome", () => {
+    // Empty-host, device open → renders the toggle/chevron, the empty hint, the
+    // "Start with" mode column and + Add Motif, but NO motif-row (hence no nested
+    // MotifBlockRack, which is a separate, out-of-scope file). This keeps the
+    // sweep scoped to the text Inspector.jsx owns in the motif device.
+    render(
+      <Inspector
+        layers={[hostLayer("host1", "grid")]}
+        selectedLayerId="host1"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    fireEvent.click(screen.getByTestId("motif-toggle"));
+    const device = screen.getByTestId("motif-device");
+    expect(device.innerHTML).not.toMatch(/text-\[\d+px\]/);
+  });
+
+  it("the motif-layer-info panel (motif layer selected) rides text-xs", () => {
+    // When a MOTIF layer itself is selected, MotifDevice self-hides and the
+    // motif-layer-info block renders instead — still part of the motif region.
+    render(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motifLayer("m1", "host1", defaultBinding)]}
+        selectedLayerId="m1"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    const info = screen.getByTestId("motif-layer-info");
+    expect(info.innerHTML).not.toMatch(/text-\[\d+px\]/);
+    // The descriptive paragraph carries the sanctioned xs step.
+    const para = info.querySelector("p");
+    expect(para.className).toContain("text-xs");
   });
 });

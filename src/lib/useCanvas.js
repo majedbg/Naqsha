@@ -63,6 +63,32 @@ function motifStatsEqual(a, b) {
   return true;
 }
 
+// Value-equality for the surfaced motif placement-POSITIONS map (Trace sweep,
+// issue #91). Keyed layerId → ordered [{x,y,radius}]. MotifPattern.generate
+// rebuilds a FRESH positions array every render, so a churn guard is essential:
+// without it an unrelated edit (another layer drag) that re-runs renderAll would
+// hand a new-reference-but-identical array to the Trace overlay every frame. The
+// compare is O(total) but only over motif layers and only inside the setState
+// updater — the same order of work the stats guard already does. Mirrors
+// motifStatsEqual; the extra inner loop is the price of value (not count) identity
+// (two different layouts can share a count but never a point list).
+function motifPlacementsEqual(a, b) {
+  const ak = Object.keys(a);
+  const bk = Object.keys(b);
+  if (ak.length !== bk.length) return false;
+  for (const k of ak) {
+    const av = a[k];
+    const bv = b[k];
+    if (!bv || av.length !== bv.length) return false;
+    for (let i = 0; i < av.length; i++) {
+      if (av[i].x !== bv[i].x || av[i].y !== bv[i].y || av[i].radius !== bv[i].radius) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 export default function useCanvas(
   containerRef,
   layers,
@@ -146,6 +172,16 @@ export default function useCanvas(
   // truncated layers appear; the map is rebuilt fresh each render and churn-
   // guarded (motifStatsEqual) so it never triggers a redundant re-render.
   const [motifPlacementStats, setMotifPlacementStats] = useState({});
+  // Motif placement POSITIONS (Trace sweep, issue #91): layerId → the ordered,
+  // post-cap [{x,y,radius}] each motif layer actually drew. Surfaced as STATE so
+  // the Trace overlay (mounted inside RightPanel's scaled canvas box, sharing the
+  // artwork coordinate space like AnchorGhostOverlay) can light a growing prefix
+  // in placement order, and so Studio's useTraceSweep can read a motif's count.
+  // Unlike motifPlacementStats (truncated-only), this holds EVERY motif layer that
+  // placed anything — Trace works for the common, non-truncated case too. Rebuilt
+  // fresh each render and churn-guarded (motifPlacementsEqual) against re-render
+  // storms. Bounded by MAX_PLACEMENTS per layer.
+  const [motifPlacements, setMotifPlacements] = useState({});
   const renderAllRef = useRef(null);
   // Live transform/selection read inside renderAll WITHOUT entering its dep
   // array — keeps renderAll's identity stable so the 150ms param-debounce
@@ -551,15 +587,27 @@ export default function useCanvas(
     // automatically when a layer stops truncating (built fresh, not merged), so
     // a stale amber warning can't persist after the user lowers density.
     const nextMotifStats = {};
+    // Trace sweep (issue #91): the ordered placement positions for EVERY motif
+    // layer that placed anything (not just truncated ones — Trace's common case is
+    // an un-capped motif). Read off the SAME resolved instance the stats come from,
+    // so the overlay lights exactly what drew. Churn-guarded below.
+    const nextMotifPlacements = {};
     for (const layer of layers) {
       if (!isMotifLayer(layer)) continue;
       const st = newInstances[layer.id]?.lastPlacementStats;
       if (st && st.total > st.placed) {
         nextMotifStats[layer.id] = { total: st.total, placed: st.placed };
       }
+      const pos = newInstances[layer.id]?.lastPlacementPositions;
+      if (pos && pos.length > 0) {
+        nextMotifPlacements[layer.id] = pos;
+      }
     }
     setMotifPlacementStats((prev) =>
       motifStatsEqual(prev, nextMotifStats) ? prev : nextMotifStats
+    );
+    setMotifPlacements((prev) =>
+      motifPlacementsEqual(prev, nextMotifPlacements) ? prev : nextMotifPlacements
     );
     // `font` resolves asynchronously (null → Font); it's in the deps so when it
     // arrives renderAll gets a new identity, the debounce effect re-fires, and
@@ -782,5 +830,5 @@ export default function useCanvas(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [transforms, selectedNodeId]);
 
-  return { patternInstances, etchBitmaps, motifPlacementStats };
+  return { patternInstances, etchBitmaps, motifPlacementStats, motifPlacements };
 }

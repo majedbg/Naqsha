@@ -145,6 +145,12 @@ describe("Inspector variable line-weight UI (C8 — #17)", () => {
     expect(warning).toBeInTheDocument();
     expect(warning.textContent).toMatch(/advanced/i);
     expect(warning.textContent).toMatch(/manual machine setup/i);
+    // Color-token contract: tone-mild tokens so dark mode inverts (raw amber-*
+    // would stay light and glow on the indigo dark paper).
+    expect(warning.className).toContain("border-tone-mild/40");
+    expect(warning.className).toContain("bg-tone-mild/10");
+    expect(warning.className).toContain("text-tone-mild");
+    expect(warning.className).not.toContain("amber");
   });
 
   // (d) GUARD — the drag-cutter profile HIDES the feature (a blade has no line

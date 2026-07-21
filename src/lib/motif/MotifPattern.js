@@ -51,6 +51,11 @@ export default class MotifPattern extends Pattern {
     // resolvePlacements below whenever we actually place. An early return (no
     // resolvable glyph / no anchors) leaves it null → no warning.
     this.lastPlacementStats = null;
+    // Ordered, POST-CAP placement positions for the Trace sweep (issue #91).
+    // Reset every generate; filled from the SAME `placements` the draw loop below
+    // stamps, so the overlay's marks land on exactly what's drawn. An early return
+    // leaves it null → the Trace overlay simply has nothing to light for this layer.
+    this.lastPlacementPositions = null;
 
     const p = params || {};
     // Glyph resolution (WI-3 + B1 multi-glyph). Two injected sources, both from
@@ -128,6 +133,16 @@ export default class MotifPattern extends Pattern {
     // after generate() and mirror truncation up to the Inspector (etchBitmaps
     // seam). placementStats is always present from resolvePlacements.
     this.lastPlacementStats = placementStats || null;
+    // Ordered placement positions for the Trace sweep (issue #91). `placements` is
+    // already the accepted, post-cap, placement-order list, so mapping x/y/radius
+    // here yields exactly what the draw loop stamps — the overlay lights a prefix
+    // of it in sync with the sweep. Only x/y/radius are surfaced (a ring per
+    // instance needs no rotation/glyph); memory is bounded by MAX_PLACEMENTS.
+    this.lastPlacementPositions = placements.map((pl) => ({
+      x: pl.x,
+      y: pl.y,
+      radius: pl.radius,
+    }));
 
     // Canvas style — mirror ImportedPath: one resolved color, alpha from opacity.
     const alpha = Math.round((Math.max(0, Math.min(100, opacity ?? 100)) / 100) * 255);

@@ -5,7 +5,13 @@
 // label alone. Renders ALL of the glyph's paths (the old 18px MotifDevice
 // swatch drew only paths[0], so multi-path imports previewed partially —
 // audit 2026-07). Draws in currentColor so callers tint via text-* classes.
-export default function GlyphThumb({ glyph, size = 28, className = "" }) {
+// Memoized: rendered in dense grids (picker flyout, library panel) whose parent
+// re-renders on every keystroke/hover, while its own props stay stable — `glyph`
+// refs come from memoized buildGlyphEntries / getGlyph, `size`/`className` are
+// primitives — so a shallow prop check skips rebuilding the SVG.
+import { memo } from "react";
+
+function GlyphThumb({ glyph, size = 28, className = "" }) {
   if (!glyph || !Array.isArray(glyph.paths)) return null;
   // 1.2× head-room over the bounding-circle radius so round joins/caps at the
   // extremes don't clip against the viewBox edge.
@@ -32,3 +38,5 @@ export default function GlyphThumb({ glyph, size = 28, className = "" }) {
     </svg>
   );
 }
+
+export default memo(GlyphThumb);

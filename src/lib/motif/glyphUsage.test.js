@@ -2,7 +2,7 @@
 // (motif-shell D; the audit's bug-3 lesson: counting only the base ref makes
 // an in-place Save claim isolation while restamping slots).
 import { describe, it, expect } from 'vitest';
-import { glyphUseCount, glyphUsedByLayerCount } from './glyphUsage';
+import { glyphUseCount, glyphUsedByLayerCount, glyphUsageMap } from './glyphUsage';
 import { MOTIF_TYPE } from './motifLayer';
 
 const motif = (id, glyphRef, chain) => ({
@@ -39,6 +39,41 @@ describe('glyphUseCount', () => {
     expect(glyphUseCount(layers, 'cg-9')).toBe(0);
     expect(glyphUseCount(layers, '')).toBe(0);
     expect(glyphUseCount(null, 'cg-9')).toBe(0);
+  });
+});
+
+describe('glyphUsageMap', () => {
+  // Single-pass replacement for calling glyphUseCount per glyph inside a render
+  // map (was O(glyphs × layers × blocks × slots)). Contract: the returned Map
+  // holds ONLY referenced ids; an unused glyph is ABSENT (callers use
+  // `map.get(id) ?? 0`), and each id's value equals glyphUseCount for that id.
+  it('counts base + slot refs across layers in one pass, agreeing with glyphUseCount', () => {
+    const chain = [
+      { type: 'route', roles: ['crossing'] },
+      { type: 'sequence', mode: 'cycle', slots: [{ glyphRef: 'cg-2' }, { rest: true }, { glyphRef: 'cg-2' }] },
+    ];
+    const layers = [plain('h'), motif('m1', 'cg-1', chain), motif('m2', 'cg-1'), plain('x')];
+    const map = glyphUsageMap(layers);
+    expect(map.get('cg-1')).toBe(2); // two base refs
+    expect(map.get('cg-2')).toBe(2); // two sequencer slots
+    // Agrees with the per-id function it replaces.
+    expect(map.get('cg-1')).toBe(glyphUseCount(layers, 'cg-1'));
+    expect(map.get('cg-2')).toBe(glyphUseCount(layers, 'cg-2'));
+  });
+
+  it('omits unreferenced ids and never keys a rest/empty slot', () => {
+    const chain = [{ type: 'sequence', mode: 'cycle', slots: [{ rest: true }, { glyphRef: 'cg-3' }] }];
+    const layers = [plain('h'), motif('m1', 'cg-3', chain)];
+    const map = glyphUsageMap(layers);
+    expect(map.get('cg-9')).toBeUndefined(); // absent, not 0
+    expect(map.has(undefined)).toBe(false);
+    expect(map.has('')).toBe(false);
+    expect(map.get('cg-3')).toBe(2); // base + one slot
+  });
+
+  it('returns an empty map for empty/nullish layers', () => {
+    expect(glyphUsageMap(null).size).toBe(0);
+    expect(glyphUsageMap([]).size).toBe(0);
   });
 });
 

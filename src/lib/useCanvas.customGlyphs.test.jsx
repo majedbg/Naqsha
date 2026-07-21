@@ -104,8 +104,9 @@ describe('useCanvas — custom-glyph resolution seam (WI-3)', () => {
     await waitFor(() => {
       const els = result.current.patternInstances.mo.svgElements;
       expect(els.length).toBeGreaterThan(0);
-      // The built-in leaf path — NOT the custom one — rendered.
-      expect(els.every((el) => el.includes('M0,-10'))).toBe(true);
+      // The built-in leaf path — NOT the custom one — rendered. 'M0,0 L6,-6' is
+      // the base-at-origin leaf's distinctive opening (glyphs.js, 2026-07).
+      expect(els.every((el) => el.includes('M0,0 L6,-6'))).toBe(true);
     });
   });
 });

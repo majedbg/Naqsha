@@ -17,6 +17,7 @@ import {
   saveUserMotif,
   loadUserMotifs,
   deleteUserMotif,
+  MOTIF_LIBRARY_LIMIT,
 } from './userMotifService';
 
 function makeChain(resolution) {
@@ -129,6 +130,24 @@ describe('loadUserMotifs', () => {
   it('returns [] when userId is falsy', async () => {
     mockSupabase(() => makeChain({ data: [], error: null }));
     expect(await loadUserMotifs(null)).toEqual([]);
+  });
+
+  it('bounds the query with .limit(MOTIF_LIBRARY_LIMIT) so a huge library never floods memory', async () => {
+    const limitSpy = vi.fn();
+    const chain = {
+      select: () => chain,
+      eq: () => chain,
+      order: () => chain,
+      limit: (...args) => {
+        limitSpy(...args);
+        return chain;
+      },
+      then: (resolve, reject) => Promise.resolve({ data: [], error: null }).then(resolve, reject),
+    };
+    mockSupabase(() => chain);
+    await loadUserMotifs('user-1');
+    expect(MOTIF_LIBRARY_LIMIT).toBeGreaterThan(0);
+    expect(limitSpy).toHaveBeenCalledWith(MOTIF_LIBRARY_LIMIT);
   });
 
   it('throws when the query errors', async () => {

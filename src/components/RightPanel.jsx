@@ -3,6 +3,7 @@ import useCanvas from "../lib/useCanvas";
 import CanvasChrome from "./canvas/CanvasChrome";
 import PlotOverlay from "./canvas/PlotOverlay";
 import AnchorGhostOverlay from "./canvas/AnchorGhostOverlay";
+import TraceOverlay from "./shell/TraceOverlay";
 import FieldOverlay from "./FieldOverlay";
 import { chladniField } from "../lib/fields/chladniField";
 import { fieldForLayer } from "../lib/fields/fieldRegistry";
@@ -145,6 +146,14 @@ export default function RightPanel({
   // §6). Only truncated motif layers appear. Optional — legacy/test callers that
   // omit it skip the warning.
   onMotifPlacementStatsChange,
+  // Trace sweep (issue #91). Surfaces the ordered per-motif placement positions
+  // (layerId → [{x,y,radius}]) up to Studio so its useTraceSweep can read a
+  // motif's count. `traceActiveMotifId` + `traceProgressIndex` come back DOWN from
+  // that hook to drive the in-canvas TraceOverlay (mounted inside the scaled box
+  // below). All optional — omitting them renders no trace marks.
+  onMotifPlacementsChange,
+  traceActiveMotifId = null,
+  traceProgressIndex = 0,
   bgColor,
   onBgColorChange,
   unit = 'mm',
@@ -284,7 +293,7 @@ export default function RightPanel({
   // useCanvas so text layers can render their outlines.
   const { font: textFont } = useFont();
 
-  const { patternInstances, etchBitmaps, motifPlacementStats } = useCanvas(
+  const { patternInstances, etchBitmaps, motifPlacementStats, motifPlacements } = useCanvas(
     containerRef,
     layers,
     canvasW,
@@ -421,6 +430,14 @@ export default function RightPanel({
   useEffect(() => {
     if (onMotifPlacementStatsChange) onMotifPlacementStatsChange(motifPlacementStats);
   }, [motifPlacementStats, onMotifPlacementStatsChange]);
+
+  // Surface per-motif-layer placement POSITIONS to the parent so Studio's
+  // useTraceSweep can read a motif's count (Trace sweep, issue #91). The map is
+  // churn-guarded in useCanvas, so this fires only when the placements actually
+  // change — no per-frame parent churn. Mirrors the stats surfacing above.
+  useEffect(() => {
+    if (onMotifPlacementsChange) onMotifPlacementsChange(motifPlacements);
+  }, [motifPlacements, onMotifPlacementsChange]);
 
   // Expose canvas container so parent can grab thumbnails
   useEffect(() => {
@@ -995,6 +1012,19 @@ export default function RightPanel({
           patternInstances={patternInstances}
           motifPick={motifPick}
           onTogglePickedPath={onTogglePickedPath}
+        />
+        {/* Trace sweep marks (issue #91). Sibling of the p5 surface INSIDE the
+            scaled box, so its canvas-coord rings inherit scale(finalScale)+pan and
+            land on the drawn instances. Renders nothing unless a motif is being
+            traced (activeMotifId set + progressIndex > 0), so it costs the canvas
+            nothing at rest. Positions come from THIS panel's own useCanvas —
+            already the churn-guarded map surfaced to Studio — indexed by the active
+            motif the sweep hook drives. */}
+        <TraceOverlay
+          positions={traceActiveMotifId ? motifPlacements[traceActiveMotifId] : null}
+          progressIndex={traceProgressIndex}
+          canvasW={canvasW}
+          canvasH={canvasH}
         />
       </div>
 

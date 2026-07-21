@@ -12,11 +12,11 @@
 // (minus library-keyed copies, same dedupe as MotifDevice), My library = the
 // signed-in user's user_motifs rows. Deletes are guarded by glyphUseCount so
 // a referenced glyph can never be removed into a dangling glyphRef.
-import { useMemo, useRef, useState } from "react";
+import { useDeferredValue, useMemo, useRef, useState } from "react";
 import GlyphThumb from "../ui/GlyphThumb";
 import { isMotifLayer } from "../../lib/motif/motifLayer";
 import { isMotifHost } from "../../lib/motif/hostKinds";
-import { glyphUseCount } from "../../lib/motif/glyphUsage";
+import { glyphUsageMap } from "../../lib/motif/glyphUsage";
 import { buildGlyphEntries } from "../../lib/motif/glyphEntries";
 
 const SETS = [
@@ -27,6 +27,16 @@ const SETS = [
 ];
 
 const isEligibleHost = (l) => l && !isMotifLayer(l) && isMotifHost(l.patternType);
+
+// Crafted inline close/delete glyph — matches EyeIcon's currentColor + hairline
+// stroke. aria-hidden; the delete button already carries an aria-label.
+function CloseIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
+      <path d="M6 6l12 12M18 6L6 18" />
+    </svg>
+  );
+}
 
 function EyeIcon({ open }) {
   return (
@@ -59,15 +69,15 @@ function MiniLayerTree({
   const [rowHover, setRowHover] = useState(null);
   return (
     <div className="border-b border-hairline p-2" data-testid="motif-mini-tree">
-      <h3 className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-ink-soft">
+      <h3 className="mb-1.5 text-2xs font-semibold uppercase tracking-wider text-ink-soft">
         {motifDrag ? "Drop onto a layer" : "Layers"}
       </h3>
-      <div className="max-h-40 space-y-0.5 overflow-y-auto">
+      <ul className="max-h-40 list-none space-y-0.5 overflow-y-auto">
         {(layers || []).map((layer) => {
           const host = isEligibleHost(layer);
           const highlighted = dragHoverHostId === layer.id || rowHover === layer.id;
           return (
-            <div
+            <li
               key={layer.id}
               data-testid={`mini-tree-row-${layer.id}`}
               onDragOver={(e) => {
@@ -92,26 +102,26 @@ function MiniLayerTree({
                 motifDrag && !host ? "opacity-40" : ""
               }`}
             >
-              <span className="w-4 shrink-0 text-center text-[9px] font-semibold uppercase">
+              <span className="w-4 shrink-0 text-center text-2xs font-semibold uppercase">
                 {(layer.patternType || "?").slice(0, 2)}
               </span>
               <span className="min-w-0 flex-1 truncate">{layer.name || layer.patternType}</span>
               {host && (
-                <span className="shrink-0 text-[8px] uppercase tracking-wide text-accent">host</span>
+                <span className="shrink-0 text-2xs uppercase tracking-wide text-accent">host</span>
               )}
               <button
                 type="button"
                 aria-label={layer.visible ? "Hide layer" : "Show layer"}
                 title={layer.visible ? "Hide layer" : "Show layer"}
                 onClick={() => onUpdateLayer?.(layer.id, { visible: !layer.visible })}
-                className="shrink-0 text-ink-soft hover:text-ink"
+                className="-m-1.5 flex shrink-0 items-center justify-center rounded-xs p-2 text-ink-soft hover:text-ink"
               >
                 <EyeIcon open={layer.visible} />
               </button>
-            </div>
+            </li>
           );
         })}
-      </div>
+      </ul>
     </div>
   );
 }
@@ -148,13 +158,43 @@ export default function MotifLibraryPanel({
     [customGlyphs, libraryMotifs]
   );
 
-  const q = query.trim().toLowerCase();
-  const visible = entries.filter(
-    (e) => (set === "all" || e.set === set) && (!q || e.name.toLowerCase().includes(q))
+  // One pass over layers per render (not glyphUseCount per custom entry, which
+  // was O(customGlyphs × layers × blocks × slots)). Deletable entries read
+  // their reference count out of this map. Keyed on [layers] so it only
+  // recomputes when the document's layers actually change.
+  const usageMap = useMemo(() => glyphUsageMap(layers), [layers]);
+
+  // Defer the query so a fast typist's keystrokes don't each re-filter and
+  // re-reconcile the whole thumbnail grid synchronously (useDeferredValue, not a
+  // manual debounce — it stays act()-synchronous for tests). The filter is
+  // memoized so it only recomputes when the entries, set tab, or deferred query
+  // change, not on every unrelated re-render.
+  const deferredQuery = useDeferredValue(query);
+  const q = deferredQuery.trim().toLowerCase();
+  const visible = useMemo(
+    () =>
+      entries.filter(
+        (e) => (set === "all" || e.set === set) && (!q || e.name.toLowerCase().includes(q))
+      ),
+    [entries, set, q]
   );
 
+  // Keyboard/click apply (WCAG 2.1.1): a tile applies to the currently selected
+  // layer when that layer is a valid host — the same seam a drop onto a host row
+  // uses, so behaviour is identical. On a non-host selection it is inert (the
+  // mini tree above shows where hosts are).
+  const selectedLayer = (layers || []).find((l) => l.id === selectedLayerId);
+  const applyToSelected = (payload) => {
+    if (isEligibleHost(selectedLayer)) onApplyToHost(payload, selectedLayerId);
+  };
+
   return (
-    <div className="flex h-full flex-col" data-testid="motif-library-panel">
+    <div
+      className="flex h-full flex-col"
+      data-testid="motif-library-panel"
+      role="region"
+      aria-label="Motif library"
+    >
       <MiniLayerTree
         layers={layers}
         selectedLayerId={selectedLayerId}
@@ -182,7 +222,7 @@ export default function MotifLibraryPanel({
               type="button"
               aria-pressed={set === s.id}
               onClick={() => setSet(s.id)}
-              className={`rounded-full px-1.5 py-0.5 text-[9px] transition-colors duration-fast ${
+              className={`-my-2 inline-flex min-h-11 items-center rounded-full px-1.5 py-0.5 text-2xs transition-colors duration-fast ${
                 set === s.id ? "bg-ink text-paper" : "text-ink-soft hover:bg-paper-warm hover:text-ink"
               }`}
             >
@@ -194,34 +234,54 @@ export default function MotifLibraryPanel({
 
       <div className="min-h-0 flex-1 overflow-y-auto p-2">
         {set === "library" && libraryError && (
-          <p className="mb-2 rounded-xs border border-amber-400/50 bg-amber-50 px-2 py-1 text-[10px] text-amber-800">
+          <p className="mb-2 rounded-xs border border-tone-mild/40 bg-tone-mild/10 px-2 py-1 text-2xs text-tone-mild">
             Library unavailable — sign in (or check the connection) to load your
             saved motifs.
           </p>
         )}
-        <div className="grid grid-cols-3 gap-1.5">
+        <ul
+          className="grid list-none grid-cols-3 gap-1.5"
+          data-testid="motif-library-grid"
+        >
           {visible.map((e) => {
-            const useCount = e.deletable ? glyphUseCount(layers, e.glyphId) : 0;
+            const useCount = e.deletable ? (usageMap.get(e.glyphId) ?? 0) : 0;
             const canDelete =
               (e.deletable && useCount === 0 && onDeleteCustomGlyph) ||
               (e.libraryRow && onDeleteLibraryMotif);
             return (
-              <div
-                key={e.key}
-                draggable
-                onDragStart={(ev) => {
-                  onMotifDragChange(e.payload);
-                  ev.dataTransfer.effectAllowed = "copy";
-                }}
-                onDragEnd={() => onMotifDragChange(null)}
-                title={`${e.name} — drag onto a layer or the canvas`}
-                className="group relative flex cursor-grab flex-col items-center gap-0.5 rounded-xs border border-transparent p-1 transition-colors duration-fast hover:border-hairline hover:bg-paper-warm active:cursor-grabbing"
-              >
-                <GlyphThumb glyph={e.glyph} size={30} className="text-ink" />
-                <span className="w-full truncate text-center text-[8px] text-ink-soft">{e.name}</span>
+              // The wrapper owns the `group` so the delete button (a SIBLING of
+              // the apply control, not a descendant — keeps the control's
+              // accessible name clean) reveals on hover OR keyboard focus-within.
+              <li key={e.key} className="group relative">
+                {/* Apply control: focusable (role+tabIndex, so fireEvent Enter/
+                    Space activation works and there is no native double-fire),
+                    still draggable. Enter/Space/click apply to the selected host. */}
+                <div
+                  role="button"
+                  tabIndex={0}
+                  aria-label={e.name}
+                  draggable
+                  onDragStart={(ev) => {
+                    onMotifDragChange(e.payload);
+                    ev.dataTransfer.effectAllowed = "copy";
+                  }}
+                  onDragEnd={() => onMotifDragChange(null)}
+                  onClick={() => applyToSelected(e.payload)}
+                  onKeyDown={(ev) => {
+                    if (ev.key === "Enter" || ev.key === " ") {
+                      ev.preventDefault();
+                      applyToSelected(e.payload);
+                    }
+                  }}
+                  title={`${e.name} — drag onto a layer or the canvas`}
+                  className="flex cursor-grab flex-col items-center gap-0.5 rounded-xs border border-transparent p-1 transition-colors duration-fast hover:border-hairline hover:bg-paper-warm active:cursor-grabbing"
+                >
+                  <GlyphThumb glyph={e.glyph} size={30} className="text-ink" />
+                  <span className="w-full truncate text-center text-2xs text-ink-soft">{e.name}</span>
+                </div>
                 {e.deletable && useCount > 0 && (
                   <span
-                    className="absolute right-0.5 top-0.5 rounded-full bg-paper-warm px-1 text-[7px] tabular-nums text-ink-soft"
+                    className="pointer-events-none absolute right-0.5 top-0.5 min-w-[1rem] rounded-full bg-paper-warm px-1 text-center text-2xs leading-none tabular-nums text-ink-soft"
                     title={`Referenced ${useCount}× in this document`}
                   >
                     {useCount}
@@ -235,20 +295,20 @@ export default function MotifLibraryPanel({
                     onClick={() =>
                       e.libraryRow ? onDeleteLibraryMotif(e.glyphId) : onDeleteCustomGlyph(e.glyphId)
                     }
-                    className="absolute right-0.5 top-0.5 hidden rounded-full bg-paper px-1 text-[9px] text-ink-soft hover:text-red-500 group-hover:block"
+                    className="absolute right-0.5 top-0.5 hidden rounded-full bg-paper p-2 leading-none text-ink-soft hover:text-tone-strong group-hover:block group-focus-within:block"
                   >
-                    ✕
+                    <CloseIcon />
                   </button>
                 )}
-              </div>
+              </li>
             );
           })}
           {visible.length === 0 && (
-            <p className="col-span-3 py-4 text-center text-[10px] text-ink-soft">
+            <li className="col-span-3 py-4 text-center text-2xs text-ink-soft">
               {q ? "No matches." : "Nothing here yet — import an SVG below."}
-            </p>
+            </li>
           )}
-        </div>
+        </ul>
       </div>
 
       <div className="flex items-center gap-2 border-t border-hairline p-2">
@@ -266,11 +326,11 @@ export default function MotifLibraryPanel({
         <button
           type="button"
           onClick={() => fileInputRef.current?.click()}
-          className="text-[10px] text-accent hover:underline"
+          className="text-2xs text-accent hover:underline"
         >
           Import SVG…
         </button>
-        <span className="ml-auto text-[9px] text-ink-soft">
+        <span className="ml-auto min-w-0 truncate text-2xs text-ink-soft">
           Drag a motif onto a host layer
         </span>
       </div>

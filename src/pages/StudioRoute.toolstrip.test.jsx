@@ -117,6 +117,16 @@ describe("StudioRoute — tool strip + control bar in the shell (B6)", () => {
     ).toHaveTextContent("125%");
   });
 
+  it("the canvas tool tab is height-guarded so it can't clip unreachably on short viewports", () => {
+    // The re-homed ToolStrip tab is pinned top-12 inside an overflow-hidden
+    // canvas; without a max-height + internal scroll it clips off-screen when the
+    // viewport is short or more tools are added.
+    renderPro();
+    const tab = screen.getByTestId("canvas-toolstrip-tab");
+    expect(tab.className).toContain("max-h-[calc(100%-3.5rem)]");
+    expect(tab.className).toContain("overflow-y-auto");
+  });
+
   it("below the breakpoint (mobile) renders no tool strip / shell regions (desktop-only)", () => {
     // #16: legacy removed; below the breakpoint StudioRoute renders MobileStudio,
     // which has no AppShell Tool strip region. (Was: "flag OFF → legacy no-op".)

@@ -26,6 +26,12 @@
   --violet:       oklch(0.48 0.17 305);   /* ornamental outline, focus ring */
   --violet-hover: oklch(0.52 0.17 305);
 
+  /* Elevation — the ONE shadow the chrome uses (popovers, menus, floating
+   * surfaces via the `shadow-pop` utility). Ink on paper: a low-alpha
+   * iron-gall indigo, never pure black, so it reads as a soft warm-neutral
+   * cast rather than a hard drop. Flips with the theme (see dark block). */
+  --shadow-color: oklch(0.24 0.05 270 / 0.12);
+
   /* === Jewel palette — reserved for user-drawn layers ONLY === */
   --jewel-cobalt:   oklch(0.42 0.17 260);
   --jewel-madder:   oklch(0.50 0.18 28);
@@ -112,6 +118,11 @@
   --saffron-hover: oklch(0.80 0.14 75);
   --violet:       oklch(0.68 0.18 305);
   --violet-hover: oklch(0.74 0.18 305);
+
+  /* On indigo-vellum paper a shadow must be DARKER than the surface to read,
+   * so it deepens (near-black indigo, still not pure black) and carries more
+   * alpha than the light cast. */
+  --shadow-color: oklch(0.10 0.03 265 / 0.5);
 
   /* Jewel palette in dark — slightly brighter to preserve contrast on indigo */
   --jewel-cobalt:   oklch(0.62 0.18 260);

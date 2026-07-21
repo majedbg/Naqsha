@@ -41,7 +41,11 @@ const SURFACES = [
 
 export default function LeftRailNav({ surface, onSurfaceChange }) {
   return (
-    <div className="flex h-full flex-col items-center gap-1 py-2" data-testid="left-rail-nav">
+    <nav
+      aria-label="Panels"
+      className="flex h-full flex-col items-center gap-1 py-2"
+      data-testid="left-rail-nav"
+    >
       {SURFACES.map((s) => {
         const active = surface === s.id;
         return (
@@ -62,10 +66,10 @@ export default function LeftRailNav({ surface, onSurfaceChange }) {
               <span className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-full bg-accent" />
             )}
             {s.icon}
-            <span className="text-[8px] uppercase leading-none tracking-wide">{s.label}</span>
+            <span className="text-2xs uppercase leading-none tracking-wide">{s.label}</span>
           </button>
         );
       })}
-    </div>
+    </nav>
   );
 }

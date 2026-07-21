@@ -12,12 +12,21 @@
  * @typedef {{id:string, name:string, tradition:string, paths:GlyphPath[], viewRadius:number}} Glyph
  */
 
-// 'leaf' — a paisley/comma-like teardrop, deliberately NOT symmetric under
-// x → −x (mirror across the vertical axis). The right side bulges wider than
-// the left, so a downstream x-negation flip is visually observable. Authored
-// as a small closed polyline (a handful of M/L commands) for a house-style
-// exact vertex list.
-const LEAF_D = 'M0,-10 L7,-4 L8,5 L2,10 L-6,6 L-7,-2 L-2,-8 Z';
+// 'leaf' — a leaf-blade that grows FROM the host line (design 2026-07). The
+// stem/base vertex sits at the ORIGIN (0,0), which the placement engine puts ON
+// the line; the whole blade extends along +x — the off-line direction, since a
+// glyph's local +x maps to the path NORMAL after orientation (see instancing.js
+// placementMatrix + placementEngine orientation 'path'/useNormal:true). So every
+// non-base vertex is strictly x>0 and the blade hangs off ONE side of the line.
+// Deliberately NOT symmetric under y → −y (mirror across the midrib, the +x
+// growth axis): one flank bulges wider than the other. That midrib asymmetry is
+// what makes a 180° turn — local (x,y)→(−x,−y), used by the Vine to alternate
+// leaves above/below — read DIFFERENTLY from a plain `flip` (x-negation,
+// (x,y)→(−x,y)); the two differ only by the y-negation the asymmetry exposes.
+// Authored as a small closed polyline (a handful of M/L commands) for a
+// house-style exact vertex list, overall ≈20 units long (matching the old
+// ±10-tall leaf's footprint).
+const LEAF_D = 'M0,0 L6,-6 L14,-5 L20,-0.5 L18,3 L11,4.5 L4,3 Z';
 
 // 'dot' — a small filled circle, approximated as a regular octagon (8
 // vertices at radius 3). Symmetric under any reflection/rotation.
@@ -40,9 +49,13 @@ export const MOTIF_GLYPHS = {
     name: 'Leaf',
     tradition: 'botanical',
     paths: [{ d: LEAF_D, closed: true }],
-    // Max vertex distance from origin is |(2,10)| = sqrt(104) ≈ 10.198; 10.2
-    // is the bounding-circle radius (covers every authored vertex).
-    viewRadius: 10.2,
+    // Max vertex distance from the origin (the base) is the blade tip
+    // |(20,-0.5)| = sqrt(400.25) ≈ 20.006; 20.1 is the bounding-circle radius
+    // (covers every authored vertex). Larger than the old centered leaf's 10.2
+    // because the blade now extends fully to one side instead of straddling the
+    // origin — the drawn footprint is still `placement.radius`, so this only
+    // re-anchors the leaf at its base, it does not change placement sizing.
+    viewRadius: 20.1,
   },
   dot: {
     id: 'dot',

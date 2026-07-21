@@ -34,6 +34,8 @@ import { selectedMaterialForScene } from "../lib/three3d/selectedMaterial";
 import ColorViewControl from "../components/canvas/ColorViewControl";
 import useSvgImport from "../lib/hooks/useSvgImport";
 import ConfirmDialog from "../components/ui/ConfirmDialog";
+import NewDocumentDialog from "../components/ui/NewDocumentDialog";
+import { resolveNewDocumentActions } from "../lib/newDocument";
 import DocumentSetupDialog from "../components/shell/DocumentSetupDialog";
 import { EXAMPLES } from "../examples";
 import ExamplesGallery from "../components/sidebar/ExamplesGallery";
@@ -1959,6 +1961,105 @@ export default function Studio({ submitOrg = null } = {}) {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
+  // === File → New: start a fresh document (issue: New was mislabelled) ===
+  // `onNew` used to ADD a pattern to the current document. It now starts a NEW
+  // document. The blank the owner wants is not a dead canvas: it's zero layers on
+  // ONE empty panel, with the pattern picker auto-opened so New ends by letting
+  // the user choose their first pattern into a clean document.
+  //
+  // The load-bearing rule: NEVER blank until the chosen save path has
+  // demonstrably completed (localStorage autosave IS the document; resetDocument
+  // overwrites it). Discard blanks now; Save blanks only on save success; Export
+  // blanks after the SVG is produced; Cancel/Esc keep the document.
+  const [newDocOpen, setNewDocOpen] = useState(false);
+  // "Blank the document once the in-flight cloud save succeeds" — the gate that
+  // keeps Save→New from discarding work before it is safe.
+  const [pendingNewAfterSave, setPendingNewAfterSave] = useState(false);
+
+  // The actual reset. Mirrors handleOnboardingNewSession's document swap (clear
+  // undo history, reset optimizations to "none applied", flush a clean snapshot
+  // via resetDocument) but for File → New: an EMPTY document (resetDocument([]) →
+  // normalizePanels seeds exactly one empty panel), onboarding is NOT re-armed,
+  // and currentDesignId is dropped so the fresh document is INDEPENDENT — the
+  // just-saved design keeps its own cloud row and the blank never autosaves over
+  // it (a null id keeps the first save explicit). Ends by opening the picker.
+  const startNewDocument = useCallback(() => {
+    historyRef.current?.clear();
+    hydrateOptimizations();
+    resetDocument([], {}, serializeApplied(hydrateApplied()));
+    setCurrentDesignId(null);
+    setPendingPanelId(undefined);
+    setUI("showPatternPicker", true);
+  }, [resetDocument, hydrateOptimizations, setCurrentDesignId, setUI]);
+
+  // Entry point wired to the File ▸ New menu item. No unsaved work → skip the
+  // prompt and start fresh; otherwise open the multi-action prompt.
+  const handleFileNew = useCallback(() => {
+    if (isDirty() || nameDirty) setNewDocOpen(true);
+    else startNewDocument();
+  }, [isDirty, nameDirty, startNewDocument]);
+
+  // The prompt's chosen action. Discard blanks now; Export writes the SVG
+  // (synchronous — the file is produced before we blank) then blanks; Save arms
+  // the success gate (guest → sign-in, which preserves the doc across the OAuth
+  // redirect and does NOT blank); Cancel keeps the document.
+  const handleNewDocAction = useCallback(
+    (id) => {
+      if (id === "cancel") {
+        setNewDocOpen(false);
+        return;
+      }
+      if (id === "discard") {
+        setNewDocOpen(false);
+        startNewDocument();
+        return;
+      }
+      if (id === "export") {
+        setNewDocOpen(false);
+        runExport(true);
+        startNewDocument();
+        return;
+      }
+      if (id === "save") {
+        setNewDocOpen(false);
+        // Guest: no cloud to save to yet. Route to sign-in (a full OAuth
+        // redirect) and PRESERVE the document — an in-memory "resume New" intent
+        // can't survive the navigation, and blanking would cost their work.
+        if (!user) {
+          signIn();
+          return;
+        }
+        // Signed-in: arm the gate, then trigger the save. The blank fires only
+        // when saveState edges saving→saved (see the effect below).
+        setPendingNewAfterSave(true);
+        handleSaveToCloud({ manual: true });
+      }
+    },
+    [startNewDocument, runExport, user, signIn, handleSaveToCloud]
+  );
+
+  // Save-success gate for Save → New. Edge-triggered on the saving→saved
+  // transition (a LEVEL check on "saved" is unsafe — saveState lingers at "saved"
+  // across later edits, so it could blank unsaved work). On a real success we
+  // blank + open the picker; on "error" we abort the New and keep the document.
+  const prevSaveStateRef = useRef(saveState);
+  useEffect(() => {
+    const prev = prevSaveStateRef.current;
+    prevSaveStateRef.current = saveState;
+    if (!pendingNewAfterSave) return;
+    if (prev === "saving" && saveState === "saved") {
+      setPendingNewAfterSave(false);
+      startNewDocument();
+    } else if (saveState === "error") {
+      setPendingNewAfterSave(false);
+    }
+  }, [saveState, pendingNewAfterSave, startNewDocument]);
+
+  const newDocActions = resolveNewDocumentActions({
+    dirty: isDirty() || nameDirty,
+    signedIn: !!user,
+  });
+
   // Per-panel ZIP export (Naqsha Panels WI-6, spec §3). Laser-only affordance:
   // bundles one SVG per VISIBLE panel + a combined SVG into a timestamped ZIP.
   // Mirrors handleExportAll's option shape; `exportLayer` spreads each layer so
@@ -2401,6 +2502,14 @@ export default function Studio({ submitOrg = null } = {}) {
         </div>
       )}
 
+      {/* File → New prompt (unsaved-work guard). Renders only when the document
+          is dirty; a clean New skips it entirely. */}
+      <NewDocumentDialog
+        open={newDocOpen}
+        actions={newDocActions}
+        onAction={handleNewDocAction}
+      />
+
       {/* New-layer pattern picker (the "periodic table") */}
       <PatternPickerModal
         open={ui.showPatternPicker}
@@ -2481,13 +2590,7 @@ export default function Studio({ submitOrg = null } = {}) {
       {menuSlot &&
         createPortal(
           <MenuBar
-            onNew={() => {
-              // Global "New layer" — clear any pending per-panel target so the
-              // layer is added unassigned (normalizer homes it), never leaking a
-              // stale panel id from a prior per-panel add.
-              setPendingPanelId(undefined);
-              setUI("showPatternPicker", true);
-            }}
+            onNew={handleFileNew}
             onOpen={() => setUI("showLoadModal", true)}
             onExamples={() => setUI("showExamples", !showExamples)}
             onImport={handleImportClick}

@@ -11,7 +11,7 @@ const PANELS_KEY = "sonoform-panels";
 const GLYPHS_KEY = "sonoform-custom-glyphs";
 const OPTS_KEY = "sonoform-optimizations";
 const BG_KEY = "sonoform-bg-color";
-const DEFAULT_BG = "#0a1628";
+const DEFAULT_BG = "#ffffff";
 
 function seedPrevAttendee() {
   localStorage.setItem(LAYERS_KEY, JSON.stringify([{ ...createLayer(0, "voronoi"), id: "layer-9-prev", panelId: "panel-prev" }]));

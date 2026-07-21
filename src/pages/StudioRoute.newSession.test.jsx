@@ -36,7 +36,7 @@ const PANELS_KEY = "sonoform-panels";
 const GLYPHS_KEY = "sonoform-custom-glyphs";
 const OPTS_KEY = "sonoform-optimizations";
 const BG_KEY = "sonoform-bg-color";
-const DEFAULT_BG = "#0a1628";
+const DEFAULT_BG = "#ffffff";
 
 const GUEST_AUTH = {
   loading: false,

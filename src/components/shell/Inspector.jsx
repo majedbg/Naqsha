@@ -49,6 +49,7 @@ import FieldOverlay from "../FieldOverlay";
 import ShapeCurve from "../ui/ShapeCurve";
 import ModulationParamBox from "../ui/ModulationParamBox";
 import { channelForTarget } from "../../lib/fields/channelConsumers";
+import { transferControlsAffectOutput } from "../../lib/fields/transferVisibility";
 import { canProduceLattice } from "../../lib/fields/latticeForLayer";
 import { resolveModulationForTarget } from "../../lib/fields/resolveModulationForTarget";
 import { ANCHOR_POS, ANCHOR_MID, ANCHOR_NEG } from "../../lib/fields/colormap";
@@ -225,6 +226,14 @@ function ModulatorDevice({
     max: current.range?.max ?? 1,
   };
 
+  // The device-level transfer controls (Offset / Shape / Steps) all run through
+  // modulationTransfer, so they share one gate: they only shape output on maps
+  // whose channel consumes the transfer chain (density / distort). Warp targets,
+  // lattice targets and an unmapped device run none of them. When they do nothing
+  // we hide all three (no dead knobs) AND pass their neutral values to the
+  // readout so the heatmap never previews a shaping the plot won't honor.
+  const transferActive = transferControlsAffectOutput({ maps });
+
   // Rebuild the whole modulator from the current one on every write. `range` MUST
   // be included or writes that omit it would drop the device range.
   const patchModulator = (patch) => {
@@ -369,6 +378,9 @@ function ModulatorDevice({
             canvasH={140}
             opacity={1}
             range={range}
+            offset={transferActive ? offset : 0}
+            shape={transferActive ? shape : 0}
+            steps={transferActive ? steps : 0}
           />
         </div>
       </div>
@@ -407,7 +419,12 @@ function ModulatorDevice({
         );
       })()}
 
-      {/* Device controls — offset / shape / steps, shared across all maps. */}
+      {/* Device controls — offset / shape / steps, shared across all maps. All
+          three run through modulationTransfer, so they're shown together only
+          when at least one mapped target consumes that chain (density / distort);
+          on warp/lattice/no-target they do nothing, so we hide the whole block
+          rather than leave dead controls. */}
+      {transferActive && (
       <div className="space-y-2">
         <label className="flex items-center gap-2 text-[11px] text-ink-soft">
           <span className="w-12 whitespace-nowrap">Offset</span>
@@ -451,6 +468,7 @@ function ModulatorDevice({
           </span>
         </label>
       </div>
+      )}
         </>
       )}
 

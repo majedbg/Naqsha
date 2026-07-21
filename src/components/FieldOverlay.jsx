@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { signedColor } from "../lib/fields/colormap";
-import { applyRange } from "../lib/fields/modulation";
+import { previewValue } from "../lib/fields/modulation";
 
 /**
  * FieldOverlay — read-only heatmap of a ScalarField, composited over the p5
@@ -23,6 +23,15 @@ import { applyRange } from "../lib/fields/modulation";
  * @param {{min:number,max:number}} [props.range] - device-level output range; each
  *   sampled value is affine-remapped through it before coloring, so the heatmap
  *   reflects attract-only ({0,1}, loses blue) / repel-only ({-1,0}, loses red).
+ * @param {number} [props.offset=0] - device-level bias, added AFTER the range
+ *   remap (same order as modulationTransfer). Lets the readout show the live
+ *   bias where offset affects output; callers pass 0 where it doesn't, so the
+ *   preview never shows a bias the plot won't honor. Default 0 = no bias.
+ * @param {number} [props.shape=0] - device-level shape ease, applied after
+ *   offset (via previewValue → modulationTransfer). Default 0 = linear.
+ * @param {number} [props.steps=0] - device-level terrace/quantize, applied after
+ *   shape. Default 0 = continuous (no banding). Like offset, callers pass the
+ *   neutral value where the transfer chain doesn't affect output.
  */
 export default function FieldOverlay({
   field,
@@ -30,6 +39,9 @@ export default function FieldOverlay({
   canvasH,
   opacity = 0.85,
   range = { min: -1, max: 1 },
+  offset = 0,
+  shape = 0,
+  steps = 0,
 }) {
   const ref = useRef(null);
 
@@ -47,7 +59,9 @@ export default function FieldOverlay({
     const img = tctx.createImageData(nx, ny);
     for (let j = 0; j < ny; j++) {
       for (let i = 0; i < nx; i++) {
-        const c = signedColor(applyRange(field.signedAt(i, j), range));
+        const c = signedColor(
+          previewValue(field.signedAt(i, j), { offset, range, shape, steps })
+        );
         const o = (j * nx + i) * 4;
         img.data[o] = c.r;
         img.data[o + 1] = c.g;
@@ -67,7 +81,8 @@ export default function FieldOverlay({
     ctx.drawImage(tmp, 0, 0, canvasW, canvasH);
     // Depend on range.min/max (not the object identity) so the heatmap recolors
     // as the range thumbs move, without re-running on unrelated re-renders.
-  }, [field, canvasW, canvasH, opacity, range.min, range.max]);
+    // offset/shape/steps are primitives, so their identity is stable across renders.
+  }, [field, canvasW, canvasH, opacity, range.min, range.max, offset, shape, steps]);
 
   return (
     <canvas

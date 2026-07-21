@@ -49,6 +49,7 @@ import FieldOverlay from "../FieldOverlay";
 import ShapeCurve from "../ui/ShapeCurve";
 import ModulationParamBox from "../ui/ModulationParamBox";
 import { channelForTarget } from "../../lib/fields/channelConsumers";
+import { offsetAffectsOutput } from "../../lib/fields/offsetVisibility";
 import { canProduceLattice } from "../../lib/fields/latticeForLayer";
 import { resolveModulationForTarget } from "../../lib/fields/resolveModulationForTarget";
 import { ANCHOR_POS, ANCHOR_MID, ANCHOR_NEG } from "../../lib/fields/colormap";
@@ -225,6 +226,12 @@ function ModulatorDevice({
     max: current.range?.max ?? 1,
   };
 
+  // Offset only biases output on maps whose channel consumes it (density /
+  // distort); warp targets, lattice targets and an unmapped device ignore it.
+  // When it does nothing we hide the knob (no dead control) AND pass 0 to the
+  // readout so the heatmap never previews a bias the plot won't honor.
+  const offsetActive = offsetAffectsOutput({ maps });
+
   // Rebuild the whole modulator from the current one on every write. `range` MUST
   // be included or writes that omit it would drop the device range.
   const patchModulator = (patch) => {
@@ -369,6 +376,7 @@ function ModulatorDevice({
             canvasH={140}
             opacity={1}
             range={range}
+            offset={offsetActive ? offset : 0}
           />
         </div>
       </div>
@@ -407,8 +415,12 @@ function ModulatorDevice({
         );
       })()}
 
-      {/* Device controls — offset / shape / steps, shared across all maps. */}
+      {/* Device controls — offset / shape / steps, shared across all maps.
+          Offset is shown only when at least one mapped target consumes it
+          (density / distort); on warp/lattice/no-target it does nothing, so we
+          hide the knob rather than leave a dead control. */}
       <div className="space-y-2">
+        {offsetActive && (
         <label className="flex items-center gap-2 text-[11px] text-ink-soft">
           <span className="w-12 whitespace-nowrap">Offset</span>
           <input
@@ -426,6 +438,7 @@ function ModulatorDevice({
             {offset.toFixed(2)}
           </span>
         </label>
+        )}
 
         <ShapeCurve
           label="Shape"

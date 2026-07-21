@@ -36,6 +36,23 @@ export function applyRange(s, range = { min: -1, max: 1 }) {
   return min + ((s + 1) / 2) * (max - min);
 }
 
+/**
+ * Preview transfer for the FieldOverlay heatmap readout: applies the SAME first
+ * two steps of the real transfer chain, in the SAME order — affine `applyRange`
+ * FIRST, then `+ offset` (matching modulationTransfer lines 48–49 exactly) — so
+ * the readout never shows a bias the plot won't honor. Shape/steps/amount are
+ * deliberately NOT previewed: the readout has never shown them, and they'd turn
+ * the field lens into a full output simulation. `offset` defaults to 0 (no bias)
+ * so callers that don't preview offset stay byte-identical to plain applyRange.
+ * Output may leave [-1,1] once biased; signedColor clamps, so it saturates.
+ * @param {number} s - signed field value, normally in [-1,1]
+ * @param {{offset?:number, range?:{min:number,max:number}}} [cfg]
+ * @returns {number}
+ */
+export function previewValue(s, { offset = 0, range } = {}) {
+  return applyRange(s, range) + offset;
+}
+
 export function modulationTransfer(s, cfg = {}) {
   const {
     amount = 1,

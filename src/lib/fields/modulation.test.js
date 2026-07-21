@@ -4,6 +4,7 @@ import {
   densityWeight,
   stackDensityWeight,
   applyRange,
+  previewValue,
 } from "./modulation";
 import { ScalarField } from "./ScalarField";
 
@@ -13,6 +14,36 @@ import { ScalarField } from "./ScalarField";
 // device-level range replaces the old per-map polarity toggle. It returns a
 // signed contribution; consumers map it to a channel (density: weight = 1 +
 // contribution).
+// previewValue is the heatmap-readout transfer: applyRange FIRST, then +offset
+// — the same order and first two steps as modulationTransfer, so the preview
+// never lies about the biased field the output actually consumes.
+describe("previewValue", () => {
+  it("equals applyRange when offset is 0 / omitted (byte-identical readout)", () => {
+    for (const s of [-1, -0.4, 0, 0.7, 1]) {
+      const range = { min: -1, max: 1 };
+      expect(previewValue(s, { range })).toBeCloseTo(applyRange(s, range));
+      expect(previewValue(s, { offset: 0, range })).toBeCloseTo(
+        applyRange(s, range)
+      );
+    }
+  });
+  it("adds offset AFTER the range remap (matches modulationTransfer order)", () => {
+    const range = { min: 0, max: 1 };
+    for (const s of [-1, 0, 1]) {
+      expect(previewValue(s, { offset: 0.25, range })).toBeCloseTo(
+        applyRange(s, range) + 0.25
+      );
+    }
+  });
+  it("shares the first two transfer steps with modulationTransfer (shape/steps/amount off)", () => {
+    const cfg = { offset: 0.3, range: { min: -1, max: 1 } };
+    for (const s of [-0.6, 0.2, 0.9]) {
+      // With shape:0, steps:0, amount:1 the transfer chain reduces to preview.
+      expect(previewValue(s, cfg)).toBeCloseTo(modulationTransfer(s, cfg));
+    }
+  });
+});
+
 describe("applyRange", () => {
   it("is identity for the full range [-1,1]", () => {
     for (const s of [-1, -0.5, 0, 0.3, 1]) {

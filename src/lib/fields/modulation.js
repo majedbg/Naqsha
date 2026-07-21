@@ -37,20 +37,23 @@ export function applyRange(s, range = { min: -1, max: 1 }) {
 }
 
 /**
- * Preview transfer for the FieldOverlay heatmap readout: applies the SAME first
- * two steps of the real transfer chain, in the SAME order — affine `applyRange`
- * FIRST, then `+ offset` (matching modulationTransfer lines 48–49 exactly) — so
- * the readout never shows a bias the plot won't honor. Shape/steps/amount are
- * deliberately NOT previewed: the readout has never shown them, and they'd turn
- * the field lens into a full output simulation. `offset` defaults to 0 (no bias)
- * so callers that don't preview offset stay byte-identical to plain applyRange.
- * Output may leave [-1,1] once biased; signedColor clamps, so it saturates.
+ * Preview transfer for the FieldOverlay heatmap readout. DELEGATES to the real
+ * `modulationTransfer` so the readout can never drift from the output pipeline —
+ * it applies the SAME device-level transfer controls (range → +offset → shape
+ * ease → steps terrace) in the SAME order. The ONLY thing it omits is per-map
+ * `amount`: the readout is device-level (shared across every mapped target),
+ * so there is no single amount to show — `modulationTransfer` defaults amount to
+ * 1, a pure vertical scale that would not change the heatmap's structure anyway.
+ * All controls default to their neutral values, so a caller that passes only a
+ * range (or nothing) gets plain `applyRange` back, byte-identical to before.
+ * Output may leave [-1,1] once biased/eased; signedColor clamps, so it saturates.
  * @param {number} s - signed field value, normally in [-1,1]
- * @param {{offset?:number, range?:{min:number,max:number}}} [cfg]
+ * @param {{offset?:number, range?:{min:number,max:number}, shape?:number, steps?:number}} [cfg]
  * @returns {number}
  */
-export function previewValue(s, { offset = 0, range } = {}) {
-  return applyRange(s, range) + offset;
+export function previewValue(s, { offset = 0, range, shape = 0, steps = 0 } = {}) {
+  // amount intentionally omitted → modulationTransfer's default of 1.
+  return modulationTransfer(s, { offset, range, shape, steps });
 }
 
 export function modulationTransfer(s, cfg = {}) {

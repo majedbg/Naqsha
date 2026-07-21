@@ -27,6 +27,11 @@ import { previewValue } from "../lib/fields/modulation";
  *   remap (same order as modulationTransfer). Lets the readout show the live
  *   bias where offset affects output; callers pass 0 where it doesn't, so the
  *   preview never shows a bias the plot won't honor. Default 0 = no bias.
+ * @param {number} [props.shape=0] - device-level shape ease, applied after
+ *   offset (via previewValue → modulationTransfer). Default 0 = linear.
+ * @param {number} [props.steps=0] - device-level terrace/quantize, applied after
+ *   shape. Default 0 = continuous (no banding). Like offset, callers pass the
+ *   neutral value where the transfer chain doesn't affect output.
  */
 export default function FieldOverlay({
   field,
@@ -35,6 +40,8 @@ export default function FieldOverlay({
   opacity = 0.85,
   range = { min: -1, max: 1 },
   offset = 0,
+  shape = 0,
+  steps = 0,
 }) {
   const ref = useRef(null);
 
@@ -53,7 +60,7 @@ export default function FieldOverlay({
     for (let j = 0; j < ny; j++) {
       for (let i = 0; i < nx; i++) {
         const c = signedColor(
-          previewValue(field.signedAt(i, j), { offset, range })
+          previewValue(field.signedAt(i, j), { offset, range, shape, steps })
         );
         const o = (j * nx + i) * 4;
         img.data[o] = c.r;
@@ -74,8 +81,8 @@ export default function FieldOverlay({
     ctx.drawImage(tmp, 0, 0, canvasW, canvasH);
     // Depend on range.min/max (not the object identity) so the heatmap recolors
     // as the range thumbs move, without re-running on unrelated re-renders.
-    // `offset` is a primitive, so its identity is stable across renders.
-  }, [field, canvasW, canvasH, opacity, range.min, range.max, offset]);
+    // offset/shape/steps are primitives, so their identity is stable across renders.
+  }, [field, canvasW, canvasH, opacity, range.min, range.max, offset, shape, steps]);
 
   return (
     <canvas

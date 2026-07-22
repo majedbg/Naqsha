@@ -115,7 +115,14 @@ export default class Grid extends Pattern {
           ctx.beginShape();
           ctx.vertex(start.x, start.y);
           for (const s of segments) {
-            ctx.bezierVertex(s.c1.x, s.c1.y, s.c2.x, s.c2.y, s.end.x, s.end.y);
+            // p5 2.x curve API (BREAKING vs 1.x): a cubic is bezierOrder(3) plus
+            // three 1-point bezierVertex calls (c1, c2, end); the anchor is the
+            // current position (prior vertex / curve end). The old 6-arg form
+            // threw inside endShape() on p5 2.2.3 and blanked the whole canvas.
+            ctx.bezierOrder(3);
+            ctx.bezierVertex(s.c1.x, s.c1.y);
+            ctx.bezierVertex(s.c2.x, s.c2.y);
+            ctx.bezierVertex(s.end.x, s.end.y);
           }
           ctx.endShape();
         }

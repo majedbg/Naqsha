@@ -499,21 +499,33 @@ export default function useCanvas(
 
       // Center-pivot transform (move/resize/rotate). Wraps the layer's bg fill
       // AND its draw so both move together and match the exported SVG group.
+      //
+      // Per-layer render guard: a single layer that throws mid-draw (e.g. a p5
+      // API misuse reaching endShape) must NOT abort the whole frame — the outer
+      // renderAll already ran p.clear()+p.background(), so an uncaught throw here
+      // blanks EVERY layer, not just the culprit. try/finally keeps the p5 matrix
+      // stack balanced (pop always runs even on throw); catch logs and lets the
+      // loop continue so the other layers still paint.
       p.push();
-      applyNodeTransform(p, nodeTransforms[layer.id], canvasW / 2, canvasH / 2);
+      try {
+        applyNodeTransform(p, nodeTransforms[layer.id], canvasW / 2, canvasH / 2);
 
-      // Draw layer background fill if bgOpacity > 0
-      if (layer.bgOpacity > 0) {
-        const bgAlpha = Math.round((layer.bgOpacity / 100) * 255);
-        const bgC = p.color(layer.bgColor);
-        bgC.setAlpha(bgAlpha);
-        p.noStroke();
-        p.fill(bgC);
-        p.rect(0, 0, canvasW, canvasH);
+        // Draw layer background fill if bgOpacity > 0
+        if (layer.bgOpacity > 0) {
+          const bgAlpha = Math.round((layer.bgOpacity / 100) * 255);
+          const bgC = p.color(layer.bgColor);
+          bgC.setAlpha(bgAlpha);
+          p.noStroke();
+          p.fill(bgC);
+          p.rect(0, 0, canvasW, canvasH);
+        }
+
+        instance.generateWithContext(drawCtx, layer.seed, renderParams, canvasW, canvasH, resolveCanvasColor(layer, { operations, outputMode, colorView, panels }), drawOpacity);
+      } catch (err) {
+        console.warn(`Naqsha: layer ${layer.id} (${layer.patternType}) failed to render; skipping it so the rest of the document still paints.`, err);
+      } finally {
+        p.pop();
       }
-
-      instance.generateWithContext(drawCtx, layer.seed, renderParams, canvasW, canvasH, resolveCanvasColor(layer, { operations, outputMode, colorView, panels }), drawOpacity);
-      p.pop();
     }
 
     // Selection chrome (canvas-drawn): bbox outline + 8 resize handles + 1

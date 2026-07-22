@@ -53,6 +53,9 @@ import { mulberry32 } from './rng';
  *   rect(x, y, w, h)
  *   triangle(x1, y1, x2, y2, x3, y3)
  *   beginShape() / vertex(x, y) / endShape(mode?)
+ *   bezierOrder(n) / bezierVertex(x, y)   — p5 2.x curve API: bezierOrder sets
+ *                         the degree, bezierVertex takes ONE point per call
+ *                         (cubic = bezierOrder(3) + three bezierVertex calls)
  * ---------------------------------------------------------------------------
  *
  * THE NON-NEGOTIABLE INVARIANT (production byte-identity with `main`):
@@ -140,6 +143,10 @@ export class P5Adapter {
   triangle(...a) { if (this._draw) this._p.triangle(...a); }
   beginShape(...a) { this._rec('beginShape', a); if (this._draw) this._p.beginShape(...a); }
   vertex(...a) { this._rec('vertex', a); if (this._draw) this._p.vertex(...a); }
+  // p5 2.x curve API: `bezierOrder(n)` sets the degree; `bezierVertex(x, y)` then
+  // takes ONE point per call (a cubic = bezierOrder(3) + three calls). The old
+  // 1.x 6-arg `bezierVertex` throws inside endShape() on p5 2.x.
+  bezierOrder(...a) { if (this._draw) this._p.bezierOrder(...a); }
   bezierVertex(...a) { if (this._draw) this._p.bezierVertex(...a); }
   endShape(...a) { this._rec('endShape', a); if (this._draw) this._p.endShape(...a); }
 }
@@ -226,6 +233,7 @@ export class RecordingContext {
   triangle(...a) { this._record('triangle', a); }
   beginShape(...a) { this._record('beginShape', a); }
   vertex(...a) { this._record('vertex', a); }
+  bezierOrder(...a) { this._record('bezierOrder', a); }
   bezierVertex(...a) { this._record('bezierVertex', a); }
   endShape(...a) { this._record('endShape', a); }
 }

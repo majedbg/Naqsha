@@ -62,7 +62,7 @@ import { MOTIF_GLYPHS } from "../../lib/motif/glyphs";
 import EtchStackRack from "./EtchStackRack";
 import EtchHighlightHold from "./EtchHighlightHold";
 import EtchPreviewHero from "./EtchPreviewHero";
-import { MOTIF_HOSTS, isSemanticHost } from "../../lib/motif/hostKinds";
+import { MOTIF_HOSTS, isMotifHost, isSemanticHost } from "../../lib/motif/hostKinds";
 import { defaultMotifAddOpts } from "../../lib/motif/defaultBinding";
 import { getSemanticAnchors } from "../../lib/motif/semanticAnchors";
 import { STARTER_CHIPS } from "../../lib/motif/starterChips";
@@ -773,6 +773,36 @@ function MotifRowModeColumn({
   );
 }
 
+// Eye / eye-slash — mirrors LayerTree's EyeIcon (visibility control), used on
+// the docked collapsed strip so a maker can hide a host's motifs from the shelf.
+function MotifEyeIcon({ open }) {
+  return open ? (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+    >
+      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  ) : (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+    >
+      <path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24" />
+      <line x1="1" y1="1" x2="23" y2="23" />
+    </svg>
+  );
+}
+
 // Motif device panel — add/edit/remove motifs that ADORN this host layer.
 // Shown ONLY for an eligible HOST (a grid/recursive/spiral pattern layer, never
 // a motif layer itself). Each motif is a sibling layer whose params.hostLayerId
@@ -800,6 +830,15 @@ function MotifDevice({
   trace,
   canvasW,
   canvasH,
+  // When the device lives inside a tab panel (the right-rail folder tabs), the
+  // tab itself IS the disclosure — so we drop the internal collapse chevron and
+  // border and render the body always-open. The `open` state below is still
+  // declared (rules-of-hooks) but ignored while embedded.
+  embedded = false,
+  // On the docked BOTTOM shelf, collapsing the device turns it into an
+  // Ableton-style full-height vertical strip (sideways "Motif" label + Trace and
+  // hide icons) instead of just hiding its body. Ignored on the right rail.
+  dockedBottom = false,
 }) {
   // OPEN by default, and the state survives selection changes (motif-shell,
   // D). The audit's top discoverability finding: SelectedLayerInspector is
@@ -1017,44 +1056,133 @@ function MotifDevice({
   // Role scoping (semantic hosts expose crossing/tip/cell; edge hosts only Edges)
   // now lives inside MotifBlockRack's Route card, driven by hostIsSemantic.
 
+  // Docked bottom shelf + collapsed → Ableton-style full-height vertical strip.
+  // The sideways label doubles as the expand affordance; Trace (play) and the
+  // hide eye ride along so a maker can rehearse or hide motifs without expanding.
+  // `data-strip` opts the child OUT of the shelf's equal-column sizing so it
+  // reads as a thin rail; `self-stretch` gives it the row's full height.
+  if (dockedBottom && !embedded && !open) {
+    const anyMotifVisible = motifs.some((m) => m.visible !== false);
+    const tracingMotif =
+      trace && motifs.find((m) => trace.activeMotifId === m.id);
+    const isTracing = !!tracingMotif;
+    return (
+      <div
+        data-strip=""
+        data-testid="motif-device"
+        data-collapsed="true"
+        className="flex w-10 flex-none flex-col items-center gap-2 self-stretch rounded-sm border border-hairline bg-paper-warm py-2"
+      >
+        {/* Expand — the sideways label IS the disclosure (mirrors the ▾ toggle). */}
+        <button
+          type="button"
+          data-testid="motif-toggle"
+          aria-expanded={false}
+          aria-label="Expand Motif"
+          title="Expand Motif"
+          onClick={() => setOpenPersistent(true)}
+          className="flex flex-1 items-center justify-center rounded-xs text-xs font-semibold uppercase tracking-wider text-ink-soft outline-none hover:text-ink focus-visible:ring-2 focus-visible:ring-violet [writing-mode:vertical-rl]"
+        >
+          <span>
+            Motif{motifs.length > 0 ? ` · ${motifs.length}` : ""}
+          </span>
+        </button>
+
+        {/* Trace (play) — rehearse the placement order of this host's motifs
+            (the one already tracing, else the first). Reuses trace.toggle. */}
+        {trace && motifs.length > 0 && (
+          <button
+            type="button"
+            data-testid="motif-strip-trace"
+            aria-label="Trace placement order"
+            aria-pressed={isTracing}
+            title="Trace placement order"
+            onClick={() => trace.toggle((tracingMotif ?? motifs[0]).id)}
+            className={[
+              "flex h-8 w-8 shrink-0 items-center justify-center rounded-xs outline-none transition-colors duration-fast focus-visible:ring-2 focus-visible:ring-violet",
+              isTracing ? "text-saffron" : "text-ink-soft hover:text-ink",
+            ].join(" ")}
+          >
+            <span aria-hidden="true">
+              {isTracing ? (
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
+                  <rect x="2" y="2" width="8" height="8" rx="1" />
+                </svg>
+              ) : (
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
+                  <path d="M3 2 L10 6 L3 10 Z" />
+                </svg>
+              )}
+            </span>
+          </button>
+        )}
+
+        {/* Eye — hide/show ALL of this host's motif adornments at once. New to
+            the inspector: the layers view has a per-layer eye, this brings the
+            same control to the collapsed Motif module. */}
+        {motifs.length > 0 && (
+          <button
+            type="button"
+            data-testid="motif-strip-visibility"
+            aria-label={anyMotifVisible ? "Hide motifs" : "Show motifs"}
+            aria-pressed={!anyMotifVisible}
+            title={anyMotifVisible ? "Hide motifs" : "Show motifs"}
+            onClick={() =>
+              motifs.forEach((m) =>
+                onUpdateLayer(m.id, { visible: !anyMotifVisible })
+              )
+            }
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xs text-ink-soft outline-none transition-colors duration-fast hover:text-ink focus-visible:ring-2 focus-visible:ring-violet"
+          >
+            <MotifEyeIcon open={anyMotifVisible} />
+          </button>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div
-      className="space-y-3 border-t border-hairline pt-3"
+      className={
+        embedded ? "space-y-3" : "space-y-3 border-t border-hairline pt-3"
+      }
       data-testid="motif-device"
     >
-      <button
-        type="button"
-        data-testid="motif-toggle"
-        aria-expanded={open}
-        onClick={() => {
-          const next = !open;
-          setOpenPersistent(next);
-          // Disarm canvas-pick on card COLLAPSE (C4 disarm event): the arm button
-          // lives inside {open && …}, so collapsing would otherwise strand the
-          // ephemeral motifPick with the overlay still armed and no visible
-          // off-switch. Only clear when THIS device owns the armed motif.
-          if (
-            !next &&
-            motifPick &&
-            motifs.some((m) => m.id === motifPick.layerId)
-          ) {
-            onMotifPick?.(null);
-          }
-        }}
-        className="flex w-full items-center gap-1.5 text-left text-xs font-semibold text-ink-soft uppercase tracking-wider outline-none hover:text-ink focus-visible:ring-2 focus-visible:ring-violet"
-      >
-        <span aria-hidden="true" className="text-2xs leading-none">
-          {open ? "▾" : "▸"}
-        </span>
-        <span>Motif</span>
-        {!open && motifs.length > 0 && (
-          <span className="font-normal normal-case tracking-normal text-ink-soft">
-            · {motifs.length}
+      {!embedded && (
+        <button
+          type="button"
+          data-testid="motif-toggle"
+          aria-expanded={open}
+          onClick={() => {
+            const next = !open;
+            setOpenPersistent(next);
+            // Disarm canvas-pick on card COLLAPSE (C4 disarm event): the arm button
+            // lives inside {open && …}, so collapsing would otherwise strand the
+            // ephemeral motifPick with the overlay still armed and no visible
+            // off-switch. Only clear when THIS device owns the armed motif.
+            if (
+              !next &&
+              motifPick &&
+              motifs.some((m) => m.id === motifPick.layerId)
+            ) {
+              onMotifPick?.(null);
+            }
+          }}
+          className="flex w-full items-center gap-1.5 text-left text-xs font-semibold text-ink-soft uppercase tracking-wider outline-none hover:text-ink focus-visible:ring-2 focus-visible:ring-violet"
+        >
+          <span aria-hidden="true" className="text-2xs leading-none">
+            {open ? "▾" : "▸"}
           </span>
-        )}
-      </button>
+          <span>Motif</span>
+          {!open && motifs.length > 0 && (
+            <span className="font-normal normal-case tracking-normal text-ink-soft">
+              · {motifs.length}
+            </span>
+          )}
+        </button>
+      )}
 
-      {open && (
+      {(embedded || open) && (
         <>
           {/* Shared hidden file input backing every row's "Import SVG as motif…"
               button. The armed row is tracked in importTargetIdRef. Mirrors the
@@ -1375,6 +1503,77 @@ function MotifDevice({
 // The param-editing body for one selected layer. Split into its own component so
 // usePatternCache (a hook) is only called when a layer is actually selected —
 // hooks can't be called conditionally inside Inspector itself.
+// Folder-style tabs for the right rail (WI-tabs). When the inspector is a tall
+// vertical rail, the Motif device and the pattern params compete for the top of
+// the panel and reaching the params means collapsing the motif module — an odd
+// path. These tabs float the view choice to the top instead: one tab per view,
+// the active one styled like a folder tab that merges into the panel below it.
+// Selection is cached per-layer by the owner so returning to a layer restores
+// its last-open view. Docked-to-bottom keeps the Ableton-style module row.
+function InspectorFolderTabs({ tabs, active, onChange, children }) {
+  const activeIdx = Math.max(
+    0,
+    tabs.findIndex((t) => t.id === active)
+  );
+  const handleKeyDown = (e) => {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    e.preventDefault();
+    const dir = e.key === "ArrowRight" ? 1 : -1;
+    const next = tabs[(activeIdx + dir + tabs.length) % tabs.length];
+    onChange(next.id);
+  };
+  return (
+    <div data-testid="inspector-tabs">
+      <div
+        role="tablist"
+        aria-label="Inspector view"
+        onKeyDown={handleKeyDown}
+        className="flex items-end gap-1 border-b border-hairline"
+      >
+        {tabs.map((t) => {
+          const selected = t.id === active;
+          return (
+            <button
+              key={t.id}
+              type="button"
+              role="tab"
+              id={`inspector-tab-${t.id}`}
+              aria-selected={selected}
+              aria-controls="inspector-tabpanel"
+              tabIndex={selected ? 0 : -1}
+              data-testid={`inspector-tab-${t.id}`}
+              onClick={() => onChange(t.id)}
+              className={`relative -mb-px flex items-center gap-1.5 rounded-t-cell border px-3 py-1.5 text-xs font-semibold uppercase tracking-wider outline-none transition-colors focus-visible:ring-2 focus-visible:ring-violet ${
+                selected
+                  ? // Merge into the panel: same bg as the inspector (bg-paper),
+                    // and drop the bottom border so tab and panel read as one sheet.
+                    "border-hairline border-b-transparent bg-paper text-ink"
+                  : "border-transparent text-ink-soft hover:text-ink"
+              }`}
+            >
+              <span>{t.label}</span>
+              {t.badge != null && t.badge > 0 && (
+                <span className="font-normal normal-case tracking-normal text-ink-soft">
+                  · {t.badge}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+      <div
+        role="tabpanel"
+        id="inspector-tabpanel"
+        aria-labelledby={`inspector-tab-${active}`}
+        data-testid="inspector-tabpanel"
+        className="pt-3"
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
 function SelectedLayerInspector({
   layer,
   layers,
@@ -1406,6 +1605,12 @@ function SelectedLayerInspector({
   trace,
   canvasW,
   canvasH,
+  // Right-rail folder tabs (WI-tabs): the active view ("pattern" | "motif") for
+  // THIS layer and a setter, owned above the per-layer remount boundary so the
+  // choice is cached per layer. Absent (legacy / no-provider / mobile) ⇒ the
+  // classic stacked module chain, unchanged.
+  inspectorTab = "pattern",
+  onInspectorTabChange,
 }) {
   // Pattern swap: route through the same cache machine LayerCard uses, applied via
   // the pair-aware onChangeLayerPattern when present (falls back to a plain param
@@ -1422,9 +1627,22 @@ function SelectedLayerInspector({
   // null (legacy / no provider) ⇒ isBottom=false ⇒ byte-unchanged column layout.
   const dock = useInspectorDockContext();
   const isBottom = dock?.dockPosition === "bottom";
+  const isRightRail = dock?.dockPosition === "right";
   const modulesClass = isBottom
-    ? "flex flex-row flex-wrap items-start gap-4 [&>*]:min-w-[16rem] [&>*]:flex-1"
+    ? // Equal-width columns EXCEPT a collapsed module strip (`data-strip`), which
+      // opts out so it can render as a thin full-height rail (Ableton collapse).
+      "flex flex-row flex-wrap items-start gap-4 [&>*:not([data-strip])]:min-w-[16rem] [&>*:not([data-strip])]:flex-1"
     : "flex flex-col gap-3";
+
+  // Right-rail folder tabs only apply to an eligible motif HOST — the one case
+  // where two competing views (Motif device vs pattern params) stack. Motif
+  // *layers* (adornment info) and non-host patterns have no Motif view, so they
+  // keep the classic single stack. The count feeds the Motif tab's badge.
+  const hostEligible = !isMotifLayer(layer) && isMotifHost(layer.patternType);
+  const useTabs = isRightRail && hostEligible;
+  const motifCount = layers.filter(
+    (l) => isMotifLayer(l) && motifHostId(l) === layer.id
+  ).length;
 
   // Param context value — identical wiring to LayerCard's boundary, bound to the
   // selected layer's id so edits patch the right layer.
@@ -1438,6 +1656,109 @@ function SelectedLayerInspector({
     onRandomizeKeysChange: (keys) =>
       onUpdateLayer(layer.id, { randomizeKeys: keys }),
   });
+
+  // Motif device props — the same set whether it renders in the module chain
+  // (with its own disclosure) or inside the Motif tab (embedded, always-open).
+  const motifDeviceProps = {
+    layer,
+    layers,
+    onUpdateLayer,
+    onAddMotif,
+    onRemoveLayer,
+    customGlyphs,
+    onEditGlyph,
+    onNewMotif,
+    onImportFile,
+    libraryMotifs,
+    onCopyLibraryGlyph,
+    onUseLibraryGlyph,
+    motifPick,
+    onMotifPick,
+    onOpenLibrary,
+    motifPlacementStats,
+    trace,
+    canvasW,
+    canvasH,
+  };
+
+  // Everything in the module chain EXCEPT the Motif device — the "Pattern" view.
+  // Rendered inline in the classic stack, or inside the Pattern tab on the rail.
+  const patternModules = (
+    <>
+      {/* Etch Stack rack (Raster Etch S2, #81) — the ordered, reorderable,
+          bypassable stack of Stages an Etch's luma field flows through before
+          screening, with the Tone Stage controls. Self-hides for non-Etch
+          layers, so it costs nothing for vector layers. */}
+      <EtchStackRack layer={layer} onUpdateLayer={onUpdateLayer} />
+
+      {/* Highlight Hold (Raster Etch S4, #83) — the FIXED TERMINAL clamp that
+          guarantees no dot etches above the cutoff, rendered as its OWN control
+          BELOW the Stack (never a Stage: it can't be dragged into the Stack,
+          reordered, or bypassed). Material-aware default (mirror → on) resolved
+          from the layer's panel material. Self-hides for non-Etch layers. */}
+      <EtchHighlightHold
+        layer={layer}
+        panels={panels}
+        colorView={colorView}
+        onUpdateLayer={onUpdateLayer}
+      />
+
+      {/* 1:1 "what etches" preview hero (Raster Etch S9, #88) — a pixel-accurate
+          verification view of the Etch's exported 1-bit output (the held band
+          shaded), so the maker can inspect the true dot density before an
+          irreversible mirror cut. Reads the SAME single-source `etchBitmap` the
+          canvas draws + svgExport embeds (grilled decision 4) — never a second
+          resolve. Self-hides for non-Etch layers / while the bitmap resolves. */}
+      <EtchPreviewHero layer={layer} bitmap={etchBitmap} />
+
+      {/* Collapsible, grouped param controls (Structure / Scale / Variation /
+          Stroke / Transform — the existing PARAM_GROUPS). */}
+      {layerParamsValue && (
+        <LayerParamsProvider value={layerParamsValue}>
+          <PatternParams />
+        </LayerParamsProvider>
+      )}
+
+      {/* Modulation-scoped param (§5) — the Grid's `warpNodes`, shown in the grid
+          panel ONLY while the grid is an active 'warp' target (a modulator maps a
+          warp channel to it and can produce a field). Owner label "Modulation".
+          Same canonical write as the modulator-row site; the `...layer.params`
+          spread is REQUIRED (shallow top-level merge). */}
+      {layer.patternType === "grid" &&
+        resolveModulationForTarget(layer, layers) !== null && (
+          <ModulationParamBox owner="Modulation">
+            <WarpNodesControl
+              testidSuffix="-panel"
+              value={layer.params?.warpNodes ?? 6}
+              onChange={(v) =>
+                onUpdateLayer(layer.id, {
+                  params: { ...layer.params, warpNodes: Number(v) },
+                })
+              }
+            />
+          </ModulationParamBox>
+        )}
+
+      {/* Variable line-weight UI (#17, C8) — capability-gated, OFF by default. */}
+      <VariableWeightControls
+        layer={layer}
+        profileId={profileId}
+        onVariableWeightChange={onVariableWeightChange}
+      />
+
+      {/* Modulator device (pattern modulation, modulator-centric) — shown only
+          for a layer that can produce a field (the guide / Chladni). */}
+      <ModulatorDevice
+        layer={layer}
+        layers={layers}
+        onUpdateLayer={onUpdateLayer}
+        onPreviewField={onPreviewField}
+        onClosePreview={onClosePreview}
+        threeDSubMode={threeDSubMode}
+        threeDFocusLayerId={threeDFocusLayerId}
+      />
+    </>
+  );
 
   return (
     <div className="flex flex-col gap-3 p-3" data-testid="inspector-params">
@@ -1481,109 +1802,41 @@ function SelectedLayerInspector({
         <DockToggle />
       </div>
 
-      {/* The module chain. Vertical stack on the right rail; a wrapping,
-          left→right row on the bottom shelf (see modulesClass). */}
-      <div className={modulesClass}>
-        {/* Motif device — add/edit/remove motifs adorning this host. Collapsed by
-          default and pinned ABOVE the pattern params so it's the first thing a
-          user sees for a host layer (mobile discoverability). Self-hides unless
-          the selected layer is an eligible host (grid/recursive/spiral) → renders
-          nothing, leaving no empty gap for non-host layers. */}
-        <MotifDevice
-          layer={layer}
-          layers={layers}
-          onUpdateLayer={onUpdateLayer}
-          onAddMotif={onAddMotif}
-          onRemoveLayer={onRemoveLayer}
-          customGlyphs={customGlyphs}
-          onEditGlyph={onEditGlyph}
-          onNewMotif={onNewMotif}
-          onImportFile={onImportFile}
-          libraryMotifs={libraryMotifs}
-          onCopyLibraryGlyph={onCopyLibraryGlyph}
-          onUseLibraryGlyph={onUseLibraryGlyph}
-          motifPick={motifPick}
-          onMotifPick={onMotifPick}
-          onOpenLibrary={onOpenLibrary}
-          motifPlacementStats={motifPlacementStats}
-          trace={trace}
-          canvasW={canvasW}
-          canvasH={canvasH}
-        />
-
-        {/* Etch Stack rack (Raster Etch S2, #81) — the ordered, reorderable,
-          bypassable stack of Stages an Etch's luma field flows through before
-          screening, with the Tone Stage controls. Self-hides for non-Etch
-          layers, so it costs nothing for vector layers. */}
-        <EtchStackRack layer={layer} onUpdateLayer={onUpdateLayer} />
-
-        {/* Highlight Hold (Raster Etch S4, #83) — the FIXED TERMINAL clamp that
-          guarantees no dot etches above the cutoff, rendered as its OWN control
-          BELOW the Stack (never a Stage: it can't be dragged into the Stack,
-          reordered, or bypassed). Material-aware default (mirror → on) resolved
-          from the layer's panel material. Self-hides for non-Etch layers. */}
-        <EtchHighlightHold
-          layer={layer}
-          panels={panels}
-          colorView={colorView}
-          onUpdateLayer={onUpdateLayer}
-        />
-
-        {/* 1:1 "what etches" preview hero (Raster Etch S9, #88) — a pixel-accurate
-          verification view of the Etch's exported 1-bit output (the held band
-          shaded), so the maker can inspect the true dot density before an
-          irreversible mirror cut. Reads the SAME single-source `etchBitmap` the
-          canvas draws + svgExport embeds (grilled decision 4) — never a second
-          resolve. Self-hides for non-Etch layers / while the bitmap resolves. */}
-        <EtchPreviewHero layer={layer} bitmap={etchBitmap} />
-
-        {/* Collapsible, grouped param controls (Structure / Scale / Variation /
-          Stroke / Transform — the existing PARAM_GROUPS). */}
-        {layerParamsValue && (
-          <LayerParamsProvider value={layerParamsValue}>
-            <PatternParams />
-          </LayerParamsProvider>
-        )}
-
-        {/* Modulation-scoped param (§5) — the Grid's `warpNodes`, shown in the grid
-          panel ONLY while the grid is an active 'warp' target (a modulator maps a
-          warp channel to it and can produce a field). Owner label "Modulation".
-          Same canonical write as the modulator-row site; the `...layer.params`
-          spread is REQUIRED (shallow top-level merge). */}
-        {layer.patternType === "grid" &&
-          resolveModulationForTarget(layer, layers) !== null && (
-            <ModulationParamBox owner="Modulation">
-              <WarpNodesControl
-                testidSuffix="-panel"
-                value={layer.params?.warpNodes ?? 6}
-                onChange={(v) =>
-                  onUpdateLayer(layer.id, {
-                    params: { ...layer.params, warpNodes: Number(v) },
-                  })
-                }
-              />
-            </ModulationParamBox>
+      {/* The module chain. Three layouts:
+          • right rail on an eligible motif host → folder tabs (Pattern | Motif),
+            the active view cached per layer by the owner (WI-tabs). Floats the
+            view choice to the top instead of gating params behind a motif
+            collapse;
+          • bottom shelf → a wrapping left→right row of "effect" modules (Ableton);
+          • otherwise (right rail non-host, legacy/no-provider, mobile) → the
+            classic vertical stack with the Motif device's own disclosure. */}
+      {useTabs ? (
+        <InspectorFolderTabs
+          active={inspectorTab}
+          onChange={onInspectorTabChange}
+          tabs={[
+            { id: "pattern", label: "Pattern" },
+            { id: "motif", label: "Motif", badge: motifCount },
+          ]}
+        >
+          {inspectorTab === "motif" ? (
+            <MotifDevice {...motifDeviceProps} embedded />
+          ) : (
+            <div className="flex flex-col gap-3">{patternModules}</div>
           )}
-
-        {/* Variable line-weight UI (#17, C8) — capability-gated, OFF by default. */}
-        <VariableWeightControls
-          layer={layer}
-          profileId={profileId}
-          onVariableWeightChange={onVariableWeightChange}
-        />
-
-        {/* Modulator device (pattern modulation, modulator-centric) — shown only
-          for a layer that can produce a field (the guide / Chladni). */}
-        <ModulatorDevice
-          layer={layer}
-          layers={layers}
-          onUpdateLayer={onUpdateLayer}
-          onPreviewField={onPreviewField}
-          onClosePreview={onClosePreview}
-          threeDSubMode={threeDSubMode}
-          threeDFocusLayerId={threeDFocusLayerId}
-        />
-      </div>
+        </InspectorFolderTabs>
+      ) : (
+        <div className={modulesClass}>
+          {/* Motif device — add/edit/remove motifs adorning this host. Pinned
+            ABOVE the pattern params so it's the first thing a user sees for a
+            host layer (mobile discoverability). Self-hides unless the selected
+            layer is an eligible host → renders nothing for non-host layers.
+            On the bottom shelf, collapsing it yields the Ableton vertical
+            strip (dockedBottom). */}
+          <MotifDevice {...motifDeviceProps} dockedBottom={isBottom} />
+          {patternModules}
+        </div>
+      )}
     </div>
   );
 }
@@ -1692,6 +1945,13 @@ export default function Inspector({
   // at the top of the component (before any early return) per rules-of-hooks.
   const { font } = useFont();
 
+  // Right-rail folder-tab selection, cached per layer (WI-tabs). Held HERE —
+  // above the `key={layer.id}` remount boundary of SelectedLayerInspector — so
+  // switching away and back to a layer restores its last-open view. In-memory
+  // (session-scoped) by design: the ask is "come back within the session", and
+  // layer ids aren't stable across sessions, so localStorage would leak keys.
+  const [motifTabByLayer, setMotifTabByLayer] = useState(() => new Map());
+
   const layer =
     selectedLayerId != null
       ? layers.find((l) => l.id === selectedLayerId) || null
@@ -1787,6 +2047,10 @@ export default function Inspector({
       trace={trace}
       canvasW={canvasW}
       canvasH={canvasH}
+      inspectorTab={motifTabByLayer.get(layer.id) ?? "pattern"}
+      onInspectorTabChange={(tabId) =>
+        setMotifTabByLayer((prev) => new Map(prev).set(layer.id, tabId))
+      }
     />
   );
 }

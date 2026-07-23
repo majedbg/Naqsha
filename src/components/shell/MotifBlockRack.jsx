@@ -41,6 +41,7 @@ import {
   sortableKeyboardCoordinates,
 } from "@dnd-kit/sortable";
 import { useInspectorDockContext } from "./inspectorDockContext";
+import { useMeasuredWidth } from "../../lib/hooks/useMeasuredWidth";
 import {
   makeBlock,
   canAddBlock,
@@ -1019,8 +1020,12 @@ function SortableBlockCard({
           bypassed ? "border-hairline bg-paper/60 opacity-60" : "border-hairline bg-paper"
         } min-w-[160px]`}
       >
-        {/* ~28-32px one-line row. Height-free unfold below (no height animation). */}
-        <div className="flex min-h-[28px] items-center gap-1.5 px-2 py-1">
+        {/* One-line header that WRAPS when narrow: below ~a rail's worth of width
+            the summary control (Route's role toggles / everyN strip) would
+            otherwise collapse its container to 0 and paint its fixed-width
+            buttons left over the block name. flex-wrap + a content-sized summary
+            (no min-w-0 below) drops it to a second line instead of overlapping. */}
+        <div className="flex min-h-[28px] flex-wrap items-center gap-1.5 px-2 py-1">
           {grip}
           <button
             type="button"
@@ -1044,7 +1049,7 @@ function SortableBlockCard({
               {BLOCK_LABELS[block.type] || block.type}
             </span>
           </button>
-          <div className="flex min-w-0 flex-1 items-center justify-end">
+          <div className="flex flex-1 items-center justify-end">
             <BlockSummaryControl
               block={block}
               roleOptions={roleOptions}
@@ -1128,7 +1133,23 @@ export default function MotifBlockRack({
   onEditSlotGlyph,
 }) {
   const dock = useInspectorDockContext();
-  const orientation = dock?.dockPosition === "bottom" ? "horizontal" : "vertical";
+  // Orientation follows the rack's ACTUAL width, not the dock position. The rack
+  // always sits in a NARROW sub-column — the w-28 mode column beside it on the
+  // rail, a ~256px module on the shelf — so the old "bottom shelf ⇒ horizontal"
+  // rule cramped the chain into a scroll strip you paged through one 160px card
+  // at a time. Go horizontal only when there's genuine room for a left→right
+  // chain (≥2 cards); fall back to the dock hint before the first measurement
+  // (jsdom / SSR / first paint) so the unmeasured default stays deterministic.
+  const [rackRef, rackWidth] = useMeasuredWidth();
+  const HORIZONTAL_MIN = 340; // ≈ 2 × min-w-[160px] cards + gap
+  const orientation =
+    rackWidth != null
+      ? rackWidth >= HORIZONTAL_MIN
+        ? "horizontal"
+        : "vertical"
+      : dock?.dockPosition === "bottom"
+        ? "horizontal"
+        : "vertical";
 
   // On an edge host, Route only offers the Edges role (semantic crossing/tip/cell
   // anchors don't exist there) — mirror MotifDevice's roleOptions scoping.
@@ -1186,7 +1207,7 @@ export default function MotifBlockRack({
   );
 
   return (
-    <div className="space-y-2" data-testid="motif-rack" data-orientation={orientation}>
+    <div ref={rackRef} className="space-y-2" data-testid="motif-rack" data-orientation={orientation}>
       <DndContext
         sensors={sensors}
         collisionDetection={closestCenter}
@@ -1204,7 +1225,11 @@ export default function MotifBlockRack({
             className={
               orientation === "horizontal"
                 ? "flex flex-nowrap gap-2 overflow-x-auto pb-1"
-                : "flex flex-col gap-2"
+                : // overflow-x-auto is a FLOOR: after the row stacks (P1) the
+                  // vertical rack gets full width and the min-w-[160px] cards fit,
+                  // but if it's ever narrower than a card this scrolls the rack
+                  // instead of pushing a scrollbar onto the whole inspector.
+                  "flex flex-col gap-2 overflow-x-auto"
             }
           >
             {blocks.map((block, i) => (

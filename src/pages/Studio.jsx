@@ -80,6 +80,7 @@ import {
   deletePanel,
   duplicatePanel,
   clearPanelLayers,
+  normalizePanels,
 } from "../lib/panels";
 import { exportPanelsZip } from "../lib/panelExport";
 import { isTextLayer } from "../lib/text/textLayer";
@@ -608,6 +609,27 @@ export default function Studio({ submitOrg = null } = {}) {
       loadLayerSet(newLayers);
     },
     [loadLayerSet, setCustomGlyphs]
+  );
+
+  // Document loads that must also (re)build the panels array. loadDocumentLayers
+  // only swaps `layers`; a loaded/seeded layer therefore keeps createLayer's null
+  // panelId while `panels` stays stale — ORPHANED: still drawn on the 2D canvas
+  // (effectiveVisible falls back to no-panel) but absent from the panel-grouped
+  // LayerTree AND the per-panel 3D preview. The cloud loader already normalizes +
+  // setPanels inline (useCloudPersistence); this is the SAME step for every other
+  // genuine load — onboarding seeds, saved groups, examples, share links. Docs
+  // that carry a panels array pass it through to preserve structure; those that
+  // don't (the common case) seed a fresh Panel 1 via normalizePanels(null, …).
+  const loadDocumentWithPanels = useCallback(
+    (newLayers, newCustomGlyphs = {}, incomingPanels = null) => {
+      const { panels: normPanels, layers: normLayers } = normalizePanels(
+        incomingPanels,
+        Array.isArray(newLayers) ? newLayers : []
+      );
+      loadDocumentLayers(normLayers, newCustomGlyphs);
+      setPanels(normPanels);
+    },
+    [loadDocumentLayers, setPanels]
   );
 
   // === Tier-2 cloud history persistence (undo-history-plan §7, S9) ===
@@ -2136,7 +2158,13 @@ export default function Studio({ submitOrg = null } = {}) {
   const handleLoadGroup = (group) => {
     // WI-3: a saved group carries its custom-glyph store; default {} resets the
     // store for a pre-WI-3 group (no field) so it never inherits current glyphs.
-    loadDocumentLayers(group.layers, group.customGlyphs ?? {});
+    // Pin the loaded layers to panels (group.panels when present, else a fresh
+    // Panel 1) so they're never orphaned off the LayerTree / 3D preview.
+    loadDocumentWithPanels(
+      group.layers,
+      group.customGlyphs ?? {},
+      group.panels ?? null
+    );
     if (group.canvasW && group.canvasH) {
       applyCanvasSize(group.canvasW, group.canvasH);
     }
@@ -2154,7 +2182,12 @@ export default function Studio({ submitOrg = null } = {}) {
       if (!cfg?.layers) return;
       // WI-3: a curated example may bundle custom glyphs; default {} resets the
       // store for examples that don't (the common case) rather than leaking.
-      loadDocumentLayers(cfg.layers, cfg.customGlyphs ?? {});
+      // Pin to panels so the example's layers aren't orphaned off LayerTree / 3D.
+      loadDocumentWithPanels(
+        cfg.layers,
+        cfg.customGlyphs ?? {},
+        cfg.panels ?? null
+      );
       if (typeof cfg.bgColor === "string") setBgColor(cfg.bgColor);
       if (cfg.canvasW && cfg.canvasH) {
         applyCanvasSize(cfg.canvasW, cfg.canvasH);
@@ -2477,7 +2510,7 @@ export default function Studio({ submitOrg = null } = {}) {
             own parallel layer-state path. */}
         <GuestOnboarding
           isGuest={!user && tier === "guest"}
-          onLoadSeed={loadDocumentLayers}
+          onLoadSeed={loadDocumentWithPanels}
           activeLayer={layers.find((l) => l.id === selectedLayerId) || layers[0] || null}
           onUpdateLayer={updateLayer}
           lensTipUsed={lensTipUsed}
@@ -2579,7 +2612,12 @@ export default function Studio({ submitOrg = null } = {}) {
         <CloudSaveModal
           onLoad={handleLoadCloudDesign}
           onLoadConfig={(config) => {
-            if (config.layers) loadDocumentLayers(config.layers);
+            if (config.layers)
+              loadDocumentWithPanels(
+                config.layers,
+                config.customGlyphs ?? {},
+                config.panels ?? null
+              );
             if (config.canvasW && config.canvasH) {
               applyCanvasSize(config.canvasW, config.canvasH);
             }

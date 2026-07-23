@@ -11,7 +11,7 @@ import { defaultTextParams } from './text/textLayer';
 import { MOTIF_TYPE, createMotifParams, motifAutoName, isMotifLayer, motifHostId } from './motif/motifLayer';
 import { ETCH_TYPE, createEtchParams } from './etch/etchLayer';
 import { getGlyph, MOTIF_GLYPHS } from './motif/glyphs';
-import { normalizePanels, loadPanels, savePanels } from './panels';
+import { normalizePanels, loadPanels, savePanels, firstPanel } from './panels';
 
 // Distinct group id for a Moiré pair (links role A + role B).
 let nextGroupNum = 1;
@@ -395,8 +395,15 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
     const requested = typeof patternType === 'string' ? patternType : undefined;
     // Panel assignment (Naqsha Panels). Additive optional 2nd arg: when
     // `opts.panelId` is provided the new layer is born on that panel; otherwise
-    // panelId stays as createLayer sets it (null) and the normalizer assigns it.
+    // it's born on the current smallest-order panel. createLayer defaults panelId
+    // to null and NOTHING normalizes an add (unlike mount / resetDocument / a
+    // document load) — so a bare add left the layer ORPHANED: still drawn on the
+    // 2D canvas (effectiveVisible falls back to no-panel) but absent from the
+    // panel-grouped LayerTree and the per-panel 3D preview. Resolve it here so
+    // every add path (the pattern picker, the New-Layer button, "Use in Studio")
+    // lands on a real panel. Empty panels (shouldn't happen post-normalize) → null.
     const panelId = opts?.panelId;
+    const resolvedPanelId = panelId !== undefined ? panelId : (firstPanel(panels)?.id ?? null);
     const defaultOpId = typeof getDefaultOperationId === 'function' ? getDefaultOperationId() : undefined;
     recordStructuralFn(); // history: discrete structural entry (capture-before)
     setLayers((prev) => {
@@ -405,9 +412,9 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
       if (nonMotifCount(prev) >= cap || prev.length >= MAX_LAYERS) return prev;
       const layer = createLayer(prev.length, requested);
       const withOp = defaultOpId ? { ...layer, operationId: defaultOpId } : layer;
-      return [...prev, panelId !== undefined ? { ...withOp, panelId } : withOp];
+      return [...prev, { ...withOp, panelId: resolvedPanelId }];
     });
-  }, [cap, getDefaultOperationId, recordStructuralFn]);
+  }, [cap, getDefaultOperationId, recordStructuralFn, panels]);
 
   // Import an SVG file's outline as ONE place-as-artwork layer (issue #12, C4).
   // Parses the SVG → imported-path layer carrying the verbatim `d` data in

@@ -27,6 +27,7 @@ import PatternSelect from "../PatternSelect";
 import PatternParams from "../PatternParams";
 import DockToggle from "./DockToggle";
 import { useInspectorDockContext } from "./inspectorDockContext";
+import { useMeasuredWidth } from "../../lib/hooks/useMeasuredWidth";
 import SheetInspector from "./SheetInspector";
 import usePatternCache from "../../lib/usePatternCache";
 import {
@@ -922,6 +923,18 @@ function MotifDevice({
     }
   }, [layer.patternType, layer.params, layer.seed, canvasW, canvasH]);
 
+  // Measure the device's OWN width so each motif row can adapt to the space it
+  // actually has, not to the dock position. On a narrow inspector (the 200–280px
+  // default/min right rail, or a ~256px shelf module) the w-28 mode column + the
+  // min-w-[160px] block rack side-by-side need ~296px and overflow — pushing a
+  // horizontal scrollbar onto the whole panel. Below the threshold the row stacks
+  // (mode column above the rack) so the rack gets the full width and fits.
+  // Declared BEFORE the self-hide early return (Rules of Hooks). Unmeasured
+  // (jsdom / SSR / first paint) ⇒ null ⇒ side-by-side, the prior behavior.
+  const [deviceRef, deviceWidth] = useMeasuredWidth();
+  const STACK_BELOW = 300; // px — mode column + rack no longer fit side-by-side
+  const stackRow = deviceWidth != null && deviceWidth < STACK_BELOW;
+
   // Self-hide: a motif layer isn't a host, and only anchor-capable pattern
   // types host motifs today.
   if (isMotifLayer(layer) || !MOTIF_HOSTS.has(layer.patternType)) return null;
@@ -1071,7 +1084,7 @@ function MotifDevice({
         data-strip=""
         data-testid="motif-device"
         data-collapsed="true"
-        className="flex w-10 flex-none flex-col items-center gap-2 self-stretch rounded-sm border border-hairline bg-paper-warm py-2"
+        className="flex w-12 flex-none flex-col items-center gap-2 self-stretch rounded-sm border border-hairline bg-paper-warm py-2"
       >
         {/* Expand — the sideways label IS the disclosure (mirrors the ▾ toggle). */}
         <button
@@ -1099,7 +1112,7 @@ function MotifDevice({
             title="Trace placement order"
             onClick={() => trace.toggle((tracingMotif ?? motifs[0]).id)}
             className={[
-              "flex h-8 w-8 shrink-0 items-center justify-center rounded-xs outline-none transition-colors duration-fast focus-visible:ring-2 focus-visible:ring-violet",
+              "flex h-11 w-11 shrink-0 items-center justify-center rounded-xs outline-none transition-colors duration-fast focus-visible:ring-2 focus-visible:ring-violet",
               isTracing ? "text-saffron" : "text-ink-soft hover:text-ink",
             ].join(" ")}
           >
@@ -1132,7 +1145,7 @@ function MotifDevice({
                 onUpdateLayer(m.id, { visible: !anyMotifVisible })
               )
             }
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xs text-ink-soft outline-none transition-colors duration-fast hover:text-ink focus-visible:ring-2 focus-visible:ring-violet"
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xs text-ink-soft outline-none transition-colors duration-fast hover:text-ink focus-visible:ring-2 focus-visible:ring-violet"
           >
             <MotifEyeIcon open={anyMotifVisible} />
           </button>
@@ -1143,6 +1156,7 @@ function MotifDevice({
 
   return (
     <div
+      ref={deviceRef}
       className={
         embedded ? "space-y-3" : "space-y-3 border-t border-hairline pt-3"
       }
@@ -1333,7 +1347,7 @@ function MotifDevice({
                     data-testid="motif-remove"
                     aria-label="Remove motif"
                     onClick={() => onRemoveLayer?.(m.id)}
-                    className="shrink-0 rounded-xs px-1 text-xs text-ink-soft hover:text-ink"
+                    className="flex h-11 w-8 shrink-0 items-center justify-center rounded-xs text-sm text-ink-soft outline-none hover:text-ink focus-visible:ring-2 focus-visible:ring-violet"
                   >
                     ×
                   </button>
@@ -1365,7 +1379,7 @@ function MotifDevice({
                     type="button"
                     data-testid="motif-import"
                     onClick={() => openImportFor(m.id)}
-                    className="flex-1 rounded-xs border border-hairline bg-paper px-2 py-0.5 text-xs text-ink-soft outline-none transition-colors hover:border-violet hover:text-ink focus-visible:ring-2 focus-visible:ring-violet"
+                    className="flex-1 rounded-xs border border-hairline bg-paper px-2 py-1.5 text-xs text-ink-soft outline-none transition-colors hover:border-violet hover:text-ink focus-visible:ring-2 focus-visible:ring-violet"
                   >
                     Import SVG as motif…
                   </button>
@@ -1375,7 +1389,7 @@ function MotifDevice({
                     aria-label="New motif"
                     title="Draw a new motif from scratch"
                     onClick={() => onNewMotif?.(m.id)}
-                    className="shrink-0 rounded-xs border border-hairline bg-paper px-2 py-0.5 text-xs text-ink-soft outline-none transition-colors hover:border-violet hover:text-ink focus-visible:ring-2 focus-visible:ring-violet"
+                    className="shrink-0 rounded-xs border border-hairline bg-paper px-2 py-1.5 text-xs text-ink-soft outline-none transition-colors hover:border-violet hover:text-ink focus-visible:ring-2 focus-visible:ring-violet"
                   >
                     New…
                   </button>
@@ -1387,7 +1401,7 @@ function MotifDevice({
                     }
                     title={isCustomGlyph ? "Edit motif" : "Duplicate to edit"}
                     onClick={() => openEditorFor(m)}
-                    className="shrink-0 rounded-xs border border-hairline bg-paper px-2 py-0.5 text-xs text-ink-soft outline-none transition-colors hover:border-violet hover:text-ink focus-visible:ring-2 focus-visible:ring-violet"
+                    className="shrink-0 rounded-xs border border-hairline bg-paper px-2 py-1.5 text-xs text-ink-soft outline-none transition-colors hover:border-violet hover:text-ink focus-visible:ring-2 focus-visible:ring-violet"
                   >
                     <span aria-hidden="true">✎</span>
                   </button>
@@ -1397,8 +1411,11 @@ function MotifDevice({
                 (right). The column lights the preset the motif's chain matches
                 (or Custom on divergence); picking a preset rewrites the chain in
                 one undo entry. The rack keeps min-w-0 so it never overflows a
-                narrow inspector, and the column holds a fixed narrow width. */}
-                <div className="flex gap-2">
+                narrow inspector, and the column holds a fixed narrow width.
+                On a narrow inspector the row STACKS (mode column above the rack)
+                so the min-w-[160px] rack keeps the full width instead of forcing
+                a horizontal scrollbar onto the whole panel (stackRow). */}
+                <div className={stackRow ? "flex flex-col gap-2" : "flex gap-2"}>
                   <MotifRowModeColumn
                     binding={m.params?.binding}
                     hostPatternType={layer.patternType}

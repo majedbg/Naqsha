@@ -41,7 +41,7 @@ function rand() {
 // The smallest-`order` panel — the canonical "first" panel for reassignment and
 // seeding. NOT array[0]: `order` is the source of truth (array position only
 // tracks it coincidentally today). Returns undefined for an empty array.
-function firstPanel(panels) {
+export function firstPanel(panels) {
   if (!Array.isArray(panels) || panels.length === 0) return undefined;
   return panels.reduce((min, p) => (p.order < min.order ? p : min));
 }

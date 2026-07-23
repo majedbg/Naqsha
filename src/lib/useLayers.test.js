@@ -20,20 +20,26 @@ describe('useLayers.addLayer panel assignment', () => {
     expect(newest.panelId).toBe('p2');
   });
 
-  it('leaves panelId at createLayer default (null) when called with no opts', () => {
+  it('assigns the new layer to the current first panel when called with no opts (no longer orphaned)', () => {
     const { result } = renderHook(() => useLayers({ persistToLocal: false }));
+    // The mount normalizer pins the seed layer to Panel 1; a bare add must join
+    // that same panel, not keep createLayer's null (which orphaned it off the
+    // panel-grouped LayerTree and the per-panel 3D preview).
+    const expectedPanelId = result.current.layers[0].panelId;
+    expect(expectedPanelId).toBeTruthy();
 
     act(() => {
       result.current.addLayer('grid');
     });
 
     const newest = result.current.layers[result.current.layers.length - 1];
-    expect(newest.panelId).toBeNull();
+    expect(newest.panelId).toBe(expectedPanelId);
   });
 
-  it('still default-cycles and leaves panelId null when first arg is a non-string (event object)', () => {
+  it('still default-cycles AND lands on the first panel when first arg is a non-string (event object)', () => {
     const { result } = renderHook(() => useLayers({ persistToLocal: false }));
     const before = result.current.layers.length;
+    const expectedPanelId = result.current.layers[0].panelId;
 
     act(() => {
       result.current.addLayer({}); // bare onClick={addLayer} passes an event
@@ -41,7 +47,7 @@ describe('useLayers.addLayer panel assignment', () => {
 
     expect(result.current.layers.length).toBe(before + 1);
     const newest = result.current.layers[result.current.layers.length - 1];
-    expect(newest.panelId).toBeNull();
+    expect(newest.panelId).toBe(expectedPanelId);
   });
 
   it('no-ops at the tier cap even when a panelId is supplied', () => {

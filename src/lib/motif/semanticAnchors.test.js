@@ -9,6 +9,7 @@ import RecursiveGeometry from '../patterns/RecursiveGeometry.js';
 import Spiral from '../patterns/Spiral.js';
 import VoronoiCells from '../patterns/VoronoiCells.js';
 import { RecordingContext } from '../patterns/drawingContext.js';
+import { ScalarField } from '../fields/ScalarField.js';
 import { gridAnchorsCentered } from '../patterns/gridAnchors.js';
 import { makeP5Random } from '../patterns/rng.js';
 import { toSymmetryCount } from '../patterns/symmetryUtils.js';
@@ -178,12 +179,27 @@ describe('getSemanticAnchors — determinism', () => {
   });
 });
 
-describe('getSemanticAnchors — warp is not verifiable, returns null', () => {
-  it('returns null when a warp modulation field is active', () => {
-    const p = linearParams({
-      modulation: { channel: 'warp', field: { type: 'noise' }, amount: 30 },
-    });
-    expect(getSemanticAnchors('grid', p, W, H)).toBeNull();
+describe('getSemanticAnchors — grid is warp-aware (Option C, #117)', () => {
+  // A warp channel no longer bails: the extractor reconstructs anchors from the
+  // drawn warped curves (world-translated by the canvas centre). Detailed exact-
+  // to-paint / equivariance coverage lives in gridWarpAnchors.test.js; here we
+  // pin the adapter WIRING — warp params yield world-space warp-aware anchors.
+  it('reconstructs world-space anchors when a warp modulation field is active', () => {
+    const field = ScalarField.fromFunction((u, v) => Math.sin(u * 5) * Math.cos(v * 4), { nx: 129, ny: 129 });
+    const p = linearParams({ warpNodes: 6, modulation: { channel: 'warp', field, amount: 3 } });
+    const a = getSemanticAnchors('grid', p, W, H);
+    expect(Array.isArray(a)).toBe(true);
+    expect(a.length).toBeGreaterThan(0);
+    // All four roles present; anchors are in canvas-world coords (centre-shifted).
+    for (const role of ['crossing', 'edge', 'tip', 'cell']) {
+      expect(a.some((x) => x.role === role)).toBe(true);
+    }
+    // At least one crossing is displaced off the straight lattice by the warp.
+    const straight = getSemanticAnchors('grid', linearParams(), W, H);
+    const sc = straight.filter((x) => x.role === 'crossing');
+    const wc = a.filter((x) => x.role === 'crossing');
+    const moved = wc.some((c, i) => Math.hypot(c.x - sc[i].x, c.y - sc[i].y) > 1e-3);
+    expect(moved).toBe(true);
   });
 });
 

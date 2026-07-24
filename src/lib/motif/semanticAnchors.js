@@ -854,8 +854,18 @@ export function getSemanticAnchors(patternType, params, canvasW, canvasH, opts) 
       // latticeForLayer does), then world-translate the centre-relative anchors
       // by the canvas centre ONLY — the core already folds offsetX/offsetY in
       // (adding them again would double-count; see the GRID header).
-      const centered = gridAnchorsCentered(params, makeP5Random(opts && opts.hostSeed), {});
-      if (centered == null) return null; // warp → null preserved.
+      //
+      // WARP-AWARE (#117): pass canvasW/canvasH so the core reconstructs anchors
+      // from the drawn warped curves when a warp channel is active (the B seam
+      // #112 surfaces that channel on params.modulation). The warped anchors are
+      // in the SAME centre-relative frame (offsets folded in), so the canvas-
+      // centre world translation below is unchanged.
+      const centered = gridAnchorsCentered(
+        params,
+        makeP5Random(opts && opts.hostSeed),
+        { canvasW, canvasH },
+      );
+      if (centered == null) return null; // warp w/o dims → null preserved.
       const ox = canvasW / 2;
       const oy = canvasH / 2;
       return centered.map((a) => ({ ...a, x: a.x + ox, y: a.y + oy }));

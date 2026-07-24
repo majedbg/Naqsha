@@ -7,6 +7,18 @@
  */
 
 /**
+ * Device-dot flatten budget, in px at render scale — the single source of truth
+ * for "how smooth is smooth enough". A warped Catmull-Rom curve is painted from
+ * the cubic control points this module emits; when the SAME curve is re-flattened
+ * for motif capture (`capturePolylines`) or reconstruction (#105), the polyline
+ * must deviate from the painted curve by LESS than one plotter-pen / laser-kerf
+ * dot, so captured / reconstructed / painted geometry all agree sub-pixel. 0.15px
+ * sits below one device dot at the app's canvas→output scale. Rationale:
+ * docs/performance-decisions.md Case 1.
+ */
+export const RENDER_FLATTEN_TOL_PX = 0.15;
+
+/**
  * Uniform Catmull-Rom spline through `points`, converted to cubic Bézier
  * segments. Endpoints are PINNED via the duplicate-endpoint boundary condition
  * (P[-1]=P[0], P[n]=P[n-1]) so the curve starts/ends exactly on the first/last

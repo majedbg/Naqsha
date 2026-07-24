@@ -46,6 +46,10 @@ import { anchorId, sampleEdgeAnchors } from './anchors.js';
 import { gridAnchorsCentered } from '../patterns/gridAnchors.js';
 import { makeP5Random } from '../patterns/rng.js';
 import { toSymmetryCount } from '../patterns/symmetryUtils.js';
+import { buildWarpedPolygon } from '../patterns/recursiveSides.js';
+import { flattenCubic } from '../geometry/flattenCubic.js';
+import { computeWarpFrame } from '../fields/warpFrame.js';
+import { stackWarpDisplacement } from '../fields/warp.js';
 
 const HALF_PI = Math.PI / 2;
 const TWO_PI = Math.PI * 2;
@@ -97,11 +101,31 @@ const TWO_PI = Math.PI * 2;
 // single-copy shape keeps its pre-WI-115 ids (id-keyed override stability). At
 // symmetry=1/startAngle=0 the output is byte-identical to before this slice.
 //
-// DELIBERATE LIMITATION (documented, honesty-gated) — NON-WARP only:
-//   • warp modulation (params.modulation.channel==='warp') displaces every vertex
-//     by an arbitrary field, so anchors cannot be tied to the drawing. We return
-//     null (never ship anchors we can't verify). Warp-aware anchors are a
-//     downstream slice that BUILDS ON this replication.
+// WARP-AWARE (WI-118, Option C): a warp channel (params.modulation.channel===
+// 'warp') NO LONGER refuses emission — anchors are RECONSTRUCTED from the shared
+// recursive core (recursiveSides.buildWarpedPolygon), the SAME geometry the
+// renderer paints (RecursiveGeometry.generate calls the same core), so they are
+// exact-to-paint by construction. Warp is applied in the LOCAL (origin-centered)
+// frame, then the copy-k rigid post-rotation above is unchanged (warp-then-
+// symmetry, #107), so warp anchors ride the replication into EVERY sector. Per
+// role, mode-matched to the drawn geometry (K = warpNodes, the bend slider; K<3
+// is the ONLY runtime gate, mirroring the core):
+//   • crossings = the warped polygon CORNERS (exact). tangent = the outgoing
+//     side's initial direction (from the reconstructed curve — NOT the FD frame,
+//     which is free-points-only, #114/#105). Under warp this side-derived frame
+//     replaces the non-warp outward-radial (vertexAngle) convention.
+//   • edges = the on-curve MIDPOINT of every drawn side: straight between warped
+//     corners in K<3 (vertices) mode; along the Catmull-Rom side in K≥3
+//     (bendable) mode, flattened via the shared flattenCubic (#111) at ≤0.15px so
+//     it is exact-to-paint at the render tolerance. tangent = the curve there.
+//   • cells + tips = polygon CENTRES. A centre is a FREE POINT (no drawn curve to
+//     be exact to) → point-warp (stackWarpDisplacement, D2) + the FD frame
+//     (computeWarpFrame, #114): the trusted-bounded free-point class, validated
+//     OFFLINE (semanticAnchors.test.js), NEVER by a runtime coincidence guard.
+//     NOTE: under warp the tip normal is the FD v-axis, NOT the non-warp outward-
+//     radial-from-global-centre convention (a centre has no radial curve).
+// With NO warp channel the extractor is byte-identical to the pre-WI-118 output
+// (the non-warp path below is untouched; regression fixture).
 
 /** Sides per shape — mirrors RecursiveGeometry.sidesForShape (RecursiveGeometry.js:35-44). */
 function sidesForShape(s) {
@@ -113,6 +137,93 @@ function sidesForShape(s) {
     case 'circle': return 72;
     default: return 4;
   }
+}
+
+// ── WARP-BRANCH HELPERS (WI-118) ─────────────────────────────────────────────
+// All operate in the LOCAL (origin-centered) frame — the same frame the renderer
+// warps in, before applySymmetryDraw's rigid rotation. Points are [x, y] arrays.
+
+/**
+ * Flatten ONE side of a `buildWarpedPolygon` result into a LOCAL polyline that
+ * traces the DRAWN side: a 2-point straight chord in K<3 (vertices) mode, or the
+ * Catmull-Rom side flattened via the shared flattenCubic (#111) at the render
+ * tolerance in K≥3 (bendable) mode — so anchors read from it are exact-to-paint.
+ * @returns {Array<[number,number]>} the side start FIRST, the side end LAST.
+ */
+function flattenSide(built, k, nSides) {
+  if (built.mode === 'vertices') {
+    const a = built.verts[k];
+    const b = built.verts[(k + 1) % nSides];
+    return [[a.x, a.y], [b.x, b.y]];
+  }
+  const side = built.sides[k];
+  const pts = [[side.start.x, side.start.y]];
+  let prev = pts[0];
+  for (const seg of side.segments) {
+    const flat = flattenCubic([prev, [seg.c1.x, seg.c1.y], [seg.c2.x, seg.c2.y], [seg.end.x, seg.end.y]]);
+    for (const q of flat) pts.push(q);
+    prev = [seg.end.x, seg.end.y];
+  }
+  return pts;
+}
+
+/** Direction (rad) of a polyline's FIRST segment — the outgoing-side tangent at
+ *  the start corner. */
+function firstSegTangent(line) {
+  const a = line[0];
+  const b = line[1] || line[line.length - 1];
+  return Math.atan2(b[1] - a[1], b[0] - a[0]);
+}
+
+/** Total arc length of a polyline. */
+function polylineLength(line) {
+  let L = 0;
+  for (let i = 0; i < line.length - 1; i++) {
+    L += Math.hypot(line[i + 1][0] - line[i][0], line[i + 1][1] - line[i][1]);
+  }
+  return L;
+}
+
+/**
+ * Point at HALF the polyline's arc length, with the local curve tangent there.
+ * For a straight 2-point chord this is the exact midpoint; for a flattened curve
+ * it is the on-curve half-length sample the renderer paints (±flatten tolerance).
+ * @returns {{x:number,y:number,tangent:number}}
+ */
+function sampleAtHalfLength(line, len) {
+  if (line.length < 2) return { x: line[0][0], y: line[0][1], tangent: 0 };
+  const half = len / 2;
+  let acc = 0;
+  for (let i = 0; i < line.length - 1; i++) {
+    const segLen = Math.hypot(line[i + 1][0] - line[i][0], line[i + 1][1] - line[i][1]);
+    if (acc + segLen >= half || i === line.length - 2) {
+      const t = segLen > 0 ? (half - acc) / segLen : 0;
+      return {
+        x: line[i][0] + (line[i + 1][0] - line[i][0]) * t,
+        y: line[i][1] + (line[i + 1][1] - line[i][1]) * t,
+        tangent: Math.atan2(line[i + 1][1] - line[i][1], line[i + 1][0] - line[i][0]),
+      };
+    }
+    acc += segLen;
+  }
+  // Unreachable (loop always returns on the last segment); satisfies the linter.
+  const last = line[line.length - 1];
+  return { x: last[0], y: last[1], tangent: 0 };
+}
+
+/**
+ * Point-warp a FREE POINT (a polygon centre) and frame it with the FD helper.
+ * Displacement comes ONLY from stackWarpDisplacement (D2); the frame from
+ * computeWarpFrame (#114). The unit-(u,v) mapping matches buildWarpedPolygon's
+ * exactly, so the centre samples the SAME field the drawn corners do.
+ * @returns {{x:number,y:number,tangent:number,normal:number}} LOCAL coords/frame.
+ */
+function warpFreePoint(center, warpSources, canvasW, canvasH) {
+  const u = (center.x + canvasW / 2) / canvasW;
+  const v = (center.y + canvasH / 2) / canvasH;
+  const { dx, dy } = stackWarpDisplacement(warpSources, u, v);
+  const { tangent, normal } = computeWarpFrame(warpSources, u, v, { W: canvasW, H: canvasH });
+  return { x: center.x + dx, y: center.y + dy, tangent, normal };
 }
 
 /**
@@ -133,12 +244,19 @@ function recursiveAnchors(params, canvasW, canvasH) {
     startAngle = 0, // degrees, matching RecursiveGeometry's param convention.
     offsetX = 0,
     offsetY = 0,
+    // Bend slider (RecursiveGeometry #116). Default 2 — same as the renderer — so
+    // enabling warp keeps straight-corner (vertices) mode. K<3 is the only gate.
+    warpNodes = 2,
   } = params || {};
 
-  // Warp displaces every vertex by an arbitrary field — unverifiable, so refuse
-  // to emit (see block header).
+  // WARP-AWARE (WI-118): a warp channel no longer refuses emission. When present,
+  // anchors are reconstructed from the SHARED recursive core in the warp branch
+  // below (see block header). warpSources are built EXACTLY as the renderer builds
+  // them (RecursiveGeometry.generate): a single-source stack when no explicit
+  // `sources` array is present, so N=1 is byte-identical to the renderer's warp.
   const mod = params && params.modulation;
-  if (mod && mod.channel === 'warp' && mod.field) return null;
+  const warpMod = mod && mod.channel === 'warp' && mod.field ? mod : null;
+  const warpSources = warpMod ? (warpMod.sources ?? [warpMod]) : null;
 
   const clampedDepth = Math.max(1, Math.min(8, depth));
   const numSides = sidesForShape(shape);
@@ -243,6 +361,104 @@ function recursiveAnchors(params, canvasW, canvasH) {
       s,
       meta: { ...meta, copy: c.k, theta: c.theta },
     });
+  }
+
+  // ── WARP BRANCH (WI-118) ────────────────────────────────────────────────────
+  // Self-contained: reconstruct every anchor from the shared recursive core, in
+  // the LOCAL (origin-centered) frame, then emit through the SAME push() (so the
+  // rigid per-copy rotation, ids, and role grouping are identical to the non-warp
+  // path — equivariance by construction). The non-warp path below is UNTOUCHED, so
+  // no-warp output stays byte-identical. Emission order matches: crossings, edges,
+  // tips, cells.
+  if (warpSources) {
+    // The SAME core the renderer paints from — exact-to-paint by construction.
+    const built = polys.map((poly) =>
+      buildWarpedPolygon(poly.verts, { warpSources, canvasW, canvasH, warpNodes }),
+    );
+    // Per poly, per side: the flattened LOCAL polyline of the DRAWN side (a 2-point
+    // straight chord in K<3; the Catmull-Rom side flattened via the shared
+    // flattenCubic at ≤0.15px in K≥3). Crossings and edges both read these so they
+    // sit on the painted line.
+    const sideLines = built.map((b) => {
+      const nSides = b.mode === 'vertices' ? b.verts.length : b.sides.length;
+      const lines = [];
+      for (let k = 0; k < nSides; k++) lines.push(flattenSide(b, k, nSides));
+      return lines;
+    });
+
+    // CROSSINGS — warped corners. position = the side's start (exact warped
+    // corner); tangent = the outgoing side's initial direction (from the
+    // reconstructed curve, NOT the FD frame); normal = tangent + π/2.
+    for (const c of copies) {
+      for (let p = 0; p < polys.length; p++) {
+        const poly = polys[p];
+        const lines = sideLines[p];
+        for (let k = 0; k < poly.verts.length; k++) {
+          const line = lines[k];
+          const t = firstSegTangent(line);
+          push(
+            'crossing',
+            [p, k],
+            line[0][0],
+            line[0][1],
+            t,
+            t + HALF_PI,
+            0,
+            { poly: p, vertex: k, level: poly.level, junction: poly.vertexHasBranch[k] },
+            c,
+          );
+        }
+      }
+    }
+
+    // EDGES — on-curve midpoint (half arc-length) of every drawn side; tangent =
+    // the curve direction there; s = cumulative warped perimeter arc-length to the
+    // midpoint (rotation-invariant, so it passes through push unchanged).
+    for (const c of copies) {
+      for (let p = 0; p < polys.length; p++) {
+        const poly = polys[p];
+        const lines = sideLines[p];
+        const nSides = poly.verts.length;
+        const lens = lines.map(polylineLength);
+        let acc = 0;
+        for (let k = 0; k < nSides; k++) {
+          const m = sampleAtHalfLength(lines[k], lens[k]);
+          push(
+            'edge',
+            [p, k],
+            m.x,
+            m.y,
+            m.tangent,
+            m.tangent + HALF_PI,
+            acc + lens[k] / 2,
+            { poly: p, side: k, level: poly.level },
+            c,
+          );
+          acc += lens[k];
+        }
+      }
+    }
+
+    // TIPS — leaf-polygon centres (FREE POINTS): point-warp + FD frame.
+    for (const c of copies) {
+      for (let p = 0; p < polys.length; p++) {
+        const poly = polys[p];
+        if (!poly.isLeaf) continue;
+        const fp = warpFreePoint(poly.center, warpSources, canvasW, canvasH);
+        push('tip', [p], fp.x, fp.y, fp.tangent, fp.normal, 0, { poly: p, level: poly.level }, c);
+      }
+    }
+
+    // CELLS — every polygon centre (FREE POINT): same point-warp + FD frame.
+    for (const c of copies) {
+      for (let p = 0; p < polys.length; p++) {
+        const poly = polys[p];
+        const fp = warpFreePoint(poly.center, warpSources, canvasW, canvasH);
+        push('cell', [p], fp.x, fp.y, fp.tangent, fp.normal, 0, { poly: p, level: poly.level }, c);
+      }
+    }
+
+    return anchors;
   }
 
   // ── CROSSINGS: every polygon vertex. normal = outward radial (vertex angle);

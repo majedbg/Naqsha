@@ -40,7 +40,7 @@ import {
   supportsVariableWeight,
 } from "../../lib/variableWeight";
 import { isTextLayer, textNodeFromLayer } from "../../lib/text/textLayer";
-import { useFont } from "../../lib/text/fontRegistry";
+import { useFonts } from "../../lib/text/fontRegistry";
 import TextPropertiesPanel from "../TextPropertiesPanel";
 import { canProduceField, fieldForLayer } from "../../lib/fields/fieldRegistry";
 import { previewButtonState } from "../../lib/three3d/previewButtonState";
@@ -553,15 +553,17 @@ function ModulatorDevice({
               const targetLayer = (layers || []).find(
                 (l) => l.id === m.targetLayerId
               );
-              if (
-                !(m.channel === "warp" && targetLayer?.patternType === "grid")
-              )
+              // The warpNodes bend slider is shared by the two math warp hosts:
+              // grid (default 6) and recursive (default 2 — ticket #116).
+              const isGrid = targetLayer?.patternType === "grid";
+              const isRecursive = targetLayer?.patternType === "recursive";
+              if (!(m.channel === "warp" && (isGrid || isRecursive)))
                 return null;
               return (
-                <ModulationParamBox owner="Grid layer">
+                <ModulationParamBox owner={isGrid ? "Grid layer" : "Recursive layer"}>
                   <WarpNodesControl
                     testidSuffix="-modulator"
-                    value={targetLayer.params?.warpNodes ?? 6}
+                    value={targetLayer.params?.warpNodes ?? (isGrid ? 6 : 2)}
                     onChange={(v) =>
                       onUpdateLayer(m.targetLayerId, {
                         params: { ...targetLayer.params, warpNodes: Number(v) },
@@ -908,7 +910,12 @@ function MotifDevice({
   // budget warning stays the truth about MAX_PLACEMENTS. Declared ABOVE the self-
   // hide early return (rules-of-hooks).
   const hostAnchors = useMemo(() => {
-    if (!isSemanticHost(layer.patternType)) return null;
+    // Params-aware: a single-axis grid is an EDGE host, so — like flowfield/wave —
+    // it yields null here and the rack shows no per-block chips (the documented
+    // fallback at the block below), instead of the semantic extractor's misleading
+    // tip-only anchors that would read as "selects nothing" while the canvas shows
+    // a full vine along the captured lines.
+    if (!isSemanticHost(layer.patternType, layer.params)) return null;
     try {
       const a = getSemanticAnchors(
         layer.patternType,
@@ -1028,9 +1035,9 @@ function MotifDevice({
   // spiral does NOT (its only crossing is a hub needing arms that share the
   // origin), so defaultRolesForHost gives spiral `edge` instead. A blanket
   // `crossing` here would empty the selection on spiral and nothing would render.
-  const hostIsSemantic = isSemanticHost(layer.patternType);
+  const hostIsSemantic = isSemanticHost(layer.patternType, layer.params);
   // RoleBadge visual family for this host (lattice vs stroke) — one per device.
-  const hostKind = badgeKindForHost(layer.patternType);
+  const hostKind = badgeKindForHost(layer.patternType, layer.params);
   // Shared with the library panel's drag-apply (motif-shell, D) so the two
   // add paths can never drift on anchor mode / roles / placement defaults.
   const addMotif = () =>
@@ -1736,17 +1743,21 @@ function SelectedLayerInspector({
         </LayerParamsProvider>
       )}
 
-      {/* Modulation-scoped param (§5) — the Grid's `warpNodes`, shown in the grid
-          panel ONLY while the grid is an active 'warp' target (a modulator maps a
-          warp channel to it and can produce a field). Owner label "Modulation".
-          Same canonical write as the modulator-row site; the `...layer.params`
-          spread is REQUIRED (shallow top-level merge). */}
-      {layer.patternType === "grid" &&
+      {/* Modulation-scoped param (§5) — the `warpNodes` bend slider, shown in the
+          layer panel ONLY while a warp-host (grid or recursive) is an active
+          'warp' target (a modulator maps a warp channel to it and can produce a
+          field). Grid default 6, recursive default 2 (ticket #116). Owner label
+          "Modulation". Same canonical write as the modulator-row site; the
+          `...layer.params` spread is REQUIRED (shallow top-level merge). */}
+      {(layer.patternType === "grid" || layer.patternType === "recursive") &&
         resolveModulationForTarget(layer, layers) !== null && (
           <ModulationParamBox owner="Modulation">
             <WarpNodesControl
               testidSuffix="-panel"
-              value={layer.params?.warpNodes ?? 6}
+              value={
+                layer.params?.warpNodes ??
+                (layer.patternType === "grid" ? 6 : 2)
+              }
               onChange={(v) =>
                 onUpdateLayer(layer.id, {
                   params: { ...layer.params, warpNodes: Number(v) },
@@ -1956,11 +1967,13 @@ export default function Inspector({
   // undefined → the row's Trace affordance self-hides (legacy/test callers).
   trace,
 }) {
-  // Resolved font for the text-properties readouts (cap-height / engrave
-  // warnings). May be null on first paint before useFont resolves — the panel's
-  // helpers all no-op on null, so it renders its controls regardless. Hook lives
-  // at the top of the component (before any early return) per rules-of-hooks.
-  const { font } = useFont();
+  // Per-node font resolver for the text-properties readouts (cap-height /
+  // engrave warnings), so the panel measures the SELECTED layer's OWN font — not
+  // a hardcoded default. Falls back to the default while a font streams in; the
+  // panel's helpers all no-op on null, so it renders its controls regardless.
+  // Hook lives at the top of the component (before any early return) per
+  // rules-of-hooks.
+  const { resolveFont } = useFonts(layers);
 
   // Right-rail folder-tab selection, cached per layer (WI-tabs). Held HERE —
   // above the `key={layer.id}` remount boundary of SelectedLayerInspector — so
@@ -1983,7 +1996,7 @@ export default function Inspector({
         <DockToggle />
         <TextPropertiesPanel
           node={textNodeFromLayer(layer)}
-          font={font}
+          font={resolveFont(textNodeFromLayer(layer).fontId)}
           onUpdate={(patch) =>
             onUpdateLayer(layer.id, { params: { ...layer.params, ...patch } })
           }

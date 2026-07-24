@@ -84,7 +84,8 @@ import {
 } from "../lib/panels";
 import { exportPanelsZip } from "../lib/panelExport";
 import { isTextLayer } from "../lib/text/textLayer";
-import { useFont } from "../lib/text/fontRegistry";
+import { useFonts } from "../lib/text/fontRegistry";
+import { registerBuiltInSingleLineFonts } from "../lib/text/singleLineFonts";
 import { useAuth } from "../lib/AuthContext";
 import useGlobalMotifLibrary from "../lib/hooks/useGlobalMotifLibrary";
 import { canUseGlobalLibrary } from "../lib/motifLibraryEntitlement";
@@ -156,8 +157,6 @@ export default function Studio({ submitOrg = null } = {}) {
   // renders over the studio route (the standalone Naqsha bar was dropped).
   const navigate = useNavigate();
   const showAdmin = useShowAdmin();
-  // Resolved opentype font for exporting text-layer glyph outlines (phase 6).
-  const { font: textFont } = useFont();
   const savedCanvas = loadCanvasState();
 
   // === UI chrome (modals + examples) ===
@@ -441,6 +440,24 @@ export default function Studio({ submitOrg = null } = {}) {
   useEffect(() => {
     layersRef.current = layers;
   }, [layers]);
+
+  // Per-node font resolution: loads every font the layers reference (plus the
+  // default) and returns a synchronous `resolveFont(fontId) → Font`. Threaded
+  // into the live preview surfaces AND the export handlers. Export must stay
+  // SYNCHRONOUS (the File→New flow exports THEN blanks the doc in the same tick,
+  // and the ⌘E receipt reads the just-written file) — so we can't await here;
+  // `useFonts` instead eagerly preloads every in-use font on mount/layers-change,
+  // so by the time an export is reachable the resolver holds the real glyphs.
+  // While a font is still streaming, resolveFont falls back to the default (a
+  // brief canvas flash; steady state — the only realistic export moment — is
+  // correct).
+  const { resolveFont } = useFonts(layers);
+
+  // Register the built-in single-line (engraving) fonts once, so they appear in
+  // the font picker's "Engraving" group. Idempotent; notifies catalog subscribers.
+  useEffect(() => {
+    registerBuiltInSingleLineFonts();
+  }, []);
   const captureAssignments = useCallback(() => {
     const map = {};
     for (const l of layersRef.current) map[l.id] = l.operationId;
@@ -1050,7 +1067,7 @@ export default function Studio({ submitOrg = null } = {}) {
       colorView: colorView.colorView,
       panels: activeProfileId === "laser" ? panels : [],
       customGlyphs,
-      textFont,
+      textFont: resolveFont,
     }),
     [
       layers,
@@ -1062,7 +1079,7 @@ export default function Studio({ submitOrg = null } = {}) {
       colorView.colorView,
       panels,
       customGlyphs,
-      textFont,
+      resolveFont,
     ],
   );
 
@@ -1912,7 +1929,8 @@ export default function Studio({ submitOrg = null } = {}) {
       // Operation library so an Etch's embedded-bitmap colour resolves through
       // its engrave Operation (same as the canvas), not a hardcoded layer colour.
       operations,
-      font: textFont,
+      // Per-node resolver so each text layer exports in its OWN typeface.
+      font: resolveFont,
     });
   };
 
@@ -1936,8 +1954,9 @@ export default function Studio({ submitOrg = null } = {}) {
         // Operation library so an Etch's embedded-bitmap colour resolves through
         // its engrave Operation (same as the canvas), not a hardcoded layer colour.
         operations,
-        // Resolved font so text layers export their glyph outlines (phase 6).
-        font: textFont,
+        // Per-node resolver so text layers export their glyph outlines in each
+        // layer's OWN typeface (phase 6 / per-node fonts).
+        font: resolveFont,
       }
     );
   };
@@ -2114,7 +2133,7 @@ export default function Studio({ submitOrg = null } = {}) {
         manifest: buildExportManifest(),
         optimizations: appliedOptimizations,
         profileId: machineProfile,
-        font: textFont,
+        font: resolveFont,
       },
     });
   };

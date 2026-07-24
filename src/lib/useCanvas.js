@@ -16,6 +16,7 @@ import { isSequenceBlock } from './motif/sequencer';
 import { handlesFor } from './transform/handles';
 import { drawTextNode } from './text/drawTextNode';
 import { isTextLayer, textNodeFromLayer } from './text/textLayer';
+import { asResolver } from './text/fontRegistry';
 import { importLayerPivot } from './scene/placement';
 import { buildSelectables } from './scene/selectables';
 import { resolveCanvasColor, sheetBackground, offSheetDimFactor, effectiveMaterialId } from './materialPreview';
@@ -27,6 +28,25 @@ import { resolveEtchBitmap, etchCacheNeedsResolve } from './etch/etchSource';
 import { resolveHold } from './etch/etchHold';
 import { createAdaptiveRenderScheduler } from './adaptiveRenderScheduler';
 import { isFrameStatsEnabled } from './onboarding/frameStatsFlag';
+
+// Recording (edge-capture) hosts whose WARP modulation is resolved from a GUIDE
+// layer into renderParams for the paint pass, NOT stored on host.params. The
+// capture probe below therefore has to inject the SAME resolved modulation, or it
+// draws unwarped geometry while the canvas draws warped — motif anchors then sit
+// on stale geometry (the D1 fail-unsafe ~24px drift, #103). Extending this beyond
+// grid to flowfield + topographic makes the probe SYMMETRIC with paint:
+//   • grid (single-axis) — draws bezierVertex when warped; capturePolylines now
+//     RECORDS + adaptively flattens those (shared flattenCubic, #111) → the vine
+//     samples the exact-to-paint curve (the single-axis warped-grid vine works).
+//   • flowfield / topographic — emit plain ctx.vertex; capture records the warped
+//     flow lines / contours → anchors land on the painted geometry (D1 fixed).
+// Byte-identity holds with no warp channel present: all three patterns branch ONLY
+// on modulation.channel==='warp' at geometry-build time (grid: warp vs straight
+// line; flowfield/topographic: the stackWarpDisplacement block), so injecting a
+// composed modulation carrying only non-warp channels is a geometric no-op. Warp
+// is RNG-free and applied AFTER all noise/random consumption, so the probe never
+// shifts the host's painted realization.
+const WARP_CAPTURE_HOSTS = new Set(['grid', 'flowfield', 'topographic']);
 
 // Pivoted node transform shared by render + selection chrome. Matches the SVG
 // `translate(x y) translate(cx cy) rotate scale translate(-cx -cy)` form emitted
@@ -247,15 +267,37 @@ export default function useCanvas(
       // host reseeds at the top of generate() → this probe never shifts its paint
       // (same no-divergence guarantee as the voronoi probe below). A SEMANTIC host
       // (voronoi) keeps the existing noDraw probe + motifHostGeometry read.
-      const recording = isEdgeHost(host.patternType);
+      const recording = isEdgeHost(host.patternType, host.params);
       const probeCtx = recording
         ? new P5Adapter(p, { draw: false, record: true })
         : noDrawCtx;
+      // FAITHFUL CAPTURE for a WARP-applying capture host (grid single-axis,
+      // flowfield, topographic — WARP_CAPTURE_HOSTS): the host's warp modulation is
+      // resolved from a GUIDE layer into renderParams for the main draw (see
+      // ~line 437), NOT stored on host.params. If the probe ran bare host.params it
+      // would capture UNWARPED geometry while the canvas paints WARPED — and the
+      // motif would arc-length-sample glyphs onto stale geometry, floating them off
+      // the visible curve / flow lines / contours (the D1 fail-unsafe ~24px drift, #103).
+      // Inject the SAME resolved modulation so the probe's geometry matches paint,
+      // symmetric with the paint pass:
+      //   • grid warped → draws bezierVertex, which capturePolylines FLATTENS (shared
+      //     adaptive flattenCubic, device-dot tolerance) into exact-to-paint polylines
+      //     the single-axis warped-grid vine samples along (#111).
+      //   • flowfield / topographic warped → emit plain ctx.vertex → captured on the
+      //     warped flow lines / contours → anchors track the painted geometry (#110).
+      // All three branch ONLY on modulation.channel==='warp' at build time and warp
+      // consumes no RNG (applied after all noise/random), so this is byte-identical
+      // capture with no warp channel present and every non-warp channel.
+      let probeParams = host.params;
+      if (recording && WARP_CAPTURE_HOSTS.has(host.patternType)) {
+        const hostMod = composeModulationParam(resolveModulationsForTarget(host, layers));
+        if (hostMod) probeParams = { ...host.params, modulation: hostMod };
+      }
       p.push(); // defensive matrix isolation — probe never draws, but be safe
       probe.generateWithContext(
         probeCtx,
         host.seed,
-        host.params,
+        probeParams,
         canvasW,
         canvasH,
         resolveCanvasColor(host, { operations, outputMode, colorView, panels }),
@@ -371,9 +413,12 @@ export default function useCanvas(
       // No PatternClass instance is registered (none exists), like orphan-B.
       // Without a resolved font we can't draw; export is handled in a later phase.
       if (isTextLayer(layer)) {
-        if (!vis || !font) continue;
         const nodeData = textNodeFromLayer(layer);
-        drawTextNode(p, nodeData, font, nodeTransforms[layer.id]);
+        // `font` is either a single Font (legacy) or a per-node resolver; pick
+        // THIS node's font so each text layer renders in its own typeface.
+        const nodeFont = asResolver(font)(nodeData.fontId);
+        if (!vis || !nodeFont) continue;
+        drawTextNode(p, nodeData, nodeFont, nodeTransforms[layer.id]);
         continue;
       }
 
@@ -479,7 +524,7 @@ export default function useCanvas(
       // hosts don't set it themselves). Absent capture → no attach → the overlay
       // renders no edge ghost (graceful). Guarded to edge hosts so it never
       // clobbers a semantic host's own motifHostGeometry.
-      if (isEdgeHost(layer.patternType) && hostGeometry[layer.id]?.hostPaths) {
+      if (isEdgeHost(layer.patternType, layer.params) && hostGeometry[layer.id]?.hostPaths) {
         instance.motifHostGeometry = { hostPaths: hostGeometry[layer.id].hostPaths };
       }
 

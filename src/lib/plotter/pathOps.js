@@ -11,6 +11,7 @@
 // to every symmetry copy.
 
 import { PX_PER_MM as _PX_PER_MM, DRAW_SPEED, TRAVEL_SPEED } from './constants.js';
+import { flattenCubic as flattenCubicShared } from '../geometry/flattenCubic.js';
 
 // Re-export PX_PER_MM so existing importers (e.g. PlotPreviewSection) continue
 // to resolve it from this module without breakage.
@@ -150,24 +151,15 @@ function tokenizeFlat(d) {
 
 // Adaptively flatten a cubic Bézier into `out`. Mirrors sampleCubic's contract:
 // p0 is NOT emitted (already the last vertex), p3 IS emitted EXACTLY (its own
-// coords, not a recomputed midpoint), control points never surface. Subdivides
-// at t=0.5 (de Casteljau) until both control points sit within `tol` of the
-// P0→P3 chord.
-function flattenCubic(p0, c1, c2, p3, tol, out, depth = 0) {
-  if (depth >= MAX_SUBDIV_DEPTH
-      || (perpDist(c1, p0, p3) <= tol && perpDist(c2, p0, p3) <= tol)) {
-    out.push([p3[0], p3[1]]);
-    return;
-  }
-  const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
-  const l1 = mid(p0, c1);
-  const m = mid(c1, c2);
-  const r2 = mid(c2, p3);
-  const l2 = mid(l1, m);
-  const r1 = mid(m, r2);
-  const mp = mid(l2, r1); // on-curve point at t=0.5
-  flattenCubic(p0, l1, l2, mp, tol, out, depth + 1);
-  flattenCubic(mp, r1, r2, p3, tol, out, depth + 1);
+// coords, not a recomputed midpoint), control points never surface.
+//
+// The subdivision itself now lives in the SHARED geometry util
+// (src/lib/geometry/flattenCubic.js) — one source of truth for cubic flattening,
+// reused by the motif capture pipeline. This is a thin push-into-`out` adapter so
+// the existing flattenPathD call sites are byte-for-byte unchanged.
+function flattenCubic(p0, c1, c2, p3, tol, out) {
+  const pts = flattenCubicShared([p0, c1, c2, p3], tol);
+  for (let i = 0; i < pts.length; i++) out.push(pts[i]);
 }
 
 // Adaptively flatten a quadratic Bézier into `out`. Same emit contract as

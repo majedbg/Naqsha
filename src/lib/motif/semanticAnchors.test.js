@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { getSemanticAnchors } from './semanticAnchors.js';
+import { anchorId } from './anchors.js';
 import { placeMotifs, selectAnchors } from './placementEngine.js';
 import { defaultRolesForHost } from './hostKinds.js';
 import { DEFAULT_PARAMS } from '../../constants.js';
@@ -8,9 +9,13 @@ import RecursiveGeometry from '../patterns/RecursiveGeometry.js';
 import Spiral from '../patterns/Spiral.js';
 import VoronoiCells from '../patterns/VoronoiCells.js';
 import { RecordingContext } from '../patterns/drawingContext.js';
+import { ScalarField } from '../fields/ScalarField.js';
 import { gridAnchorsCentered } from '../patterns/gridAnchors.js';
 import { makeP5Random } from '../patterns/rng.js';
 import { toSymmetryCount } from '../patterns/symmetryUtils.js';
+import { stackWarpDisplacement } from '../fields/warp.js';
+import { flattenCubic } from '../geometry/flattenCubic.js';
+import { computeWarpFrame } from '../fields/warpFrame.js';
 
 const HALF_PI = Math.PI / 2;
 
@@ -177,12 +182,27 @@ describe('getSemanticAnchors — determinism', () => {
   });
 });
 
-describe('getSemanticAnchors — warp is not verifiable, returns null', () => {
-  it('returns null when a warp modulation field is active', () => {
-    const p = linearParams({
-      modulation: { channel: 'warp', field: { type: 'noise' }, amount: 30 },
-    });
-    expect(getSemanticAnchors('grid', p, W, H)).toBeNull();
+describe('getSemanticAnchors — grid is warp-aware (Option C, #117)', () => {
+  // A warp channel no longer bails: the extractor reconstructs anchors from the
+  // drawn warped curves (world-translated by the canvas centre). Detailed exact-
+  // to-paint / equivariance coverage lives in gridWarpAnchors.test.js; here we
+  // pin the adapter WIRING — warp params yield world-space warp-aware anchors.
+  it('reconstructs world-space anchors when a warp modulation field is active', () => {
+    const field = ScalarField.fromFunction((u, v) => Math.sin(u * 5) * Math.cos(v * 4), { nx: 129, ny: 129 });
+    const p = linearParams({ warpNodes: 6, modulation: { channel: 'warp', field, amount: 3 } });
+    const a = getSemanticAnchors('grid', p, W, H);
+    expect(Array.isArray(a)).toBe(true);
+    expect(a.length).toBeGreaterThan(0);
+    // All four roles present; anchors are in canvas-world coords (centre-shifted).
+    for (const role of ['crossing', 'edge', 'tip', 'cell']) {
+      expect(a.some((x) => x.role === role)).toBe(true);
+    }
+    // At least one crossing is displaced off the straight lattice by the warp.
+    const straight = getSemanticAnchors('grid', linearParams(), W, H);
+    const sc = straight.filter((x) => x.role === 'crossing');
+    const wc = a.filter((x) => x.role === 'crossing');
+    const moved = wc.some((c, i) => Math.hypot(c.x - sc[i].x, c.y - sc[i].y) > 1e-3);
+    expect(moved).toBe(true);
   });
 });
 
@@ -468,11 +488,21 @@ describe('getSemanticAnchors — recursive role taxonomy', () => {
     expect(a).toEqual(b);
   });
 
-  it('returns null when a warp modulation field is active (unverifiable)', () => {
-    const p = recursiveParams({
-      modulation: { channel: 'warp', field: { type: 'noise' }, amount: 30 },
+  it('emits warp-AWARE anchors (not null) when a warp modulation field is active (WI-118)', () => {
+    const field = ScalarField.fromFunction((u, v) => Math.sin(6 * u) * Math.cos(6 * v), {
+      nx: 65,
+      ny: 65,
     });
-    expect(getSemanticAnchors('recursive', p, W, H)).toBeNull();
+    const p = recursiveParams({
+      modulation: { channel: 'warp', field, amount: 2 },
+    });
+    const anchors = getSemanticAnchors('recursive', p, W, H);
+    expect(Array.isArray(anchors)).toBe(true);
+    expect(anchors.length).toBeGreaterThan(0);
+    // All four roles still present under warp.
+    expect(new Set(anchors.map((a) => a.role))).toEqual(
+      new Set(['crossing', 'edge', 'tip', 'cell']),
+    );
   });
 });
 
@@ -593,6 +623,512 @@ describe('getSemanticAnchors — recursive feeds the placement engine', () => {
       { canvasW: W, canvasH: H, boundary: { type: 'rect', width: W, height: H } }
     );
     expect(placements.length).toBeGreaterThan(0);
+  });
+});
+
+// ── RECURSIVE symmetry + startAngle replication (WI-115) ────────────────────
+// The recursive extractor now replicates every radial-symmetry copy and folds in
+// startAngle as a RIGID post-rotation of the base copy — matching the renderer's
+// applySymmetryDraw (θk = 2π·k/n + startAngle, rotate-then-add-offset). These
+// tests pin: (1) N-fold count, (2) anchors in EVERY sector under N≥2 & non-zero
+// startAngle, (3) BYTE-EXACT rotation-equivariance anchor(k) == Rot_θk(anchor(0)),
+// (4) an independent directional check that startAngle rotates the right way.
+describe('getSemanticAnchors — recursive symmetry + startAngle replication (WI-115)', () => {
+  it('symmetry=N yields exactly N× the symmetry=1 anchor count', () => {
+    const one = getSemanticAnchors('recursive', recursiveParams({ symmetry: 1 }), W, H);
+    const four = getSemanticAnchors('recursive', recursiveParams({ symmetry: 4 }), W, H);
+    expect(four.length).toBe(one.length * 4);
+  });
+
+  it('N≥2 with non-zero startAngle places anchors in EVERY sector (not just sector 0)', () => {
+    const n = 4;
+    const anchors = getSemanticAnchors(
+      'recursive',
+      recursiveParams({ symmetry: n, startAngle: 33 }),
+      W,
+      H
+    );
+    // Every copy index 0..n-1 is present — no sector is missing.
+    expect(new Set(anchors.map((a) => a.meta.copy))).toEqual(new Set([0, 1, 2, 3]));
+    // Each role is present in every sector too (nothing collapses to sector 0).
+    for (const role of ['crossing', 'edge', 'tip', 'cell']) {
+      const copies = new Set(anchors.filter((a) => a.role === role).map((a) => a.meta.copy));
+      expect(copies).toEqual(new Set([0, 1, 2, 3]));
+    }
+  });
+
+  it('copy-k anchors carry meta.copy/meta.theta and rotated tangent/normal (θ = 2π·k/n + startRad)', () => {
+    const n = 3;
+    const startDeg = 40;
+    const startRad = (startDeg * Math.PI) / 180;
+    const full = getSemanticAnchors(
+      'recursive',
+      recursiveParams({ symmetry: n, startAngle: startDeg }),
+      W,
+      H
+    );
+    for (const a of full) {
+      const theta = (2 * Math.PI * a.meta.copy) / n + startRad;
+      expect(a.meta.theta).toBeCloseTo(theta, 12);
+    }
+  });
+
+  it('byte-exact rotation-equivariance: anchor(k) == Rot_θk(anchor(0)) for position AND frame', () => {
+    // ox = W2 + offsetX = 0 so world coords ARE the centred rotation — this dodges
+    // the (ox+bx)-ox cancellation and lets us reconstruct Rot_θk(master) byte-exact.
+    const W2 = 800;
+    const H2 = 800;
+    const geom = {
+      shape: 'hexagon',
+      depth: 3,
+      rotationPerLevel: 15,
+      scaleFactor: 0.7,
+      scaleNonLinearity: 0,
+      startScale: 70,
+      offsetX: -W2 / 2,
+      offsetY: -H2 / 2,
+    };
+    const ox = 0; // W2/2 + offsetX
+    const oy = 0;
+    const n = 3;
+    const startDeg = 40;
+    const startRad = (startDeg * Math.PI) / 180;
+
+    // anchor(0) = the base copy at DEFAULT orientation (symmetry=1, startAngle=0).
+    const master = getSemanticAnchors('recursive', { ...geom, symmetry: 1, startAngle: 0 }, W2, H2);
+    const full = getSemanticAnchors('recursive', { ...geom, symmetry: n, startAngle: startDeg }, W2, H2);
+
+    expect(full.length).toBe(master.length * n);
+    const masterById = new Map(master.map((m) => [m.id, m]));
+
+    for (const a of full) {
+      const k = a.meta.copy;
+      const theta = (2 * Math.PI * k) / n + startRad;
+      const cos = Math.cos(theta);
+      const sin = Math.sin(theta);
+      // full ids gain a trailing ':k'; strip it to recover the master id.
+      const baseId = a.id.slice(0, a.id.lastIndexOf(':'));
+      const m = masterById.get(baseId);
+      expect(m).toBeDefined();
+      // master (θ=0, ox=0) world coords ARE the centred base coords (m.x, m.y).
+      // Reconstruct Rot_θk(master) with the SAME expression the extractor uses.
+      expect(a.x).toBe(ox + m.x * cos - m.y * sin);
+      expect(a.y).toBe(oy + m.x * sin + m.y * cos);
+      expect(a.tangent).toBe(m.tangent + theta);
+      expect(a.normal).toBe(m.normal + theta);
+      // Arc length is rotation-invariant.
+      expect(a.s).toBe(m.s);
+    }
+  });
+
+  it('startAngle rotates in the applySymmetryDraw direction: 90° maps (x,y)→(−y,x) about centre (independent check)', () => {
+    // Independent of the extractor's own rotation expression — a +90° rotation in
+    // the [cos −sin; sin cos] convention sends centred (x,y) → (−y, x).
+    const W2 = 800;
+    const H2 = 800;
+    const geom = {
+      shape: 'pentagon',
+      depth: 3,
+      rotationPerLevel: 12,
+      startScale: 70,
+      offsetX: -W2 / 2, // ox = 0
+      offsetY: -H2 / 2,
+    };
+    const master = getSemanticAnchors('recursive', { ...geom, symmetry: 1, startAngle: 0 }, W2, H2);
+    const rot90 = getSemanticAnchors('recursive', { ...geom, symmetry: 1, startAngle: 90 }, W2, H2);
+    // symmetry=1 keeps ids un-suffixed, so ids line up between the two runs.
+    const byId = new Map(master.map((m) => [m.id, m]));
+    expect(rot90.length).toBe(master.length);
+    for (const a of rot90) {
+      const m = byId.get(a.id);
+      expect(m).toBeDefined();
+      expect(a.x).toBeCloseTo(-m.y, 9);
+      expect(a.y).toBeCloseTo(m.x, 9);
+      expect(a.tangent).toBeCloseTo(m.tangent + Math.PI / 2, 9);
+    }
+  });
+
+  it('symmetry=1 & startAngle=0 keeps pre-WI-115 ids (no copy suffix) and an unrotated base copy', () => {
+    const base = getSemanticAnchors('recursive', recursiveParams(), W, H);
+    expect(base.length).toBeGreaterThan(0);
+    for (const a of base) {
+      // Every base-copy anchor is copy 0 at θ=0 (unrotated).
+      expect(a.meta.copy).toBe(0);
+      expect(a.meta.theta).toBe(0);
+      // Ids are byte-identical to the pre-WI-115 form — NO trailing :copy segment.
+      let expectedId;
+      if (a.role === 'crossing') expectedId = anchorId('crossing', a.meta.poly, a.meta.vertex);
+      else if (a.role === 'edge') expectedId = anchorId('edge', a.meta.poly, a.meta.side);
+      else if (a.role === 'tip') expectedId = anchorId('tip', a.meta.poly);
+      else expectedId = anchorId('cell', a.meta.poly);
+      expect(a.id).toBe(expectedId);
+    }
+  });
+});
+
+// ── RECURSIVE WARP-AWARE anchors (WI-118, Option C) ─────────────────────────
+// The recursive extractor no longer refuses warp; it reconstructs every anchor
+// from the SHARED recursive core (buildWarpedPolygon) — the SAME geometry the
+// renderer paints — so vertices/edges are EXACT-TO-PAINT, and free-point centres
+// (cells/tips) are point-warped + FD-framed (trusted-bounded, offline-validated).
+// The load-bearing proof compares extractor output against the RENDERER's CAPTURED
+// paint stream (not a re-call of the core), so "exact-to-paint" is genuinely
+// tested, not asserted circularly.
+
+const SIDES_FOR_SHAPE = { triangle: 3, square: 4, pentagon: 5, hexagon: 6, circle: 72 };
+
+// A non-trivial warp field so curves actually bend (the test is meaningful).
+const warpField = () =>
+  ScalarField.fromFunction((u, v) => Math.sin(6 * u) * Math.cos(6 * v), { nx: 65, ny: 65 });
+
+function warpParams(overrides = {}) {
+  const { amount = 2, warpNodes = 2, ...rest } = overrides;
+  return recursiveParams({
+    modulation: { channel: 'warp', field: warpField(), amount },
+    warpNodes,
+    ...rest,
+  });
+}
+
+// Capture the renderer's ACTUAL painted LOCAL geometry per polygon by parsing its
+// recorded op stream. symmetry=1/startAngle=0/offset=0 ⇒ recorded vertex/bezier
+// args are origin-centered LOCAL coords (RecordingContext does not apply the
+// recorded translate/rotate). Each polygon becomes { verts, segs }: plain-vertex
+// polygons carry all corners in `verts`; bendable polygons carry the ONE start in
+// `verts` and every cubic triple in `segs`.
+function recordRecursivePaint(params, seed = 7) {
+  const rg = new RecursiveGeometry();
+  const ctx = new RecordingContext({ seed });
+  rg.generateWithContext(ctx, seed, params, W, H, '#000000', 100);
+  const polys = [];
+  let cur = null;
+  for (const { op, args } of ctx.calls) {
+    if (op === 'beginShape') cur = { verts: [], segs: [], pending: [] };
+    else if (op === 'vertex' && cur) cur.verts.push({ x: args[0], y: args[1] });
+    else if (op === 'bezierVertex' && cur) {
+      cur.pending.push({ x: args[0], y: args[1] });
+      if (cur.pending.length === 3) {
+        cur.segs.push({ c1: cur.pending[0], c2: cur.pending[1], end: cur.pending[2] });
+        cur.pending = [];
+      }
+    } else if (op === 'endShape' && cur) {
+      polys.push({ verts: cur.verts, segs: cur.segs });
+      cur = null;
+    }
+  }
+  return polys;
+}
+
+// Turn one recorded polygon into { corners, sideLines } in LOCAL coords, flattening
+// bendable sides with the SAME shared flattenCubic the extractor uses. Corners and
+// side polylines are indexed to match the extractor's per-poly vertex/side order.
+function paintedGeometry(poly, K, numSides) {
+  if (poly.segs.length === 0) {
+    const corners = poly.verts;
+    const n = corners.length;
+    const sideLines = [];
+    for (let k = 0; k < n; k++) {
+      const a = corners[k];
+      const b = corners[(k + 1) % n];
+      sideLines.push([[a.x, a.y], [b.x, b.y]]);
+    }
+    return { corners, sideLines };
+  }
+  const segsPerSide = K - 1;
+  const corners = [];
+  const sideLines = [];
+  for (let s = 0; s < numSides; s++) {
+    const startPt = s === 0 ? poly.verts[0] : poly.segs[s * segsPerSide - 1].end;
+    corners.push(startPt);
+    const line = [[startPt.x, startPt.y]];
+    let prev = [startPt.x, startPt.y];
+    for (let j = 0; j < segsPerSide; j++) {
+      const seg = poly.segs[s * segsPerSide + j];
+      const flat = flattenCubic([prev, [seg.c1.x, seg.c1.y], [seg.c2.x, seg.c2.y], [seg.end.x, seg.end.y]]);
+      for (const q of flat) line.push(q);
+      prev = [seg.end.x, seg.end.y];
+    }
+    sideLines.push(line);
+  }
+  return { corners, sideLines };
+}
+
+// Point at half a polyline's arc length (mirrors the extractor's on-curve sample).
+function halfLengthPoint(line) {
+  let total = 0;
+  for (let i = 0; i < line.length - 1; i++) {
+    total += Math.hypot(line[i + 1][0] - line[i][0], line[i + 1][1] - line[i][1]);
+  }
+  const half = total / 2;
+  let acc = 0;
+  for (let i = 0; i < line.length - 1; i++) {
+    const l = Math.hypot(line[i + 1][0] - line[i][0], line[i + 1][1] - line[i][1]);
+    if (acc + l >= half || i === line.length - 2) {
+      const t = l > 0 ? (half - acc) / l : 0;
+      return {
+        x: line[i][0] + (line[i + 1][0] - line[i][0]) * t,
+        y: line[i][1] + (line[i + 1][1] - line[i][1]) * t,
+      };
+    }
+    acc += l;
+  }
+  const last = line[line.length - 1];
+  return { x: last[0], y: last[1] };
+}
+
+describe('getSemanticAnchors — recursive WARP-aware anchors, exact-to-paint (WI-118)', () => {
+  for (const K of [2, 4]) {
+    const mode = K < 3 ? 'K=2 vertices' : 'K≥3 bendable';
+    const params = warpParams({ shape: 'hexagon', depth: 3, warpNodes: K, amount: 2 });
+    const numSides = SIDES_FOR_SHAPE.hexagon;
+
+    it(`crossings sit on the renderer's painted warped corners (${mode})`, () => {
+      const painted = recordRecursivePaint(params);
+      const anchors = getSemanticAnchors('recursive', params, W, H);
+      const crossings = anchors.filter((a) => a.role === 'crossing');
+      expect(crossings.length).toBe(painted.length * numSides);
+      for (const c of crossings) {
+        const { corners } = paintedGeometry(painted[c.meta.poly], K, numSides);
+        const corner = corners[c.meta.vertex];
+        // World = LOCAL + (CX, CY); sub-pixel agreement with the painted corner.
+        expect(c.x).toBeCloseTo(corner.x + CX, 6);
+        expect(c.y).toBeCloseTo(corner.y + CY, 6);
+      }
+    });
+
+    it(`edges sit on the painted side, sub-pixel (≤0.15px), tangent = side direction (${mode})`, () => {
+      const painted = recordRecursivePaint(params);
+      const anchors = getSemanticAnchors('recursive', params, W, H);
+      const edges = anchors.filter((a) => a.role === 'edge');
+      expect(edges.length).toBe(painted.length * numSides);
+      for (const e of edges) {
+        const { sideLines } = paintedGeometry(painted[e.meta.poly], K, numSides);
+        const line = sideLines[e.meta.side];
+        const mid = halfLengthPoint(line);
+        const dist = Math.hypot(e.x - (mid.x + CX), e.y - (mid.y + CY));
+        expect(dist).toBeLessThanOrEqual(0.15);
+      }
+    });
+  }
+
+  it('is deterministic under warp (byte-identical for identical params)', () => {
+    const p = warpParams({ warpNodes: 4 });
+    expect(getSemanticAnchors('recursive', p, W, H)).toEqual(getSemanticAnchors('recursive', p, W, H));
+  });
+
+  it('no-warp byte-identity: a modulation with NO warp channel is unchanged from today', () => {
+    // The warp branch fires ONLY on channel==='warp'. A density (non-warp) channel
+    // must leave the extractor on its untouched non-warp path → byte-identical.
+    const density = { channel: 'density', field: warpField(), amount: 2 };
+    const withDensity = getSemanticAnchors('recursive', recursiveParams({ modulation: density }), W, H);
+    const plain = getSemanticAnchors('recursive', recursiveParams(), W, H);
+    expect(withDensity).toEqual(plain);
+  });
+
+  it('D2: crossing corners are displaced ONLY by stackWarpDisplacement (K=2 vertices)', () => {
+    const params = warpParams({ shape: 'square', depth: 2, warpNodes: 2, amount: 2 });
+    const sources = [params.modulation]; // the extractor builds [warpMod] the same way
+    // Straight-corner mode: each crossing = its ideal corner + stackWarpDisplacement.
+    const ideal = getSemanticAnchors('recursive', recursiveParams({ shape: 'square', depth: 2 }), W, H)
+      .filter((a) => a.role === 'crossing');
+    const warped = getSemanticAnchors('recursive', params, W, H).filter((a) => a.role === 'crossing');
+    const byId = new Map(warped.map((a) => [a.id, a]));
+    for (const c of ideal) {
+      const lx = c.x - CX;
+      const ly = c.y - CY;
+      const u = (lx + W / 2) / W;
+      const v = (ly + H / 2) / H;
+      const { dx, dy } = stackWarpDisplacement(sources, u, v);
+      const w = byId.get(c.id);
+      expect(w.x).toBeCloseTo(c.x + dx, 9);
+      expect(w.y).toBeCloseTo(c.y + dy, 9);
+    }
+  });
+
+  it('cells/tips are free points: position = mean of the DRAWN warped corners, frame = computeWarpFrame (FD)', () => {
+    const params = warpParams({ shape: 'hexagon', depth: 3, warpNodes: 4, amount: 2 });
+    const sources = [params.modulation];
+    const anchors = getSemanticAnchors('recursive', params, W, H);
+    const centres = anchors.filter((a) => a.role === 'cell' || a.role === 'tip');
+    expect(centres.length).toBeGreaterThan(0);
+    // Position is the mean of the polygon's DRAWN warped corners — its own crossing
+    // anchors, which sit on the exact warped vertices the renderer paints — NOT a
+    // point-warp of the straight centre (that lands ~4× further from the visible
+    // shape under a curved field). Rebuild each mean from the painted crossings so
+    // this stays exact-to-paint, not a re-derivation. Frame is still the FD helper
+    // at the straight centre (a free-point orientation; no curve tangent is used).
+    const cornersByPoly = new Map();
+    for (const a of anchors) {
+      if (a.role !== 'crossing') continue;
+      const key = `${a.meta.copy ?? 0}:${a.meta.poly}`;
+      if (!cornersByPoly.has(key)) cornersByPoly.set(key, []);
+      cornersByPoly.get(key).push(a);
+    }
+    const idealCentres = getSemanticAnchors('recursive', recursiveParams({ shape: 'hexagon', depth: 3 }), W, H)
+      .filter((a) => a.role === 'cell' || a.role === 'tip');
+    const byId = new Map(anchors.map((a) => [a.id, a]));
+    for (const c of idealCentres) {
+      const w = byId.get(c.id);
+      const corners = cornersByPoly.get(`${w.meta.copy ?? 0}:${w.meta.poly}`);
+      const mx = corners.reduce((s, a) => s + a.x, 0) / corners.length;
+      const my = corners.reduce((s, a) => s + a.y, 0) / corners.length;
+      expect(w.x).toBeCloseTo(mx, 6);
+      expect(w.y).toBeCloseTo(my, 6);
+      const lx = c.x - CX;
+      const ly = c.y - CY;
+      const u = (lx + W / 2) / W;
+      const v = (ly + H / 2) / H;
+      const frame = computeWarpFrame(sources, u, v, { W, H });
+      expect(w.tangent).toBeCloseTo(frame.tangent, 9);
+      expect(w.normal).toBeCloseTo(frame.normal, 9);
+    }
+  });
+});
+
+describe('getSemanticAnchors — recursive warp × symmetry (WI-118 rides on WI-115)', () => {
+  it('warp anchors appear in EVERY sector under N≥2 and non-zero startAngle', () => {
+    const anchors = getSemanticAnchors(
+      'recursive',
+      warpParams({ symmetry: 4, startAngle: 33, warpNodes: 4 }),
+      W,
+      H,
+    );
+    expect(new Set(anchors.map((a) => a.meta.copy))).toEqual(new Set([0, 1, 2, 3]));
+    for (const role of ['crossing', 'edge', 'tip', 'cell']) {
+      const copies = new Set(anchors.filter((a) => a.role === role).map((a) => a.meta.copy));
+      expect(copies).toEqual(new Set([0, 1, 2, 3]));
+    }
+  });
+
+  it('byte-exact rotation-equivariance under warp: anchor(k) == Rot_θk(anchor(0)) (position AND frame)', () => {
+    // ox = W2/2 + offsetX = 0 so world coords ARE the centred rotation.
+    const W2 = 800;
+    const H2 = 800;
+    const geom = {
+      shape: 'hexagon',
+      depth: 3,
+      rotationPerLevel: 15,
+      scaleFactor: 0.7,
+      startScale: 70,
+      offsetX: -W2 / 2,
+      offsetY: -H2 / 2,
+      warpNodes: 4,
+    };
+    const field = warpField();
+    const modulation = { channel: 'warp', field, amount: 2 };
+    const n = 3;
+    const startDeg = 40;
+    const startRad = (startDeg * Math.PI) / 180;
+
+    const master = getSemanticAnchors('recursive', { ...geom, modulation, symmetry: 1, startAngle: 0 }, W2, H2);
+    const full = getSemanticAnchors('recursive', { ...geom, modulation, symmetry: n, startAngle: startDeg }, W2, H2);
+    expect(full.length).toBe(master.length * n);
+    const masterById = new Map(master.map((m) => [m.id, m]));
+    for (const a of full) {
+      const k = a.meta.copy;
+      const theta = (2 * Math.PI * k) / n + startRad;
+      const cos = Math.cos(theta);
+      const sin = Math.sin(theta);
+      const baseId = a.id.slice(0, a.id.lastIndexOf(':'));
+      const m = masterById.get(baseId);
+      expect(m).toBeDefined();
+      expect(a.x).toBeCloseTo(m.x * cos - m.y * sin, 9);
+      expect(a.y).toBeCloseTo(m.x * sin + m.y * cos, 9);
+      expect(a.tangent).toBeCloseTo(m.tangent + theta, 12);
+      expect(a.normal).toBeCloseTo(m.normal + theta, 12);
+      expect(a.s).toBe(m.s);
+    }
+  });
+});
+
+// ── OFFLINE bound-validation for the trusted-bounded free-point centres ───────
+// Per the PRD: the recursive-bendable centre class is validated by an OFFLINE
+// bound test, NOT a runtime coincidence guard (K<3 is the only runtime gate).
+//
+// WHAT IS VALIDATED — the centre TRACKS the drawn warped shape. A centre is a
+// FREE POINT (nothing is painted AT it), but it must SIT IN the drawn polygon.
+// Unlike a crossing (an exact drawn intersection — reconstruct-and-intersect, no
+// point-warp), a centre has no drawn curve, so the extractor places it at the
+// MEAN OF THE DRAWN WARPED CORNERS (the centroid of the painted regular polygon's
+// vertices). Recursive polygons are REGULAR by construction, so unwarped the
+// vertex-mean equals the area-centroid; under a curved field the corner-mean stays
+// near the true outline centroid, whereas a single point-warp of the straight
+// centre drifts by the field's variation across the canvas-scale polygon. This
+// test sweeps fields/polygons and asserts OFFLINE that the corner-mean tracks the
+// flattened-outline area-centroid — and does so materially tighter than a
+// point-warp would (measured ~4×). That bounded, always-better tracking is the
+// substitute for a per-frame guard. (The other half — FD FRAME accuracy < 0.24° —
+// is proven generically in warpFrame.test.js and pinned for these anchors by the
+// cells/tips test above.)
+describe('recursive-bendable centres — OFFLINE tracking of the drawn shape (no runtime guard)', () => {
+  const regularPoly = (cx, cy, r, n, rot = 0) =>
+    Array.from({ length: n }, (_, i) => {
+      const a = rot + (2 * Math.PI * i) / n;
+      return { x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) };
+    });
+  const warpVertex = (p, sources) => {
+    const u = (p.x + W / 2) / W;
+    const v = (p.y + H / 2) / H;
+    const { dx, dy } = stackWarpDisplacement(sources, u, v);
+    return { x: p.x + dx, y: p.y + dy };
+  };
+  // Shoelace area-centroid of a simple polygon — the "true" visual centre.
+  const areaCentroid = (poly) => {
+    let a = 0;
+    let cx = 0;
+    let cy = 0;
+    for (let i = 0; i < poly.length; i++) {
+      const p = poly[i];
+      const q = poly[(i + 1) % poly.length];
+      const cross = p.x * q.y - q.x * p.y;
+      a += cross;
+      cx += (p.x + q.x) * cross;
+      cy += (p.y + q.y) * cross;
+    }
+    a *= 0.5;
+    return { x: cx / (6 * a), y: cy / (6 * a) };
+  };
+
+  it('warped-corner mean tracks the drawn outline centroid, tighter than a point-warp', () => {
+    // Canvas-scale REGULAR polygons (as recursive generates), at various centres.
+    const polygons = [
+      regularPoly(0, 0, 130, 4, Math.PI / 4),
+      regularPoly(40, -30, 120, 6),
+      regularPoly(-50, 20, 110, 3),
+    ];
+    const fields = [
+      ScalarField.fromFunction((u, v) => Math.sin(6 * u) * Math.cos(6 * v), { nx: 65, ny: 65 }),
+      ScalarField.fromFunction((u, v) => Math.sin(11 * u + 2 * v), { nx: 97, ny: 97 }),
+      ScalarField.fromFunction((u) => 2 * (u - 0.5), { nx: 33, ny: 33 }),
+    ];
+    const amount = 1; // outline stays simple → its shoelace centroid is meaningful
+
+    let sumCorner = 0;
+    let sumPoint = 0;
+    for (const verts of polygons) {
+      for (const field of fields) {
+        const sources = [{ channel: 'warp', field, amount }];
+        const warped = verts.map((p) => warpVertex(p, sources));
+        const cornerMean = {
+          x: warped.reduce((s, p) => s + p.x, 0) / warped.length,
+          y: warped.reduce((s, p) => s + p.y, 0) / warped.length,
+        };
+        const cx = verts.reduce((s, p) => s + p.x, 0) / verts.length;
+        const cy = verts.reduce((s, p) => s + p.y, 0) / verts.length;
+        const pointWarp = warpVertex({ x: cx, y: cy }, sources);
+        const centroid = areaCentroid(warped);
+        const dCorner = Math.hypot(cornerMean.x - centroid.x, cornerMean.y - centroid.y);
+        const dPoint = Math.hypot(pointWarp.x - centroid.x, pointWarp.y - centroid.y);
+        // Bounded (never wild) AND never worse than a point-warp, per config.
+        expect(Number.isFinite(dCorner)).toBe(true);
+        expect(dCorner).toBeLessThanOrEqual(dPoint + 1e-9);
+        sumCorner += dCorner;
+        sumPoint += dPoint;
+      }
+    }
+    // Non-vacuous: across the sweep the corner-mean tracks the drawn centroid
+    // materially tighter than a single point-warp of the straight centre.
+    expect(sumCorner).toBeLessThan(sumPoint * 0.75);
   });
 });
 

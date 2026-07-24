@@ -145,9 +145,12 @@ export class P5Adapter {
   vertex(...a) { this._rec('vertex', a); if (this._draw) this._p.vertex(...a); }
   // p5 2.x curve API: `bezierOrder(n)` sets the degree; `bezierVertex(x, y)` then
   // takes ONE point per call (a cubic = bezierOrder(3) + three calls). The old
-  // 1.x 6-arg `bezierVertex` throws inside endShape() on p5 2.x.
-  bezierOrder(...a) { if (this._draw) this._p.bezierOrder(...a); }
-  bezierVertex(...a) { if (this._draw) this._p.bezierVertex(...a); }
+  // 1.x 6-arg `bezierVertex` throws inside endShape() on p5 2.x. RECORDED in
+  // record mode so capturePolylines can flatten a warped host's Bézier curves
+  // (single-axis warped-grid vine). Only Grid-warp emits these among probe-able
+  // hosts, so non-warp capture stays byte-identical.
+  bezierOrder(...a) { this._rec('bezierOrder', a); if (this._draw) this._p.bezierOrder(...a); }
+  bezierVertex(...a) { this._rec('bezierVertex', a); if (this._draw) this._p.bezierVertex(...a); }
   endShape(...a) { this._rec('endShape', a); if (this._draw) this._p.endShape(...a); }
 }
 

@@ -11,6 +11,7 @@ import { resolveOperation } from './operations.js';
 import { realizeVariableWeightElements } from './variableWeight.js';
 import { transformToSVG } from './transform/transformOps.js';
 import { isTextLayer, textNodeFromLayer } from './text/textLayer.js';
+import { asResolver } from './text/fontRegistry.js';
 import { TextNode } from './scene/TextNode.js';
 import { importLayerPivot } from './scene/placement.js';
 import { etchImageMarkup } from './etch/etchSvg.js';
@@ -47,13 +48,16 @@ function wrapLayerTransform(content, layer, canvasW, canvasH) {
   return svgT ? `<g transform="${svgT}">${content}</g>` : content;
 }
 
-// Text layers export their glyph OUTLINE. The font must be supplied (opts.font)
-// — without it glyphs can't be measured/outlined, so the layer is skipped.
-// Text uses its own bbox-center pivot (NOT the canvas-center wrapLayerTransform
-// patterns use), so toSVGGroup already emits the correctly-pivoted transform.
-function textLayerGroup(layer, font) {
-  if (!font) return '';
+// Text layers export their glyph OUTLINE. `fontOrResolver` (opts.font) is EITHER
+// a single Font (legacy) OR a per-node resolver `(fontId) => Font|null`; the
+// layer is measured with ITS OWN font. Without a resolvable font the layer is
+// skipped. Text uses its own bbox-center pivot (NOT the canvas-center
+// wrapLayerTransform patterns use), so toSVGGroup already emits the correctly-
+// pivoted transform.
+function textLayerGroup(layer, fontOrResolver) {
   const data = textNodeFromLayer(layer);
+  const font = asResolver(fontOrResolver)(data.fontId);
+  if (!font) return '';
   if (!data.text || !data.text.trim()) return '';        // empty text → nothing
   const node = new TextNode({ ...data, font, transform: layer.transform });
   const local = node.localBBox();

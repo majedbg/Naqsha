@@ -23,10 +23,13 @@
 // Returned in layers[] order (front to back), preserving z-order. Hit-testing
 // walks the list front-first so a click hits the topmost visible layer.
 //
-// Pure: no DOM. The caller supplies a RESOLVED opentype `font` so text bboxes
-// can be measured; with no font, text layers are SKIPPED (not yet measurable).
+// Pure: no DOM. The caller supplies `font` as EITHER a single resolved opentype
+// Font (legacy single-font) OR a resolver `(fontId) => Font|null` (per-node
+// fonts). Either way each text layer is measured with ITS OWN font; a layer
+// whose font isn't resolvable yet is SKIPPED (not measurable → not selectable).
 
 import { isTextLayer, textNodeFromLayer } from '../text/textLayer.js';
+import { asResolver } from '../text/fontRegistry.js';
 import { TextNode } from './TextNode.js';
 import { importLayerBBox } from './placement.js';
 
@@ -42,6 +45,8 @@ const IDENTITY = { x: 0, y: 0, rotation: 0, scale: 1 };
  *   of this by the caller (hit-test / gestures / chrome / render / export).
  */
 export function buildSelectables({ layers = [], font = null, canvasW, canvasH }) {
+  // `font` may be a single Font (legacy) or a per-node resolver — normalize.
+  const resolveFont = asResolver(font);
   const out = [];
   // Hidden or locked layers are NOT selectable on the canvas — a click over one
   // must fall through to the visible, unlocked layer beneath it. (Locked layers
@@ -51,9 +56,11 @@ export function buildSelectables({ layers = [], font = null, canvasW, canvasH })
     if (layer.locked) continue;
 
     if (isTextLayer(layer)) {
+      const nodeData = textNodeFromLayer(layer);
+      const font = resolveFont(nodeData.fontId);
       // Not measurable without a resolved font → not selectable yet.
       if (!font) continue;
-      const tn = new TextNode({ ...textNodeFromLayer(layer), font });
+      const tn = new TextNode({ ...nodeData, font });
       const local = tn.localBBox(); // {x:0,y:0,w,h} — origin-based
       const x = layer.params?.x || 0;
       const y = layer.params?.y || 0;

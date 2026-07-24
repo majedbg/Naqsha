@@ -16,13 +16,25 @@ import { pxToUnit } from '../units.js';
 // counters and fine strokes degrade on typical hardware.
 export const MIN_CAP_HEIGHT_MM = 1.5;
 
+// The double-line caution shown for an OUTLINE font in OUTLINE engrave mode. Its
+// glyph strokes are closed contours, so the tool traces BOTH edges of every
+// stroke — a doubled path. This is intrinsic to outline fonts (uploaded or
+// bundled); the escape hatches are Fill mode or a single-line "Engraving" font.
+export const DOUBLE_LINE_MESSAGE =
+  'This is an outline font: in Outline engrave mode the tool traces both edges ' +
+  'of every stroke, so each stroke comes out as a DOUBLE line. Switch to Fill, ' +
+  'or pick an Engraving (single-line) font, for a true single stroke.';
+
 /**
- * @param {{ text?: string, fontSize: number, lineMode?: string, box?: {w:number} }} node
+ * @param {{ text?: string, fontSize: number, lineMode?: string, box?: {w:number},
+ *           renderMode?: 'fill'|'outline' }} node
  * @param {import('opentype.js').Font|null} font  resolved font (null → cannot measure)
- * @param {{ minCapHeightMm?: number }} [opts]
+ * @param {{ minCapHeightMm?: number, fontKind?: 'outline'|'single-line' }} [opts]
+ *   `fontKind` gates the double-line caution: it fires only for an OUTLINE font
+ *   (never for a single-line engraving font). Omitted → no double-line warning.
  * @returns {Array<{ level: 'warn', code: string, message: string }>}
  */
-export function textEngraveWarnings(node, font, { minCapHeightMm = MIN_CAP_HEIGHT_MM } = {}) {
+export function textEngraveWarnings(node, font, { minCapHeightMm = MIN_CAP_HEIGHT_MM, fontKind } = {}) {
   if (!node || !font || !node.text) return [];
   const size = effectiveFontSize(node, font);
   const capMm = pxToUnit(capHeightPx(font, size), 'mm');
@@ -37,6 +49,11 @@ export function textEngraveWarnings(node, font, { minCapHeightMm = MIN_CAP_HEIGH
         `Cap height ≈${capMm.toFixed(1)}mm is below the ~${minCapHeightMm}mm clean-engrave ` +
         `minimum — counters may burn shut and fine strokes lose definition.`,
     });
+  }
+  // Outline-in-outline-mode → double line. Single-line fonts are exempt (that's
+  // their whole point); an unknown kind stays silent (conservative).
+  if (node.renderMode === 'outline' && fontKind === 'outline') {
+    warnings.push({ level: 'warn', code: 'double-line', message: DOUBLE_LINE_MESSAGE });
   }
   return warnings;
 }

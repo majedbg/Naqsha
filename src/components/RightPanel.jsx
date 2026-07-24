@@ -21,7 +21,7 @@ import {
 } from "../lib/tools/transformGestures";
 import { ROTATE_OFFSET } from "../lib/transform/handles";
 import { ghostSvg } from "../lib/scene/placement";
-import { useFont } from "../lib/text/fontRegistry";
+import { useFonts } from "../lib/text/fontRegistry";
 // Three-free lazy host for the 3D preview (S1). Canvas3DHost itself imports no
 // three.js — it React.lazy-loads the inner Scene3D, so importing it here never
 // pulls three into the 2D bundle.
@@ -288,9 +288,11 @@ export default function RightPanel({
   // (flag-OFF) transform string stays byte-identical.
   const panTransform = externalPan ? `translate(${pan.x}px, ${pan.y}px) ` : "";
 
-  // Resolve the default text font (async; null until loaded). Threaded into
-  // useCanvas so text layers can render their outlines.
-  const { font: textFont } = useFont();
+  // Per-node font resolution: load every font referenced by the layers (plus the
+  // default) and expose `resolveFont(fontId) → Font`. Threaded (in place of the
+  // old single default font) into canvas render, hit-testing, the 3D mark build
+  // and the edit overlay so each text layer draws/exports in its OWN typeface.
+  const { resolveFont } = useFonts(layers);
 
   const { patternInstances, etchBitmaps, motifPlacementStats, motifPlacements } = useCanvas(
     containerRef,
@@ -300,7 +302,7 @@ export default function RightPanel({
     bgColor,
     transforms,
     selectedNodeId,
-    textFont,
+    resolveFont,
     operations,
     machineProfile,
     colorView,
@@ -342,7 +344,7 @@ export default function RightPanel({
       patternInstances,
       canvasW,
       canvasH,
-      svgOpts: { font: textFont },
+      svgOpts: { font: resolveFont },
       // Material-lens appearance: lets the reaction layer light fluorescent
       // grooves (markGlow → emissiveIntensity); null lens → no glow anywhere.
       appearance: selectedMaterial ? resolveAppearance(selectedMaterial) : null,
@@ -352,7 +354,7 @@ export default function RightPanel({
       panelVisibility: livePanelVisibility,
       layerVisibility: liveLayerVisibility,
     });
-  }, [threeDSnapshot, patternInstances, canvasW, canvasH, textFont, selectedMaterial, livePanelMaterials, livePanelVisibility, liveLayerVisibility]);
+  }, [threeDSnapshot, patternInstances, canvasW, canvasH, resolveFont, selectedMaterial, livePanelMaterials, livePanelVisibility, liveLayerVisibility]);
 
   // Surface B (S8): the relief source field. Resolved 2D-side from the focus
   // guide layer via fieldForLayer (three-free; LRU-cached internally so this is
@@ -712,7 +714,7 @@ export default function RightPanel({
       const pt = toCanvasPoint(e.clientX, e.clientY);
       if (!pt) return;
       const liveTransforms = transformsLiveRef.current || {};
-      const selectables = buildSelectables({ layers, canvasW, canvasH, font: textFont });
+      const selectables = buildSelectables({ layers, canvasW, canvasH, font: resolveFont });
 
       // 1) If a layer is selected, its rotate/resize handles take priority over
       //    re-selecting/moving — a handle hit starts a transform WITHOUT changing
@@ -760,7 +762,7 @@ export default function RightPanel({
       };
       capturePointer(e);
     },
-    [placing, onPlaceAsset, handActive, selectActive, textActive, toCanvasPoint, layers, canvasW, canvasH, selectedNodeId, onSelect, textFont, stopGlide]
+    [placing, onPlaceAsset, handActive, selectActive, textActive, toCanvasPoint, layers, canvasW, canvasH, selectedNodeId, onSelect, resolveFont, stopGlide]
   );
 
   const handlePointerMove = useCallback(
@@ -842,7 +844,7 @@ export default function RightPanel({
       const pt = toCanvasPoint(e.clientX, e.clientY);
       if (!pt) return;
       const liveTransforms = transformsLiveRef.current || {};
-      const selectables = buildSelectables({ layers, canvasW, canvasH, font: textFont });
+      const selectables = buildSelectables({ layers, canvasW, canvasH, font: resolveFont });
       const id = pickTopmost(pt, selectables, liveTransforms);
       if (!id) return;
       const sel = selectables.find((s) => s.id === id);
@@ -850,7 +852,7 @@ export default function RightPanel({
       dragRef.current = null; // cancel any move armed by the preceding pointerdown — NO commit
       onRequestEdit(id);
     },
-    [selectActive, textActive, toCanvasPoint, layers, canvasW, canvasH, textFont, onRequestEdit]
+    [selectActive, textActive, toCanvasPoint, layers, canvasW, canvasH, resolveFont, onRequestEdit]
   );
 
   return (
@@ -912,13 +914,16 @@ export default function RightPanel({
             with the drawn glyphs at any zoom. Rendered only when an edit is open,
             the editing layer still exists + is a text layer, and the font is
             loaded (it sizes the textarea from the laid-out glyph box). */}
-        {editingNodeId && textFont && (() => {
+        {editingNodeId && (() => {
           const eLayer = layers.find((l) => l.id === editingNodeId);
           if (!eLayer || !isTextLayer(eLayer)) return null;
+          const eNode = textNodeFromLayer(eLayer);
+          const eFont = resolveFont(eNode.fontId); // this node's OWN font
+          if (!eFont) return null; // not loaded yet → overlay sizes from glyphs
           return (
             <TextEditOverlay
-              node={textNodeFromLayer(eLayer)}
-              font={textFont}
+              node={eNode}
+              font={eFont}
               onEditText={onEditText}
               onExitEdit={onExitEdit}
             />

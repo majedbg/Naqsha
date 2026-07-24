@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { getSemanticAnchors } from './semanticAnchors.js';
+import { anchorId } from './anchors.js';
 import { placeMotifs, selectAnchors } from './placementEngine.js';
 import { defaultRolesForHost } from './hostKinds.js';
 import { DEFAULT_PARAMS } from '../../constants.js';
@@ -593,6 +594,146 @@ describe('getSemanticAnchors — recursive feeds the placement engine', () => {
       { canvasW: W, canvasH: H, boundary: { type: 'rect', width: W, height: H } }
     );
     expect(placements.length).toBeGreaterThan(0);
+  });
+});
+
+// ── RECURSIVE symmetry + startAngle replication (WI-115) ────────────────────
+// The recursive extractor now replicates every radial-symmetry copy and folds in
+// startAngle as a RIGID post-rotation of the base copy — matching the renderer's
+// applySymmetryDraw (θk = 2π·k/n + startAngle, rotate-then-add-offset). These
+// tests pin: (1) N-fold count, (2) anchors in EVERY sector under N≥2 & non-zero
+// startAngle, (3) BYTE-EXACT rotation-equivariance anchor(k) == Rot_θk(anchor(0)),
+// (4) an independent directional check that startAngle rotates the right way.
+describe('getSemanticAnchors — recursive symmetry + startAngle replication (WI-115)', () => {
+  it('symmetry=N yields exactly N× the symmetry=1 anchor count', () => {
+    const one = getSemanticAnchors('recursive', recursiveParams({ symmetry: 1 }), W, H);
+    const four = getSemanticAnchors('recursive', recursiveParams({ symmetry: 4 }), W, H);
+    expect(four.length).toBe(one.length * 4);
+  });
+
+  it('N≥2 with non-zero startAngle places anchors in EVERY sector (not just sector 0)', () => {
+    const n = 4;
+    const anchors = getSemanticAnchors(
+      'recursive',
+      recursiveParams({ symmetry: n, startAngle: 33 }),
+      W,
+      H
+    );
+    // Every copy index 0..n-1 is present — no sector is missing.
+    expect(new Set(anchors.map((a) => a.meta.copy))).toEqual(new Set([0, 1, 2, 3]));
+    // Each role is present in every sector too (nothing collapses to sector 0).
+    for (const role of ['crossing', 'edge', 'tip', 'cell']) {
+      const copies = new Set(anchors.filter((a) => a.role === role).map((a) => a.meta.copy));
+      expect(copies).toEqual(new Set([0, 1, 2, 3]));
+    }
+  });
+
+  it('copy-k anchors carry meta.copy/meta.theta and rotated tangent/normal (θ = 2π·k/n + startRad)', () => {
+    const n = 3;
+    const startDeg = 40;
+    const startRad = (startDeg * Math.PI) / 180;
+    const full = getSemanticAnchors(
+      'recursive',
+      recursiveParams({ symmetry: n, startAngle: startDeg }),
+      W,
+      H
+    );
+    for (const a of full) {
+      const theta = (2 * Math.PI * a.meta.copy) / n + startRad;
+      expect(a.meta.theta).toBeCloseTo(theta, 12);
+    }
+  });
+
+  it('byte-exact rotation-equivariance: anchor(k) == Rot_θk(anchor(0)) for position AND frame', () => {
+    // ox = W2 + offsetX = 0 so world coords ARE the centred rotation — this dodges
+    // the (ox+bx)-ox cancellation and lets us reconstruct Rot_θk(master) byte-exact.
+    const W2 = 800;
+    const H2 = 800;
+    const geom = {
+      shape: 'hexagon',
+      depth: 3,
+      rotationPerLevel: 15,
+      scaleFactor: 0.7,
+      scaleNonLinearity: 0,
+      startScale: 70,
+      offsetX: -W2 / 2,
+      offsetY: -H2 / 2,
+    };
+    const ox = 0; // W2/2 + offsetX
+    const oy = 0;
+    const n = 3;
+    const startDeg = 40;
+    const startRad = (startDeg * Math.PI) / 180;
+
+    // anchor(0) = the base copy at DEFAULT orientation (symmetry=1, startAngle=0).
+    const master = getSemanticAnchors('recursive', { ...geom, symmetry: 1, startAngle: 0 }, W2, H2);
+    const full = getSemanticAnchors('recursive', { ...geom, symmetry: n, startAngle: startDeg }, W2, H2);
+
+    expect(full.length).toBe(master.length * n);
+    const masterById = new Map(master.map((m) => [m.id, m]));
+
+    for (const a of full) {
+      const k = a.meta.copy;
+      const theta = (2 * Math.PI * k) / n + startRad;
+      const cos = Math.cos(theta);
+      const sin = Math.sin(theta);
+      // full ids gain a trailing ':k'; strip it to recover the master id.
+      const baseId = a.id.slice(0, a.id.lastIndexOf(':'));
+      const m = masterById.get(baseId);
+      expect(m).toBeDefined();
+      // master (θ=0, ox=0) world coords ARE the centred base coords (m.x, m.y).
+      // Reconstruct Rot_θk(master) with the SAME expression the extractor uses.
+      expect(a.x).toBe(ox + m.x * cos - m.y * sin);
+      expect(a.y).toBe(oy + m.x * sin + m.y * cos);
+      expect(a.tangent).toBe(m.tangent + theta);
+      expect(a.normal).toBe(m.normal + theta);
+      // Arc length is rotation-invariant.
+      expect(a.s).toBe(m.s);
+    }
+  });
+
+  it('startAngle rotates in the applySymmetryDraw direction: 90° maps (x,y)→(−y,x) about centre (independent check)', () => {
+    // Independent of the extractor's own rotation expression — a +90° rotation in
+    // the [cos −sin; sin cos] convention sends centred (x,y) → (−y, x).
+    const W2 = 800;
+    const H2 = 800;
+    const geom = {
+      shape: 'pentagon',
+      depth: 3,
+      rotationPerLevel: 12,
+      startScale: 70,
+      offsetX: -W2 / 2, // ox = 0
+      offsetY: -H2 / 2,
+    };
+    const master = getSemanticAnchors('recursive', { ...geom, symmetry: 1, startAngle: 0 }, W2, H2);
+    const rot90 = getSemanticAnchors('recursive', { ...geom, symmetry: 1, startAngle: 90 }, W2, H2);
+    // symmetry=1 keeps ids un-suffixed, so ids line up between the two runs.
+    const byId = new Map(master.map((m) => [m.id, m]));
+    expect(rot90.length).toBe(master.length);
+    for (const a of rot90) {
+      const m = byId.get(a.id);
+      expect(m).toBeDefined();
+      expect(a.x).toBeCloseTo(-m.y, 9);
+      expect(a.y).toBeCloseTo(m.x, 9);
+      expect(a.tangent).toBeCloseTo(m.tangent + Math.PI / 2, 9);
+    }
+  });
+
+  it('symmetry=1 & startAngle=0 keeps pre-WI-115 ids (no copy suffix) and an unrotated base copy', () => {
+    const base = getSemanticAnchors('recursive', recursiveParams(), W, H);
+    expect(base.length).toBeGreaterThan(0);
+    for (const a of base) {
+      // Every base-copy anchor is copy 0 at θ=0 (unrotated).
+      expect(a.meta.copy).toBe(0);
+      expect(a.meta.theta).toBe(0);
+      // Ids are byte-identical to the pre-WI-115 form — NO trailing :copy segment.
+      let expectedId;
+      if (a.role === 'crossing') expectedId = anchorId('crossing', a.meta.poly, a.meta.vertex);
+      else if (a.role === 'edge') expectedId = anchorId('edge', a.meta.poly, a.meta.side);
+      else if (a.role === 'tip') expectedId = anchorId('tip', a.meta.poly);
+      else expectedId = anchorId('cell', a.meta.poly);
+      expect(a.id).toBe(expectedId);
+    }
   });
 });
 

@@ -2599,7 +2599,10 @@ export default function Studio({ submitOrg = null } = {}) {
           // Thread the pending panel (per-panel add) into the new layer; a
           // global/flat add leaves it undefined → addLayer ignores it and the
           // normalizer assigns the layer. Reset after so it never leaks again.
-          addLayer(id, { panelId: pendingPanelId });
+          const outcome = addLayer(id, { panelId: pendingPanelId });
+          // Select the just-created layer so the Inspector shows IT, not the
+          // previously-selected pattern (which would otherwise linger).
+          if (outcome?.ok) setSelectedLayerId(outcome.id);
           setPendingPanelId(undefined);
           setUI("showPatternPicker", false);
         }}
@@ -3172,7 +3175,8 @@ export default function Studio({ submitOrg = null } = {}) {
             onClose={() => setLibraryOpen(false)}
             onUseInStudio={(patternId) => {
               setLibraryOpen(false);
-              addLayer(patternId);
+              const outcome = addLayer(patternId);
+              if (outcome?.ok) setSelectedLayerId(outcome.id);
             }}
             onNewExtraction={() => {
               extractFromLibraryRef.current = true;

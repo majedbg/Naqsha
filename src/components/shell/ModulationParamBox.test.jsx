@@ -170,3 +170,48 @@ describe("warpNodes modulation param — conditional gating (§5)", () => {
     expect(patch.params.spacing).toBe(40);
   });
 });
+
+// Ticket #116 — the warpNodes bend slider is shared by BOTH math warp hosts.
+// Recursive is the second host; it exposes the same slider (default 2, not 6).
+function recursiveLayer(id = "rec1") {
+  return makeLayer(id, "recursive", "Recursive", {
+    params: { ...DEFAULT_PARAMS.recursive, depth: 3 },
+  });
+}
+
+describe("warpNodes modulation param — recursive host (ticket #116)", () => {
+  it("Site B: recursive panel shows the box for an active warp target and edits warpNodes", () => {
+    const onUpdateSpy = vi.fn();
+    render(
+      <Harness
+        initialLayers={[warpGuide("rec1"), recursiveLayer("rec1")]}
+        initialSelectedId="rec1"
+        onUpdateSpy={onUpdateSpy}
+      />
+    );
+    expect(screen.getByTestId("modulation-param-box")).toBeInTheDocument();
+
+    const slider = screen.getByRole("slider", { name: "Warp nodes" });
+    // Recursive default is 2 (straight corners), not grid's 6.
+    expect(slider).toHaveValue("2");
+
+    fireEvent.change(slider, { target: { value: "7" } });
+    expect(onUpdateSpy).toHaveBeenCalled();
+    const [id, patch] = onUpdateSpy.mock.calls.at(-1);
+    expect(id).toBe("rec1");
+    expect(patch.params.warpNodes).toBe(7);
+    // A recursive sibling param survives the shallow top-level merge.
+    expect(patch.params.depth).toBe(3);
+  });
+
+  it("Site A: modulator row shows the box for a warp→recursive map with the Recursive owner label", () => {
+    render(
+      <Harness
+        initialLayers={[warpGuide("rec1"), recursiveLayer("rec1")]}
+        initialSelectedId="guide1"
+      />
+    );
+    expect(screen.getByTestId("modulation-param-box")).toBeInTheDocument();
+    expect(screen.getByText("Recursive layer")).toBeInTheDocument();
+  });
+});

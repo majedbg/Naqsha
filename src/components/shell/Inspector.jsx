@@ -553,15 +553,17 @@ function ModulatorDevice({
               const targetLayer = (layers || []).find(
                 (l) => l.id === m.targetLayerId
               );
-              if (
-                !(m.channel === "warp" && targetLayer?.patternType === "grid")
-              )
+              // The warpNodes bend slider is shared by the two math warp hosts:
+              // grid (default 6) and recursive (default 2 — ticket #116).
+              const isGrid = targetLayer?.patternType === "grid";
+              const isRecursive = targetLayer?.patternType === "recursive";
+              if (!(m.channel === "warp" && (isGrid || isRecursive)))
                 return null;
               return (
-                <ModulationParamBox owner="Grid layer">
+                <ModulationParamBox owner={isGrid ? "Grid layer" : "Recursive layer"}>
                   <WarpNodesControl
                     testidSuffix="-modulator"
-                    value={targetLayer.params?.warpNodes ?? 6}
+                    value={targetLayer.params?.warpNodes ?? (isGrid ? 6 : 2)}
                     onChange={(v) =>
                       onUpdateLayer(m.targetLayerId, {
                         params: { ...targetLayer.params, warpNodes: Number(v) },
@@ -1741,17 +1743,21 @@ function SelectedLayerInspector({
         </LayerParamsProvider>
       )}
 
-      {/* Modulation-scoped param (§5) — the Grid's `warpNodes`, shown in the grid
-          panel ONLY while the grid is an active 'warp' target (a modulator maps a
-          warp channel to it and can produce a field). Owner label "Modulation".
-          Same canonical write as the modulator-row site; the `...layer.params`
-          spread is REQUIRED (shallow top-level merge). */}
-      {layer.patternType === "grid" &&
+      {/* Modulation-scoped param (§5) — the `warpNodes` bend slider, shown in the
+          layer panel ONLY while a warp-host (grid or recursive) is an active
+          'warp' target (a modulator maps a warp channel to it and can produce a
+          field). Grid default 6, recursive default 2 (ticket #116). Owner label
+          "Modulation". Same canonical write as the modulator-row site; the
+          `...layer.params` spread is REQUIRED (shallow top-level merge). */}
+      {(layer.patternType === "grid" || layer.patternType === "recursive") &&
         resolveModulationForTarget(layer, layers) !== null && (
           <ModulationParamBox owner="Modulation">
             <WarpNodesControl
               testidSuffix="-panel"
-              value={layer.params?.warpNodes ?? 6}
+              value={
+                layer.params?.warpNodes ??
+                (layer.patternType === "grid" ? 6 : 2)
+              }
               onChange={(v) =>
                 onUpdateLayer(layer.id, {
                   params: { ...layer.params, warpNodes: Number(v) },

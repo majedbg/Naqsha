@@ -149,6 +149,12 @@ export const DEFAULT_PARAMS = {
     scaleNonLinearity: -0.6,
     strokeWeight: 1,
     strokeDepthDecay: 0,
+    // Modulation-scoped bend slider (ticket #116). Only consumed when the
+    // recursive layer is an active 'warp' target. K=2 (default) = vertices-only
+    // (corners warp, sides straight — byte-identical to today); K≥3 = bendable
+    // Catmull-Rom edges. Default is 2 (NOT grid's 6) so enabling warp never
+    // changes rendered output on its own. Ignored when unwarped.
+    warpNodes: 2,
     symmetry: 1,
     startAngle: 0,
     offsetX: 0,

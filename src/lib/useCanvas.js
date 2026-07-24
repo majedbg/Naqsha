@@ -35,8 +35,9 @@ import { isFrameStatsEnabled } from './onboarding/frameStatsFlag';
 // draws unwarped geometry while the canvas draws warped — motif anchors then sit
 // on stale geometry (the D1 fail-unsafe ~24px drift, #103). Extending this beyond
 // grid to flowfield + topographic makes the probe SYMMETRIC with paint:
-//   • grid (single-axis) — draws bezierVertex when warped; capturePolylines does
-//     NOT record those → empty hostPaths → the intended single-axis-vine deferral.
+//   • grid (single-axis) — draws bezierVertex when warped; capturePolylines now
+//     RECORDS + adaptively flattens those (shared flattenCubic, #111) → the vine
+//     samples the exact-to-paint curve (the single-axis warped-grid vine works).
 //   • flowfield / topographic — emit plain ctx.vertex; capture records the warped
 //     flow lines / contours → anchors land on the painted geometry (D1 fixed).
 // Byte-identity holds with no warp channel present: all three patterns branch ONLY

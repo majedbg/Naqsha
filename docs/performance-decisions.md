@@ -62,6 +62,49 @@ tol)` feeds both `capturePolylines` (capture path) and the #105 reconstruction p
 
 ---
 
+## Case 2 — Grid warp cells: offline bound instead of a per-frame coincidence guard
+
+**Context.** Ticket #117 (grid warp anchors, Option C). Three interior anchor roles must
+track the warped grid. Crossings and edges are reconstructed *exactly* from the painted
+Catmull-Rom curves (reconstruct-and-intersect / on-curve sampling). **Cells** are the one
+role with no curve to be exact to — a cell centre is a *free point* — so they are placed by
+**point-warp + finite-difference frame** (`stackWarpDisplacement` + `computeWarpFrame`).
+
+**The decision.** *A:* a runtime coincidence guard that, every frame, checks each cell
+anchor against the true bent centre and suppresses/relocates it if it drifts too far. *B:*
+NO runtime guard — trust point-warp as a **bounded** approximation, proven once **offline**.
+
+**Where performance turned the argument.** The cell centre is on the hot render path (one
+per grid cell, every frame, every symmetry copy). A runtime guard would recompute the "true
+bent centre" — four curve-curve intersections per cell (flatten + intersect) — on every
+frame, dwarfing the cost of the point-warp it guards. And it would guard nothing useful:
+the deviation is not a coincidence to be caught, it is a *structural* property that can be
+bounded ahead of time. So we bound it offline and let the render path carry only the cheap
+point-warp.
+
+**The number, and why it's that number.** The "true bent centre" is the centroid of the
+cell's four reconstruct-and-intersect warped corner crossings (the curve-derived truth the
+PRD names). Sweeping several fields across the operating range (warp amount 1–3) the
+point-warped straight centre stays within **≤ 21.5px** (measured) of that centroid; the
+documented bound is **24px = `WARP_MAX_PX`**, the warp clamp reference. This is an
+*empirical, offline-validated* bound (the PRD asked for a bound-validation test, not a
+closed-form proof): the deviation is dominated by the warp clamp magnitude — both the
+point-warp displacement and the corner displacements are clamp-bounded — so it stays small
+and predictable rather than diverging. Cells are therefore *trusted-bounded* — bounded,
+never wildly wrong — even though (unlike crossings/edges) they are not exact-to-paint.
+
+**The transferable lesson.** When an approximation's error is *structurally* bounded rather
+than *coincidentally* small, validate the bound **offline** and keep the hot path guard-free.
+A per-frame check that re-derives the exact answer just to confirm the approximation is
+close is pure waste — you have already paid for the exact answer.
+
+**Receipts.** Ticket #117; bound-validation test in
+`src/lib/patterns/__tests__/gridWarpAnchors.test.js` ("point-warp+FD cell centre stays within
+the documented bound"); cell placement in `src/lib/patterns/gridWarpAnchors.js`
+(`gridWarpAnchorsCentered` CELLS block); no runtime guard added anywhere.
+
+---
+
 ## Case template (for future entries)
 
 - **Context** — feature / ticket, and the geometry or interaction under load.

@@ -38,6 +38,10 @@ import {
   applyPickedPathToggle,
 } from './motifLayer.js';
 import { capturePolylines } from './capturePolylines.js';
+import { gridWarpAnchorsCentered } from '../patterns/gridWarpAnchors.js';
+import { stackWarpDisplacement } from '../fields/warp.js';
+import { makeP5Random } from '../patterns/rng.js';
+import { ScalarField } from '../patterns/../fields/ScalarField.js';
 
 // ── fixtures ─────────────────────────────────────────────────────────────────
 // Two-path anchor host: path 0 = ids p0_0..p0_9, path 1 = p1_0..p1_9. role
@@ -303,5 +307,53 @@ describe('D2 item 6 — C1 mutual-exclusivity: chain-form NEVER carries selectio
     const round = JSON.parse(JSON.stringify(cf));
     expect(round).toEqual(cf);
     expect('selection' in round).toBe(false);
+  });
+});
+
+// ── D2 warp invariant — sole warp primitive across warp-aware extractors ──────
+// The D2 invariant ("stackWarpDisplacement is the ONE warp-displacement primitive
+// both renderer and extractor call — no parallel warp math anywhere") is a cross-
+// cutting integration invariant no single slice owns: it binds the renderer, the
+// grid warp extractor (#117), and future warp-aware extractors. This battery re-
+// affirms it at the integration level for the grid extractor; the per-slice exact
+// proof lives in patterns/__tests__/gridWarpAnchors.test.js. A grid CELL is the
+// free-point role placed by a DIRECT stackWarpDisplacement call, so recomputing
+// the primitive independently and matching the anchor byte-for-byte proves no
+// extra/parallel warp math crept into the extractor.
+describe('D2 — warp displacement is the sole primitive (grid warp anchors)', () => {
+  it('a warped grid cell anchor’s displacement equals stackWarpDisplacement exactly', () => {
+    const CW = 800;
+    const CH = 600;
+    const field = ScalarField.fromFunction((u, v) => Math.sin(u * 3) * Math.cos(v * 3), { nx: 129, ny: 129 });
+    const params = {
+      cols: 4, rows: 3, spacing: 60, jitter: 0, margin: 20,
+      symmetry: 1, startAngle: 0, offsetX: 0, offsetY: 0,
+      drawHorizontal: 1, drawVertical: 1, warpNodes: 6,
+      modulation: { channel: 'warp', field, amount: 2 },
+    };
+    const anchors = gridWarpAnchorsCentered(params, makeP5Random(0), { canvasW: CW, canvasH: CH });
+    const cells = anchors.filter((a) => a.role === 'cell');
+    expect(cells.length).toBeGreaterThan(0);
+    const sources = params.modulation.sources ?? [params.modulation];
+
+    // Reconstruct the straight cell-centre lattice (jitter=0) and independently
+    // apply the ONE primitive; the extractor's cell must match byte-for-byte.
+    const spacing = params.spacing;
+    const totalW = params.cols * spacing;
+    const totalH = params.rows * spacing;
+    const xs = [];
+    for (let i = 0; i <= params.cols; i++) xs.push(-totalW / 2 + (i / params.cols) * totalW);
+    const ys = [];
+    for (let j = 0; j <= params.rows; j++) ys.push(-totalH / 2 + (j / params.rows) * totalH);
+    for (const cell of cells) {
+      const { col: i, row: j } = cell.meta;
+      const cx = (xs[i] + xs[i + 1]) / 2;
+      const cy = (ys[j] + ys[j + 1]) / 2;
+      const u = (cx + CW / 2) / CW;
+      const v = (cy + CH / 2) / CH;
+      const { dx, dy } = stackWarpDisplacement(sources, u, v);
+      expect(cell.x).toBe(cx + dx);
+      expect(cell.y).toBe(cy + dy);
+    }
   });
 });

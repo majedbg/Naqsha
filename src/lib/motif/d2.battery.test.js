@@ -437,11 +437,13 @@ describe('D2 warp · grid — byte-exact rotation-equivariance (invariant 2, #10
 });
 
 // ── RECURSIVE · INVARIANT 1 — D2 single warp primitive ───────────────────────
-// A recursive CELL/TIP is a FREE POINT placed by a DIRECT stackWarpDisplacement
-// call (position) + computeWarpFrame (which finite-differences the SAME primitive,
-// no parallel math). Recomputing the primitive independently at each ideal (no-
-// warp) centre and matching the warped anchor proves no extra warp math crept in —
-// the recursive analogue of the grid-cell D2 case above. Recursive is seedless.
+// A recursive CELL/TIP is a FREE POINT placed at the MEAN OF THE DRAWN WARPED
+// CORNERS — each corner displaced ONLY by stackWarpDisplacement — plus a
+// computeWarpFrame (which finite-differences the SAME primitive, no parallel
+// math). Recomputing that mean independently from the ideal (no-warp) corners
+// using ONLY stackWarpDisplacement, and matching the warped anchor, proves no
+// extra warp math crept in — the recursive analogue of the grid-cell D2 case
+// above. Recursive is seedless.
 describe('D2 warp · recursive — free-point displacement is solely stackWarpDisplacement (invariant 1)', () => {
   const CX = D2W / 2;
   const CY = D2H / 2;
@@ -450,25 +452,42 @@ describe('D2 warp · recursive — free-point displacement is solely stackWarpDi
     scaleNonLinearity: 0, startScale: 70, symmetry: 1, startAngle: 0,
     offsetX: 0, offsetY: 0,
   };
-  it('every warped cell/tip centre equals ideal + stackWarpDisplacement, frame = computeWarpFrame', () => {
+  it('every warped cell/tip centre equals the ideal-corner mean displaced solely by stackWarpDisplacement, frame = computeWarpFrame', () => {
     const modulation = { channel: 'warp', field: d2Field(), amount: 2 };
     const sources = [modulation];
     const warped = getSemanticAnchors('recursive', { ...geom, warpNodes: 4, modulation }, D2W, D2H);
-    const ideal = getSemanticAnchors('recursive', geom, D2W, D2H)
-      .filter((a) => a.role === 'cell' || a.role === 'tip');
-    expect(ideal.length).toBeGreaterThan(0);
+    const idealAll = getSemanticAnchors('recursive', geom, D2W, D2H);
+    const idealCentres = idealAll.filter((a) => a.role === 'cell' || a.role === 'tip');
+    expect(idealCentres.length).toBeGreaterThan(0);
+    // Ideal (no-warp) corners per polygon = its crossings. Displace each by
+    // stackWarpDisplacement ONLY and average — independently of the extractor.
+    const idealCornersByPoly = new Map();
+    for (const a of idealAll) {
+      if (a.role !== 'crossing') continue;
+      const key = `${a.meta.copy ?? 0}:${a.meta.poly}`;
+      if (!idealCornersByPoly.has(key)) idealCornersByPoly.set(key, []);
+      idealCornersByPoly.get(key).push(a);
+    }
     const byId = new Map(warped.map((a) => [a.id, a]));
-    for (const c of ideal) {
-      const lx = c.x - CX;
-      const ly = c.y - CY;
-      const u = (lx + D2W / 2) / D2W;
-      const v = (ly + D2H / 2) / D2H;
-      const { dx, dy } = stackWarpDisplacement(sources, u, v);
-      const frame = computeWarpFrame(sources, u, v, { W: D2W, H: D2H });
+    for (const c of idealCentres) {
       const w = byId.get(c.id);
       expect(w).toBeTruthy();
-      expect(w.x).toBeCloseTo(c.x + dx, 9);
-      expect(w.y).toBeCloseTo(c.y + dy, 9);
+      const corners = idealCornersByPoly.get(`${w.meta.copy ?? 0}:${w.meta.poly}`);
+      let sx = 0;
+      let sy = 0;
+      for (const corner of corners) {
+        const u = (corner.x - CX + D2W / 2) / D2W;
+        const v = (corner.y - CY + D2H / 2) / D2H;
+        const { dx, dy } = stackWarpDisplacement(sources, u, v);
+        sx += corner.x + dx;
+        sy += corner.y + dy;
+      }
+      expect(w.x).toBeCloseTo(sx / corners.length, 6);
+      expect(w.y).toBeCloseTo(sy / corners.length, 6);
+      // Frame: computeWarpFrame (FD of the SAME primitive) at the straight centre.
+      const u = (c.x - CX + D2W / 2) / D2W;
+      const v = (c.y - CY + D2H / 2) / D2H;
+      const frame = computeWarpFrame(sources, u, v, { W: D2W, H: D2H });
       expect(w.tangent).toBeCloseTo(frame.tangent, 9);
       expect(w.normal).toBeCloseTo(frame.normal, 9);
     }

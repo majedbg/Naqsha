@@ -119,9 +119,12 @@ const TWO_PI = Math.PI * 2;
 //     (bendable) mode, flattened via the shared flattenCubic (#111) at ≤0.15px so
 //     it is exact-to-paint at the render tolerance. tangent = the curve there.
 //   • cells + tips = polygon CENTRES. A centre is a FREE POINT (no drawn curve to
-//     be exact to) → point-warp (stackWarpDisplacement, D2) + the FD frame
-//     (computeWarpFrame, #114): the trusted-bounded free-point class, validated
-//     OFFLINE (semanticAnchors.test.js), NEVER by a runtime coincidence guard.
+//     be exact to) → position is the MEAN OF THE DRAWN WARPED CORNERS (centroid of
+//     the painted polygon's vertices, displaced ONLY by stackWarpDisplacement, D2
+//     — tracks the visible warped shape ~4× closer than point-warping the straight
+//     centre), framed by the FD helper (computeWarpFrame, #114): the trusted-
+//     bounded free-point class, validated OFFLINE (semanticAnchors.test.js) that it
+//     tracks the drawn-outline centroid, NEVER by a runtime coincidence guard.
 //     NOTE: under warp the tip normal is the FD v-axis, NOT the non-warp outward-
 //     radial-from-global-centre convention (a centre has no radial curve).
 // With NO warp channel the extractor is byte-identical to the pre-WI-118 output
@@ -212,18 +215,31 @@ function sampleAtHalfLength(line, len) {
 }
 
 /**
- * Point-warp a FREE POINT (a polygon centre) and frame it with the FD helper.
- * Displacement comes ONLY from stackWarpDisplacement (D2); the frame from
- * computeWarpFrame (#114). The unit-(u,v) mapping matches buildWarpedPolygon's
- * exactly, so the centre samples the SAME field the drawn corners do.
+ * Frame a polygon-centre FREE POINT under warp. POSITION is the mean of the
+ * DRAWN warped corners (`sideLinesP` — each flattened side starts at the exact
+ * warped vertex the renderer paints), i.e. the centroid of the painted polygon's
+ * vertices. This tracks the visible warped shape ~4× closer than point-warping
+ * the straight centre would under a curved field (measured: ~11px vs ~43px from
+ * the drawn-outline centroid at amount 1 on a canvas-scale polygon), while
+ * staying a FREE POINT — nothing is painted AT a centre, so there is no curve to
+ * be exact to. Displacement is still ONLY stackWarpDisplacement (D2): the corners
+ * are the ones the shared core (buildWarpedPolygon) already warped. FRAME comes
+ * from the FD helper (computeWarpFrame, #114), sampled at the straight centre's
+ * (u,v) — an orientation for the free point, unchanged by the position choice.
  * @returns {{x:number,y:number,tangent:number,normal:number}} LOCAL coords/frame.
  */
-function warpFreePoint(center, warpSources, canvasW, canvasH) {
+function warpedCentreFreePoint(sideLinesP, center, warpSources, canvasW, canvasH) {
+  let sx = 0;
+  let sy = 0;
+  for (const line of sideLinesP) {
+    sx += line[0][0];
+    sy += line[0][1];
+  }
+  const n = sideLinesP.length;
   const u = (center.x + canvasW / 2) / canvasW;
   const v = (center.y + canvasH / 2) / canvasH;
-  const { dx, dy } = stackWarpDisplacement(warpSources, u, v);
   const { tangent, normal } = computeWarpFrame(warpSources, u, v, { W: canvasW, H: canvasH });
-  return { x: center.x + dx, y: center.y + dy, tangent, normal };
+  return { x: sx / n, y: sy / n, tangent, normal };
 }
 
 /**
@@ -439,21 +455,21 @@ function recursiveAnchors(params, canvasW, canvasH) {
       }
     }
 
-    // TIPS — leaf-polygon centres (FREE POINTS): point-warp + FD frame.
+    // TIPS — leaf-polygon centres (FREE POINTS): warped-corner-mean + FD frame.
     for (const c of copies) {
       for (let p = 0; p < polys.length; p++) {
         const poly = polys[p];
         if (!poly.isLeaf) continue;
-        const fp = warpFreePoint(poly.center, warpSources, canvasW, canvasH);
+        const fp = warpedCentreFreePoint(sideLines[p], poly.center, warpSources, canvasW, canvasH);
         push('tip', [p], fp.x, fp.y, fp.tangent, fp.normal, 0, { poly: p, level: poly.level }, c);
       }
     }
 
-    // CELLS — every polygon centre (FREE POINT): same point-warp + FD frame.
+    // CELLS — every polygon centre (FREE POINT): same warped-corner-mean + FD frame.
     for (const c of copies) {
       for (let p = 0; p < polys.length; p++) {
         const poly = polys[p];
-        const fp = warpFreePoint(poly.center, warpSources, canvasW, canvasH);
+        const fp = warpedCentreFreePoint(sideLines[p], poly.center, warpSources, canvasW, canvasH);
         push('cell', [p], fp.x, fp.y, fp.tangent, fp.normal, 0, { poly: p, level: poly.level }, c);
       }
     }

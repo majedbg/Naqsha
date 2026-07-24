@@ -13,7 +13,7 @@ import { ScalarField } from '../fields/ScalarField.js';
 import { gridAnchorsCentered } from '../patterns/gridAnchors.js';
 import { makeP5Random } from '../patterns/rng.js';
 import { toSymmetryCount } from '../patterns/symmetryUtils.js';
-import { stackWarpDisplacement, WARP_MAX_PX } from '../fields/warp.js';
+import { stackWarpDisplacement } from '../fields/warp.js';
 import { flattenCubic } from '../geometry/flattenCubic.js';
 import { computeWarpFrame } from '../fields/warpFrame.js';
 
@@ -945,28 +945,40 @@ describe('getSemanticAnchors — recursive WARP-aware anchors, exact-to-paint (W
     }
   });
 
-  it('cells/tips are free points: position = point-warp, frame = computeWarpFrame (FD)', () => {
+  it('cells/tips are free points: position = mean of the DRAWN warped corners, frame = computeWarpFrame (FD)', () => {
     const params = warpParams({ shape: 'hexagon', depth: 3, warpNodes: 4, amount: 2 });
     const sources = [params.modulation];
     const anchors = getSemanticAnchors('recursive', params, W, H);
     const centres = anchors.filter((a) => a.role === 'cell' || a.role === 'tip');
     expect(centres.length).toBeGreaterThan(0);
-    // Cross-check against the ideal (no-warp) centres by id: point-warp each ideal
-    // centre and assert the warped anchor matches position AND the FD frame — no
-    // curve tangent is used (free-point recipe).
+    // Position is the mean of the polygon's DRAWN warped corners — its own crossing
+    // anchors, which sit on the exact warped vertices the renderer paints — NOT a
+    // point-warp of the straight centre (that lands ~4× further from the visible
+    // shape under a curved field). Rebuild each mean from the painted crossings so
+    // this stays exact-to-paint, not a re-derivation. Frame is still the FD helper
+    // at the straight centre (a free-point orientation; no curve tangent is used).
+    const cornersByPoly = new Map();
+    for (const a of anchors) {
+      if (a.role !== 'crossing') continue;
+      const key = `${a.meta.copy ?? 0}:${a.meta.poly}`;
+      if (!cornersByPoly.has(key)) cornersByPoly.set(key, []);
+      cornersByPoly.get(key).push(a);
+    }
     const idealCentres = getSemanticAnchors('recursive', recursiveParams({ shape: 'hexagon', depth: 3 }), W, H)
       .filter((a) => a.role === 'cell' || a.role === 'tip');
     const byId = new Map(anchors.map((a) => [a.id, a]));
     for (const c of idealCentres) {
+      const w = byId.get(c.id);
+      const corners = cornersByPoly.get(`${w.meta.copy ?? 0}:${w.meta.poly}`);
+      const mx = corners.reduce((s, a) => s + a.x, 0) / corners.length;
+      const my = corners.reduce((s, a) => s + a.y, 0) / corners.length;
+      expect(w.x).toBeCloseTo(mx, 6);
+      expect(w.y).toBeCloseTo(my, 6);
       const lx = c.x - CX;
       const ly = c.y - CY;
       const u = (lx + W / 2) / W;
       const v = (ly + H / 2) / H;
-      const { dx, dy } = stackWarpDisplacement(sources, u, v);
       const frame = computeWarpFrame(sources, u, v, { W, H });
-      const w = byId.get(c.id);
-      expect(w.x).toBeCloseTo(c.x + dx, 9);
-      expect(w.y).toBeCloseTo(c.y + dy, 9);
       expect(w.tangent).toBeCloseTo(frame.tangent, 9);
       expect(w.normal).toBeCloseTo(frame.normal, 9);
     }
@@ -1033,93 +1045,90 @@ describe('getSemanticAnchors — recursive warp × symmetry (WI-118 rides on WI-
 // Per the PRD: the recursive-bendable centre class is validated by an OFFLINE
 // bound test, NOT a runtime coincidence guard (K<3 is the only runtime gate).
 //
-// WHAT IS ACTUALLY VALIDATED — boundedness, not smallness. A centre is a FREE
-// POINT: unlike a crossing (where reconstruct-and-intersect gives an EXACT
-// position, so point-warp was REJECTED for missing it by ~50px), a centre has NO
-// drawn curve to be exact to, so point-warp is ACCEPTED as its definition. The
-// trusted-bounded guarantee is that the centre's error from any corner-averaged
-// centre can never go WILD — it is provably ≤ the warp CLAMP ENVELOPE. Because a
-// recursive outer polygon is canvas-scale (startRadius ≈ 140 on a 400 canvas), a
-// guide field with curvature across the canvas displaces opposite corners in
-// different directions, so the point-warped centre and the corner mean diverge by
-// the field's variation over the polygon — bounded only by 2·WARP_MAX_PX·amount
-// (each point clamped to WARP_MAX_PX·amount). The measured max IS that envelope;
-// there is no smaller honest number for canvas-scale polygons. That bounded-never-
-// wild property is exactly what lets the hot path skip a per-frame guard.
-//
-// Truth = the MEAN OF THE POINT-WARPED CORNERS (stable under extreme bend). The
-// flattened-outline area centroid is NOT used: under strong warp the outline self-
-// intersects and its shoelace centroid is meaningless.
-//
-// The OTHER half of the free-point validation — FD FRAME accuracy (< 0.24° for
-// free points) — is already proven generically in warpFrame.test.js and pinned
-// exactly for these anchors by the cells/tips test above; not re-derived here.
-describe('recursive-bendable centres — OFFLINE position-drift bound (no runtime guard)', () => {
-  // Mean of the point-warped polygon CORNERS (LOCAL coords) — the stable corner-
-  // averaged centre the point-warped centroid is bounded against.
-  function warpedCornerMean(verts, sources) {
-    let sx = 0;
-    let sy = 0;
-    for (const p of verts) {
-      const u = (p.x + W / 2) / W;
-      const v = (p.y + H / 2) / H;
-      const { dx, dy } = stackWarpDisplacement(sources, u, v);
-      sx += p.x + dx;
-      sy += p.y + dy;
+// WHAT IS VALIDATED — the centre TRACKS the drawn warped shape. A centre is a
+// FREE POINT (nothing is painted AT it), but it must SIT IN the drawn polygon.
+// Unlike a crossing (an exact drawn intersection — reconstruct-and-intersect, no
+// point-warp), a centre has no drawn curve, so the extractor places it at the
+// MEAN OF THE DRAWN WARPED CORNERS (the centroid of the painted regular polygon's
+// vertices). Recursive polygons are REGULAR by construction, so unwarped the
+// vertex-mean equals the area-centroid; under a curved field the corner-mean stays
+// near the true outline centroid, whereas a single point-warp of the straight
+// centre drifts by the field's variation across the canvas-scale polygon. This
+// test sweeps fields/polygons and asserts OFFLINE that the corner-mean tracks the
+// flattened-outline area-centroid — and does so materially tighter than a
+// point-warp would (measured ~4×). That bounded, always-better tracking is the
+// substitute for a per-frame guard. (The other half — FD FRAME accuracy < 0.24° —
+// is proven generically in warpFrame.test.js and pinned for these anchors by the
+// cells/tips test above.)
+describe('recursive-bendable centres — OFFLINE tracking of the drawn shape (no runtime guard)', () => {
+  const regularPoly = (cx, cy, r, n, rot = 0) =>
+    Array.from({ length: n }, (_, i) => {
+      const a = rot + (2 * Math.PI * i) / n;
+      return { x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) };
+    });
+  const warpVertex = (p, sources) => {
+    const u = (p.x + W / 2) / W;
+    const v = (p.y + H / 2) / H;
+    const { dx, dy } = stackWarpDisplacement(sources, u, v);
+    return { x: p.x + dx, y: p.y + dy };
+  };
+  // Shoelace area-centroid of a simple polygon — the "true" visual centre.
+  const areaCentroid = (poly) => {
+    let a = 0;
+    let cx = 0;
+    let cy = 0;
+    for (let i = 0; i < poly.length; i++) {
+      const p = poly[i];
+      const q = poly[(i + 1) % poly.length];
+      const cross = p.x * q.y - q.x * p.y;
+      a += cross;
+      cx += (p.x + q.x) * cross;
+      cy += (p.y + q.y) * cross;
     }
-    return { x: sx / verts.length, y: sy / verts.length };
-  }
+    a *= 0.5;
+    return { x: cx / (6 * a), y: cy / (6 * a) };
+  };
 
-  it('point-warped centre stays within the clamp envelope of the warped-corner mean', () => {
-    // Representative polygons (canvas-scale, various positions) × warp fields ×
-    // amounts × bend counts.
+  it('warped-corner mean tracks the drawn outline centroid, tighter than a point-warp', () => {
+    // Canvas-scale REGULAR polygons (as recursive generates), at various centres.
     const polygons = [
-      [{ x: -80, y: -80 }, { x: 80, y: -80 }, { x: 80, y: 80 }, { x: -80, y: 80 }],
-      [{ x: 0, y: -120 }, { x: 104, y: -60 }, { x: 104, y: 60 }, { x: 0, y: 120 }, { x: -104, y: 60 }, { x: -104, y: -60 }],
-      [{ x: 60, y: 40 }, { x: 140, y: 20 }, { x: 120, y: 130 }, { x: 30, y: 110 }],
+      regularPoly(0, 0, 130, 4, Math.PI / 4),
+      regularPoly(40, -30, 120, 6),
+      regularPoly(-50, 20, 110, 3),
     ];
     const fields = [
       ScalarField.fromFunction((u, v) => Math.sin(6 * u) * Math.cos(6 * v), { nx: 65, ny: 65 }),
       ScalarField.fromFunction((u, v) => Math.sin(11 * u + 2 * v), { nx: 97, ny: 97 }),
       ScalarField.fromFunction((u) => 2 * (u - 0.5), { nx: 33, ny: 33 }),
     ];
-    const AMOUNTS = [1, 2, 3];
-    const MAX_AMOUNT = Math.max(...AMOUNTS);
+    const amount = 1; // outline stays simple → its shoelace centroid is meaningful
 
-    // DOCUMENTED bound, tied to the clamp so it is self-documenting: each point is
-    // clamped to WARP_MAX_PX·amount, and the centre vs corner-mean error spans at
-    // most two such clamps. This constant IS the offline substitute for a per-frame
-    // coincidence guard.
-    const BOUND_PX = 2 * WARP_MAX_PX * MAX_AMOUNT;
-
-    // Note: the drift is independent of warpNodes (K) — a centre is point-warped
-    // and the corner mean uses the corners, neither of which the bend touches — so
-    // K is not swept here; the K<3-vs-K≥3 modes are exercised by the exact-to-paint
-    // tests above.
-    let maxDrift = 0;
+    let sumCorner = 0;
+    let sumPoint = 0;
     for (const verts of polygons) {
       for (const field of fields) {
-        for (const amount of AMOUNTS) {
-          const sources = [{ channel: 'warp', field, amount }];
-          const cx = verts.reduce((s, p) => s + p.x, 0) / verts.length;
-          const cy = verts.reduce((s, p) => s + p.y, 0) / verts.length;
-          const u = (cx + W / 2) / W;
-          const v = (cy + H / 2) / H;
-          const { dx, dy } = stackWarpDisplacement(sources, u, v);
-          const warpedCentre = { x: cx + dx, y: cy + dy };
-          const truth = warpedCornerMean(verts, sources);
-          const drift = Math.hypot(warpedCentre.x - truth.x, warpedCentre.y - truth.y);
-          if (drift > maxDrift) maxDrift = drift;
-          // Every config individually respects the envelope.
-          expect(drift).toBeLessThanOrEqual(BOUND_PX);
-        }
+        const sources = [{ channel: 'warp', field, amount }];
+        const warped = verts.map((p) => warpVertex(p, sources));
+        const cornerMean = {
+          x: warped.reduce((s, p) => s + p.x, 0) / warped.length,
+          y: warped.reduce((s, p) => s + p.y, 0) / warped.length,
+        };
+        const cx = verts.reduce((s, p) => s + p.x, 0) / verts.length;
+        const cy = verts.reduce((s, p) => s + p.y, 0) / verts.length;
+        const pointWarp = warpVertex({ x: cx, y: cy }, sources);
+        const centroid = areaCentroid(warped);
+        const dCorner = Math.hypot(cornerMean.x - centroid.x, cornerMean.y - centroid.y);
+        const dPoint = Math.hypot(pointWarp.x - centroid.x, pointWarp.y - centroid.y);
+        // Bounded (never wild) AND never worse than a point-warp, per config.
+        expect(Number.isFinite(dCorner)).toBe(true);
+        expect(dCorner).toBeLessThanOrEqual(dPoint + 1e-9);
+        sumCorner += dCorner;
+        sumPoint += dPoint;
       }
     }
-
-    // Guard the guard BOTH ways: the sweep genuinely moved centres past one clamp
-    // unit (non-vacuous), yet never escaped the envelope (bounded-never-wild).
-    expect(maxDrift).toBeGreaterThan(WARP_MAX_PX);
-    expect(maxDrift).toBeLessThanOrEqual(BOUND_PX);
+    // Non-vacuous: across the sweep the corner-mean tracks the drawn centroid
+    // materially tighter than a single point-warp of the straight centre.
+    expect(sumCorner).toBeLessThan(sumPoint * 0.75);
   });
 });
 

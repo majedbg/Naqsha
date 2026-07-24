@@ -12,6 +12,10 @@ import { RecordingContext } from '../patterns/drawingContext.js';
 import { gridAnchorsCentered } from '../patterns/gridAnchors.js';
 import { makeP5Random } from '../patterns/rng.js';
 import { toSymmetryCount } from '../patterns/symmetryUtils.js';
+import { ScalarField } from '../fields/ScalarField.js';
+import { stackWarpDisplacement, WARP_MAX_PX } from '../fields/warp.js';
+import { flattenCubic } from '../geometry/flattenCubic.js';
+import { computeWarpFrame } from '../fields/warpFrame.js';
 
 const HALF_PI = Math.PI / 2;
 
@@ -469,11 +473,21 @@ describe('getSemanticAnchors — recursive role taxonomy', () => {
     expect(a).toEqual(b);
   });
 
-  it('returns null when a warp modulation field is active (unverifiable)', () => {
-    const p = recursiveParams({
-      modulation: { channel: 'warp', field: { type: 'noise' }, amount: 30 },
+  it('emits warp-AWARE anchors (not null) when a warp modulation field is active (WI-118)', () => {
+    const field = ScalarField.fromFunction((u, v) => Math.sin(6 * u) * Math.cos(6 * v), {
+      nx: 65,
+      ny: 65,
     });
-    expect(getSemanticAnchors('recursive', p, W, H)).toBeNull();
+    const p = recursiveParams({
+      modulation: { channel: 'warp', field, amount: 2 },
+    });
+    const anchors = getSemanticAnchors('recursive', p, W, H);
+    expect(Array.isArray(anchors)).toBe(true);
+    expect(anchors.length).toBeGreaterThan(0);
+    // All four roles still present under warp.
+    expect(new Set(anchors.map((a) => a.role))).toEqual(
+      new Set(['crossing', 'edge', 'tip', 'cell']),
+    );
   });
 });
 
@@ -734,6 +748,363 @@ describe('getSemanticAnchors — recursive symmetry + startAngle replication (WI
       else expectedId = anchorId('cell', a.meta.poly);
       expect(a.id).toBe(expectedId);
     }
+  });
+});
+
+// ── RECURSIVE WARP-AWARE anchors (WI-118, Option C) ─────────────────────────
+// The recursive extractor no longer refuses warp; it reconstructs every anchor
+// from the SHARED recursive core (buildWarpedPolygon) — the SAME geometry the
+// renderer paints — so vertices/edges are EXACT-TO-PAINT, and free-point centres
+// (cells/tips) are point-warped + FD-framed (trusted-bounded, offline-validated).
+// The load-bearing proof compares extractor output against the RENDERER's CAPTURED
+// paint stream (not a re-call of the core), so "exact-to-paint" is genuinely
+// tested, not asserted circularly.
+
+const SIDES_FOR_SHAPE = { triangle: 3, square: 4, pentagon: 5, hexagon: 6, circle: 72 };
+
+// A non-trivial warp field so curves actually bend (the test is meaningful).
+const warpField = () =>
+  ScalarField.fromFunction((u, v) => Math.sin(6 * u) * Math.cos(6 * v), { nx: 65, ny: 65 });
+
+function warpParams(overrides = {}) {
+  const { amount = 2, warpNodes = 2, ...rest } = overrides;
+  return recursiveParams({
+    modulation: { channel: 'warp', field: warpField(), amount },
+    warpNodes,
+    ...rest,
+  });
+}
+
+// Capture the renderer's ACTUAL painted LOCAL geometry per polygon by parsing its
+// recorded op stream. symmetry=1/startAngle=0/offset=0 ⇒ recorded vertex/bezier
+// args are origin-centered LOCAL coords (RecordingContext does not apply the
+// recorded translate/rotate). Each polygon becomes { verts, segs }: plain-vertex
+// polygons carry all corners in `verts`; bendable polygons carry the ONE start in
+// `verts` and every cubic triple in `segs`.
+function recordRecursivePaint(params, seed = 7) {
+  const rg = new RecursiveGeometry();
+  const ctx = new RecordingContext({ seed });
+  rg.generateWithContext(ctx, seed, params, W, H, '#000000', 100);
+  const polys = [];
+  let cur = null;
+  for (const { op, args } of ctx.calls) {
+    if (op === 'beginShape') cur = { verts: [], segs: [], pending: [] };
+    else if (op === 'vertex' && cur) cur.verts.push({ x: args[0], y: args[1] });
+    else if (op === 'bezierVertex' && cur) {
+      cur.pending.push({ x: args[0], y: args[1] });
+      if (cur.pending.length === 3) {
+        cur.segs.push({ c1: cur.pending[0], c2: cur.pending[1], end: cur.pending[2] });
+        cur.pending = [];
+      }
+    } else if (op === 'endShape' && cur) {
+      polys.push({ verts: cur.verts, segs: cur.segs });
+      cur = null;
+    }
+  }
+  return polys;
+}
+
+// Turn one recorded polygon into { corners, sideLines } in LOCAL coords, flattening
+// bendable sides with the SAME shared flattenCubic the extractor uses. Corners and
+// side polylines are indexed to match the extractor's per-poly vertex/side order.
+function paintedGeometry(poly, K, numSides) {
+  if (poly.segs.length === 0) {
+    const corners = poly.verts;
+    const n = corners.length;
+    const sideLines = [];
+    for (let k = 0; k < n; k++) {
+      const a = corners[k];
+      const b = corners[(k + 1) % n];
+      sideLines.push([[a.x, a.y], [b.x, b.y]]);
+    }
+    return { corners, sideLines };
+  }
+  const segsPerSide = K - 1;
+  const corners = [];
+  const sideLines = [];
+  for (let s = 0; s < numSides; s++) {
+    const startPt = s === 0 ? poly.verts[0] : poly.segs[s * segsPerSide - 1].end;
+    corners.push(startPt);
+    const line = [[startPt.x, startPt.y]];
+    let prev = [startPt.x, startPt.y];
+    for (let j = 0; j < segsPerSide; j++) {
+      const seg = poly.segs[s * segsPerSide + j];
+      const flat = flattenCubic([prev, [seg.c1.x, seg.c1.y], [seg.c2.x, seg.c2.y], [seg.end.x, seg.end.y]]);
+      for (const q of flat) line.push(q);
+      prev = [seg.end.x, seg.end.y];
+    }
+    sideLines.push(line);
+  }
+  return { corners, sideLines };
+}
+
+// Point at half a polyline's arc length (mirrors the extractor's on-curve sample).
+function halfLengthPoint(line) {
+  let total = 0;
+  for (let i = 0; i < line.length - 1; i++) {
+    total += Math.hypot(line[i + 1][0] - line[i][0], line[i + 1][1] - line[i][1]);
+  }
+  const half = total / 2;
+  let acc = 0;
+  for (let i = 0; i < line.length - 1; i++) {
+    const l = Math.hypot(line[i + 1][0] - line[i][0], line[i + 1][1] - line[i][1]);
+    if (acc + l >= half || i === line.length - 2) {
+      const t = l > 0 ? (half - acc) / l : 0;
+      return {
+        x: line[i][0] + (line[i + 1][0] - line[i][0]) * t,
+        y: line[i][1] + (line[i + 1][1] - line[i][1]) * t,
+      };
+    }
+    acc += l;
+  }
+  const last = line[line.length - 1];
+  return { x: last[0], y: last[1] };
+}
+
+describe('getSemanticAnchors — recursive WARP-aware anchors, exact-to-paint (WI-118)', () => {
+  for (const K of [2, 4]) {
+    const mode = K < 3 ? 'K=2 vertices' : 'K≥3 bendable';
+    const params = warpParams({ shape: 'hexagon', depth: 3, warpNodes: K, amount: 2 });
+    const numSides = SIDES_FOR_SHAPE.hexagon;
+
+    it(`crossings sit on the renderer's painted warped corners (${mode})`, () => {
+      const painted = recordRecursivePaint(params);
+      const anchors = getSemanticAnchors('recursive', params, W, H);
+      const crossings = anchors.filter((a) => a.role === 'crossing');
+      expect(crossings.length).toBe(painted.length * numSides);
+      for (const c of crossings) {
+        const { corners } = paintedGeometry(painted[c.meta.poly], K, numSides);
+        const corner = corners[c.meta.vertex];
+        // World = LOCAL + (CX, CY); sub-pixel agreement with the painted corner.
+        expect(c.x).toBeCloseTo(corner.x + CX, 6);
+        expect(c.y).toBeCloseTo(corner.y + CY, 6);
+      }
+    });
+
+    it(`edges sit on the painted side, sub-pixel (≤0.15px), tangent = side direction (${mode})`, () => {
+      const painted = recordRecursivePaint(params);
+      const anchors = getSemanticAnchors('recursive', params, W, H);
+      const edges = anchors.filter((a) => a.role === 'edge');
+      expect(edges.length).toBe(painted.length * numSides);
+      for (const e of edges) {
+        const { sideLines } = paintedGeometry(painted[e.meta.poly], K, numSides);
+        const line = sideLines[e.meta.side];
+        const mid = halfLengthPoint(line);
+        const dist = Math.hypot(e.x - (mid.x + CX), e.y - (mid.y + CY));
+        expect(dist).toBeLessThanOrEqual(0.15);
+      }
+    });
+  }
+
+  it('is deterministic under warp (byte-identical for identical params)', () => {
+    const p = warpParams({ warpNodes: 4 });
+    expect(getSemanticAnchors('recursive', p, W, H)).toEqual(getSemanticAnchors('recursive', p, W, H));
+  });
+
+  it('no-warp byte-identity: a modulation with NO warp channel is unchanged from today', () => {
+    // The warp branch fires ONLY on channel==='warp'. A density (non-warp) channel
+    // must leave the extractor on its untouched non-warp path → byte-identical.
+    const density = { channel: 'density', field: warpField(), amount: 2 };
+    const withDensity = getSemanticAnchors('recursive', recursiveParams({ modulation: density }), W, H);
+    const plain = getSemanticAnchors('recursive', recursiveParams(), W, H);
+    expect(withDensity).toEqual(plain);
+  });
+
+  it('D2: crossing corners are displaced ONLY by stackWarpDisplacement (K=2 vertices)', () => {
+    const params = warpParams({ shape: 'square', depth: 2, warpNodes: 2, amount: 2 });
+    const sources = [params.modulation]; // the extractor builds [warpMod] the same way
+    // Straight-corner mode: each crossing = its ideal corner + stackWarpDisplacement.
+    const ideal = getSemanticAnchors('recursive', recursiveParams({ shape: 'square', depth: 2 }), W, H)
+      .filter((a) => a.role === 'crossing');
+    const warped = getSemanticAnchors('recursive', params, W, H).filter((a) => a.role === 'crossing');
+    const byId = new Map(warped.map((a) => [a.id, a]));
+    for (const c of ideal) {
+      const lx = c.x - CX;
+      const ly = c.y - CY;
+      const u = (lx + W / 2) / W;
+      const v = (ly + H / 2) / H;
+      const { dx, dy } = stackWarpDisplacement(sources, u, v);
+      const w = byId.get(c.id);
+      expect(w.x).toBeCloseTo(c.x + dx, 9);
+      expect(w.y).toBeCloseTo(c.y + dy, 9);
+    }
+  });
+
+  it('cells/tips are free points: position = point-warp, frame = computeWarpFrame (FD)', () => {
+    const params = warpParams({ shape: 'hexagon', depth: 3, warpNodes: 4, amount: 2 });
+    const sources = [params.modulation];
+    const anchors = getSemanticAnchors('recursive', params, W, H);
+    const centres = anchors.filter((a) => a.role === 'cell' || a.role === 'tip');
+    expect(centres.length).toBeGreaterThan(0);
+    // Cross-check against the ideal (no-warp) centres by id: point-warp each ideal
+    // centre and assert the warped anchor matches position AND the FD frame — no
+    // curve tangent is used (free-point recipe).
+    const idealCentres = getSemanticAnchors('recursive', recursiveParams({ shape: 'hexagon', depth: 3 }), W, H)
+      .filter((a) => a.role === 'cell' || a.role === 'tip');
+    const byId = new Map(anchors.map((a) => [a.id, a]));
+    for (const c of idealCentres) {
+      const lx = c.x - CX;
+      const ly = c.y - CY;
+      const u = (lx + W / 2) / W;
+      const v = (ly + H / 2) / H;
+      const { dx, dy } = stackWarpDisplacement(sources, u, v);
+      const frame = computeWarpFrame(sources, u, v, { W, H });
+      const w = byId.get(c.id);
+      expect(w.x).toBeCloseTo(c.x + dx, 9);
+      expect(w.y).toBeCloseTo(c.y + dy, 9);
+      expect(w.tangent).toBeCloseTo(frame.tangent, 9);
+      expect(w.normal).toBeCloseTo(frame.normal, 9);
+    }
+  });
+});
+
+describe('getSemanticAnchors — recursive warp × symmetry (WI-118 rides on WI-115)', () => {
+  it('warp anchors appear in EVERY sector under N≥2 and non-zero startAngle', () => {
+    const anchors = getSemanticAnchors(
+      'recursive',
+      warpParams({ symmetry: 4, startAngle: 33, warpNodes: 4 }),
+      W,
+      H,
+    );
+    expect(new Set(anchors.map((a) => a.meta.copy))).toEqual(new Set([0, 1, 2, 3]));
+    for (const role of ['crossing', 'edge', 'tip', 'cell']) {
+      const copies = new Set(anchors.filter((a) => a.role === role).map((a) => a.meta.copy));
+      expect(copies).toEqual(new Set([0, 1, 2, 3]));
+    }
+  });
+
+  it('byte-exact rotation-equivariance under warp: anchor(k) == Rot_θk(anchor(0)) (position AND frame)', () => {
+    // ox = W2/2 + offsetX = 0 so world coords ARE the centred rotation.
+    const W2 = 800;
+    const H2 = 800;
+    const geom = {
+      shape: 'hexagon',
+      depth: 3,
+      rotationPerLevel: 15,
+      scaleFactor: 0.7,
+      startScale: 70,
+      offsetX: -W2 / 2,
+      offsetY: -H2 / 2,
+      warpNodes: 4,
+    };
+    const field = warpField();
+    const modulation = { channel: 'warp', field, amount: 2 };
+    const n = 3;
+    const startDeg = 40;
+    const startRad = (startDeg * Math.PI) / 180;
+
+    const master = getSemanticAnchors('recursive', { ...geom, modulation, symmetry: 1, startAngle: 0 }, W2, H2);
+    const full = getSemanticAnchors('recursive', { ...geom, modulation, symmetry: n, startAngle: startDeg }, W2, H2);
+    expect(full.length).toBe(master.length * n);
+    const masterById = new Map(master.map((m) => [m.id, m]));
+    for (const a of full) {
+      const k = a.meta.copy;
+      const theta = (2 * Math.PI * k) / n + startRad;
+      const cos = Math.cos(theta);
+      const sin = Math.sin(theta);
+      const baseId = a.id.slice(0, a.id.lastIndexOf(':'));
+      const m = masterById.get(baseId);
+      expect(m).toBeDefined();
+      expect(a.x).toBeCloseTo(m.x * cos - m.y * sin, 9);
+      expect(a.y).toBeCloseTo(m.x * sin + m.y * cos, 9);
+      expect(a.tangent).toBeCloseTo(m.tangent + theta, 12);
+      expect(a.normal).toBeCloseTo(m.normal + theta, 12);
+      expect(a.s).toBe(m.s);
+    }
+  });
+});
+
+// ── OFFLINE bound-validation for the trusted-bounded free-point centres ───────
+// Per the PRD: the recursive-bendable centre class is validated by an OFFLINE
+// bound test, NOT a runtime coincidence guard (K<3 is the only runtime gate).
+//
+// WHAT IS ACTUALLY VALIDATED — boundedness, not smallness. A centre is a FREE
+// POINT: unlike a crossing (where reconstruct-and-intersect gives an EXACT
+// position, so point-warp was REJECTED for missing it by ~50px), a centre has NO
+// drawn curve to be exact to, so point-warp is ACCEPTED as its definition. The
+// trusted-bounded guarantee is that the centre's error from any corner-averaged
+// centre can never go WILD — it is provably ≤ the warp CLAMP ENVELOPE. Because a
+// recursive outer polygon is canvas-scale (startRadius ≈ 140 on a 400 canvas), a
+// guide field with curvature across the canvas displaces opposite corners in
+// different directions, so the point-warped centre and the corner mean diverge by
+// the field's variation over the polygon — bounded only by 2·WARP_MAX_PX·amount
+// (each point clamped to WARP_MAX_PX·amount). The measured max IS that envelope;
+// there is no smaller honest number for canvas-scale polygons. That bounded-never-
+// wild property is exactly what lets the hot path skip a per-frame guard.
+//
+// Truth = the MEAN OF THE POINT-WARPED CORNERS (stable under extreme bend). The
+// flattened-outline area centroid is NOT used: under strong warp the outline self-
+// intersects and its shoelace centroid is meaningless.
+//
+// The OTHER half of the free-point validation — FD FRAME accuracy (< 0.24° for
+// free points) — is already proven generically in warpFrame.test.js and pinned
+// exactly for these anchors by the cells/tips test above; not re-derived here.
+describe('recursive-bendable centres — OFFLINE position-drift bound (no runtime guard)', () => {
+  // Mean of the point-warped polygon CORNERS (LOCAL coords) — the stable corner-
+  // averaged centre the point-warped centroid is bounded against.
+  function warpedCornerMean(verts, sources) {
+    let sx = 0;
+    let sy = 0;
+    for (const p of verts) {
+      const u = (p.x + W / 2) / W;
+      const v = (p.y + H / 2) / H;
+      const { dx, dy } = stackWarpDisplacement(sources, u, v);
+      sx += p.x + dx;
+      sy += p.y + dy;
+    }
+    return { x: sx / verts.length, y: sy / verts.length };
+  }
+
+  it('point-warped centre stays within the clamp envelope of the warped-corner mean', () => {
+    // Representative polygons (canvas-scale, various positions) × warp fields ×
+    // amounts × bend counts.
+    const polygons = [
+      [{ x: -80, y: -80 }, { x: 80, y: -80 }, { x: 80, y: 80 }, { x: -80, y: 80 }],
+      [{ x: 0, y: -120 }, { x: 104, y: -60 }, { x: 104, y: 60 }, { x: 0, y: 120 }, { x: -104, y: 60 }, { x: -104, y: -60 }],
+      [{ x: 60, y: 40 }, { x: 140, y: 20 }, { x: 120, y: 130 }, { x: 30, y: 110 }],
+    ];
+    const fields = [
+      ScalarField.fromFunction((u, v) => Math.sin(6 * u) * Math.cos(6 * v), { nx: 65, ny: 65 }),
+      ScalarField.fromFunction((u, v) => Math.sin(11 * u + 2 * v), { nx: 97, ny: 97 }),
+      ScalarField.fromFunction((u) => 2 * (u - 0.5), { nx: 33, ny: 33 }),
+    ];
+    const AMOUNTS = [1, 2, 3];
+    const MAX_AMOUNT = Math.max(...AMOUNTS);
+
+    // DOCUMENTED bound, tied to the clamp so it is self-documenting: each point is
+    // clamped to WARP_MAX_PX·amount, and the centre vs corner-mean error spans at
+    // most two such clamps. This constant IS the offline substitute for a per-frame
+    // coincidence guard.
+    const BOUND_PX = 2 * WARP_MAX_PX * MAX_AMOUNT;
+
+    // Note: the drift is independent of warpNodes (K) — a centre is point-warped
+    // and the corner mean uses the corners, neither of which the bend touches — so
+    // K is not swept here; the K<3-vs-K≥3 modes are exercised by the exact-to-paint
+    // tests above.
+    let maxDrift = 0;
+    for (const verts of polygons) {
+      for (const field of fields) {
+        for (const amount of AMOUNTS) {
+          const sources = [{ channel: 'warp', field, amount }];
+          const cx = verts.reduce((s, p) => s + p.x, 0) / verts.length;
+          const cy = verts.reduce((s, p) => s + p.y, 0) / verts.length;
+          const u = (cx + W / 2) / W;
+          const v = (cy + H / 2) / H;
+          const { dx, dy } = stackWarpDisplacement(sources, u, v);
+          const warpedCentre = { x: cx + dx, y: cy + dy };
+          const truth = warpedCornerMean(verts, sources);
+          const drift = Math.hypot(warpedCentre.x - truth.x, warpedCentre.y - truth.y);
+          if (drift > maxDrift) maxDrift = drift;
+          // Every config individually respects the envelope.
+          expect(drift).toBeLessThanOrEqual(BOUND_PX);
+        }
+      }
+    }
+
+    // Guard the guard BOTH ways: the sweep genuinely moved centres past one clamp
+    // unit (non-vacuous), yet never escaped the envelope (bounded-never-wild).
+    expect(maxDrift).toBeGreaterThan(WARP_MAX_PX);
+    expect(maxDrift).toBeLessThanOrEqual(BOUND_PX);
   });
 });
 

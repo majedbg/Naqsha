@@ -106,10 +106,12 @@ describe('resolveMotifHostParams — B seam: resolves host modulation in-place',
     expect(out.hostParams.cols).toBe(gridHost.params.cols);
   });
 
-  it('surfaces warp to a REAL math extractor: a warped recursive host now refuses straight reconstruction', () => {
-    // recursiveAnchors reconstructs from straight math and bails the moment a warp
-    // channel is present (semanticAnchors.js). With B, the extractor SEES warp via
-    // hostParams.modulation and refuses (→ null); a later slice makes it warp-aware.
+  it('surfaces warp to a REAL math extractor: a warped recursive host emits warp-AWARE anchors (WI-118)', () => {
+    // The B seam folds the guide's warp into hostParams.modulation; the recursive
+    // extractor (WI-118) now RECONSTRUCTS warp-aware anchors from the shared core
+    // instead of refusing (→ null). This test proves the seam is consumed end-to-
+    // end: the same params that emit straight anchors with no guide emit warp-aware
+    // anchors once a warp guide is surfaced.
     const recHost = { id: 'r', patternType: 'recursive', params: { shape: 'triangle', depth: 3 } };
     const motif = {
       id: 'rm', type: MOTIF_TYPE, patternType: MOTIF_TYPE,
@@ -125,9 +127,22 @@ describe('resolveMotifHostParams — B seam: resolves host modulation in-place',
     expect(Array.isArray(straightAnchors)).toBe(true);
     expect(straightAnchors.length).toBeGreaterThan(0);
 
-    // With the warp guide surfaced in-place, the extractor now detects warp → null.
+    // With the warp guide surfaced in-place, the extractor emits warp-aware anchors
+    // (same count/roles — the warp moves them, it does not drop any).
     const warpedAnchors = getSemanticAnchors('recursive', warped.hostParams, 800, 600, {});
-    expect(warpedAnchors).toBeNull();
+    expect(Array.isArray(warpedAnchors)).toBe(true);
+    expect(warpedAnchors.length).toBe(straightAnchors.length);
+    expect(new Set(warpedAnchors.map((a) => a.role))).toEqual(
+      new Set(['crossing', 'edge', 'tip', 'cell']),
+    );
+    // At least one anchor actually moved off its straight position (warp applied).
+    const straightById = new Map(straightAnchors.map((a) => [a.id, a]));
+    expect(
+      warpedAnchors.some((a) => {
+        const s = straightById.get(a.id);
+        return s && (Math.abs(a.x - s.x) > 1e-6 || Math.abs(a.y - s.y) > 1e-6);
+      }),
+    ).toBe(true);
   });
 
   it('is order-independent: the guide above vs below the host resolves the same modulation', () => {

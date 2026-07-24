@@ -464,13 +464,13 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
         role: 'cut',
         operationId: operationIdForRole('cut'), // default operation = Cut
         penSlot: (index % 4) + 1,
-        panelId: null, // Panel membership (WI-1); normalizer assigns on load.
+        panelId: firstPanel(panels)?.id ?? null, // #122: born on the first panel, never null (a null-panel add draws in 2D but the per-panel 3D preview drops it until reload).
         ...(opts.transform ? { transform: opts.transform } : {}),
       };
       return [...prev, layer];
     });
     return { ok: true, id };
-  }, [cap, layers, recordStructuralFn]);
+  }, [cap, layers, recordStructuralFn, panels]);
 
   // Create a TEXT layer (Option B: text objects are layers, like `import`).
   // Mirrors addImportedLayer's structure exactly: id generated outside the
@@ -509,13 +509,13 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
         role: 'engrave',              // text defaults to ENGRAVE
         operationId: operationIdForRole('engrave'),
         penSlot: (index % 4) + 1,
-        panelId: null, // Panel membership (WI-1); normalizer assigns on load.
+        panelId: firstPanel(panels)?.id ?? null, // #122: born on the first panel, never null (a null-panel add draws in 2D but the per-panel 3D preview drops it until reload).
         ...(opts.transform ? { transform: opts.transform } : {}),
       };
       return [...prev, layer];
     });
     return { ok: true, id };
-  }, [cap, layers, recordStructuralFn]);
+  }, [cap, layers, recordStructuralFn, panels]);
 
   // Create a MOTIF layer that adorns an existing host layer (headless plumbing;
   // no UI this slice). Mirrors addTextLayer EXACTLY: id generated outside the
@@ -572,7 +572,12 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
         role: 'engrave',              // motif defaults to ENGRAVE (like text)
         operationId: operationIdForRole('engrave'),
         penSlot: (index % 4) + 1,
-        panelId: null, // Panel membership (WI-1); normalizer assigns on load.
+        // #122: a motif adorns a host — land it on the HOST's panel (fallback
+        // firstPanel), never null. Nothing normalizes an ADD, so a null panelId
+        // draws in 2D but is dropped by the per-panel 3D preview (layersForPanel)
+        // until reload; the host's panel also keeps motif + host in the SAME 3D
+        // panel in a multi-panel document.
+        panelId: host?.panelId ?? firstPanel(panels)?.id ?? null,
         ...(opts.transform ? { transform: opts.transform } : {}),
       };
       return [...prev, layer];
@@ -580,7 +585,7 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
     return { ok: true, id };
     // `cap` dropped from deps (Fix 2): addMotifLayer no longer reads the tier cap
     // — motifs are exempt (per-host budget + MAX_LAYERS backstop instead).
-  }, [layers, customGlyphs, recordStructuralFn]);
+  }, [layers, customGlyphs, recordStructuralFn, panels]);
 
   // Create an ETCH layer — the raster counterpart to the vector layers (Raster
   // Etch S1, issue #80). Mirrors addImportedLayer/addTextLayer EXACTLY: id
@@ -626,13 +631,13 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
         role: 'engrave',              // an Etch is engrave-role (decision 6)
         operationId: operationIdForRole('engrave'),
         penSlot: (index % 4) + 1,
-        panelId: null, // Panel membership (WI-1); normalizer assigns on load.
+        panelId: firstPanel(panels)?.id ?? null, // #122: born on the first panel, never null (a null-panel add draws in 2D but the per-panel 3D preview drops it until reload).
         ...(opts.transform ? { transform: opts.transform } : {}),
       };
       return [...prev, layer];
     });
     return { ok: true, id };
-  }, [cap, layers, recordStructuralFn]);
+  }, [cap, layers, recordStructuralFn, panels]);
 
   const duplicateLayer = useCallback((id) => {
     recordStructuralFn(); // history: discrete structural entry

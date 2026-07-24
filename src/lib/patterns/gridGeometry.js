@@ -15,6 +15,9 @@
  * `random` call order or count here without re-baselining Grid's output.
  */
 
+import { stackWarpDisplacement } from '../fields/warp';
+import { catmullRomToBezier } from './catmullRomBezier';
+
 /**
  * Compute the grid's line positions in the ORIGIN-CENTERED frame (offsets about
  * 0, canvas-independent — the caller applies cx/cy via a translate).
@@ -72,4 +75,65 @@ export function gridLinePositions(params, rng) {
   const yJittered = yPositions.map((y) => y + (jitter > 0 ? rng(-jitter, jitter) : 0));
 
   return { xPositions, yPositions, xJittered, yJittered, totalW, totalH };
+}
+
+/**
+ * Build the warp-node chain + Catmull-Rom curve for each straight grid line —
+ * the shared warped-geometry core. A straight line has only 2 endpoints and
+ * cannot bend, so a warped line SUBDIVIDES into K nodes; interior nodes are
+ * displaced along the guide field while the two ENDPOINTS stay pinned (tidy
+ * plotter frame). This is the SINGLE source of the warped grid geometry: the
+ * renderer paints the returned curve (canvas == SVG), and the extractor
+ * reconstructs the identical curve for anchor placement — "exact-to-paint" by
+ * construction rather than by two implementations agreeing by luck (PRD #109).
+ *
+ * Extracted VERBATIM from Grid.generate()'s inline warp build so on-canvas/SVG
+ * output stays byte-identical: same K clamp, same source resolution, same
+ * unit-domain formula, same interior-only displacement, same catmullRomToBezier.
+ * warp consumes NO RNG — it runs after the jitter stream, so moving it here
+ * cannot perturb call order. Returns FULL-PRECISION numbers; rounding/formatting
+ * (toFixed) stays at the renderer's emit site.
+ *
+ * Warp displacement comes ONLY from `stackWarpDisplacement` (D2 invariant) — no
+ * parallel warp math here or anywhere.
+ *
+ * @param {{x1:number,y1:number,x2:number,y2:number}[]} lines - straight lines in
+ *   the ORIGIN-CENTERED frame (as Grid builds them from the jittered positions).
+ * @param {object} warpMod - the resolved warp modulation object; its warp
+ *   sources are `warpMod.sources ?? [warpMod]` (N=1 → the lone object).
+ * @param {object} opts
+ * @param {number} opts.canvasW - canvas width (px) for unit-domain mapping.
+ * @param {number} opts.canvasH - canvas height (px).
+ * @param {number} opts.warpNodes - requested node count; clamped to [2,24] and
+ *   rounded (K).
+ * @returns {{ nodes: {x:number,y:number}[],
+ *   start: {x:number,y:number},
+ *   segments: {c1:{x:number,y:number}, c2:{x:number,y:number}, end:{x:number,y:number}}[]
+ * }[]} one warped curve per input line, index-aligned. `nodes` is the K-node
+ *   warp chain; `start`/`segments` are its Catmull-Rom cubic form.
+ */
+export function gridWarpCurves(lines, warpMod, { canvasW, canvasH, warpNodes }) {
+  const K = Math.max(2, Math.min(24, Math.round(warpNodes)));
+  // Phase 2b: vector-SUM every warp source (N=1 → single, byte-identical).
+  const sources = warpMod.sources ?? [warpMod];
+  const curves = [];
+  for (const l of lines) {
+    const nodes = [];
+    for (let k = 0; k < K; k++) {
+      const t = k / (K - 1);
+      const node = { x: l.x1 + (l.x2 - l.x1) * t, y: l.y1 + (l.y2 - l.y1) * t };
+      // Pin endpoints: displace only interior nodes k=1..K-2.
+      if (k > 0 && k < K - 1) {
+        const u = (node.x + canvasW / 2) / canvasW;
+        const v = (node.y + canvasH / 2) / canvasH;
+        const { dx, dy } = stackWarpDisplacement(sources, u, v);
+        node.x += dx;
+        node.y += dy;
+      }
+      nodes.push(node);
+    }
+    const { start, segments } = catmullRomToBezier(nodes);
+    curves.push({ nodes, start, segments });
+  }
+  return curves;
 }

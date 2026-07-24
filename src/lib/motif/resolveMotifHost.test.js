@@ -5,6 +5,11 @@
 import { describe, it, expect } from 'vitest';
 import { resolveMotifHostParams } from './resolveMotifHost.js';
 import { MOTIF_TYPE } from './motifLayer.js';
+import {
+  resolveModulationsForTarget,
+  composeModulationParam,
+} from '../fields/resolveModulationForTarget.js';
+import { getSemanticAnchors } from './semanticAnchors.js';
 
 const gridHost = {
   id: 'host-1',
@@ -70,6 +75,84 @@ describe('resolveMotifHostParams', () => {
     const out = resolveMotifHostParams(layers[1], layers, hostGeometry);
     expect(out).toEqual({ hostPatternType: 'grid', hostParams: gridHost.params });
     expect(out).not.toHaveProperty('drawnCells');
+  });
+});
+
+// B seam (#112) — resolveMotifHostParams must resolve the host's OWN modulation
+// in-place, via the EXACT composition useCanvas runs (composeModulationParam ∘
+// resolveModulationsForTarget), so the math extractors reading hostParams SEE
+// the warp channel the paint pass paints. A warp GUIDE layer maps to the host.
+describe('resolveMotifHostParams — B seam: resolves host modulation in-place', () => {
+  // A chladni guide is a real field producer (fieldForLayer → ScalarField); its
+  // map targets the grid host on channel 'warp'.
+  const warpGuide = (targetId = 'host-1') => ({
+    id: 'guide-1',
+    patternType: 'chladni',
+    params: { m: 2, n: 1 },
+    modulator: { maps: [{ targetLayerId: targetId, channel: 'warp', amount: 1 }] },
+  });
+
+  it('folds the host warp modulation into hostParams.modulation (the key the extractor reads)', () => {
+    const g = warpGuide();
+    const layers = [g, gridHost, motifLayer('host-1')];
+    const out = resolveMotifHostParams(layers[2], layers);
+    // Byte-for-byte the composition useCanvas uses (probe line 270 / paint 437-439).
+    const expected = composeModulationParam(resolveModulationsForTarget(gridHost, layers));
+    expect(out.hostParams.modulation).toEqual(expected);
+    // The nested shape the extractor's guard inspects: channel + field.
+    expect(out.hostParams.modulation.channel).toBe('warp');
+    expect(typeof out.hostParams.modulation.field.sampleSigned).toBe('function');
+    // Base params still present (the fold enriches, does not replace).
+    expect(out.hostParams.cols).toBe(gridHost.params.cols);
+  });
+
+  it('surfaces warp to a REAL math extractor: a warped recursive host now refuses straight reconstruction', () => {
+    // recursiveAnchors reconstructs from straight math and bails the moment a warp
+    // channel is present (semanticAnchors.js). With B, the extractor SEES warp via
+    // hostParams.modulation and refuses (→ null); a later slice makes it warp-aware.
+    const recHost = { id: 'r', patternType: 'recursive', params: { shape: 'triangle', depth: 3 } };
+    const motif = {
+      id: 'rm', type: MOTIF_TYPE, patternType: MOTIF_TYPE,
+      params: { glyphRef: 'leaf', hostLayerId: 'r', anchorMode: 'semantic' },
+    };
+    const g = warpGuide('r');
+
+    const straight = resolveMotifHostParams(motif, [recHost, motif]);
+    const warped = resolveMotifHostParams(motif, [g, recHost, motif]);
+
+    // Baseline (no guide): extractor sees straight params → emits anchors.
+    const straightAnchors = getSemanticAnchors('recursive', straight.hostParams, 800, 600, {});
+    expect(Array.isArray(straightAnchors)).toBe(true);
+    expect(straightAnchors.length).toBeGreaterThan(0);
+
+    // With the warp guide surfaced in-place, the extractor now detects warp → null.
+    const warpedAnchors = getSemanticAnchors('recursive', warped.hostParams, 800, 600, {});
+    expect(warpedAnchors).toBeNull();
+  });
+
+  it('is order-independent: the guide above vs below the host resolves the same modulation', () => {
+    // A single guide produces one source regardless of its array position, so the
+    // composite is identical — no dependence on layer (render) order.
+    const g = warpGuide();
+    const motif = motifLayer('host-1');
+    const above = resolveMotifHostParams(motif, [g, gridHost, motif]);
+    const below = resolveMotifHostParams(motif, [gridHost, motif, g]);
+    expect(above.hostParams.modulation).toEqual(below.hostParams.modulation);
+  });
+
+  it('NO-WARP regression: unmodulated hostParams is the SAME reference as host.params (byte-identical)', () => {
+    const layers = [gridHost, motifLayer('host-1')];
+    const out = resolveMotifHostParams(layers[1], layers);
+    // No guide maps → composeModulationParam is undefined → no clone, reference held.
+    expect(out.hostParams).toBe(gridHost.params);
+    expect(out.hostParams).not.toHaveProperty('modulation');
+  });
+
+  it('is pure: does NOT mutate host.params (no modulation key leaks onto the host layer)', () => {
+    const g = warpGuide();
+    const layers = [g, gridHost, motifLayer('host-1')];
+    resolveMotifHostParams(layers[2], layers);
+    expect(gridHost.params).not.toHaveProperty('modulation');
   });
 });
 

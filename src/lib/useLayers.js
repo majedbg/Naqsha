@@ -405,16 +405,27 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
     const panelId = opts?.panelId;
     const resolvedPanelId = panelId !== undefined ? panelId : (firstPanel(panels)?.id ?? null);
     const defaultOpId = typeof getDefaultOperationId === 'function' ? getDefaultOperationId() : undefined;
-    recordStructuralFn(); // history: discrete structural entry (capture-before)
+    // Capacity decided synchronously off live `layers` (setLayers is async),
+    // mirroring the other creators, so the returned outcome — and the `id`
+    // callers select on — is exact. Count only non-motif layers against the tier
+    // cap (Fix 2 — motifs are exempt); MAX_LAYERS is the whole-document backstop.
+    if (nonMotifCount(layers) >= cap) return { ok: false, error: 'Layer limit reached.' };
+    if (layers.length >= MAX_LAYERS) return { ok: false, error: 'Document layer limit reached.' };
+
+    recordStructuralFn(); // history: past the cap guard, this will mutate
+    // Generate the id ONCE outside the updater (survives StrictMode's double
+    // invoke) and override createLayer's internal id with it, so the id we return
+    // to the caller is the id actually on the appended layer — callers select on
+    // it, so a mismatch would blank the inspector.
+    const id = genId();
     setLayers((prev) => {
-      // Count only non-motif layers against the tier cap (Fix 2 — motifs are
-      // exempt); the absolute MAX_LAYERS backstop still bounds the whole document.
-      if (nonMotifCount(prev) >= cap || prev.length >= MAX_LAYERS) return prev;
+      if (nonMotifCount(prev) >= cap || prev.length >= MAX_LAYERS) return prev; // re-check
       const layer = createLayer(prev.length, requested);
       const withOp = defaultOpId ? { ...layer, operationId: defaultOpId } : layer;
-      return [...prev, { ...withOp, panelId: resolvedPanelId }];
+      return [...prev, { ...withOp, id, panelId: resolvedPanelId }];
     });
-  }, [cap, getDefaultOperationId, recordStructuralFn, panels]);
+    return { ok: true, id };
+  }, [cap, getDefaultOperationId, recordStructuralFn, panels, layers]);
 
   // Import an SVG file's outline as ONE place-as-artwork layer (issue #12, C4).
   // Parses the SVG → imported-path layer carrying the verbatim `d` data in

@@ -258,11 +258,12 @@ export default function useCanvas(
       // would draw STRAIGHT ctx.line while the canvas draws warped bezier curves —
       // and the motif would arc-length-sample leaves onto the straight chords,
       // floating them off the visible curve. Inject the SAME resolved modulation
-      // so the probe's geometry matches the paint: a warp-modulated grid then
-      // draws bezierVertex (which capturePolylines does NOT record) → empty
-      // hostPaths → nothing placed, the intended Phase-2 deferral. warp consumes
-      // no RNG and Grid only branches on channel==='warp', so this is byte-
-      // identical capture for an unmodulated grid and every non-warp channel.
+      // so the probe's geometry matches the paint: a warp-modulated grid draws
+      // bezierVertex curves, which capturePolylines now FLATTENS (shared adaptive
+      // flattenCubic, device-dot tolerance) into exact-to-paint polylines the vine
+      // samples along (ticket #111 — the single-axis warped-grid vine). warp
+      // consumes no RNG and Grid only branches on channel==='warp', so this is
+      // byte-identical capture for an unmodulated grid and every non-warp channel.
       // Scoped to grid: the flowfield/wave modulation divergence is pre-existing
       // and out of scope (same base-params caveat as the voronoi probe above).
       let probeParams = host.params;

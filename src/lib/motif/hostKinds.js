@@ -109,11 +109,11 @@ export function isSemanticHost(patternType, params) {
  * `ctx.line` segments are captured as polylines and motifs are arc-length
  * sampled along them. Mirrors Grid.js:42/49 (>=0.5 gates whether an axis draws).
  * A WARPED single-axis grid also qualifies here (params carry no modulation to
- * distinguish it — warp is resolved from a guide layer at render). It degrades to
- * "nothing placed" NOT here but at the CAPTURE probe (useCanvas injects the
- * resolved modulation so the probe draws the same warped bezierVertex curve,
- * which capturePolylines does not record → empty hostPaths). That is the intended
- * Phase-2 deferral: a warped grid places nothing until bezier-flattening lands.
+ * distinguish it — warp is resolved from a guide layer at render). useCanvas
+ * injects the resolved modulation into the capture probe so it draws the same
+ * warped bezierVertex curve the canvas paints; capturePolylines flattens those
+ * Béziers (shared adaptive flattenCubic, ticket #111) into exact-to-paint
+ * polylines, so the vine follows the curved edge.
  * @param {object} [params] @returns {boolean}
  */
 function gridIsSingleAxis(params) {

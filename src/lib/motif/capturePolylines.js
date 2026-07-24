@@ -19,6 +19,8 @@
 // [cos, sin, -sin, cos, 0, 0], identical to what p5 applies, so folded coords
 // reproduce the drawn geometry exactly.
 
+import { flattenCubic } from '../geometry/flattenCubic.js';
+
 /** Identity SVG affine matrix. */
 const IDENTITY = [1, 0, 0, 1, 0, 0];
 
@@ -51,10 +53,17 @@ function apply(m, x, y) {
  *   DRAW       line(x1,y1,x2,y2)                 → one 2-point OPEN polyline
  *              beginShape · vertex(x,y) · endShape(mode?) → one polyline;
  *                CLOSED iff endShape's first arg is non-null (p5's CLOSE flag).
+ *              bezierOrder(n) · bezierVertex(x,y) → p5 2.x curve API: a cubic is
+ *                bezierOrder(3) plus THREE 1-point bezierVertex calls (c1, c2,
+ *                end). Each such segment is FLATTENED (shared adaptive
+ *                flattenCubic, device-dot tolerance) into on-curve points appended
+ *                to the in-flight shape — so a WARPED single-axis grid's Bézier
+ *                lines become exact-to-paint polylines the vine samples along.
  *
  * Robustness: an unbalanced pop never discards the identity base; a shape with
  * fewer than 2 vertices is dropped (arc-length samplers need ≥2 points); a
- * vertex outside beginShape/endShape is ignored.
+ * vertex (plain or bezier) outside beginShape/endShape is ignored; a bezier
+ * segment with no preceding on-curve anchor is ignored.
  *
  * @param {Array<{op:string,args:any[]}>} calls
  * @returns {Array<{points:{x:number,y:number}[], closed:boolean}>} hostPaths
@@ -63,6 +72,8 @@ export function capturePolylines(calls) {
   const stack = [IDENTITY];
   const paths = [];
   let shape = null; // in-flight beginShape vertex buffer, or null
+  let bezierOrder = 3; // p5 2.x default cubic degree for bezierVertex
+  let bezierBuf = null; // control points collected for the in-flight bezier segment
 
   const top = () => stack[stack.length - 1];
   const setTop = (m) => { stack[stack.length - 1] = m; };
@@ -102,10 +113,43 @@ export function capturePolylines(calls) {
       }
       case 'beginShape':
         shape = [];
+        bezierBuf = null;
         break;
       case 'vertex':
         if (shape) shape.push(apply(top(), a[0], a[1]));
+        bezierBuf = null; // a plain vertex closes any half-collected bezier run
         break;
+      case 'bezierOrder':
+        // p5 2.x: sets the degree of the following bezierVertex run (cubic = 3).
+        bezierOrder = a[0] || 3;
+        break;
+      case 'bezierVertex': {
+        // p5 2.x emits one point per call; a cubic is bezierOrder(3) + three
+        // calls (c1, c2, end) where the LAST is the on-curve endpoint. Fold each
+        // control point through the CTM FIRST so the flatness tolerance is in
+        // absolute render px (not rescaled by any CTM scale), then adaptively
+        // flatten the cubic from the shape's current point.
+        if (!shape || shape.length < 1) break; // no anchor to start the curve
+        if (!bezierBuf) bezierBuf = [];
+        bezierBuf.push(apply(top(), a[0], a[1]));
+        if (bezierBuf.length >= bezierOrder) {
+          const p0 = shape[shape.length - 1];
+          if (bezierOrder === 3) {
+            const [c1, c2, end] = bezierBuf;
+            const flat = flattenCubic([
+              [p0.x, p0.y], [c1.x, c1.y], [c2.x, c2.y], [end.x, end.y],
+            ]);
+            for (const [x, y] of flat) shape.push({ x, y });
+          } else {
+            // Non-cubic order (not emitted by any current host): fall back to the
+            // on-curve endpoint so the shape stays continuous without guessing.
+            const end = bezierBuf[bezierBuf.length - 1];
+            shape.push({ x: end.x, y: end.y });
+          }
+          bezierBuf = null;
+        }
+        break;
+      }
       case 'endShape':
         if (shape) {
           if (shape.length >= 2) {
@@ -114,6 +158,7 @@ export function capturePolylines(calls) {
             paths.push({ points: shape, closed: a[0] != null });
           }
           shape = null;
+          bezierBuf = null;
         }
         break;
       default:

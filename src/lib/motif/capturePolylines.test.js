@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { capturePolylines } from './capturePolylines.js';
+import Grid from '../patterns/Grid.js';
+import { RecordingContext } from '../patterns/drawingContext.js';
+import { sampleEdgeAnchors } from './anchors.js';
 
 // Helper: assert a point is close to (x,y) (folded float math).
 function near(pt, x, y) {
@@ -153,5 +156,98 @@ describe('capturePolylines', () => {
     // copy 1: rotated 180° → (10,0)→(-10,0)→+T=(40,50); (20,0)→(-20,0)→(30,50)
     near(paths[1].points[0], 40, 50);
     near(paths[1].points[1], 30, 50);
+  });
+});
+
+// INTEGRATION — the real feature seam the vine-along-a-column relies on: a
+// single-axis Grid's generate() draws its lines with ctx.line INSIDE
+// applySymmetryDraw's push/translate/rotate/pop wrapper, and capturePolylines
+// must fold those through the CTM into non-empty, canvas-absolute hostPaths. Unit
+// tests that inject hostPaths directly never exercise this; this drives a REAL
+// Grid through the SAME record format the production P5Adapter emits (Recording
+// context records identical {op,args}) and the REAL capturePolylines. Without
+// this, an empty-capture regression would silently relocate the "nothing appears"
+// bug one stage upstream.
+describe('capturePolylines — real single-axis Grid host (vine seam)', () => {
+  const W = 800;
+  const H = 600;
+  function captureGrid(params) {
+    const ctx = new RecordingContext({ seed: 7 });
+    new Grid().generateWithContext(ctx, 7, params, W, H, '#000000', 100);
+    return capturePolylines(ctx.calls);
+  }
+
+  it('columns-only grid captures one polyline per vertical column', () => {
+    const cols = 5;
+    const paths = captureGrid({ cols, rows: 4, spacing: 60, drawHorizontal: 0 });
+    // One straight line per drawn vertical (cols+1 line positions in a grid).
+    expect(paths.length).toBeGreaterThanOrEqual(cols);
+    // Each is a vertical segment (near-constant x, y spans a range) in absolute
+    // canvas coords (centered lattice folded by applySymmetryDraw's translate).
+    for (const p of paths) {
+      expect(p.points.length).toBeGreaterThanOrEqual(2);
+      const [a, b] = [p.points[0], p.points[p.points.length - 1]];
+      expect(Math.abs(a.x - b.x)).toBeLessThan(1e-6); // vertical: x constant
+      expect(Math.abs(a.y - b.y)).toBeGreaterThan(50); // real vertical extent
+      expect(a.x).toBeGreaterThan(0); // folded to absolute canvas space, not centered
+      expect(a.x).toBeLessThan(W);
+    }
+  });
+
+  it('rows-only grid captures horizontal polylines', () => {
+    const paths = captureGrid({ cols: 4, rows: 5, spacing: 60, drawVertical: 0 });
+    expect(paths.length).toBeGreaterThan(0);
+    for (const p of paths) {
+      const [a, b] = [p.points[0], p.points[p.points.length - 1]];
+      expect(Math.abs(a.y - b.y)).toBeLessThan(1e-6); // horizontal: y constant
+      expect(Math.abs(a.x - b.x)).toBeGreaterThan(50);
+    }
+  });
+
+  it('captured columns feed sampleEdgeAnchors — anchors distribute ALONG each line', () => {
+    const paths = captureGrid({ cols: 3, rows: 4, spacing: 80, drawHorizontal: 0 });
+    // This is what MotifPattern does in edge mode. Multiple samples per line means
+    // leaves march UP the column — the whole point of the feature.
+    const anchors = sampleEdgeAnchors(paths, { spacing: 40 });
+    expect(anchors.length).toBeGreaterThan(paths.length); // >1 anchor per line
+    expect(anchors.every((an) => an.role === 'edge')).toBe(true);
+    // Anchors on a given path share x (vertical) but differ in y (distributed up).
+    const byPath = new Map();
+    for (const an of anchors) {
+      const k = an.meta.pathIndex;
+      if (!byPath.has(k)) byPath.set(k, []);
+      byPath.get(k).push(an);
+    }
+    const someLineHasSpread = [...byPath.values()].some((group) => {
+      const ys = group.map((g) => g.y);
+      return Math.max(...ys) - Math.min(...ys) > 50;
+    });
+    expect(someLineHasSpread).toBe(true);
+  });
+
+  it('a two-axis grid captures BOTH families (baseline — still works)', () => {
+    const paths = captureGrid({ cols: 4, rows: 4, spacing: 60 });
+    expect(paths.length).toBeGreaterThan(0);
+  });
+
+  // A WARP-modulated single-axis grid draws its lines with bezierVertex (curved),
+  // which capturePolylines does NOT record → empty capture → nothing placed. This
+  // is the Phase-2 deferral: the motif must NOT fall back to sampling the straight
+  // chords (which would float leaves off the visible curve). useCanvas injects the
+  // resolved modulation into the probe so this path is reached faithfully; here we
+  // pin the underlying Grid+capture behaviour directly.
+  it('a WARP-modulated single-axis grid captures NOTHING (bezierVertex uncaptured)', () => {
+    // Minimal constant-gradient warp field so Grid takes its warpMod branch.
+    const field = { sampleGradient: () => ({ dx: 0.5, dy: 0.5 }) };
+    const modulation = { channel: 'warp', field, amount: 1 };
+    const paths = captureGrid({
+      cols: 5,
+      rows: 4,
+      spacing: 60,
+      drawHorizontal: 0,
+      warpNodes: 6,
+      modulation,
+    });
+    expect(paths).toHaveLength(0);
   });
 });

@@ -16,6 +16,7 @@ import { isSequenceBlock } from './motif/sequencer';
 import { handlesFor } from './transform/handles';
 import { drawTextNode } from './text/drawTextNode';
 import { isTextLayer, textNodeFromLayer } from './text/textLayer';
+import { asResolver } from './text/fontRegistry';
 import { importLayerPivot } from './scene/placement';
 import { buildSelectables } from './scene/selectables';
 import { resolveCanvasColor, sheetBackground, offSheetDimFactor, effectiveMaterialId } from './materialPreview';
@@ -247,15 +248,33 @@ export default function useCanvas(
       // host reseeds at the top of generate() → this probe never shifts its paint
       // (same no-divergence guarantee as the voronoi probe below). A SEMANTIC host
       // (voronoi) keeps the existing noDraw probe + motifHostGeometry read.
-      const recording = isEdgeHost(host.patternType);
+      const recording = isEdgeHost(host.patternType, host.params);
       const probeCtx = recording
         ? new P5Adapter(p, { draw: false, record: true })
         : noDrawCtx;
+      // FAITHFUL CAPTURE for a single-axis GRID host: the grid's warp modulation
+      // is resolved from a GUIDE layer into renderParams for the main draw (see
+      // ~line 419), NOT stored on host.params. If the probe ran host.params it
+      // would draw STRAIGHT ctx.line while the canvas draws warped bezier curves —
+      // and the motif would arc-length-sample leaves onto the straight chords,
+      // floating them off the visible curve. Inject the SAME resolved modulation
+      // so the probe's geometry matches the paint: a warp-modulated grid then
+      // draws bezierVertex (which capturePolylines does NOT record) → empty
+      // hostPaths → nothing placed, the intended Phase-2 deferral. warp consumes
+      // no RNG and Grid only branches on channel==='warp', so this is byte-
+      // identical capture for an unmodulated grid and every non-warp channel.
+      // Scoped to grid: the flowfield/wave modulation divergence is pre-existing
+      // and out of scope (same base-params caveat as the voronoi probe above).
+      let probeParams = host.params;
+      if (recording && host.patternType === 'grid') {
+        const hostMod = composeModulationParam(resolveModulationsForTarget(host, layers));
+        if (hostMod) probeParams = { ...host.params, modulation: hostMod };
+      }
       p.push(); // defensive matrix isolation — probe never draws, but be safe
       probe.generateWithContext(
         probeCtx,
         host.seed,
-        host.params,
+        probeParams,
         canvasW,
         canvasH,
         resolveCanvasColor(host, { operations, outputMode, colorView, panels }),
@@ -371,9 +390,12 @@ export default function useCanvas(
       // No PatternClass instance is registered (none exists), like orphan-B.
       // Without a resolved font we can't draw; export is handled in a later phase.
       if (isTextLayer(layer)) {
-        if (!vis || !font) continue;
         const nodeData = textNodeFromLayer(layer);
-        drawTextNode(p, nodeData, font, nodeTransforms[layer.id]);
+        // `font` is either a single Font (legacy) or a per-node resolver; pick
+        // THIS node's font so each text layer renders in its own typeface.
+        const nodeFont = asResolver(font)(nodeData.fontId);
+        if (!vis || !nodeFont) continue;
+        drawTextNode(p, nodeData, nodeFont, nodeTransforms[layer.id]);
         continue;
       }
 
@@ -479,7 +501,7 @@ export default function useCanvas(
       // hosts don't set it themselves). Absent capture → no attach → the overlay
       // renders no edge ghost (graceful). Guarded to edge hosts so it never
       // clobbers a semantic host's own motifHostGeometry.
-      if (isEdgeHost(layer.patternType) && hostGeometry[layer.id]?.hostPaths) {
+      if (isEdgeHost(layer.patternType, layer.params) && hostGeometry[layer.id]?.hostPaths) {
         instance.motifHostGeometry = { hostPaths: hostGeometry[layer.id].hostPaths };
       }
 

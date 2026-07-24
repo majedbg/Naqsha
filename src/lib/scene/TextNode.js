@@ -108,8 +108,11 @@ export class TextNode extends SceneNode {
       )
       .join('');
 
+    // Single-line (Hershey) fonts export as OPEN stroked centre-lines regardless
+    // of renderMode — the path data has no Z, and filling it would be meaningless.
+    // Otherwise: outline → stroked contour, fill → solid glyph.
     const paint =
-      this.renderMode === 'outline'
+      this.font?.isSingleLine || this.renderMode === 'outline'
         ? `fill="none" stroke="${this.color}"`
         : `fill="${this.color}" fill-rule="nonzero"`;
 

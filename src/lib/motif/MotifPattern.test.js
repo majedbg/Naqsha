@@ -439,6 +439,82 @@ describe('MotifPattern semantic anchor mode', () => {
   });
 });
 
+describe('MotifPattern edge-mode role coercion (single-axis grid vine)', () => {
+  // A single-axis grid resolves to EDGE anchoring at render (resolveMotifHost),
+  // but its binding still carries the baked semantic default roles:['crossing']
+  // (hostKinds defaultRolesForHost) — or a user made the vine on a 2-axis grid
+  // then dropped a row family. Edge anchors are role:'edge', so an un-coerced
+  // ['crossing'] route filter would drop EVERY anchor and place nothing. The
+  // render coerces stale roles → ['edge'] so the vine still marches up the line.
+  it('CHAIN-form route roles:[crossing] still places in edge mode', () => {
+    const inst = new MotifPattern();
+    const ctx = new RecordingContext({ seed: 1 });
+    inst.generateWithContext(
+      ctx,
+      7,
+      {
+        glyphRef: 'leaf',
+        anchorMode: 'edge',
+        hostPaths: DIAGONAL_HOST,
+        edgeOpts: { count: 4 },
+        // The vine's baked grid route — 'crossing' would be a dead filter in edge
+        // mode without coercion.
+        binding: { chain: [{ type: 'route', roles: ['crossing'], pathScope: 'all' }] },
+      },
+      W,
+      H,
+      '#123456',
+      100
+    );
+    expect(inst.svgElements.length).toBeGreaterThan(0);
+    expect(ctx.calls.filter((c) => c.op === 'vertex').length).toBeGreaterThan(0);
+  });
+
+  it('LEGACY selection.roles:[crossing] still places in edge mode', () => {
+    const inst = new MotifPattern();
+    inst.generateWithContext(
+      new RecordingContext({ seed: 1 }),
+      7,
+      {
+        glyphRef: 'leaf',
+        anchorMode: 'edge',
+        hostPaths: DIAGONAL_HOST,
+        edgeOpts: { count: 4 },
+        binding: { selection: { roles: ['crossing'] } },
+      },
+      W,
+      H,
+      '#123456',
+      100
+    );
+    expect(inst.svgElements.length).toBeGreaterThan(0);
+  });
+
+  it('does NOT coerce roles in SEMANTIC mode (leaves crossing filter intact)', () => {
+    // Same stale ['crossing'] but semantic mode: coercion must NOT fire. A grid
+    // semantic host with crossings still places via the crossing filter — proving
+    // coercion is edge-gated, not blanket.
+    const inst = new MotifPattern();
+    inst.generateWithContext(
+      new RecordingContext({ seed: 1 }),
+      7,
+      {
+        glyphRef: 'leaf',
+        anchorMode: 'semantic',
+        hostPatternType: 'grid',
+        hostParams: { cols: 4, rows: 4, spacing: 60, margin: 20 },
+        binding: { chain: [{ type: 'route', roles: ['crossing'], pathScope: 'all' }] },
+      },
+      W,
+      H,
+      '#123456',
+      100
+    );
+    // Crossings exist on a 2-axis grid, so the intact crossing filter still places.
+    expect(inst.svgElements.length).toBeGreaterThan(0);
+  });
+});
+
 describe('MotifPattern voronoi drawn-geometry (GEOMETRY-IN) semantic path', () => {
   // Three hand-authored cells sharing the interior vertex V = (400,300). The
   // Voronoi extractor dedupes it into ONE crossing anchor (junction, cellCount 3);

@@ -200,3 +200,32 @@ describe('resolveMotifHostParams — arbitrary-edge host capture (B2)', () => {
     expect(out).toEqual({ hostPatternType: 'text', hostParams: textHost.params });
   });
 });
+
+describe('resolveMotifHostParams — single-axis grid routes to edge capture', () => {
+  const hostPaths = [{ points: [{ x: 0, y: -100 }, { x: 0, y: 100 }], closed: false }];
+  const motifOn = (hostId) => ({
+    id: 'm',
+    type: MOTIF_TYPE,
+    patternType: MOTIF_TYPE,
+    // Created with the semantic default (as a grid motif is) — resolve must FORCE edge.
+    params: { glyphRef: 'leaf', hostLayerId: hostId, anchorMode: 'semantic' },
+  });
+
+  it('forces anchorMode:edge + forwards hostPaths for a columns-only grid', () => {
+    const host = { id: 'g', patternType: 'grid', params: { cols: 8, rows: 6, drawHorizontal: 0 } };
+    const m = motifOn('g');
+    const out = resolveMotifHostParams(m, [host, m], { g: { hostPaths } });
+    expect(out.anchorMode).toBe('edge');
+    expect(out.hostPaths).toBe(hostPaths);
+  });
+
+  it('stays SEMANTIC (no forced edge, no hostPaths) for a two-axis grid', () => {
+    const host = { id: 'g', patternType: 'grid', params: { cols: 8, rows: 6 } }; // both axes
+    const m = motifOn('g');
+    const out = resolveMotifHostParams(m, [host, m], { g: { hostPaths } });
+    expect(out).not.toHaveProperty('anchorMode');
+    expect(out).not.toHaveProperty('hostPaths');
+    // Semantic grid still threads its host seed for the lattice replay.
+    expect(out.hostPatternType).toBe('grid');
+  });
+});

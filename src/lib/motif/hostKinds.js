@@ -84,14 +84,57 @@ export function defaultRolesForHost(patternType) {
   return [DEFAULT_SEMANTIC_ROLE[patternType] ?? 'edge'];
 }
 
-/** @param {string} patternType @returns {boolean} */
-export function isSemanticHost(patternType) {
-  return SEMANTIC_MOTIF_HOSTS.has(patternType);
+/**
+ * Whether a host anchors motifs by a structural (crossing/tip/cell) extractor.
+ * Params-aware, the exact complement of isEdgeHost for a grid: a single-axis grid
+ * is NOT semantic (it routes through edge capture). `params` is optional — omit it
+ * and a grid stays semantic (single-arg back-compat: the pre-render binding
+ * writers in defaultBinding/starterChips call this by type alone and rely on the
+ * render-time edge override + coerceEdgeRoles to fix a grid that later goes
+ * single-axis, so their by-type answer is intentionally the two-axis default).
+ * @param {string} patternType @param {object} [params] @returns {boolean}
+ */
+export function isSemanticHost(patternType, params) {
+  if (!SEMANTIC_MOTIF_HOSTS.has(patternType)) return false;
+  if (patternType === 'grid' && params && gridIsSingleAxis(params)) return false;
+  return true;
 }
 
-/** @param {string} patternType @returns {boolean} */
-export function isEdgeHost(patternType) {
-  return EDGE_MOTIF_HOSTS.has(patternType);
+/**
+ * A grid drawn on exactly ONE axis (only columns OR only rows) is, for motif
+ * purposes, just a bundle of parallel straight-line PATHS: it has no crossings,
+ * so its semantic extractor yields only 2 `tip` anchors per line and a motif has
+ * nowhere to distribute ALONG the line (the "vine up a column" case). Such a
+ * grid is routed through the EDGE-host capture path instead — its drawn
+ * `ctx.line` segments are captured as polylines and motifs are arc-length
+ * sampled along them. Mirrors Grid.js:42/49 (>=0.5 gates whether an axis draws).
+ * A WARPED single-axis grid also qualifies here (params carry no modulation to
+ * distinguish it — warp is resolved from a guide layer at render). It degrades to
+ * "nothing placed" NOT here but at the CAPTURE probe (useCanvas injects the
+ * resolved modulation so the probe draws the same warped bezierVertex curve,
+ * which capturePolylines does not record → empty hostPaths). That is the intended
+ * Phase-2 deferral: a warped grid places nothing until bezier-flattening lands.
+ * @param {object} [params] @returns {boolean}
+ */
+function gridIsSingleAxis(params) {
+  const v = (params?.drawVertical ?? 1) >= 0.5;
+  const h = (params?.drawHorizontal ?? 1) >= 0.5;
+  return v !== h; // XOR: exactly one axis drawn.
+}
+
+/**
+ * Whether a host anchors motifs by EDGE capture (arc-length along drawn
+ * polylines) rather than a semantic extractor. Params-aware: a `grid` is an edge
+ * host WHEN single-axis (see gridIsSingleAxis) so a columns-only / rows-only grid
+ * distributes motifs along its lines. `params` is optional — omitting it keeps
+ * the pure by-type behaviour (native edge hosts only), so single-arg callers that
+ * never see a single-axis grid stay byte-identical.
+ * @param {string} patternType @param {object} [params] @returns {boolean}
+ */
+export function isEdgeHost(patternType, params) {
+  if (EDGE_MOTIF_HOSTS.has(patternType)) return true;
+  if (patternType === 'grid' && params && gridIsSingleAxis(params)) return true;
+  return false;
 }
 
 /** @param {string} patternType @returns {boolean} */

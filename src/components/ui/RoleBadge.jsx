@@ -40,16 +40,18 @@ const SQUARE = 3.6;
  *   • stroke  — everything else: SPIRAL (semantic, but its anchors ride arms,
  *     not a graticule), every EDGE host, and any unknown/non-host type.
  * Spiral is the one semantic host that is NOT a lattice, so we subtract it from
- * the semantic set instead of hard-coding the lattice members.
+ * the semantic set instead of hard-coding the lattice members. Params-aware: a
+ * single-axis grid is an edge (stroke) host, not a lattice.
  * @param {string} patternType
+ * @param {object} [params]
  * @returns {'lattice'|'stroke'}
  */
 // A small pure host→family helper, co-located with the sole component that
 // consumes it; the HMR-boundary rule below is not worth a separate module for
 // one branchless function.
 // eslint-disable-next-line react-refresh/only-export-components
-export function badgeKindForHost(patternType) {
-  return isSemanticHost(patternType) && patternType !== "spiral" ? "lattice" : "stroke";
+export function badgeKindForHost(patternType, params) {
+  return isSemanticHost(patternType, params) && patternType !== "spiral" ? "lattice" : "stroke";
 }
 
 /** A filled role mark (dot). */

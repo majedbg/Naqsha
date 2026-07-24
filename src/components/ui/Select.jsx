@@ -19,11 +19,24 @@ export default function Select({ label, value, options, onChange, tooltip }) {
         onChange={(e) => onChange(e.target.value)}
         className="w-full bg-muted text-ink text-xs px-2 py-1.5 rounded border border-hairline outline-none focus:border-violet"
       >
-        {options.map((opt) => (
-          <option key={opt.value} value={opt.value}>
-            {opt.label}
-          </option>
-        ))}
+        {options.map((opt) =>
+          // Grouped option: `{ label, options: [...] }` → <optgroup>. Flat option
+          // `{ value, label }` → <option>. Backward-compatible (existing callers
+          // pass flat options).
+          Array.isArray(opt.options) ? (
+            <optgroup key={opt.label} label={opt.label}>
+              {opt.options.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </optgroup>
+          ) : (
+            <option key={opt.value} value={opt.value}>
+              {opt.label}
+            </option>
+          ),
+        )}
       </select>
     </div>
   );

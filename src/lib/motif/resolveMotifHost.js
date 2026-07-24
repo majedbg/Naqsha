@@ -51,10 +51,11 @@ export function resolveMotifHostParams(layer, layers, hostGeometry = {}) {
       if (geom.sites) out.sites = geom.sites;
       if (geom.drawnCells) out.drawnCells = geom.drawnCells; // legacy
     }
-  } else if (isEdgeHost(host.patternType)) {
-    // B2 — arbitrary-edge host (flowfield/wave/…): the host has NO semantic
-    // extractor, so FORCE edge anchoring and forward the polylines captured by
-    // the record-mode prepass (capturePolylines) as `hostPaths`. anchorMode:'edge'
+  } else if (isEdgeHost(host.patternType, host.params)) {
+    // B2 — arbitrary-edge host (flowfield/wave/…) OR a single-axis grid (params-
+    // aware isEdgeHost): the host has NO usable semantic extractor for this case,
+    // so FORCE edge anchoring and forward the polylines captured by the record-
+    // mode prepass (capturePolylines) as `hostPaths`. anchorMode:'edge'
     // overrides whatever the binding stored (motifs are created with the
     // 'semantic' default) so the motif samples generic Edge anchors along the
     // host's drawn geometry. Absent hostPaths (host not yet probed) → omit → the

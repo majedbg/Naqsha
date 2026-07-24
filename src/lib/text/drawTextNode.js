@@ -97,6 +97,25 @@ function emitCommands(p, commands) {
   if (shapeOpen) p.endShape(p.CLOSE);
 }
 
+// Single-line (Hershey) fonts: each `M` starts a NEW OPEN polyline. We stroke the
+// centre-lines and NEVER close/fill — closing would connect a stroke's ends and
+// filling would flood an open path. This is the whole reason single-line fonts
+// engrave as one pass per stroke instead of a double line.
+function emitSingleLinePolylines(p, commands) {
+  let open = false;
+  for (const cmd of commands) {
+    if (cmd.type === 'M') {
+      if (open) p.endShape(); // close the PREVIOUS polyline — open (no CLOSE)
+      p.beginShape();
+      open = true;
+      p.vertex(cmd.x, cmd.y);
+    } else if (cmd.type === 'L') {
+      p.vertex(cmd.x, cmd.y);
+    }
+  }
+  if (open) p.endShape(); // open, not CLOSE
+}
+
 /**
  * Draw a text node on the p5 instance, wrapped in the SAME center-pivot
  * transform patterns use, so canvas and exported SVG stay consistent.
@@ -127,14 +146,21 @@ export function drawTextNode(p, node, font, transform) {
   if (t.scale != null && t.scale !== 1) p.scale(t.scale);
   p.translate(-cx, -cy);
 
-  if (node.renderMode === 'outline') {
+  if (font.isSingleLine) {
+    // Single-line fonts are ALWAYS stroked open polylines (renderMode is ignored
+    // — there is no fill for a centre-line stroke).
     p.noFill();
     p.stroke(node.color);
+    emitSingleLinePolylines(p, commands);
   } else {
-    p.fill(node.color);
-    p.noStroke();
+    if (node.renderMode === 'outline') {
+      p.noFill();
+      p.stroke(node.color);
+    } else {
+      p.fill(node.color);
+      p.noStroke();
+    }
+    emitCommands(p, commands);
   }
-
-  emitCommands(p, commands);
   p.pop();
 }

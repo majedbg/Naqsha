@@ -38,6 +38,38 @@ import { resolvePlacements } from './placementEngine.js';
 import { getGlyph } from './glyphs.js';
 import { placementMatrix, applyMatrix, matrixToSVG } from './instancing.js';
 
+// EDGE-MODE ROLE COERCION. In edge mode the only anchor role that exists is
+// 'edge' (sampleEdgeAnchors tags every anchor role:'edge', anchors.js), so a
+// ROUTE/selection role filter naming any OTHER role filters EVERYTHING out. This
+// bites a grid that became a single-axis EDGE host at render (resolveMotifHost)
+// while its binding still carries the baked semantic default roles:['crossing']
+// (hostKinds defaultRolesForHost) — the vine would place nothing. Normalize such
+// stale roles to ['edge']. A role already `null` (all-pass) or exactly ['edge']
+// is left untouched — so this is a byte-identical no-op for native edge hosts
+// and only un-bakes a grid's 'crossing'. Clones; never mutates the stored binding.
+const roleIsEdgeSafe = (roles) =>
+  roles == null || (Array.isArray(roles) && roles.length === 1 && roles[0] === 'edge');
+
+function coerceEdgeRoles(binding) {
+  if (!binding || typeof binding !== 'object') return binding;
+  let changed = false;
+  const out = { ...binding };
+  if (Array.isArray(binding.chain)) {
+    out.chain = binding.chain.map((block) => {
+      if (block && block.type === 'route' && !roleIsEdgeSafe(block.roles)) {
+        changed = true;
+        return { ...block, roles: ['edge'] };
+      }
+      return block;
+    });
+  }
+  if (binding.selection && !roleIsEdgeSafe(binding.selection.roles)) {
+    out.selection = { ...binding.selection, roles: ['edge'] };
+    changed = true;
+  }
+  return changed ? out : binding;
+}
+
 export default class MotifPattern extends Pattern {
   /**
    * Resolve motif placements and dual-emit them to the p5 canvas (via ctx) and
@@ -114,7 +146,10 @@ export default class MotifPattern extends Pattern {
     // decision, so B1 passes a TOP-LEVEL `binding.overrides` through if present
     // (undefined otherwise) and does NOT invent a schema. For legacy bindings
     // the compile path overwrites this with the compiled overrides anyway.
-    const binding = p.binding || {};
+    // In edge mode, un-bake any stale non-edge route roles (e.g. a single-axis
+    // grid whose binding still says ['crossing']) so the role filter passes the
+    // edge anchors. No-op for semantic mode and for already-edge bindings.
+    const binding = anchorMode === 'edge' ? coerceEdgeRoles(p.binding || {}) : p.binding || {};
     const { survivors, sequence } = resolveSelection(binding, anchors, {
       canvasW,
       canvasH,

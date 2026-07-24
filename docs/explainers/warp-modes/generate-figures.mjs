@@ -245,12 +245,12 @@ The rule that falls out: **derive every anchor from the same geometry the render
 | anchor role | vertices-only (K=2) | bendable (K≥3) |
 |---|---|---|
 | **crossing** (vertex) | \`warp(v)\` — exact | \`warp(v)\` — exact (a warped node) |
-| **edge** (side) | midpoint of warped vertices; tangent = warped-side direction — *exact, no estimation* | sample the bent curve on-curve → the capture path |
+| **edge** (side) | midpoint of warped vertices; tangent = warped-side direction — *exact, no estimation* | reconstruct the bent curve, sample on-curve → exact |
 | **cell / tip** (centre) | centroid of warped vertices | \`warp(centre)\` + finite-difference frame |
 
 Two invariants hold in **both** columns:
 
-1. **One displacement primitive.** Every method above only ever calls \`stackWarpDisplacement\` — the single, shared warp function the renderer uses. Nothing re-implements the displacement, so the anchors can never drift from the paint by construction.
+1. **One displacement primitive.** Every method above only ever calls \`stackWarpDisplacement\` — the single, shared warp function the renderer uses. Nothing re-implements the displacement (curves are *reconstructed* from the same node-build the renderer uses, via a shared core), so the anchors can never drift from the paint by construction.
 2. **Orientation follows the field.** A motif doesn't just translate to its anchor — it *rotates* to the local warp frame, so a rosette at a bent crossing leans the way the form leans.
 
 ---
@@ -262,7 +262,7 @@ Two invariants hold in **both** columns:
 **A — Both, and they aren't rivals: each matches a render mode, selected by the \`warpNodes\` bend slider.**
 
 - \`K = 2\` → **vertices-only**: warp corners, straight sides, anchors *derived from warped vertices* (exact — edge tangents come for free from the warped-side direction).
-- \`K ≥ 3\` → **bendable edges**: subdivide every side, warp all nodes (recursive never pins), smooth curve; structural anchors use *point-warp + finite-difference frame*, and along-edge anchors ride the capture path.
+- \`K ≥ 3\` → **bendable edges**: subdivide every side, warp all nodes (recursive never pins), smooth curve; centres use *point-warp + finite-difference frame*, vertices are exact warped nodes, and edges are sampled on the *reconstructed* curve.
 
 Recursive reuses grid's exact machinery (\`catmullRomToBezier\` + the warp loop), minus endpoint-pinning. The bendable render mode is a genuine new renderer feature — carved as its own build slice so it's visible, not smuggled in.
 

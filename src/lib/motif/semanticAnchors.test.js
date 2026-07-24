@@ -13,7 +13,6 @@ import { ScalarField } from '../fields/ScalarField.js';
 import { gridAnchorsCentered } from '../patterns/gridAnchors.js';
 import { makeP5Random } from '../patterns/rng.js';
 import { toSymmetryCount } from '../patterns/symmetryUtils.js';
-import { ScalarField } from '../fields/ScalarField.js';
 import { stackWarpDisplacement, WARP_MAX_PX } from '../fields/warp.js';
 import { flattenCubic } from '../geometry/flattenCubic.js';
 import { computeWarpFrame } from '../fields/warpFrame.js';

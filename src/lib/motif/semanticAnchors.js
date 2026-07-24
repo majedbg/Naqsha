@@ -45,6 +45,7 @@
 import { anchorId, sampleEdgeAnchors } from './anchors.js';
 import { gridAnchorsCentered } from '../patterns/gridAnchors.js';
 import { makeP5Random } from '../patterns/rng.js';
+import { toSymmetryCount } from '../patterns/symmetryUtils.js';
 
 const HALF_PI = Math.PI / 2;
 const TWO_PI = Math.PI * 2;
@@ -82,14 +83,25 @@ const TWO_PI = Math.PI * 2;
 //     concentric-chain terminus, where outward is undefined). Tips are a subset of
 //     cell positions but a distinct role.
 //
-// DELIBERATE LIMITATIONS (documented, honesty-gated). NOTE: unlike the Grid
-// extractor (which now routes through the shared geometry core and DOES replicate
-// jitter + radial symmetry), this recursive extractor keeps the limitation below:
-//   • symmetry>1 copies and startAngle rotation are NOT replicated — anchors
-//     describe the single base copy at the default orientation.
+// SYMMETRY + startAngle (WI-115): like the Grid extractor, this recursive
+// extractor replicates every radial-symmetry copy and folds in startAngle. Copy k
+// is a RIGID post-rotation of the base copy about the (offset) centre by
+// θk = 2π·k/n + startAngle (startAngle in DEGREES, matching the pattern param) —
+// position AND frame (tangent/normal) rotate by θk, while the arc-length s is
+// rotation-invariant and passes through unchanged. The rotation arithmetic mirrors
+// gridAnchorsCentered / applySymmetryDraw operand-for-operand
+// (world = ox + px·cosθ − py·sinθ, ox = canvasW/2 + offsetX), so anchors land
+// exactly where applySymmetryDraw paints the master (for N ≥ 2 and non-zero
+// startAngle, in EVERY sector — not just sector 0). copy k carries
+// meta.copy/meta.theta; ids gain a trailing :k segment ONLY when n > 1, so a
+// single-copy shape keeps its pre-WI-115 ids (id-keyed override stability). At
+// symmetry=1/startAngle=0 the output is byte-identical to before this slice.
+//
+// DELIBERATE LIMITATION (documented, honesty-gated) — NON-WARP only:
 //   • warp modulation (params.modulation.channel==='warp') displaces every vertex
 //     by an arbitrary field, so anchors cannot be tied to the drawing. We return
-//     null (never ship anchors we can't verify).
+//     null (never ship anchors we can't verify). Warp-aware anchors are a
+//     downstream slice that BUILDS ON this replication.
 
 /** Sides per shape — mirrors RecursiveGeometry.sidesForShape (RecursiveGeometry.js:35-44). */
 function sidesForShape(s) {
@@ -117,6 +129,8 @@ function recursiveAnchors(params, canvasW, canvasH) {
     scaleFactor = 0.7,
     scaleNonLinearity = 0,
     startScale = 70,
+    symmetry = 1,
+    startAngle = 0, // degrees, matching RecursiveGeometry's param convention.
     offsetX = 0,
     offsetY = 0,
   } = params || {};
@@ -196,83 +210,132 @@ function recursiveAnchors(params, canvasW, canvasH) {
   const oy = canvasH / 2 + offsetY;
   const anchors = [];
 
+  // ── SYMMETRY (WI-115): copy k is a RIGID post-rotation of the base copy by
+  //    θk = 2π·k/n + startAngle, about the (offset) centre (ox, oy) — matching
+  //    applySymmetryDraw's translate(cx+offsetX, cy+offsetY); rotate(θk). The
+  //    rotation expression below is operand-for-operand identical to
+  //    gridAnchorsCentered's push (world = ox + px·cosθ − py·sinθ), so the two
+  //    extractors — and the renderer — share ONE convention. startAngle is in
+  //    degrees (the pattern's param convention), converted once.
+  const n = toSymmetryCount(symmetry);
+  const suffixCopy = n > 1; // no :k suffix at n===1 → pre-WI-115 id stability.
+  const startRad = (startAngle * Math.PI) / 180;
+  const copies = [];
+  for (let k = 0; k < n; k++) {
+    const theta = (TWO_PI * k) / n + startRad;
+    copies.push({ k, theta, cos: Math.cos(theta), sin: Math.sin(theta) });
+  }
+
+  /**
+   * Push one anchor for copy `c`: rigidly rotate the base centred point (px, py)
+   * and its frame by θ, then translate by (ox, oy). Operand order mirrors
+   * gridAnchorsCentered.push exactly — do NOT reorder the products. s is
+   * rotation-invariant and passes through unchanged.
+   */
+  function push(role, idParts, px, py, baseTangent, baseNormal, s, meta, c) {
+    anchors.push({
+      id: suffixCopy ? anchorId(role, ...idParts, c.k) : anchorId(role, ...idParts),
+      role,
+      x: ox + px * c.cos - py * c.sin,
+      y: oy + px * c.sin + py * c.cos,
+      tangent: baseTangent + c.theta,
+      normal: baseNormal + c.theta,
+      s,
+      meta: { ...meta, copy: c.k, theta: c.theta },
+    });
+  }
+
   // ── CROSSINGS: every polygon vertex. normal = outward radial (vertex angle);
   //    tangent = perpendicular. junction = a branch child was actually drawn here.
-  for (let p = 0; p < polys.length; p++) {
-    const poly = polys[p];
-    for (let k = 0; k < poly.verts.length; k++) {
-      const v = poly.verts[k];
-      const vertexAngle = poly.rotationRad + (Math.PI * 2 * k) / numSides;
-      anchors.push({
-        id: anchorId('crossing', p, k),
-        role: 'crossing',
-        x: v.x + ox,
-        y: v.y + oy,
-        tangent: vertexAngle + HALF_PI,
-        normal: vertexAngle,
-        s: 0,
-        meta: { poly: p, vertex: k, level: poly.level, junction: poly.vertexHasBranch[k] },
-      });
+  //    copy-outer within the role block (mirrors gridAnchorsCentered), so role
+  //    grouping (all crossings before edges …) is preserved.
+  for (const c of copies) {
+    for (let p = 0; p < polys.length; p++) {
+      const poly = polys[p];
+      for (let k = 0; k < poly.verts.length; k++) {
+        const v = poly.verts[k];
+        const vertexAngle = poly.rotationRad + (Math.PI * 2 * k) / numSides;
+        push(
+          'crossing',
+          [p, k],
+          v.x,
+          v.y,
+          vertexAngle + HALF_PI,
+          vertexAngle,
+          0,
+          { poly: p, vertex: k, level: poly.level, junction: poly.vertexHasBranch[k] },
+          c,
+        );
+      }
     }
   }
 
   // ── EDGES: midpoint of every polygon side. tangent = side direction; normal =
   //    tangent+PI/2; s = perimeter arc length from vertex 0 (equal-length sides).
-  for (let p = 0; p < polys.length; p++) {
-    const poly = polys[p];
-    const n = poly.verts.length;
-    const sideLen = 2 * poly.radius * Math.sin(Math.PI / n);
-    for (let k = 0; k < n; k++) {
-      const a = poly.verts[k];
-      const b = poly.verts[(k + 1) % n];
-      const tangent = Math.atan2(b.y - a.y, b.x - a.x);
-      anchors.push({
-        id: anchorId('edge', p, k),
-        role: 'edge',
-        x: (a.x + b.x) / 2 + ox,
-        y: (a.y + b.y) / 2 + oy,
-        tangent,
-        normal: tangent + HALF_PI,
-        s: (k + 0.5) * sideLen,
-        meta: { poly: p, side: k, level: poly.level },
-      });
+  for (const c of copies) {
+    for (let p = 0; p < polys.length; p++) {
+      const poly = polys[p];
+      const nSides = poly.verts.length;
+      const sideLen = 2 * poly.radius * Math.sin(Math.PI / nSides);
+      for (let k = 0; k < nSides; k++) {
+        const a = poly.verts[k];
+        const b = poly.verts[(k + 1) % nSides];
+        const tangent = Math.atan2(b.y - a.y, b.x - a.x);
+        push(
+          'edge',
+          [p, k],
+          (a.x + b.x) / 2,
+          (a.y + b.y) / 2,
+          tangent,
+          tangent + HALF_PI,
+          (k + 0.5) * sideLen,
+          { poly: p, side: k, level: poly.level },
+          c,
+        );
+      }
     }
   }
 
   // ── TIPS: center of every LEAF polygon (branch terminus). normal points
   //    outward from the global center; 0 at the origin (outward undefined there).
-  for (let p = 0; p < polys.length; p++) {
-    const poly = polys[p];
-    if (!poly.isLeaf) continue;
-    const outward =
-      poly.center.x === 0 && poly.center.y === 0
-        ? 0
-        : Math.atan2(poly.center.y, poly.center.x);
-    anchors.push({
-      id: anchorId('tip', p),
-      role: 'tip',
-      x: poly.center.x + ox,
-      y: poly.center.y + oy,
-      tangent: outward + HALF_PI,
-      normal: outward,
-      s: 0,
-      meta: { poly: p, level: poly.level },
-    });
+  for (const c of copies) {
+    for (let p = 0; p < polys.length; p++) {
+      const poly = polys[p];
+      if (!poly.isLeaf) continue;
+      const outward =
+        poly.center.x === 0 && poly.center.y === 0
+          ? 0
+          : Math.atan2(poly.center.y, poly.center.x);
+      push(
+        'tip',
+        [p],
+        poly.center.x,
+        poly.center.y,
+        outward + HALF_PI,
+        outward,
+        0,
+        { poly: p, level: poly.level },
+        c,
+      );
+    }
   }
 
   // ── CELLS: center of every polygon (a closed filled region). Fixed convention.
-  for (let p = 0; p < polys.length; p++) {
-    const poly = polys[p];
-    anchors.push({
-      id: anchorId('cell', p),
-      role: 'cell',
-      x: poly.center.x + ox,
-      y: poly.center.y + oy,
-      tangent: 0,
-      normal: HALF_PI,
-      s: 0,
-      meta: { poly: p, level: poly.level },
-    });
+  for (const c of copies) {
+    for (let p = 0; p < polys.length; p++) {
+      const poly = polys[p];
+      push(
+        'cell',
+        [p],
+        poly.center.x,
+        poly.center.y,
+        0,
+        HALF_PI,
+        0,
+        { poly: p, level: poly.level },
+        c,
+      );
+    }
   }
 
   return anchors;

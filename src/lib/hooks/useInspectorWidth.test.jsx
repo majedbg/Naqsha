@@ -6,7 +6,9 @@ import useInspectorWidth, {
   MIN_WIDTH,
   MAX_WIDTH,
   STORAGE_KEY,
+  maxWidthForViewport,
 } from "./useInspectorWidth";
+import { STORAGE_KEY as LEFT_STORAGE_KEY } from "./usePanelWidth";
 
 // Inspector resize drag: resizable + persisted width for the right-hand rail.
 // X-axis mirror of usePanelWidth with two deliberate differences:
@@ -15,8 +17,17 @@ import useInspectorWidth, {
 //   2. MIN === DEFAULT === 288 (today's `w-72` rail) — the inspector only ever
 //      grows, and double-click resets to the compact rail.
 
+// jsdom defaults to a 1024px window, which the viewport guard would cap. These
+// suites test the STATIC range, so give them a monitor wide enough that the
+// guard never binds; the guard has its own suite at the bottom.
+function setViewport(px) {
+  window.innerWidth = px;
+  window.dispatchEvent(new Event("resize"));
+}
+
 beforeEach(() => {
   localStorage.clear();
+  window.innerWidth = 1600;
 });
 
 describe("useInspectorWidth (load + clamp)", () => {
@@ -173,5 +184,89 @@ describe("useInspectorWidth (drag + persistence)", () => {
       window.dispatchEvent(new MouseEvent("mousemove", { clientX: 300 }));
       window.dispatchEvent(new MouseEvent("mouseup", { clientX: 300 }));
     }).not.toThrow();
+  });
+});
+
+// The rail is wide enough to erase the canvas: the shell renders down to 768px,
+// both side columns are shrink-0, and the flex-1 canvas is what yields. A 560
+// width persisted on a big monitor must NOT reopen on a laptop with no canvas
+// (measured pre-fix: 768px viewport + stored 560 => a 2px canvas).
+describe("useInspectorWidth (viewport guard)", () => {
+  it("leaves the full range available on a wide monitor", () => {
+    expect(maxWidthForViewport(1600)).toBe(MAX_WIDTH);
+    expect(maxWidthForViewport(1440)).toBe(MAX_WIDTH);
+  });
+
+  it("caps the rail on a narrow viewport so the canvas keeps its floor", () => {
+    // 1024 - 48 tool strip - 280 left rail - 320 canvas floor = 376
+    expect(maxWidthForViewport(1024)).toBe(376);
+  });
+
+  it("never caps below MIN — the 288 rail always survives", () => {
+    expect(maxWidthForViewport(768)).toBe(MIN_WIDTH);
+    expect(maxWidthForViewport(320)).toBe(MIN_WIDTH);
+  });
+
+  it("accounts for the left rail's ACTUAL width, not just its default", () => {
+    localStorage.setItem(LEFT_STORAGE_KEY, "480"); // left panel dragged to max
+    // 1440 - 48 - 480 - 320 = 592 -> still over MAX, so MAX stands
+    expect(maxWidthForViewport(1440)).toBe(MAX_WIDTH);
+    // 1280 - 48 - 480 - 320 = 432 -> the wider left rail eats into the cap
+    expect(maxWidthForViewport(1280)).toBe(432);
+  });
+
+  it("falls back to the full range when the viewport is unknown/absurd", () => {
+    expect(maxWidthForViewport(undefined)).toBe(MAX_WIDTH);
+    expect(maxWidthForViewport(0)).toBe(MAX_WIDTH);
+    expect(maxWidthForViewport(NaN)).toBe(MAX_WIDTH);
+  });
+
+  it("renders a stored-560 rail clamped down on a 768px viewport", () => {
+    localStorage.setItem(STORAGE_KEY, "560");
+    window.innerWidth = 768;
+    const { result } = renderHook(() => useInspectorWidth());
+    expect(result.current.width).toBe(MIN_WIDTH);
+  });
+
+  it("re-clamps live on window resize, and RESTORES the preference on re-widen", () => {
+    localStorage.setItem(STORAGE_KEY, "560");
+    const { result } = renderHook(() => useInspectorWidth());
+    expect(result.current.width).toBe(560);
+
+    act(() => setViewport(1024));
+    expect(result.current.width).toBe(376); // capped, preference not forgotten
+
+    act(() => setViewport(1600));
+    expect(result.current.width).toBe(560); // ...and it comes back
+  });
+
+  it("does not overwrite the stored preference when the window merely shrinks", () => {
+    localStorage.setItem(STORAGE_KEY, "560");
+    const { result } = renderHook(() => useInspectorWidth());
+    act(() => setViewport(768));
+    expect(result.current.width).toBe(MIN_WIDTH);
+    expect(localStorage.getItem(STORAGE_KEY)).toBe("560");
+  });
+
+  it("a drag on a narrow viewport cannot exceed the viewport cap", () => {
+    window.innerWidth = 1024;
+    const { result } = renderHook(() => useInspectorWidth());
+    act(() => {
+      result.current.onMouseDown({ clientX: 900, preventDefault() {} });
+    });
+    act(() => {
+      window.dispatchEvent(new MouseEvent("mousemove", { clientX: -5000 }));
+    });
+    expect(result.current.width).toBe(376);
+    act(() => {
+      window.dispatchEvent(new MouseEvent("mouseup", { clientX: -5000 }));
+    });
+    expect(localStorage.getItem(STORAGE_KEY)).toBe("376");
+  });
+
+  it("removes its resize listener on unmount", () => {
+    const { unmount } = renderHook(() => useInspectorWidth());
+    unmount();
+    expect(() => setViewport(640)).not.toThrow();
   });
 });

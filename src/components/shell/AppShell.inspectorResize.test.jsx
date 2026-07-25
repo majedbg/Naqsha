@@ -12,6 +12,11 @@ import { STORAGE_KEY } from "../../lib/hooks/useInspectorWidth";
 
 beforeEach(() => {
   localStorage.clear();
+  // jsdom defaults to 1024px, where the hook's viewport guard caps the rail
+  // below MAX. These assertions are about the column wiring, not the guard
+  // (which has its own suite in useInspectorWidth.test), so mount on a monitor
+  // wide enough that the guard never binds.
+  window.innerWidth = 1600;
 });
 
 function getColumn() {

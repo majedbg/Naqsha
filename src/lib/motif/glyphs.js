@@ -7,6 +7,15 @@
 //
 // See docs/motif-adorn-arch-brief.md §8/§9 for house conventions.
 
+// Vector-motif built-ins (58 SVGs authored in Serif/Affinity, imported 2026-07).
+// AUTO-GENERATED and flattened from src/lib/motif/vectorMotifs/*.svg — see
+// vectorMotifsGlyphs.js. They are spread into MOTIF_GLYPHS below so they ship as
+// BUILT-IN glyphs (the `builtin` set in glyphEntries). Unlike the hand-authored
+// core four, each carries a `root` (bbox bottom-center, the scale pivot) exactly
+// like a user SVG import — the placement pipeline handles root uniformly
+// (MotifPattern.js: `glyph.root || {x:0,y:0,angle:0}`).
+import { VECTOR_MOTIF_GLYPHS } from './vectorMotifsGlyphs.js';
+
 /**
  * @typedef {{d:string, closed:boolean}} GlyphPath
  * @typedef {{id:string, name:string, tradition:string, paths:GlyphPath[], viewRadius:number}} Glyph
@@ -72,6 +81,8 @@ export const MOTIF_GLYPHS = {
     // the inner valley vertices (radius 4) are well within that bound.
     viewRadius: 10,
   },
+  // 58 flattened SVG motifs, ingested as built-ins (see import above).
+  ...VECTOR_MOTIF_GLYPHS,
 };
 
 /**

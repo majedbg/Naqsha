@@ -376,4 +376,104 @@ describe("useGlyphCommits", () => {
     expect(r2).toBeUndefined();
     expect(result.current.layersApi.customGlyphs).toEqual(before2); // no glyph write
   });
+
+  // ── Zoned commit-back (ADR 0008): the pencil badge on a Zone's slot must fork
+  // into THAT zone's slot — never the flat slots (absent on a zoned block), never
+  // the sibling Zone, never the base. Same one-undo atomicity as the flat path.
+  const zonedSeqParams = (apexSlots, stemSlots) => ({
+    glyphRef: "rosette",
+    binding: {
+      chain: [
+        { type: "route", roles: ["crossing", "edge", "tip"], pathScope: "all" },
+        {
+          type: "sequence",
+          zones: [
+            { zone: "apex", mode: "cycle", continuous: true, ends: "both", slots: apexSlots },
+            { zone: "stem", mode: "cycle", slots: stemSlots },
+          ],
+        },
+      ],
+      placement: {},
+    },
+  });
+
+  it("commitNewGlyphToSlot with a zone rebinds ONLY that Zone's slot as ONE undo entry (other Zone + base untouched)", () => {
+    const { result } = renderHook(() => useWired());
+    const layerId = firstLayer(result).id;
+    act(() =>
+      result.current.layersApi.updateLayer(layerId, {
+        params: zonedSeqParams(
+          [{ glyphRef: "rosette" }],
+          [{ glyphRef: "leaf" }, { glyphRef: "leaf", rotationOffset: 180 }]
+        ),
+      })
+    );
+    act(() => vi.advanceTimersByTime(500));
+    act(() => result.current.history.clear());
+
+    let newId;
+    act(() => {
+      newId = result.current.glyphCommits.commitNewGlyphToSlot(
+        testGlyph(),
+        layerId,
+        1,
+        "stem"
+      );
+    });
+
+    expect(typeof newId).toBe("string");
+    const seq = firstLayer(result).params.binding.chain[1];
+    const stem = seq.zones.find((z) => z.zone === "stem");
+    const apex = seq.zones.find((z) => z.zone === "apex");
+    expect(stem.slots[1].glyphRef).toBe(newId); // Stem slot 1 rebound to the fork
+    expect(stem.slots[1].rotationOffset).toBe(180); // modifier preserved through rebind
+    expect(stem.slots[0].glyphRef).toBe("leaf"); // sibling Stem slot untouched
+    expect(apex.slots[0].glyphRef).toBe("rosette"); // Apex untouched
+    expect(firstLayer(result).params.glyphRef).toBe("rosette"); // BASE untouched
+
+    // One ⌘Z reverts both the glyph add and the Zone-slot rebind.
+    act(() => result.current.history.undo());
+    expect(result.current.layersApi.customGlyphs[newId]).toBeUndefined();
+    expect(
+      firstLayer(result).params.binding.chain[1].zones.find((z) => z.zone === "stem")
+        .slots[1].glyphRef
+    ).toBe("leaf");
+  });
+
+  it("commitNewGlyphToSlot aborts on an unknown zone, an out-of-range Zone slot, or a zone on a FLAT sequence", () => {
+    const { result } = renderHook(() => useWired());
+    const layerId = firstLayer(result).id;
+    act(() =>
+      result.current.layersApi.updateLayer(layerId, {
+        params: zonedSeqParams([{ glyphRef: "rosette" }], [{ glyphRef: "leaf" }]),
+      })
+    );
+    act(() => vi.advanceTimersByTime(500));
+    act(() => result.current.history.clear());
+    const before = result.current.layersApi.customGlyphs;
+
+    let r1, r2;
+    act(() => {
+      r1 = result.current.glyphCommits.commitNewGlyphToSlot(testGlyph(), layerId, 0, "node");
+      r2 = result.current.glyphCommits.commitNewGlyphToSlot(testGlyph(), layerId, 9, "stem");
+    });
+    expect(r1).toBeUndefined();
+    expect(r2).toBeUndefined();
+    expect(result.current.layersApi.customGlyphs).toEqual(before); // no glyph writes
+
+    // Zone given but the sequence is FLAT → abort (address form must match block form).
+    act(() =>
+      result.current.layersApi.updateLayer(layerId, {
+        params: chainWithSeqParams([{ glyphRef: "leaf" }]),
+      })
+    );
+    act(() => vi.advanceTimersByTime(500));
+    const before2 = result.current.layersApi.customGlyphs;
+    let r3;
+    act(() => {
+      r3 = result.current.glyphCommits.commitNewGlyphToSlot(testGlyph(), layerId, 0, "stem");
+    });
+    expect(r3).toBeUndefined();
+    expect(result.current.layersApi.customGlyphs).toEqual(before2);
+  });
 });

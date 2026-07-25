@@ -3,12 +3,20 @@
 //
 // A glyph is referenced from TWO places: a motif layer's base
 // `params.glyphRef`, and any Sequencer slot's `glyphRef` inside the layer's
-// chain (`params.binding.chain[i].slots[n].glyphRef`). The old
+// chain (`params.binding.chain[i].slots[n].glyphRef`, or the zoned
+// `…chain[i].zones[z].slots[n].glyphRef`). The old
 // `usedByCount` in useMotifEditor counted only the base ref, so an in-place
 // Save claimed isolation while silently restamping sequencer slots (audit
 // 2026-07 bug 3) — every "is this glyph in use?" question must go through
 // here instead.
+//
+// A ZONED sequence Block (ADR 0008) keeps its slots under `zones[].slots` with
+// no flat block-level `slots`, so every read here goes through `sequenceSlots`
+// — reading `block.slots` directly undercounted a Vine's zone glyphs to ZERO,
+// the same class of lie as bug 3 (the library panel would offer a glyph the
+// Vine is actively stamping as safe to delete).
 import { isMotifLayer } from './motifLayer';
+import { sequenceSlots } from './sequencer.js';
 
 /**
  * Visit every glyph-reference OCCURRENCE in the document — a motif layer's base
@@ -26,8 +34,7 @@ function eachGlyphRef(layers, visit) {
     const chain = l.params?.binding?.chain;
     if (!Array.isArray(chain)) continue;
     for (const block of chain) {
-      const slots = Array.isArray(block?.slots) ? block.slots : [];
-      for (const slot of slots) {
+      for (const slot of sequenceSlots(block)) {
         if (slot?.glyphRef) visit(slot.glyphRef);
       }
     }
@@ -82,11 +89,7 @@ export function glyphUsedByLayerCount(layers, glyphId) {
     const chain = l.params?.binding?.chain;
     if (
       Array.isArray(chain) &&
-      chain.some(
-        (block) =>
-          Array.isArray(block?.slots) &&
-          block.slots.some((slot) => slot?.glyphRef === glyphId)
-      )
+      chain.some((block) => sequenceSlots(block).some((slot) => slot?.glyphRef === glyphId))
     ) {
       n += 1;
     }

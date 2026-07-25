@@ -34,11 +34,16 @@
 // See docs/motif-chain-plan.md, docs/adr/0005, docs/motif-chain-ORCHESTRATOR.md.
 
 import { hashRng } from './hashRng.js';
+import { partitionZones, applyEnds } from './zones.js';
 
 /**
  * @typedef {{glyphRef?:string, sizeScale?:number, rotationOffset?:number, flip?:boolean,
  *            rotationRandom?:{range:number, spread:'flat'|'bell'}, weight?:number, rest?:boolean}} Slot
- * @typedef {{type:'sequence', mode?:'cycle'|'random', continuous?:boolean, seed?:number, slots:Slot[]}} SequenceBlock
+ * @typedef {{zone:'apex'|'stem', mode?:'cycle'|'random', continuous?:boolean, ends?:'both'|'up'|'down', slots:Slot[]}} Zone
+ * FLAT form: `slots` at top level. ZONED form (ADR 0008): a `zones` array (its
+ * presence marks the block zoned; the flat `slots`/`mode`/`continuous` fields are
+ * absent). Both share the block-level `seed`.
+ * @typedef {{type:'sequence', mode?:'cycle'|'random', continuous?:boolean, seed?:number, slots?:Slot[], zones?:Zone[]}} SequenceBlock
  * @typedef {{
  *   rest:boolean, glyphRef:string|undefined, slotIndex:number, seqId:number,
  *   sizeScale:number, rotationOffset:number, rotationRandomDelta:number,
@@ -142,6 +147,12 @@ function randomSlotIndex(slots, weights, totalWeight, seed, anchorId) {
  */
 export function dealSlots(survivors, sequence) {
   const list = Array.isArray(survivors) ? survivors : [];
+  // ZONED form (ADR 0008): presence of a `zones` array routes to the zone-aware
+  // deal. The FLAT path below is left byte-identical (this is the regression
+  // guard — existing sequencer tests must pass untouched).
+  if (sequence && Array.isArray(sequence.zones)) {
+    return dealSlotsZoned(list, sequence);
+  }
   const slots = sequence && Array.isArray(sequence.slots) ? sequence.slots : null;
   if (!slots || slots.length === 0) return null;
 
@@ -178,18 +189,123 @@ export function dealSlots(survivors, sequence) {
 }
 
 /**
+ * Deal ONE Zone's slots over its members (already restricted to the zone and in
+ * survivor order). Mirrors the flat cycle/random deals, but slotIndex/seqId are
+ * indices within THIS zone's slots. `continuous` resolves per zone: an explicit
+ * boolean wins, else the zone-aware default (`defaultContinuous`). A zone with no
+ * valid slots rests every member (stamp nothing).
+ * @param {import('./chain.js').Anchor[]} members
+ * @param {*} zone  the zone config block ({mode?, continuous?, slots})
+ * @param {number} seed  block-level seed, shared by all zones
+ * @param {boolean} defaultContinuous  zone-aware default (Apex true, Stem false)
+ * @param {Map<string, Assignment>} out  id → assignment (mutated)
+ */
+function dealZone(members, zone, seed, defaultContinuous, out) {
+  const slots = zone && Array.isArray(zone.slots) ? zone.slots : null;
+  if (!slots || slots.length === 0) {
+    for (const a of members) out.set(a.id, makeAssignment({ rest: true }, 0, seed, a.id));
+    return;
+  }
+  const mode = zone.mode === 'random' ? 'random' : 'cycle';
+  const len = slots.length;
+
+  if (mode === 'random') {
+    const weights = slots.map((s) => (s && s.weight != null ? s.weight : 1));
+    const totalWeight = weights.reduce((sum, w) => sum + w, 0);
+    for (const a of members) {
+      const slotIndex = randomSlotIndex(slots, weights, totalWeight, seed, a.id);
+      out.set(a.id, makeAssignment(slots[slotIndex], slotIndex, seed, a.id));
+    }
+    return;
+  }
+
+  // CYCLE — positional. Index is per-path within the zone unless continuous
+  // (zone-global survivor index). Zone-aware default: Apex continuous, Stem not.
+  const continuous = zone.continuous != null ? !!zone.continuous : defaultContinuous;
+  const counters = new Map();
+  members.forEach((a, gi) => {
+    let idx;
+    if (continuous) {
+      idx = gi;
+    } else {
+      const p = pathKey(a);
+      idx = counters.get(p) || 0;
+      counters.set(p, idx + 1);
+    }
+    const slotIndex = ((idx % len) + len) % len;
+    out.set(a.id, makeAssignment(slots[slotIndex], slotIndex, seed, a.id));
+  });
+}
+
+/**
+ * Zone-aware deal (ADR 0008): partition survivors into Apex/Stem, apply the Apex
+ * end-selector, then deal EACH zone independently over its own members with its
+ * own mode/continuous/slots, all sharing the block-level seed. Anchors in NO zone
+ * — `cell`s, and Apex members dropped by the ends filter — rest (stamp nothing).
+ * Always returns one Assignment per survivor in survivor order (never null: a
+ * zoned block is explicitly requested, so it must not trip the engine's legacy
+ * single-glyph fallback — an empty `zones` array simply rests everyone).
+ * @param {import('./chain.js').Anchor[]} list  survivors in placement (input) order
+ * @param {{seed?:number, zones:Array<object>}} sequence
+ * @returns {Assignment[]}
+ */
+function dealSlotsZoned(list, sequence) {
+  const seed = sequence.seed != null ? sequence.seed : 1;
+  const zones = Array.isArray(sequence.zones) ? sequence.zones : [];
+  const { apex, stem } = partitionZones(list);
+  const apexZone = zones.find((z) => z && z.zone === 'apex') || null;
+  const stemZone = zones.find((z) => z && z.zone === 'stem') || null;
+
+  const ends = apexZone && apexZone.ends != null ? apexZone.ends : 'both';
+  const apexMembers = applyEnds(apex, ends);
+
+  const byId = new Map();
+  if (apexZone) dealZone(apexMembers, apexZone, seed, true, byId);
+  if (stemZone) dealZone(stem, stemZone, seed, false, byId);
+
+  return list.map((a) =>
+    byId.has(a.id) ? byId.get(a.id) : makeAssignment({ rest: true }, 0, seed, a.id),
+  );
+}
+
+/**
  * Detect the new object-form sequence Block (vs the legacy `config.sequence`
  * string array which resolvePlacements keeps handling byte-identically). A valid
- * block is a non-array object with a non-empty `slots` array.
+ * block is a non-array object with something to deal — either a non-empty FLAT
+ * `slots` array, or (ADR 0008) a non-empty `zones` array (the zoned form carries
+ * `zones` and no top-level `slots`). This is the gate the placement engine uses
+ * to decide whether to call `dealSlots`; an empty/absent deal on both fields is
+ * degenerate ⇒ the engine falls back to its legacy single-glyph path.
  * @param {*} seq
  * @returns {boolean}
  */
 export function isSequenceBlock(seq) {
-  return (
-    seq != null &&
-    typeof seq === 'object' &&
-    !Array.isArray(seq) &&
-    Array.isArray(seq.slots) &&
-    seq.slots.length > 0
-  );
+  if (seq == null || typeof seq !== 'object' || Array.isArray(seq)) return false;
+  const hasSlots = Array.isArray(seq.slots) && seq.slots.length > 0;
+  const hasZones = Array.isArray(seq.zones) && seq.zones.length > 0;
+  return hasSlots || hasZones;
+}
+
+/**
+ * The Slots a Block holds, FLAT or ZONED — the one place the "a zoned block's
+ * slots are its zones' slots" reading rule lives, so no consumer has to know the
+ * two shapes. A flat block reads as its own `slots`; a zoned block (ADR 0008)
+ * reads as its zones' slots concatenated in zone order. Total and non-throwing:
+ * anything without either field (a route/everyN/… block, null, an array) reads
+ * as `[]`.
+ *
+ * FOR SET QUESTIONS ONLY — "which glyphs could this block stamp?", "is this
+ * glyph referenced?". The returned array must NOT be indexed by an Assignment's
+ * `slotIndex`: zoned indices are ZONE-LOCAL (dealZone indexes within one zone),
+ * so they do not address this flattened list. An Assignment already carries the
+ * resolved glyphRef/sizeScale/rotationOffset/flip — resolve from it, not here.
+ * @param {*} seq
+ * @returns {Slot[]}
+ */
+export function sequenceSlots(seq) {
+  if (seq == null || typeof seq !== 'object' || Array.isArray(seq)) return [];
+  if (Array.isArray(seq.zones)) {
+    return seq.zones.flatMap((z) => (z && Array.isArray(z.slots) ? z.slots : []));
+  }
+  return Array.isArray(seq.slots) ? seq.slots : [];
 }

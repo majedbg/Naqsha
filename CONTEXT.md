@@ -103,15 +103,49 @@ Motif device), effect
 
 **Sequencer**:
 The Block that deals Slots to surviving anchors — in cycling order (the x‑o‑x‑o
-rhythm) or as a weighted random draw — making one motif layer alternate flowers,
-leaves, and rests along a stem.
+rhythm) or as a weighted random draw — either as one run over all survivors, or
+partitioned into Zones that each deal their own Slots. Makes one motif layer
+flower at the Apex and leaf along the Stem.
 _Avoid_: arpeggiator, randomizer (inspirations, not names), pattern (hopelessly
 overloaded)
 
+**Zone**:
+A named partition of a Sequencer's surviving anchors by structural position on
+the host (Apex, Stem). Each Zone deals its own Slots with its own cycle/random
+deal. A Sequencer without Zones deals one run of Slots to every survivor.
+_Avoid_: section (UI word), region (canvas-space word), role (the anchor-level
+vocabulary Zones are built from, not shown to the maker)
+
+**Apex**:
+The Zone at the ends of a path — where a vine flowers. The maker chooses which
+ends: both, or only the upper or lower end of each strand (spatially, as seen on
+canvas — never drawing order). A closed loop has no Apex.
+_Avoid_: tip (internal anchor role), end/terminus (mechanical), leaf (that's a
+glyph)
+
+**Stem**:
+The Zone along the body of a path — interior points and junctions; where leaves
+sprout. Covers the whole of a closed loop.
+_Avoid_: edge (internal anchor role), interior, body
+
+**Mode**:
+The named preset a motif's chain structurally matches (Vine, Alternate x‑o, …),
+or Custom when none. A zoned mode's identity is its Zone skeleton — the
+Sequencer's contents (glyphs, counts, deals) belong to the maker and never
+change the mode. A flat mode's identity is its rhythm, glyph-agnostic — swap a
+glyph and the mode holds; change the rhythm and it becomes Custom. Switching
+modes stashes the outgoing chain and restores the incoming mode's stash;
+clicking Custom returns to the stashed custom chain; only an explicit Reset
+returns a mode to factory.
+_Avoid_: preset (the chip is the button; the mode is the state), template
+
 **Route**:
 The Block that scopes a motif to part of its host — by anchor role and by path
-(all, closed loops, open strands, or specific paths picked on canvas). "Flowers
-on the border ring, leaves on the inner tendrils" is two motifs with two Routes.
+(all, closed loops, open strands, or specific paths picked on canvas). Route
+scopes the whole motif; giving different glyphs to different structural
+positions *within* that scope is the Sequencer's job (Zones). Two motifs with
+two Routes still split by *path*: one motif on the border ring, another on the
+inner tendrils.
 _Avoid_: filter (every selection Block filters), target (modulation word)
 
 **Slot**:

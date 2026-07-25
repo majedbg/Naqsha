@@ -91,9 +91,14 @@ export default function useMotifEditorSession({
   // glyph id already flows to the base + this slot + sibling refs, so no rebind is
   // needed there. When `slotIndex` is absent (the base Edit button, New, import),
   // both save paths fall through to the today's BASE rebind, byte-identical.
+  // ZONED sequences (ADR 0008): the locator also carries `opts.zone`
+  // ('apex'|'stem') so a fork from a Zone's pencil badge rebinds THAT Zone's
+  // slot; commitNewGlyphToSlot aborts if the address form and block form
+  // disagree, so a stale locator can never rebind the wrong slot.
   const open = useCallback(
     (layerId, glyphRef, opts = {}) => {
       const slotIndex = opts && opts.slotIndex != null ? opts.slotIndex : null;
+      const zone = opts && opts.zone != null ? opts.zone : null;
       const isCustom =
         glyphRef && !MOTIF_GLYPHS[glyphRef] && !!customGlyphs?.[glyphRef];
       if (isCustom) {
@@ -101,6 +106,7 @@ export default function useMotifEditorSession({
           glyphId: glyphRef,
           layerId,
           slotIndex,
+          zone,
           initialTool: null,
           draftGlyph: null,
         });
@@ -111,6 +117,7 @@ export default function useMotifEditorSession({
         glyphId: null,
         layerId,
         slotIndex,
+        zone,
         initialTool: null,
         draftGlyph: {
           name: builtIn.name,
@@ -178,10 +185,13 @@ export default function useMotifEditorSession({
     (glyph) => {
       if (!session) return;
       if (session.draftGlyph) {
-        // Fork: rebind the SLOT (C3) when a slot locator is present, else the
-        // layer's base glyphRef (unchanged base Edit path).
+        // Fork: rebind the SLOT (C3) when a slot locator is present — zone-
+        // addressed when the locator carries one — else the layer's base
+        // glyphRef (unchanged base Edit path).
         if (session.slotIndex != null) {
-          glyphCommits.commitNewGlyphToSlot(glyph, session.layerId, session.slotIndex);
+          glyphCommits.commitNewGlyphToSlot(
+            glyph, session.layerId, session.slotIndex, session.zone ?? undefined
+          );
         } else {
           glyphCommits.commitNewGlyph(glyph, session.layerId);
         }
@@ -200,7 +210,9 @@ export default function useMotifEditorSession({
     (glyph) => {
       if (!session) return;
       if (session.slotIndex != null) {
-        glyphCommits.commitNewGlyphToSlot(glyph, session.layerId, session.slotIndex);
+        glyphCommits.commitNewGlyphToSlot(
+          glyph, session.layerId, session.slotIndex, session.zone ?? undefined
+        );
       } else {
         glyphCommits.commitNewGlyph(glyph, session.layerId);
       }

@@ -77,6 +77,41 @@ describe('glyphUsageMap', () => {
   });
 });
 
+// ZONED sequence (ADR 0008) — a Vine's slot glyphs live under `zones[].slots`,
+// never a flat block-level `slots`. Reading only the flat field silently
+// undercounts them to ZERO, which is the same class of lie as bug 3: the
+// library panel would offer a glyph the Vine is actively stamping as deletable.
+describe('zoned sequence Blocks (ADR 0008)', () => {
+  const vineChain = [
+    { type: 'route', roles: ['crossing', 'edge', 'tip'] },
+    {
+      type: 'sequence',
+      zones: [
+        { zone: 'apex', mode: 'cycle', continuous: true, ends: 'both', slots: [{ glyphRef: 'cg-a' }] },
+        { zone: 'stem', mode: 'cycle', slots: [{ glyphRef: 'cg-s' }, { rest: true }, { glyphRef: 'cg-s' }] },
+      ],
+    },
+  ];
+
+  it('glyphUseCount counts slot refs from EVERY zone', () => {
+    const layers = [plain('h'), motif('m1', 'leaf', vineChain)];
+    expect(glyphUseCount(layers, 'cg-a')).toBe(1);
+    expect(glyphUseCount(layers, 'cg-s')).toBe(2);
+  });
+
+  it('glyphUsageMap keys every zone slot ref, skipping rests', () => {
+    const map = glyphUsageMap([plain('h'), motif('m1', 'leaf', vineChain)]);
+    expect(map.get('cg-a')).toBe(1);
+    expect(map.get('cg-s')).toBe(2);
+    expect(map.has(undefined)).toBe(false);
+  });
+
+  it('glyphUsedByLayerCount sees a zone-slot-only reference as a using layer', () => {
+    const layers = [motif('m1', 'leaf', vineChain)];
+    expect(glyphUsedByLayerCount(layers, 'cg-s')).toBe(1);
+  });
+});
+
 describe('glyphUsedByLayerCount', () => {
   it('counts a layer ONCE even when base + multiple slots all reference the glyph', () => {
     const chain = [

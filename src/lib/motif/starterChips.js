@@ -62,15 +62,23 @@ const PLACEMENT = {
  * so spiral gets 'edge', not the dead 'crossing'). `edgeScope` is used verbatim
  * on an edge host; on a semantic host it is downgraded to 'all'/'open' only
  * (never 'closed'/'picked' — A2).
+ *
+ * `semanticRoles` (ADR 0008) overrides the default roles ON SEMANTIC HOSTS ONLY —
+ * for a ZONED chip whose Zones together consume more than the single default role
+ * (the Vine: Apex reads `tip`, Stem reads `edge`∪`crossing`, so the route must
+ * admit their union). An edge host still gets the `defaultRolesForHost` fallback
+ * (`['edge']`) — the only live role there — regardless. Omit it and behavior is
+ * byte-identical to before, so the three flat chips are unchanged.
  * @param {string} patternType
  * @param {'all'|'open'|'closed'} edgeScope
+ * @param {string[]|null} [semanticRoles]  fixed roles to force on a semantic host.
  * @returns {{type:'route', roles:string[], pathScope:'all'|'open'|'closed'}}
  */
-function hostAwareRoute(patternType, edgeScope = 'all') {
+function hostAwareRoute(patternType, edgeScope = 'all', semanticRoles = null) {
   const hostIsSemantic = isSemanticHost(patternType);
   return {
     type: 'route',
-    roles: defaultRolesForHost(patternType),
+    roles: hostIsSemantic && semanticRoles ? semanticRoles : defaultRolesForHost(patternType),
     pathScope: hostIsSemantic ? (edgeScope === 'all' ? 'all' : 'open') : edgeScope,
   };
 }
@@ -109,22 +117,44 @@ export const STARTER_CHIPS = [
         anchorMode: hostIsSemantic ? 'semantic' : 'edge',
         binding: {
           chain: [
-            hostAwareRoute(patternType, 'all'),
+            // The Vine is the ZONED preset (ADR 0008): one motif that flowers at
+            // the path ends and leafs along the body. Both Zones draw from ONE
+            // Route, so it must admit the UNION of the roles they consume —
+            // Apex reads `tip` (path termini), Stem reads `edge`∪`crossing`
+            // (interior samples and junctions). On an edge host the union
+            // collapses to the only live role, `edge` (the fallback).
+            hostAwareRoute(patternType, 'all', ['crossing', 'edge', 'tip']),
             {
               type: 'sequence',
-              mode: 'cycle',
-              // Vine alternation: consecutive leaves alternate sides of the host
-              // line. The base-at-origin leaf hangs off ONE side of the line
-              // (glyphs.js), so turning the SECOND leaf 180° (`rotationOffset` in
-              // DEGREES — placementEngine adds it to the degree-valued rotation)
-              // swings its blade to the OTHER side: the vine reads leaf-above,
-              // leaf-below. A 180° turn (not `flip`) is deliberate — flip is a
-              // pure x-mirror, whereas the leaf's midrib asymmetry makes the
-              // half-turn visibly distinct (see glyphs.js LEAF_D comment).
-              slots: [
-                { glyphRef: 'rosette' },
-                { glyphRef: 'leaf' },
-                { glyphRef: 'leaf', rotationOffset: 180 },
+              // ZONED sequencer: named partitions of the survivor set, each
+              // dealing its own slots. `zones` PRESENCE marks this block zoned —
+              // there is no flat `slots`/`mode`/`continuous` at the block level.
+              zones: [
+                // Apex = the flowers. Cycle over a single rosette; `continuous`
+                // so the flower index runs ACROSS paths (a per-path restart over
+                // ≤2 termini would pin every strand's end to slot 0 — "flowers
+                // cycling" would never visibly cycle, ADR 0008). `ends:'both'`
+                // flowers every terminus (upper AND lower).
+                {
+                  zone: 'apex',
+                  mode: 'cycle',
+                  continuous: true,
+                  ends: 'both',
+                  slots: [{ glyphRef: 'rosette' }],
+                },
+                // Stem = the leaves. Cycle of two leaves that alternate sides of
+                // the host line: the base-at-origin leaf hangs off ONE side
+                // (glyphs.js), so turning the SECOND leaf 180° (`rotationOffset`
+                // in DEGREES — placementEngine adds it to the degree-valued
+                // rotation) swings its blade to the OTHER side, reading
+                // leaf-above, leaf-below. A 180° turn (not `flip`) is deliberate:
+                // flip is a pure x-mirror, whereas the leaf's midrib asymmetry
+                // makes the half-turn visibly distinct (see glyphs.js LEAF_D).
+                {
+                  zone: 'stem',
+                  mode: 'cycle',
+                  slots: [{ glyphRef: 'leaf' }, { glyphRef: 'leaf', rotationOffset: 180 }],
+                },
               ],
             },
           ],

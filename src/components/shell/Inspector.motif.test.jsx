@@ -973,7 +973,10 @@ describe("Sequencer card (C3)", () => {
     expect(seqOf(patch).slots).toEqual([{ glyphRef: "leaf" }, { rest: true }]);
   });
 
-  it("tapping a slot glyph opens the editor with SLOT CONTEXT (layer id, slot glyphRef, slotIndex)", () => {
+  // Feature B (Wave 3, #79): the slot preview click now opens the glyph-swap
+  // PICKER; the pen editor is reached via tile #1's pencil badge. Updated from
+  // the C3 direct-to-editor click (the one sanctioned change — see report).
+  it("the pencil badge on the picker's current tile opens the editor with SLOT CONTEXT", () => {
     const onEditGlyph = vi.fn();
     const motif = seqMotif("m1", "host1", {
       slots: [{ glyphRef: "leaf" }, { glyphRef: "flower" }],
@@ -987,7 +990,11 @@ describe("Sequencer card (C3)", () => {
         onEditGlyph={onEditGlyph}
       />
     );
-    fireEvent.click(screen.getAllByTestId("motif-slot-edit")[1]); // tap slot 1 (flower)
+    // Click the slot-1 (flower) preview → opens the picker (NOT the editor).
+    fireEvent.click(screen.getAllByTestId("motif-slot-edit")[1]);
+    expect(onEditGlyph).not.toHaveBeenCalled();
+    // Tile #1 = the slot's current glyph, wearing the pencil badge → editor.
+    fireEvent.click(screen.getByTestId("motif-slot-edit-pen"));
     expect(onEditGlyph).toHaveBeenCalledTimes(1);
     const [layerId, glyphRef, opts] = onEditGlyph.mock.calls[0];
     expect(layerId).toBe("m1");
@@ -995,7 +1002,7 @@ describe("Sequencer card (C3)", () => {
     expect(opts).toEqual({ slotIndex: 1 });
   });
 
-  it("tapping a modifier-only slot (no glyphRef) opens the editor on the BASE glyph", () => {
+  it("the pencil badge on a modifier-only slot (no glyphRef) opens the editor on the BASE glyph", () => {
     const onEditGlyph = vi.fn();
     // slot 0 has no glyphRef → renders + forks from the base ('leaf').
     const motif = seqMotif("m1", "host1", { slots: [{ sizeScale: 2 }] });
@@ -1009,10 +1016,157 @@ describe("Sequencer card (C3)", () => {
       />
     );
     fireEvent.click(screen.getByTestId("motif-slot-edit"));
+    fireEvent.click(screen.getByTestId("motif-slot-edit-pen"));
     const [layerId, glyphRef, opts] = onEditGlyph.mock.calls[0];
     expect(layerId).toBe("m1");
     expect(glyphRef).toBe("leaf"); // base fallback
     expect(opts).toEqual({ slotIndex: 0 });
+  });
+});
+
+// ── Wave 3 (#79): slot glyph-swap commit wiring (Feature B) ───────────────────
+describe("Slot glyph-swap commit wiring (Feature B)", () => {
+  function seqMotif(id, hostId, slots) {
+    return {
+      id,
+      name: id,
+      type: MOTIF_TYPE,
+      patternType: MOTIF_TYPE,
+      params: createMotifParams({
+        hostLayerId: hostId,
+        glyphRef: "leaf",
+        binding: {
+          chain: [
+            { type: "route", roles: ["crossing"], pathScope: "all" },
+            { type: "sequence", mode: "cycle", slots },
+          ],
+          placement: defaultBinding.placement,
+        },
+      }),
+      randomizeKeys: [],
+      paramsCache: {},
+    };
+  }
+  function zonedMotif(id, hostId) {
+    return {
+      id,
+      name: id,
+      type: MOTIF_TYPE,
+      patternType: MOTIF_TYPE,
+      params: createMotifParams({
+        hostLayerId: hostId,
+        glyphRef: "leaf",
+        binding: {
+          chain: [
+            { type: "route", roles: ["crossing"], pathScope: "all" },
+            {
+              type: "sequence",
+              zones: [
+                { zone: "apex", mode: "cycle", ends: "both", slots: [{ glyphRef: "flower" }] },
+                { zone: "stem", mode: "cycle", slots: [{ glyphRef: "leaf" }] },
+              ],
+            },
+          ],
+          placement: defaultBinding.placement,
+        },
+      }),
+      randomizeKeys: [],
+      paramsCache: {},
+    };
+  }
+  const libMotif = (glyphId, name) => ({
+    id: glyphId,
+    name,
+    glyph: {
+      id: glyphId,
+      name,
+      tradition: "custom",
+      paths: [{ d: "M1,1 L9,9", closed: false }],
+      viewRadius: 6,
+      root: { x: 0, y: 0, angle: 0 },
+    },
+  });
+  const seqOf = (patch) =>
+    patch.params.binding.chain.find((b) => b.type === "sequence");
+  const openDevice = () => fireEvent.click(screen.getByTestId("motif-toggle"));
+
+  it("a BUILTIN slot pick writes the slot glyphRef through editChain (one onUpdateLayer)", () => {
+    const onUpdateLayer = vi.fn();
+    render(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), seqMotif("m1", "host1", [{ glyphRef: "leaf" }])]}
+        selectedLayerId="host1"
+        onUpdateLayer={onUpdateLayer}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    openDevice();
+    fireEvent.click(screen.getByTestId("motif-slot-edit")); // open the slot picker
+    fireEvent.click(screen.getByTestId("glyph-option-diamond")); // swap to a builtin
+    expect(onUpdateLayer).toHaveBeenCalledTimes(1);
+    const [id, patch] = onUpdateLayer.mock.calls.at(-1);
+    expect(id).toBe("m1");
+    expect(seqOf(patch).slots[0].glyphRef).toBe("diamond");
+    expect(patch.params.binding.selection).toBeUndefined();
+  });
+
+  it("a LIBRARY slot pick routes through onUseLibraryGlyph carrying the slot-pointed binding (one undo)", () => {
+    const onUseLibraryGlyph = vi.fn();
+    const onCopyLibraryGlyph = vi.fn();
+    const onUpdateLayer = vi.fn();
+    render(
+      <Inspector
+        layers={[
+          hostLayer("host1", "grid"),
+          seqMotif("m1", "host1", [{ glyphRef: "leaf" }, { glyphRef: "flower" }]),
+        ]}
+        selectedLayerId="host1"
+        onUpdateLayer={onUpdateLayer}
+        onChangeLayerPattern={() => {}}
+        customGlyphs={{}}
+        libraryMotifs={[libMotif("lib-1", "Saved Vine")]}
+        onUseLibraryGlyph={onUseLibraryGlyph}
+        onCopyLibraryGlyph={onCopyLibraryGlyph}
+      />
+    );
+    openDevice();
+    fireEvent.click(screen.getAllByTestId("motif-slot-edit")[1]); // slot 1 (flower)
+    fireEvent.click(screen.getByTestId("glyph-option-lib-1"));
+    // ONE batched seam — copy-into-doc + point-the-slot fold into a single undo.
+    expect(onUseLibraryGlyph).toHaveBeenCalledTimes(1);
+    const [glyph, layerId, params] = onUseLibraryGlyph.mock.calls[0];
+    expect(glyph.id).toBe("lib-1");
+    expect(layerId).toBe("m1");
+    const seq = params.binding.chain.find((b) => b.type === "sequence");
+    expect(seq.slots[1].glyphRef).toBe("lib-1"); // the slot now points at the copy
+    expect(seq.slots[0].glyphRef).toBe("leaf"); // sibling slot untouched
+    expect(params.glyphRef).toBe("leaf"); // base glyph unchanged (slot swap, not base)
+    // The legacy two-call path is NOT also fired (would be a second undo entry).
+    expect(onCopyLibraryGlyph).not.toHaveBeenCalled();
+    expect(onUpdateLayer).not.toHaveBeenCalled();
+  });
+
+  it("a ZONED slot pick writes via setZoneSlotGlyphRef (zone-addressed, one onUpdateLayer)", () => {
+    const onUpdateLayer = vi.fn();
+    render(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), zonedMotif("m1", "host1")]}
+        selectedLayerId="host1"
+        onUpdateLayer={onUpdateLayer}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    openDevice();
+    const stem = screen
+      .getAllByTestId("motif-zone")
+      .find((s) => s.getAttribute("data-zone") === "stem");
+    fireEvent.click(within(stem).getByTestId("motif-slot-edit"));
+    fireEvent.click(screen.getByTestId("glyph-option-diamond"));
+    const [, patch] = onUpdateLayer.mock.calls.at(-1);
+    const seq = seqOf(patch);
+    expect(seq.zones.find((z) => z.zone === "stem").slots[0].glyphRef).toBe("diamond");
+    // Apex zone untouched.
+    expect(seq.zones.find((z) => z.zone === "apex").slots[0].glyphRef).toBe("flower");
   });
 });
 

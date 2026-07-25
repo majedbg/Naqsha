@@ -240,3 +240,184 @@ describe("MotifBlockRack — type scale (typography pass)", () => {
     expect(angleLabel.className).not.toMatch(/text-\[\d+px\]/);
   });
 });
+
+// ── Wave 3 (#79): zoned Sequencer sections (Apex / Stem) ──────────────────────
+describe("MotifBlockRack — zoned Sequencer sections", () => {
+  // A chain-form motif whose terminal sequence is ZONED (apex + stem), seqIndex=1.
+  const zonedChain = [
+    { type: "route", roles: ["crossing"], pathScope: "all" },
+    {
+      type: "sequence",
+      zones: [
+        { zone: "apex", mode: "cycle", ends: "both", slots: [{ glyphRef: "flower" }] },
+        { zone: "stem", mode: "cycle", slots: [{ glyphRef: "leaf" }, { rest: true }] },
+      ],
+    },
+  ];
+  const seqOf = (chain) => chain.find((b) => b.type === "sequence");
+  const zoneOf = (chain, id) => seqOf(chain).zones.find((z) => z.zone === id);
+  const zoneSection = (id) =>
+    screen.getAllByTestId("motif-zone").find((s) => s.getAttribute("data-zone") === id);
+
+  it("renders one SECTION per zone with Apex/Stem headers + info tooltips", () => {
+    render(<MotifBlockRack {...baseProps} chain={zonedChain} />);
+    const sections = screen.getAllByTestId("motif-zone");
+    expect(sections.map((s) => s.getAttribute("data-zone"))).toEqual(["apex", "stem"]);
+    expect(within(zoneSection("apex")).getByText("Apex")).toBeInTheDocument();
+    expect(within(zoneSection("stem")).getByText("Stem")).toBeInTheDocument();
+    // ⓘ affordance carries the maker-facing zone explanation.
+    expect(within(zoneSection("apex")).getByTestId("motif-zone-info")).toHaveAttribute(
+      "title",
+      expect.stringContaining("A closed loop has no Apex")
+    );
+    expect(within(zoneSection("stem")).getByTestId("motif-zone-info")).toHaveAttribute(
+      "title",
+      expect.stringContaining("where leaves sprout")
+    );
+    // Two isolated slot strips — one per zone — so a drag never crosses a zone.
+    expect(screen.getAllByTestId("motif-slot-strip")).toHaveLength(2);
+  });
+
+  it("the Apex end-selector renders VECTOR arrows (Apex only) and writes ends via editChain", () => {
+    const onEditChain = vi.fn();
+    render(<MotifBlockRack {...baseProps} chain={zonedChain} onEditChain={onEditChain} />);
+    const ends = within(zoneSection("apex")).getByTestId("motif-zone-ends");
+    // Three states, each an inline SVG arrow (never a text arrow glyph).
+    for (const label of ["Both ends", "Upper end", "Lower end"]) {
+      const btn = within(ends).getByLabelText(label);
+      expect(btn.querySelector("svg path")).not.toBeNull();
+    }
+    expect(ends.textContent).not.toMatch(/[↕↑↓]/);
+    // Default 'both' is the lit state.
+    expect(within(ends).getByLabelText("Both ends")).toHaveAttribute("aria-pressed", "true");
+    // Stem has NO end-selector.
+    expect(within(zoneSection("stem")).queryByTestId("motif-zone-ends")).toBeNull();
+    // Choosing 'up' writes ends through setZoneEnds on the Apex zone.
+    fireEvent.click(within(ends).getByLabelText("Upper end"));
+    const next = onEditChain.mock.calls[0][0](zonedChain);
+    expect(zoneOf(next, "apex").ends).toBe("up");
+    expect(zoneOf(next, "stem")).toBe(zoneOf(zonedChain, "stem")); // Stem untouched (identity)
+  });
+
+  it("the per-zone deal toggle writes zone.mode via setZoneMode (isolated to that zone)", () => {
+    const onEditChain = vi.fn();
+    render(<MotifBlockRack {...baseProps} chain={zonedChain} onEditChain={onEditChain} />);
+    fireEvent.click(within(zoneSection("stem")).getByTestId("motif-zone-mode-random"));
+    const next = onEditChain.mock.calls[0][0](zonedChain);
+    expect(zoneOf(next, "stem").mode).toBe("random");
+    expect(zoneOf(next, "apex").mode).toBe("cycle"); // Apex untouched
+  });
+
+  it("per-zone + Glyph adds a base-glyph slot to THAT zone via addZoneSlot", () => {
+    const onEditChain = vi.fn();
+    render(<MotifBlockRack {...baseProps} chain={zonedChain} onEditChain={onEditChain} />);
+    fireEvent.click(within(zoneSection("stem")).getByTestId("motif-slot-add"));
+    const next = onEditChain.mock.calls[0][0](zonedChain);
+    expect(zoneOf(next, "stem").slots).toHaveLength(3);
+    expect(zoneOf(next, "stem").slots[2]).toEqual({ glyphRef: "leaf" }); // baseGlyphRef
+    expect(zoneOf(next, "apex").slots).toHaveLength(1); // Apex untouched
+  });
+
+  it("removing a zone slot is zone-addressed and isolated (Apex survivors untouched)", () => {
+    const onEditChain = vi.fn();
+    render(<MotifBlockRack {...baseProps} chain={zonedChain} onEditChain={onEditChain} />);
+    const stemChips = within(zoneSection("stem")).getAllByTestId("motif-slot");
+    fireEvent.click(within(stemChips[0]).getByTestId("motif-slot-remove")); // drop leaf
+    const next = onEditChain.mock.calls[0][0](zonedChain);
+    expect(zoneOf(next, "stem").slots).toEqual([{ rest: true }]);
+    expect(zoneOf(next, "apex").slots).toEqual([{ glyphRef: "flower" }]);
+  });
+
+  it("FLAT sequences keep the flat slot row (no zone sections)", () => {
+    render(<MotifBlockRack {...baseProps} />); // fullChain — flat sequence
+    expect(screen.queryAllByTestId("motif-zone")).toHaveLength(0);
+    expect(within(cardOf("sequence")).getByTestId("motif-seq-mode")).toBeInTheDocument();
+  });
+});
+
+// ── Wave 3 (#79): slot glyph-swap picker (Feature B) ──────────────────────────
+describe("MotifBlockRack — slot glyph-swap picker", () => {
+  // fullChain's terminal sequence sits at index 5; slot 0 is a 'leaf' glyph.
+  const SEQ_INDEX = 5;
+  const seqPreview = (i = 0) =>
+    within(cardOf("sequence")).getAllByTestId("motif-slot-edit")[i];
+
+  it("clicking a slot preview opens the PICKER, not the pen editor", () => {
+    const onEditSlotGlyph = vi.fn();
+    render(<MotifBlockRack {...baseProps} onEditSlotGlyph={onEditSlotGlyph} />);
+    fireEvent.click(seqPreview(0));
+    expect(onEditSlotGlyph).not.toHaveBeenCalled();
+    expect(screen.getByTestId("glyph-picker-flyout")).toBeInTheDocument();
+  });
+
+  it("tile #1 is the slot's CURRENT glyph (ring) wearing a pencil badge → editor", () => {
+    const onEditSlotGlyph = vi.fn();
+    render(<MotifBlockRack {...baseProps} onEditSlotGlyph={onEditSlotGlyph} />);
+    fireEvent.click(seqPreview(0));
+    const current = screen.getByTestId("motif-slot-current");
+    expect(current.className).toContain("ring-accent"); // marked current
+    fireEvent.click(within(current).getByTestId("motif-slot-edit-pen"));
+    expect(onEditSlotGlyph).toHaveBeenCalledWith(SEQ_INDEX, 0, "leaf");
+  });
+
+  it("picking another tile swaps via onSwapSlotGlyph with the FLAT address + payload", () => {
+    const onSwapSlotGlyph = vi.fn();
+    render(<MotifBlockRack {...baseProps} onSwapSlotGlyph={onSwapSlotGlyph} />);
+    fireEvent.click(seqPreview(0));
+    // 'leaf' is the current tile (excluded from the grid) — pick a different builtin.
+    fireEvent.click(screen.getByTestId("glyph-option-diamond"));
+    expect(onSwapSlotGlyph).toHaveBeenCalledTimes(1);
+    const [address, payload] = onSwapSlotGlyph.mock.calls[0];
+    expect(address).toEqual({ seqIndex: SEQ_INDEX, slotIndex: 0 });
+    expect(payload).toMatchObject({ kind: "builtin", glyphId: "diamond" });
+  });
+
+  it("the slot's current glyph never appears as a recents chip (no same-value swap)", () => {
+    // Seed recents with the slot's OWN glyph ('leaf') — it must not surface as a
+    // recents button, or clicking it would fire a phantom same-value swap.
+    localStorage.setItem("sonoform-recent-glyphs", JSON.stringify(["leaf", "diamond"]));
+    const onSwapSlotGlyph = vi.fn();
+    render(<MotifBlockRack {...baseProps} onSwapSlotGlyph={onSwapSlotGlyph} />);
+    fireEvent.click(seqPreview(0)); // current glyph is 'leaf'
+    // 'leaf' is pinned as tile #1, not offered as a recents chip.
+    expect(screen.queryByRole("button", { name: "Leaf" })).toBeNull();
+    localStorage.clear();
+  });
+
+  it("zoned slots carry the ZONE in both the swap address and the editor callback", () => {
+    const onSwapSlotGlyph = vi.fn();
+    const onEditSlotGlyph = vi.fn();
+    const zonedChain = [
+      { type: "route", roles: ["crossing"], pathScope: "all" },
+      {
+        type: "sequence",
+        zones: [
+          { zone: "apex", mode: "cycle", ends: "both", slots: [{ glyphRef: "flower" }] },
+          { zone: "stem", mode: "cycle", slots: [{ glyphRef: "leaf" }] },
+        ],
+      },
+    ];
+    render(
+      <MotifBlockRack
+        {...baseProps}
+        chain={zonedChain}
+        onSwapSlotGlyph={onSwapSlotGlyph}
+        onEditSlotGlyph={onEditSlotGlyph}
+      />
+    );
+    const stem = screen
+      .getAllByTestId("motif-zone")
+      .find((s) => s.getAttribute("data-zone") === "stem");
+    fireEvent.click(within(stem).getByTestId("motif-slot-edit"));
+    // Swap → zoned address.
+    fireEvent.click(screen.getByTestId("glyph-option-diamond"));
+    expect(onSwapSlotGlyph).toHaveBeenCalledWith(
+      { seqIndex: 1, zone: "stem", slotIndex: 0 },
+      expect.objectContaining({ kind: "builtin", glyphId: "diamond" })
+    );
+    // Editor → zone passed as the 4th arg.
+    fireEvent.click(within(stem).getByTestId("motif-slot-edit"));
+    fireEvent.click(screen.getByTestId("motif-slot-edit-pen"));
+    expect(onEditSlotGlyph).toHaveBeenCalledWith(1, 0, "leaf", "stem");
+  });
+});

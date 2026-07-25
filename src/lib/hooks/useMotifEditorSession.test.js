@@ -391,6 +391,56 @@ describe("useMotifEditorSession — slot commit-back (C3)", () => {
     expect(lastSeq(result).slots[0].glyphRef).toBe("leaf");
   });
 
+  it("save() on a forked BUILT-IN slot in a ZONE rebinds ONLY that Zone's slot (ADR 0008 — pencil badge on a Stem slot)", () => {
+    const { result } = renderHook(() => useWired());
+    const layerId = firstLayer(result).id;
+    act(() =>
+      result.current.layersApi.updateLayer(layerId, {
+        params: {
+          glyphRef: "rosette",
+          binding: {
+            chain: [
+              { type: "route", roles: ["crossing", "edge", "tip"], pathScope: "all" },
+              {
+                type: "sequence",
+                zones: [
+                  { zone: "apex", mode: "cycle", continuous: true, ends: "both", slots: [{ glyphRef: "rosette" }] },
+                  { zone: "stem", mode: "cycle", slots: [{ glyphRef: "leaf" }, { glyphRef: "leaf", rotationOffset: 180 }] },
+                ],
+              },
+            ],
+            placement: {},
+          },
+        },
+      })
+    );
+    act(() => vi.advanceTimersByTime(500));
+    act(() => result.current.history.clear());
+
+    // Pencil badge on Stem slot 1 → fork a Draft Glyph with a ZONED locator.
+    act(() => result.current.session.open(layerId, "leaf", { slotIndex: 1, zone: "stem" }));
+    expect(result.current.session.modalProps.glyphId).toBe(MOTIF_DRAFT_ID);
+    act(() => result.current.session.save(testGlyph({ name: "Forked Stem Leaf" })));
+
+    const ids = Object.keys(result.current.layersApi.customGlyphs);
+    expect(ids).toHaveLength(1);
+    const newId = ids[0];
+    const zones = lastSeq(result).zones;
+    const stem = zones.find((z) => z.zone === "stem");
+    const apex = zones.find((z) => z.zone === "apex");
+    expect(stem.slots[1].glyphRef).toBe(newId); // the Stem slot rebound
+    expect(stem.slots[0].glyphRef).toBe("leaf"); // Stem sibling untouched
+    expect(apex.slots[0].glyphRef).toBe("rosette"); // Apex untouched
+    expect(firstLayer(result).params.glyphRef).toBe("rosette"); // BASE untouched
+
+    // One undo reverts both the glyph add and the Zone-slot rebind.
+    act(() => result.current.history.undo());
+    expect(result.current.layersApi.customGlyphs[newId]).toBeUndefined();
+    expect(
+      lastSeq(result).zones.find((z) => z.zone === "stem").slots[1].glyphRef
+    ).toBe("leaf");
+  });
+
   it("save() on a CUSTOM slot glyph edits IN PLACE — no new id, no rebind, slot keeps the shared id (base picks it up too)", () => {
     const { result } = renderHook(() => useWired());
     const layerId = firstLayer(result).id;

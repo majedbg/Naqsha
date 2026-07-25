@@ -59,6 +59,10 @@ import {
   readChain,
   ensureChainForm,
 } from "../../lib/motif/motifLayer";
+import {
+  setSlotGlyphRef,
+  setZoneSlotGlyphRef,
+} from "../../lib/motif/chainEditor";
 import { MOTIF_GLYPHS } from "../../lib/motif/glyphs";
 import EtchStackRack from "./EtchStackRack";
 import EtchHighlightHold from "./EtchHighlightHold";
@@ -757,6 +761,7 @@ function MotifRowModeColumn({
   modeChips,
   hostKind,
   onApply,
+  onReset,
   markerFrac = null,
 }) {
   const litModeId = useMemo(
@@ -764,15 +769,34 @@ function MotifRowModeColumn({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [binding?.chain, hostPatternType]
   );
+  // Reset is meaningful only when a PRESET is lit — Custom has no factory to reset
+  // to (modeForMotif returns a chip id or 'custom'). Enabled ⇔ not Custom.
+  const canReset = litModeId !== "custom";
   return (
-    <MotifModeColumn
-      modeChips={modeChips}
-      hostKind={hostKind}
-      selectedId={litModeId}
-      onPick={onApply}
-      includeCustom
-      markerFrac={markerFrac}
-    />
+    <div className="flex w-28 shrink-0 flex-col gap-1">
+      <MotifModeColumn
+        modeChips={modeChips}
+        hostKind={hostKind}
+        selectedId={litModeId}
+        onPick={onApply}
+        includeCustom
+        markerFrac={markerFrac}
+      />
+      {/* Explicit Reset (ADR 0008): a deliberately MINOR text affordance under the
+          column that returns the lit preset to its factory build and drops its
+          modeCache stash. Disabled on Custom (no factory). A plain mode-click
+          restores stashed work; Reset is the one path back to factory. */}
+      <button
+        type="button"
+        data-testid="motif-mode-reset"
+        disabled={!canReset}
+        onClick={() => onReset?.()}
+        title="Reset this mode to its factory build"
+        className="rounded-sm px-1.5 py-0.5 text-left text-2xs text-ink-soft outline-none transition-colors duration-fast hover:text-ink focus-visible:ring-2 focus-visible:ring-violet disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-ink-soft"
+      >
+        Reset mode
+      </button>
+    </div>
   );
 }
 
@@ -1009,8 +1033,42 @@ function MotifDevice({
   // `glyphRef` is the slot's effective ref (slot.glyphRef ?? base) resolved in
   // the card. seqIndex is unused by `open` (it derives the at-most-one sequence
   // from the binding) but kept in the signature for locality.
-  const openSlotEditorFor = (m, seqIndex, slotIndex, glyphRef) => {
-    onEditGlyph?.(m.id, glyphRef, { slotIndex });
+  const openSlotEditorFor = (m, seqIndex, slotIndex, glyphRef, zone) => {
+    // Flat slots keep opts EXACTLY {slotIndex} (the Wave-1 slot-commit contract,
+    // useGlyphCommits.commitNewGlyphToSlot). A zoned slot additionally carries
+    // its `zone` for a future zone-aware session; Wave-1 commit-back is flat-only
+    // (a known limitation — the editor OPENS on the zoned slot's glyph, but
+    // Save-as-copy commit-back is not yet wired for zones).
+    onEditGlyph?.(m.id, glyphRef, zone ? { slotIndex, zone } : { slotIndex });
+  };
+
+  // Swap a Sequencer SLOT's glyph via the flyout picker (Feature B, #79 Wave 3).
+  // `address` is {seqIndex, slotIndex} (flat) or {seqIndex, zone, slotIndex}
+  // (zoned); `picked` is the picker payload {kind, glyphId, glyph}.
+  //   • builtin / custom → point the slot's glyphRef through the editChain seam
+  //     (ONE undo entry, first-edit legacy→chain rewrite + no-op guard).
+  //   • library → copy-into-doc + point-the-slot as ONE undo entry, reusing the
+  //     SAME batched onUseLibraryGlyph seam the base-glyph pick uses — here the
+  //     `params` carry the swapped binding chain instead of a swapped base
+  //     glyphRef (placeFromLibrary applies params wholesale). Legacy two-call
+  //     fallback (copy + editChain) when Studio hasn't wired onUseLibraryGlyph.
+  const swapSlotGlyph = (m, address, picked) => {
+    const point = (chain) =>
+      address.zone
+        ? setZoneSlotGlyphRef(chain, address.seqIndex, address.zone, address.slotIndex, picked.glyphId)
+        : setSlotGlyphRef(chain, address.seqIndex, address.slotIndex, picked.glyphId);
+    if (picked.kind === "library" && onUseLibraryGlyph) {
+      const base = ensureChainForm(m.params?.binding);
+      onUseLibraryGlyph(picked.glyph, m.id, {
+        ...m.params,
+        binding: deepMergeBinding(base, { chain: point(base.chain) }),
+      });
+      return;
+    }
+    if (picked.kind === "library" && !customGlyphs?.[picked.glyphId]) {
+      onCopyLibraryGlyph?.(picked.glyph);
+    }
+    editChain(m, point);
   };
 
   // File-input mechanics only (Wave 3, #77): the read → parse → error → commit
@@ -1043,22 +1101,76 @@ function MotifDevice({
   const addMotif = () =>
     onAddMotif?.(layer.id, defaultMotifAddOpts(layer.patternType, "leaf"));
 
-  // Pick a MODE on an EXISTING motif (Variant D). applyModeChain returns the
-  // preset's {glyphRef, anchorMode, binding}; we write all three in a SINGLE
-  // onUpdateLayer — the SAME seam as editChain, so a mode-pick is ONE undo entry
-  // exactly like any rack edit. 'custom' / unknown → applyModeChain is null →
-  // a no-op (Custom is never destructive; it is only ever lit by divergence).
-  // This resets placement to the preset default by design (modeForMotif ignores
-  // placement, so the row still lights correctly whatever the size/flip was).
+  // Pick a MODE on an EXISTING motif (Variant D + modeCache, ADR 0008). Switching
+  // modes must never destroy work, so the motif layer carries `params.modeCache`
+  // (mode-id → stashed {glyphRef, anchorMode, binding}), mirroring the pattern-
+  // switch `paramsCache` precedent (persisted document state on the layer). On a
+  // switch we STASH the OUTGOING chain under its DERIVED mode id (modeForMotif —
+  // 'custom' included; a glyph-swapped Vine still READS as 'vine', which is exactly
+  // why the swapped glyph survives a round-trip), then RESTORE the incoming mode's
+  // stash if one exists, else fall back to the chip factory build. Both cache and
+  // factory share the {glyphRef, anchorMode, binding} shape so `incoming.*` reads
+  // uniformly. ONE coalesced onUpdateLayer (params carries the new binding AND the
+  // updated modeCache) = ONE undo entry, the SAME seam as editChain. A mode switch
+  // REPLACES the whole binding (never deepMergeBinding — merging a restored chain
+  // onto a foreign base would resurrect stale blocks).
+  //   • Clicking the ALREADY-LIT mode → no-op (no rewrite, no undo burn).
+  //   • Clicking Custom → restore modeCache.custom when it exists, else inert
+  //     (Custom has no factory; it is only ever lit by divergence otherwise).
+  //   • Unknown / factory-less preset → no-op.
   const applyMode = (m, modeId) => {
-    const applied = applyModeChain(modeId, layer.patternType);
-    if (!applied) return;
+    const host = layer.patternType;
+    const outgoingBinding = m.params?.binding;
+    const litModeId = modeForMotif(outgoingBinding, host);
+    if (modeId === litModeId) return; // clicking the lit mode is a no-op
+
+    const cache = m.params?.modeCache || {};
+    const incoming =
+      modeId === "custom"
+        ? cache.custom
+        : cache[modeId] || applyModeChain(modeId, host);
+    if (!incoming) return;
+
     onUpdateLayer(m.id, {
       params: {
         ...m.params,
-        glyphRef: applied.glyphRef,
-        anchorMode: applied.anchorMode,
-        binding: applied.binding,
+        glyphRef: incoming.glyphRef,
+        anchorMode: incoming.anchorMode,
+        binding: incoming.binding,
+        modeCache: {
+          ...cache,
+          // Stash the outgoing chain under the mode it currently READS as, never
+          // the clicked chip id — zoned identity ignores in-zone glyphs, so a
+          // customized Vine stashes under 'vine' and its edits come back intact.
+          [litModeId]: {
+            glyphRef: m.params?.glyphRef,
+            anchorMode: m.params?.anchorMode,
+            binding: outgoingBinding,
+          },
+        },
+      },
+    });
+  };
+
+  // Explicit Reset (ADR 0008): re-apply the CURRENTLY LIT preset's FACTORY build
+  // and CLEAR that mode's stash — the one escape hatch back to factory (a plain
+  // mode-click restores stashed work instead of factory). Only meaningful when a
+  // PRESET is lit (Custom has no factory); the UI enables the affordance only then.
+  // One onUpdateLayer = one undo entry.
+  const resetMode = (m) => {
+    const host = layer.patternType;
+    const litModeId = modeForMotif(m.params?.binding, host);
+    const factory = applyModeChain(litModeId, host);
+    if (!factory) return; // Custom / unknown → no factory to reset to
+    const rest = { ...(m.params?.modeCache || {}) };
+    delete rest[litModeId]; // drop the lit mode's stash — Reset returns to factory
+    onUpdateLayer(m.id, {
+      params: {
+        ...m.params,
+        glyphRef: factory.glyphRef,
+        anchorMode: factory.anchorMode,
+        binding: factory.binding,
+        modeCache: rest,
       },
     });
   };
@@ -1429,6 +1541,7 @@ function MotifDevice({
                     modeChips={modeChips}
                     hostKind={hostKind}
                     onApply={(modeId) => applyMode(m, modeId)}
+                    onReset={() => resetMode(m)}
                     // Lit-row RhythmStrip marker scrubs to the Trace progress fraction
                     // while this motif is tracing; null otherwise (no marker).
                     markerFrac={isTracing ? trace.frac : null}
@@ -1463,9 +1576,14 @@ function MotifDevice({
                         )
                       }
                       customGlyphs={customGlyphs}
+                      libraryMotifs={library}
                       baseGlyphRef={glyphRef}
-                      onEditSlotGlyph={(seqIndex, slotIndex, slotGlyphRef) =>
-                        openSlotEditorFor(m, seqIndex, slotIndex, slotGlyphRef)
+                      onManageLibrary={onOpenLibrary}
+                      onEditSlotGlyph={(seqIndex, slotIndex, slotGlyphRef, zone) =>
+                        openSlotEditorFor(m, seqIndex, slotIndex, slotGlyphRef, zone)
+                      }
+                      onSwapSlotGlyph={(address, picked) =>
+                        swapSlotGlyph(m, address, picked)
                       }
                     />
                   </div>

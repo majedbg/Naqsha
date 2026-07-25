@@ -21,6 +21,13 @@ import {
   setSlot,
   setSlotGlyphRef,
   togglePickedPath,
+  setZoneSlot,
+  setZoneSlotGlyphRef,
+  addZoneSlot,
+  removeZoneSlot,
+  reorderZoneSlots,
+  setZoneMode,
+  setZoneEnds,
 } from './chainEditor.js';
 
 const route = () => ({ type: 'route', roles: null, pathScope: 'all' });
@@ -259,5 +266,137 @@ describe('togglePickedPath', () => {
     const out = togglePickedPath(chain, 1, 0);
     expect(out[0]).toBe(chain[0]); // everyN untouched
     expect(out[1].pickedPaths).toEqual([0]);
+  });
+});
+
+// ── Zoned Sequencer slot/mode ops (ADR-0008) ─────────────────────────────────
+// The terminal `sequence` gains an optional `zones` array (presence = zoned;
+// flat `slots`/`mode`/`continuous` absent when zoned). Each Zone is addressed by
+// its `zone` field (Apex/Stem), NOT by array position — order in the array is not
+// part of the address. These ops mirror the flat slot ops' no-op/same-ref
+// discipline: invalid seqIndex / non-sequence / flat (un-zoned) sequence / unknown
+// zoneId / out-of-range slotIndex ⇒ the INPUT ARRAY UNCHANGED (same ref).
+describe('chainEditor — zoned Sequencer ops (ADR-0008)', () => {
+  const glyphSlot = (ref) => ({ glyphRef: ref });
+  const restSlot = () => ({ rest: true });
+  // A zoned sequence with the Stem zone listed BEFORE the Apex zone, so tests
+  // that address by `zone` field also prove addressing is order-independent.
+  const zoned = (apexSlots, stemSlots) => [
+    route(),
+    {
+      type: 'sequence',
+      zones: [
+        { zone: 'stem', mode: 'cycle', continuous: false, slots: stemSlots },
+        { zone: 'apex', mode: 'cycle', continuous: true, ends: 'both', slots: apexSlots },
+      ],
+    },
+  ];
+  const zoneOf = (block, id) => block.zones.find((z) => z.zone === id);
+
+  it('addZoneSlot appends to the addressed zone (by id, not array order)', () => {
+    const input = zoned([glyphSlot('flower')], [glyphSlot('leaf')]);
+    const out = addZoneSlot(input, 1, 'apex', restSlot());
+    expect(zoneOf(out[1], 'apex').slots).toEqual([{ glyphRef: 'flower' }, { rest: true }]);
+    expect(out).not.toBe(input);
+  });
+
+  it('addZoneSlot to the Apex leaves the Stem zone reference identical (cross-zone isolation)', () => {
+    const input = zoned([glyphSlot('flower')], [glyphSlot('leaf')]);
+    const stemIn = zoneOf(input[1], 'stem');
+    const out = addZoneSlot(input, 1, 'apex', restSlot());
+    // Stem addressed by id regardless of its array position; untouched ⇒ same ref.
+    expect(zoneOf(out[1], 'stem')).toBe(stemIn);
+    expect(out[0]).toBe(input[0]); // route block identity preserved
+  });
+
+  it('removeZoneSlot drops the slot at index in the addressed zone; out-of-range ⇒ same ref', () => {
+    const input = zoned([glyphSlot('a'), glyphSlot('b'), glyphSlot('c')], [glyphSlot('leaf')]);
+    const out = removeZoneSlot(input, 1, 'apex', 1);
+    expect(zoneOf(out[1], 'apex').slots).toEqual([{ glyphRef: 'a' }, { glyphRef: 'c' }]);
+    expect(removeZoneSlot(input, 1, 'apex', 9)).toBe(input);
+    expect(removeZoneSlot(input, 1, 'apex', -1)).toBe(input);
+  });
+
+  it('reorderZoneSlots moves a slot in the addressed zone; from===to / out-of-range ⇒ same ref', () => {
+    const input = zoned([glyphSlot('a'), glyphSlot('b'), glyphSlot('c')], [glyphSlot('leaf')]);
+    const out = reorderZoneSlots(input, 1, 'apex', 0, 2);
+    expect(zoneOf(out[1], 'apex').slots.map((s) => s.glyphRef)).toEqual(['b', 'c', 'a']);
+    expect(reorderZoneSlots(input, 1, 'apex', 1, 1)).toBe(input); // from === to
+    expect(reorderZoneSlots(input, 1, 'apex', 0, 9)).toBe(input); // out of range
+  });
+
+  it('setZoneSlot shallow-merges a patch into one slot; other slots keep identity', () => {
+    const input = zoned([glyphSlot('a'), glyphSlot('b')], [glyphSlot('leaf')]);
+    const out = setZoneSlot(input, 1, 'apex', 0, { weight: 3 });
+    expect(zoneOf(out[1], 'apex').slots[0]).toEqual({ glyphRef: 'a', weight: 3 });
+    expect(zoneOf(out[1], 'apex').slots[1]).toBe(zoneOf(input[1], 'apex').slots[1]); // sibling slot identity
+    expect(setZoneSlot(input, 1, 'apex', 9, { weight: 2 })).toBe(input); // out of range
+  });
+
+  it('setZoneSlotGlyphRef rebinds one slot glyphRef in the addressed zone', () => {
+    const input = zoned([glyphSlot('leaf'), restSlot()], [glyphSlot('stemleaf')]);
+    const out = setZoneSlotGlyphRef(input, 1, 'apex', 0, 'custom-uuid-1');
+    expect(zoneOf(out[1], 'apex').slots[0].glyphRef).toBe('custom-uuid-1');
+    expect(zoneOf(out[1], 'apex').slots[1]).toEqual({ rest: true }); // rest untouched
+  });
+
+  it('setZoneMode merges a full deal patch ({mode, continuous})', () => {
+    const input = zoned([glyphSlot('flower')], [glyphSlot('leaf')]);
+    const out = setZoneMode(input, 1, 'apex', { mode: 'random', continuous: false });
+    expect(zoneOf(out[1], 'apex')).toMatchObject({ mode: 'random', continuous: false });
+    expect(out).not.toBe(input);
+  });
+
+  it('setZoneMode with a partial patch ({continuous} only) flips only that key, leaving mode intact', () => {
+    const input = zoned([glyphSlot('flower')], [glyphSlot('leaf')]);
+    const out = setZoneMode(input, 1, 'apex', { continuous: false });
+    expect(zoneOf(out[1], 'apex').continuous).toBe(false);
+    expect(zoneOf(out[1], 'apex').mode).toBe('cycle'); // mode untouched
+  });
+
+  it('setZoneMode with an identical-value patch returns the SAME ref (no undo churn)', () => {
+    const input = zoned([glyphSlot('flower')], [glyphSlot('leaf')]);
+    // Apex fixture is already mode:'cycle', continuous:true.
+    expect(setZoneMode(input, 1, 'apex', { mode: 'cycle' })).toBe(input);
+    expect(setZoneMode(input, 1, 'apex', { mode: 'cycle', continuous: true })).toBe(input);
+  });
+
+  it('setZoneEnds sets the Apex end selector; an identical value returns the SAME ref', () => {
+    const input = zoned([glyphSlot('flower')], [glyphSlot('leaf')]);
+    const out = setZoneEnds(input, 1, 'apex', 'up');
+    expect(zoneOf(out[1], 'apex').ends).toBe('up');
+    expect(setZoneEnds(out, 1, 'apex', 'up')).toBe(out); // identical ⇒ same ref
+  });
+
+  it('unknown zoneId returns the SAME ref across every op', () => {
+    const input = zoned([glyphSlot('flower')], [glyphSlot('leaf')]);
+    expect(addZoneSlot(input, 1, 'node', restSlot())).toBe(input);
+    expect(removeZoneSlot(input, 1, 'node', 0)).toBe(input);
+    expect(reorderZoneSlots(input, 1, 'node', 0, 1)).toBe(input);
+    expect(setZoneSlot(input, 1, 'node', 0, { weight: 2 })).toBe(input);
+    expect(setZoneSlotGlyphRef(input, 1, 'node', 0, 'x')).toBe(input);
+    expect(setZoneMode(input, 1, 'node', { mode: 'random' })).toBe(input);
+    expect(setZoneEnds(input, 1, 'node', 'up')).toBe(input);
+  });
+
+  it('a flat (un-zoned) sequence is rejected by every zone op (same ref)', () => {
+    const flat = [route(), { type: 'sequence', mode: 'cycle', slots: [glyphSlot('a')] }];
+    expect(addZoneSlot(flat, 1, 'apex', restSlot())).toBe(flat);
+    expect(removeZoneSlot(flat, 1, 'apex', 0)).toBe(flat);
+    expect(reorderZoneSlots(flat, 1, 'apex', 0, 1)).toBe(flat);
+    expect(setZoneSlot(flat, 1, 'apex', 0, { weight: 2 })).toBe(flat);
+    expect(setZoneSlotGlyphRef(flat, 1, 'apex', 0, 'x')).toBe(flat);
+    expect(setZoneMode(flat, 1, 'apex', { mode: 'random' })).toBe(flat);
+    expect(setZoneEnds(flat, 1, 'apex', 'up')).toBe(flat);
+  });
+
+  it('an invalid seqIndex / non-sequence target is rejected by every zone op (same ref)', () => {
+    const input = zoned([glyphSlot('flower')], [glyphSlot('leaf')]);
+    expect(addZoneSlot(input, 0, 'apex', restSlot())).toBe(input); // index 0 is route
+    expect(removeZoneSlot(input, 9, 'apex', 0)).toBe(input); // out of range
+    expect(reorderZoneSlots(input, 0, 'apex', 0, 1)).toBe(input);
+    expect(setZoneSlot(input, 0, 'apex', 0, { weight: 2 })).toBe(input);
+    expect(setZoneMode(input, 9, 'apex', { mode: 'random' })).toBe(input);
+    expect(setZoneEnds(input, 0, 'apex', 'up')).toBe(input);
   });
 });

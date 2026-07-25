@@ -37,3 +37,9 @@ docs/material-references/
 # verification screenshots (s2-/s5b-/…-verification) ARE committed there.
 .playwright-mcp/page-*
 .playwright-mcp/console-*
+
+# Codebase-index MCP cache. Regenerated locally from the source tree, so it
+# carries no information the repo doesn't already hold — but it's a binary
+# pickle that rewrites wholesale (392KB -> 10MB in one session), so every commit
+# it lands in permanently bloats history and conflicts on every merge.
+.codebase-index-cache.pkl

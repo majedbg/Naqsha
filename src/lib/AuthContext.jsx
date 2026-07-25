@@ -8,6 +8,7 @@ import {
 import { supabase } from "./supabase";
 import { maybeClaimOnLogin } from "./org/claimOnLogin";
 import { clearExtractedPatterns } from "./patterns/ExtractedPatternGenerator";
+import { _clearEtchSourceCache } from "./etch/etchSourceStorage";
 
 const AuthContext = createContext(null);
 
@@ -169,6 +170,13 @@ export function AuthProvider({ children }) {
       // have no sign-out lifecycle today; extracted-only keeps this surgical).
       if (event === "SIGNED_OUT") {
         clearExtractedPatterns();
+        // Same account-hygiene contract for the Etch source bucket (S7, #86):
+        // fetchEtchSourceDataUrl memoizes decoded PRIVATE source bytes by
+        // sourcePath in a module-global cache. Sign-out is an in-SPA state change
+        // (no reload), so without this the next account on this tab could be
+        // served the previous owner's photo from cache BEFORE the RLS-enforced
+        // download runs. Clear it on SIGNED_OUT, exactly like the pattern cache.
+        _clearEtchSourceCache();
       }
       if (mounted) setLoading(false);
     });
@@ -207,6 +215,7 @@ export function AuthProvider({ children }) {
     // user as signed out even when supabase.auth.signOut() errored (no event
     // fires then), so the extracted library must clear here too. Idempotent.
     clearExtractedPatterns();
+    _clearEtchSourceCache(); // same twin for the Etch source cache (S7, #86)
   }, []);
 
   const tier = getEffectiveTier(profile);

@@ -13,6 +13,7 @@
 import { loadImage } from '../extraction/imageIO.js';
 import { computeEtchBitmap } from './etchWorkerBridge.js';
 import { etchPixelDims } from './etchLayer.js';
+import { resolveEtchSourceUrl } from './etchSourceStorage.js';
 import { PPI, MM_PER_IN } from '../plotter/constants.js';
 
 // Spine safety cap on the working bitmap's longest side. A large workpiece at
@@ -87,18 +88,25 @@ function resampleToImageData(img, w, h) {
  * materials live) via resolveHold, so the worker only ever sees concrete values.
  * Absent → no clamp (back-compat with callers that don't pass it).
  *
- * @param {object} layer the etch layer (reads params.source, params.dpi, params.stack)
+ * The source is resolved through resolveEtchSourceUrl (S7, #86): a guest layer's
+ * inline `source` data-URI feeds straight in; a signed-in layer's `sourcePath` is
+ * downloaded from the private `etch-sources` bucket first. Both then flow through
+ * the SAME decode → resample → worker pipeline below. `bridgeOpts.fetchSource`
+ * overrides the bucket download (tests).
+ *
+ * @param {object} layer the etch layer (reads params.source/sourcePath, params.dpi, params.stack)
  * @param {number} canvasW document width in px
  * @param {number} canvasH document height in px
- * @param {{ workerFactory?: (() => Worker|null) | null }} [bridgeOpts]
+ * @param {{ workerFactory?: (() => Worker|null) | null, fetchSource?: ((sourcePath:string)=>Promise<string|null>) }} [bridgeOpts]
  * @param {{enabled:boolean, cutoff:number}} [hold] resolved Highlight Hold
  * @returns {Promise<{bits: Uint8Array, held: Uint8Array|null, width: number, height: number}|null>}
  */
 export async function resolveEtchBitmap(layer, canvasW, canvasH, bridgeOpts = {}, hold) {
-  const { source, dpi, stack } = layer?.params || {};
-  if (!source) return null;
+  const { dpi, stack } = layer?.params || {};
+  const srcUrl = await resolveEtchSourceUrl(layer, bridgeOpts.fetchSource);
+  if (!srcUrl) return null;
   const { width, height } = etchExportDims(canvasW, canvasH, dpi);
-  const img = await loadImage(source);
+  const img = await loadImage(srcUrl);
   const imageData = resampleToImageData(img, width, height);
   // The Etch Stack config and the resolved Hold are plain data; they travel to
   // the worker where the heavy per-pixel Stage work runs, then screening cuts the

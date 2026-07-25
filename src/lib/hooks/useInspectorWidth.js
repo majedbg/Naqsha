@@ -133,6 +133,8 @@ export default function useInspectorWidth() {
   // CURRENT viewport, not the one captured when the drag started.
   const latestViewport = useRef(viewportWidth);
   latestViewport.current = viewportWidth;
+  // Did this gesture actually move? A bare click must not persist — see onUp.
+  const moved = useRef(false);
 
   // Toggle the <body> drag affordances (text-select off + col-resize cursor)
   // for the drag duration only.
@@ -164,8 +166,10 @@ export default function useInspectorWidth() {
       e?.preventDefault?.();
       startX.current = e.clientX;
       startWidth.current = latestWidth.current;
+      moved.current = false;
 
       const onMove = (ev) => {
+        moved.current = true;
         // Left-edge handle: dragging left (clientX decreases) grows the column.
         const next = clampWidth(
           startWidth.current - (ev.clientX - startX.current),
@@ -175,7 +179,11 @@ export default function useInspectorWidth() {
       };
       const onUp = () => {
         endDrag();
-        persist(latestWidth.current);
+        // Only a real drag writes. We persist the RENDERED width, which the
+        // viewport guard may have capped below the stored preference — so a bare
+        // click (mousedown+mouseup, no move) would otherwise silently overwrite
+        // a 560 preference with whatever this narrower window allows.
+        if (moved.current) persist(latestWidth.current);
       };
 
       moveHandlerRef.current = onMove;

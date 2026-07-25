@@ -248,6 +248,27 @@ describe("useInspectorWidth (viewport guard)", () => {
     expect(localStorage.getItem(STORAGE_KEY)).toBe("560");
   });
 
+  it("a bare CLICK on the handle does not persist the capped width", () => {
+    // Regression: onUp persists the RENDERED width, which the guard may have
+    // capped below the preference. A click with no movement used to overwrite a
+    // 560 preference with the current window's cap — losing it for good.
+    localStorage.setItem(STORAGE_KEY, "560");
+    window.innerWidth = 1024;
+    const { result } = renderHook(() => useInspectorWidth());
+    expect(result.current.width).toBe(376); // capped for this viewport
+
+    act(() => {
+      result.current.onMouseDown({ clientX: 900, preventDefault() {} });
+    });
+    act(() => {
+      window.dispatchEvent(new MouseEvent("mouseup", { clientX: 900 }));
+    });
+
+    expect(localStorage.getItem(STORAGE_KEY)).toBe("560"); // preference intact
+    act(() => setViewport(1600));
+    expect(result.current.width).toBe(560); // ...and still recoverable
+  });
+
   it("a drag on a narrow viewport cannot exceed the viewport cap", () => {
     window.innerWidth = 1024;
     const { result } = renderHook(() => useInspectorWidth());

@@ -23,6 +23,7 @@ import {
 } from "../../lib/motif/motifLayer";
 import { STARTER_CHIPS } from "../../lib/motif/starterChips";
 import { applyModeChain, modeForMotif } from "../../lib/motif/modeMatch";
+import { setZoneSlotGlyphRef } from "../../lib/motif/chainEditor";
 
 vi.mock("../../lib/AuthContext", () => ({
   useAuth: () => ({ tier: "studio" }),
@@ -218,7 +219,7 @@ describe("Motif mode selector — per-motif row", () => {
     expect(modeForMotif(patch.params.binding, "grid")).toBe("border-march");
   });
 
-  it("picking the lit preset again is inert-safe (still one clean write, same mode)", () => {
+  it("picking the ALREADY-LIT preset is a no-op (no rewrite, no undo burn) — ADR 0008", () => {
     const onUpdateLayer = vi.fn();
     const motif = motifOnMode("m1", "host1", "vine");
     render(
@@ -229,11 +230,9 @@ describe("Motif mode selector — per-motif row", () => {
         onChangeLayerPattern={() => {}}
       />
     );
+    // vine is lit; clicking it must NOT write (clicking the lit mode is inert).
     fireEvent.click(screen.getByTestId("motif-mode-vine"));
-    expect(onUpdateLayer).toHaveBeenCalledTimes(1);
-    expect(modeForMotif(onUpdateLayer.mock.calls[0][1].params.binding, "grid")).toBe(
-      "vine"
-    );
+    expect(onUpdateLayer).not.toHaveBeenCalled();
   });
 
   it("picking Custom does nothing (no write) — it is only ever lit by divergence", () => {
@@ -385,5 +384,218 @@ describe("Motif mode selector — empty host (Start with)", () => {
     expect(opts.anchorMode).toBe("edge");
     const route = opts.binding.chain.find((b) => b.type === "route");
     expect(route.roles).toEqual(["edge"]);
+  });
+});
+
+// ── modeCache (Wave 2, ADR 0008) ─────────────────────────────────────────────
+// Switching a motif's Mode must never destroy work. The layer carries a
+// `params.modeCache` (mode-id → stashed {glyphRef, anchorMode, binding}),
+// mirroring the pattern-switch paramsCache precedent. Applying a mode stashes the
+// OUTGOING chain under its DERIVED mode id and restores the incoming mode's stash,
+// falling back to the chip factory. Zone vocabulary (CONTEXT.md): the Vine is the
+// zoned Sequencer whose Apex flowers and Stem leafs; a zoned mode's identity is its
+// Zone skeleton, so a swapped Stem glyph never flips the mode off 'vine' — which is
+// exactly why the stash round-trips.
+
+// The index of the terminal Sequencer block in a chain.
+function seqIndexOf(chain) {
+  return chain.findIndex((b) => b.type === "sequence");
+}
+
+// Read the glyphRef of Stem slot 0 out of a (zoned Vine) binding — the field the
+// round-trip must preserve. Independent of any production derivation.
+function stemSlot0Glyph(binding) {
+  const seq = binding.chain.find((b) => b.type === "sequence");
+  const stem = seq.zones.find((z) => z.zone === "stem");
+  return stem.slots[0].glyphRef;
+}
+
+// A Vine motif whose Stem slot 0 glyph has been swapped to `swap` (maker content
+// inside the Stem Zone). modeForMotif still reads 'vine' (zoned identity ignores
+// in-Zone glyphs), so the chip stays lit and the swap is the maker's work at risk.
+function customizedVine(id, hostId, swap, extraParams = {}, patternType = "grid") {
+  const applied = applyModeChain("vine", patternType);
+  const si = seqIndexOf(applied.binding.chain);
+  const chain = setZoneSlotGlyphRef(applied.binding.chain, si, "stem", 0, swap);
+  return {
+    id,
+    name: id,
+    type: MOTIF_TYPE,
+    patternType: MOTIF_TYPE,
+    params: {
+      ...createMotifParams({
+        hostLayerId: hostId,
+        glyphRef: applied.glyphRef,
+        anchorMode: applied.anchorMode,
+        binding: { ...applied.binding, chain },
+      }),
+      ...extraParams,
+    },
+    randomizeKeys: [],
+    paramsCache: {},
+  };
+}
+
+// A live host that APPLIES onUpdateLayer patches (so multi-click round-trips see
+// each prior write) AND records every (id, patch) so a test can read the last
+// binding back — the DOM never exposes a Stem slot's glyphRef.
+function RecordingHost({ initialLayers, onUpdate }) {
+  const [layers, setLayers] = useState(initialLayers);
+  const onUpdateLayer = (id, patch) => {
+    onUpdate?.(id, patch);
+    setLayers((ls) => ls.map((l) => (l.id === id ? { ...l, ...patch } : l)));
+  };
+  return (
+    <Inspector
+      layers={layers}
+      selectedLayerId="host1"
+      onUpdateLayer={onUpdateLayer}
+      onChangeLayerPattern={() => {}}
+      onAddMotif={() => {}}
+    />
+  );
+}
+
+const lastPatch = (rec) => rec.mock.calls[rec.mock.calls.length - 1][1];
+
+describe("Motif mode selector — modeCache stash/restore (ADR 0008)", () => {
+  it("round-trips a customized Vine: Stem glyph swap survives switch-away-and-back", () => {
+    const rec = vi.fn();
+    // Stem slot 0 swapped from the factory 'leaf' to an independent literal.
+    const motif = customizedVine("m1", "host1", "diamond");
+    render(<RecordingHost initialLayers={[hostLayer("host1", "grid"), motif]} onUpdate={rec} />);
+    // The customized Vine still lights 'vine' (zoned identity ignores Stem glyphs).
+    expect(screen.getByTestId("motif-mode-vine")).toHaveAttribute("aria-checked", "true");
+
+    // Switch away to the flat Alternate x‑o mode …
+    fireEvent.click(screen.getByTestId("motif-mode-alternate-xo"));
+    expect(modeForMotif(lastPatch(rec).params.binding, "grid")).toBe("alternate-xo");
+    // … then back to Vine — the swapped Stem glyph is restored from the stash.
+    fireEvent.click(screen.getByTestId("motif-mode-vine"));
+    const back = lastPatch(rec).params;
+    expect(modeForMotif(back.binding, "grid")).toBe("vine");
+    expect(stemSlot0Glyph(back.binding)).toBe("diamond");
+  });
+
+  it("switching from a Custom chain to Vine stashes the outgoing chain under 'custom'", () => {
+    const onUpdateLayer = vi.fn();
+    const motif = motifDiverged("m1", "host1");
+    const outgoingChain = motif.params.binding.chain; // capture the custom chain up front
+    render(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={onUpdateLayer}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    // Custom is lit for a diverged motif.
+    expect(screen.getByTestId("motif-mode-custom")).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(screen.getByTestId("motif-mode-vine"));
+    expect(onUpdateLayer).toHaveBeenCalledTimes(1);
+    const patch = onUpdateLayer.mock.calls[0][1].params;
+    // Incoming chain is the factory Vine …
+    expect(modeForMotif(patch.binding, "grid")).toBe("vine");
+    // … and the outgoing Custom chain is stashed verbatim under 'custom'.
+    expect(patch.modeCache.custom.binding.chain).toEqual(outgoingChain);
+  });
+
+  it("clicking Custom restores the stashed custom chain (no longer inert once a stash exists)", () => {
+    const rec = vi.fn();
+    const motif = motifDiverged("m1", "host1");
+    const customChain = motif.params.binding.chain; // the maker's Custom work
+    render(<RecordingHost initialLayers={[hostLayer("host1", "grid"), motif]} onUpdate={rec} />);
+    // Leave Custom for Vine (stashes the Custom chain), then click Custom to return.
+    fireEvent.click(screen.getByTestId("motif-mode-vine"));
+    fireEvent.click(screen.getByTestId("motif-mode-custom"));
+    const restored = lastPatch(rec).params;
+    expect(restored.binding.chain).toEqual(customChain);
+    expect(modeForMotif(restored.binding, "grid")).toBe("custom");
+  });
+
+  it("clicking Custom is inert when no custom stash exists", () => {
+    const onUpdateLayer = vi.fn();
+    const motif = motifOnMode("m1", "host1", "vine"); // no modeCache
+    render(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={onUpdateLayer}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    fireEvent.click(screen.getByTestId("motif-mode-custom"));
+    expect(onUpdateLayer).not.toHaveBeenCalled();
+  });
+
+  it("clicking the lit Vine leaves the layer untouched (no write) — object reference unchanged", () => {
+    const onUpdateLayer = vi.fn();
+    const motif = motifOnMode("m1", "host1", "vine");
+    render(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={onUpdateLayer}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    fireEvent.click(screen.getByTestId("motif-mode-vine"));
+    expect(onUpdateLayer).not.toHaveBeenCalled();
+  });
+});
+
+describe("Motif mode selector — explicit Reset (ADR 0008)", () => {
+  it("Reset restores the lit Vine's factory Stem glyph and clears its cache entry", () => {
+    const onUpdateLayer = vi.fn();
+    // A customized Vine (Stem slot 0 = 'diamond') with a pre-existing 'vine' stash.
+    const motif = customizedVine("m1", "host1", "diamond", {
+      modeCache: { vine: { glyphRef: "rosette", anchorMode: "semantic", binding: { chain: [] } } },
+    });
+    render(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={onUpdateLayer}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    fireEvent.click(screen.getByTestId("motif-mode-reset"));
+    expect(onUpdateLayer).toHaveBeenCalledTimes(1);
+    const patch = onUpdateLayer.mock.calls[0][1].params;
+    // Factory build restored: Stem slot 0 is back to the factory literal 'leaf'.
+    expect(stemSlot0Glyph(patch.binding)).toBe("leaf");
+    expect(modeForMotif(patch.binding, "grid")).toBe("vine");
+    // The lit mode's stash is cleared.
+    expect(patch.modeCache.vine).toBeUndefined();
+  });
+
+  it("Reset is disabled while Custom is lit (no factory to reset to)", () => {
+    const onUpdateLayer = vi.fn();
+    const motif = motifDiverged("m1", "host1");
+    render(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={onUpdateLayer}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    const reset = screen.getByTestId("motif-mode-reset");
+    expect(reset).toBeDisabled();
+    fireEvent.click(reset);
+    expect(onUpdateLayer).not.toHaveBeenCalled();
+  });
+
+  it("Reset is enabled while a preset (Vine) is lit", () => {
+    const motif = motifOnMode("m1", "host1", "vine");
+    render(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    expect(screen.getByTestId("motif-mode-reset")).toBeEnabled();
   });
 });

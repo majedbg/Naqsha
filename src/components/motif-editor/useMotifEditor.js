@@ -275,24 +275,29 @@ export default function useMotifEditor(glyph, ops = {}) {
   // Undo/redo pop/repush whole-working-copy snapshots on the MODAL-LOCAL stacks
   // only — never document history. Selection is cleared: a snapshot swap can
   // strand indices at anchors that no longer exist.
+  // Returns the RESTORED working copy (null when the stack was empty) so callers
+  // can resettle view-only state — notably the modal's viewing frame, which grows
+  // on commit and must be able to shrink back when the growth is undone.
   const undo = useCallback(() => {
-    if (undoStack.length === 0) return;
+    if (undoStack.length === 0) return null;
     const prev = undoStack[undoStack.length - 1];
     baselineRef.current = null;
     setRedoStack((r) => [...r, working]);
     setUndoStack(undoStack.slice(0, -1));
     setWorking(prev);
     setSelection([]);
+    return prev;
   }, [undoStack, working]);
 
   const redo = useCallback(() => {
-    if (redoStack.length === 0) return;
+    if (redoStack.length === 0) return null;
     const nextWc = redoStack[redoStack.length - 1];
     baselineRef.current = null;
     setUndoStack((u) => [...u, working]);
     setRedoStack(redoStack.slice(0, -1));
     setWorking(nextWc);
     setSelection([]);
+    return nextWc;
   }, [redoStack, working]);
 
   const serialize = useCallback(

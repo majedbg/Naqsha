@@ -27,18 +27,7 @@ import PenCanvas from './PenCanvas';
 // toggled on. See docs/svg-motif-editor-P2-ORCHESTRATOR.md run log (WI-P2-5).
 const MiniPreview = lazy(() => import('./MiniPreview'));
 import { deleteAnchors } from './penMachine';
-
-/** viewBox string with proportional padding; guards against a degenerate box. */
-function viewBoxFor(working) {
-  const { minX, minY, maxX, maxY } = boundsFromWorkingCopy(working);
-  const w = Math.max(maxX - minX, 1);
-  const h = Math.max(maxY - minY, 1);
-  const pad = Math.max(w, h) * 0.14 || 1;
-  return {
-    box: `${minX - pad} ${minY - pad} ${w + pad * 2} ${h + pad * 2}`,
-    span: Math.max(w, h) + pad * 2,
-  };
-}
+import { frameFromBounds, growFrame, frameToBox } from './editorFrame';
 
 // The editor's tools (Illustrator-faithful). Keys P/A/V + Shift+C switch them.
 // Add/Delete-Anchor are dedicated tools (Slice 1, Phase 5 gap-close) mirroring
@@ -104,6 +93,48 @@ export default function MotifEditorModal({
     parseD,
     anchorsToD,
   });
+
+  // ── The viewing frame (see editorFrame.js). Sized ONCE from the glyph, with
+  //    generous empty space, and held still while you edit — a frame that tracked
+  //    the geometry made the view flee the cursor on any drag past the content's
+  //    edge. It moves only at commit seams, and only when geometry escaped it.
+  //    `baseFrame` is the opening fit — computed once at mount and never again,
+  //    matching useMotifEditor's own working copy (the modal is one editing
+  //    session per mount; neither re-fits for a swapped glyph prop).
+  const [baseFrame] = useState(() => frameFromBounds(boundsFromWorkingCopy(working)));
+  const [frame, setFrame] = useState(baseFrame);
+
+  // The frame is always "the opening fit, grown as far as the COMMITTED geometry
+  // demands" — a pure function of the two, so it's idempotent and can shrink back
+  // to the opening fit when an outward edit is undone (growFrame alone never
+  // shrinks). Called only at commit seams; previews (the live drag) never move it.
+  const settleFrame = useCallback(
+    (wc) => {
+      if (!wc) return;
+      setFrame(growFrame(baseFrame, boundsFromWorkingCopy(wc)));
+    },
+    [baseFrame]
+  );
+
+  const commitPaths = useCallback(
+    (paths) => {
+      applyEdit(paths);
+      settleFrame({ paths, root: working.root });
+    },
+    [applyEdit, settleFrame, working.root]
+  );
+  const commitRoot = useCallback(
+    (root) => {
+      applyRoot(root);
+      settleFrame({ paths: working.paths, root });
+    },
+    [applyRoot, settleFrame, working.paths]
+  );
+  // Undo/redo hand back the restored copy — resettle so undoing an edit that
+  // pushed the frame outward also restores the framing.
+  const undoAndSettle = useCallback(() => settleFrame(undo()), [undo, settleFrame]);
+  const redoAndSettle = useCallback(() => settleFrame(redo()), [redo, settleFrame]);
+
   // Preview is INERT this slice — state settles the layout; WI-P2-5 wires it to
   // the throttled mini full-canvas preview.
   const [preview, setPreview] = useState(false);
@@ -167,9 +198,9 @@ export default function MotifEditorModal({
   // (applyEdit → one undo step); if nothing is selected it's a no-op.
   const deleteSelected = useCallback(() => {
     if (!selection || selection.length === 0) return;
-    applyEdit(deleteAnchors(working.paths, selection));
+    commitPaths(deleteAnchors(working.paths, selection));
     setSelection([]);
-  }, [selection, working.paths, applyEdit, setSelection]);
+  }, [selection, working.paths, commitPaths, setSelection]);
 
   // Keyboard is SCOPED to the editor: EVERY handled key stops propagation +
   // prevents default so the editor's Undo/Delete never leak to the app's GLOBAL
@@ -206,11 +237,11 @@ export default function MotifEditorModal({
       const mod = e.metaKey || e.ctrlKey;
       if (mod && (e.key === 'z' || e.key === 'Z')) {
         e.preventDefault();
-        if (e.shiftKey) redo();
-        else undo();
+        if (e.shiftKey) redoAndSettle();
+        else undoAndSettle();
       } else if (mod && (e.key === 'y' || e.key === 'Y')) {
         e.preventDefault();
-        redo();
+        redoAndSettle();
       } else if (e.key === 'Delete' || e.key === 'Backspace') {
         e.preventDefault();
         deleteSelected();
@@ -241,11 +272,12 @@ export default function MotifEditorModal({
         changeTool('delete-anchor');
       }
     },
-    [onCancel, undo, redo, deleteSelected, penDraft, changeTool]
+    [onCancel, undoAndSettle, redoAndSettle, deleteSelected, penDraft, changeTool]
   );
 
   const n = usedByCount(layers, glyphId);
-  const { box, span } = viewBoxFor(working);
+  const box = frameToBox(frame);
+  const span = frame.side;
   const gridStep = span / 12;
 
   return (
@@ -348,11 +380,11 @@ export default function MotifEditorModal({
             penDraft={penDraft}
             anchorsToD={anchorsToD}
             onPreview={previewPaths}
-            onCommit={applyEdit}
+            onCommit={commitPaths}
             onSelectionChange={setSelection}
             onPenDraftChange={setPenDraft}
             onRootPreview={previewRoot}
-            onRootCommit={applyRoot}
+            onRootCommit={commitRoot}
           />
           {preview && (
             <div className="absolute bottom-4 right-4 z-10">

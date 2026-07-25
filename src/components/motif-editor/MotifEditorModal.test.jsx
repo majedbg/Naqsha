@@ -413,16 +413,19 @@ describe('MotifEditorModal — tool switching', () => {
     const svg = screen.getByTestId('motif-editor-canvas');
     expect(screen.getAllByTestId('motif-editor-anchor')).toHaveLength(3);
 
-    // Add-Anchor tool: click the midpoint of the (0,0)-(10,0) segment.
+    // Add-Anchor tool: click the midpoint of the (10,0)-(20,0) segment. NOT the
+    // first segment's midpoint — this glyph's root sits at (0,0) with angle 0, so
+    // its growth-arm handle (span-relative, and the frame opens deliberately wide)
+    // lies ON that segment and wins the hit-test, as it always has.
     fireEvent.keyDown(dialog, { key: '+' });
-    fireEvent.pointerDown(svg, { clientX: 5, clientY: 0, pointerId: 1 });
-    fireEvent.pointerUp(svg, { clientX: 5, clientY: 0, pointerId: 1 });
+    fireEvent.pointerDown(svg, { clientX: 15, clientY: 0, pointerId: 1 });
+    fireEvent.pointerUp(svg, { clientX: 15, clientY: 0, pointerId: 1 });
     expect(screen.getAllByTestId('motif-editor-anchor')).toHaveLength(4);
 
-    // Delete-Anchor tool: click the anchor just added, back at (5,0).
+    // Delete-Anchor tool: click the anchor just added, back at (15,0).
     fireEvent.keyDown(dialog, { key: '-' });
-    fireEvent.pointerDown(svg, { clientX: 5, clientY: 0, pointerId: 1 });
-    fireEvent.pointerUp(svg, { clientX: 5, clientY: 0, pointerId: 1 });
+    fireEvent.pointerDown(svg, { clientX: 15, clientY: 0, pointerId: 1 });
+    fireEvent.pointerUp(svg, { clientX: 15, clientY: 0, pointerId: 1 });
     expect(screen.getAllByTestId('motif-editor-anchor')).toHaveLength(3);
   });
 
@@ -675,5 +678,87 @@ describe('MotifEditorModal — Save to my library (P4)', () => {
     );
     fireEvent.click(screen.getByTestId('motif-editor-save-library'));
     expect(await screen.findByText(/couldn.t save|could not save|error/i)).toBeTruthy();
+  });
+});
+
+// ── Viewing frame: stable while editing, generous on open ───────────────────
+// Regression for "the view scrolls away / zooms out when the mouse nears the
+// edge": the viewBox used to be re-derived from the working copy's bounds on
+// every render with PROPORTIONAL padding, so a drag past the content's edge grew
+// the box faster than the drag moved — and the changed viewBox changed the SVG
+// CTM, so the next pointermove mapped the same cursor to a different model point.
+describe('MotifEditorModal — viewing frame', () => {
+  const renderEditor = () =>
+    render(
+      <MotifEditorModal
+        glyphId="cg-1"
+        glyph={importedGlyph}
+        layers={[]}
+        parseD={parseDToAnchors}
+        anchorsToD={anchorsToD}
+      />
+    );
+
+  it('opens ZOOMED OUT — the glyph fills at most half the frame', () => {
+    renderEditor();
+    const [, , w] = screen
+      .getByTestId('motif-editor-canvas')
+      .getAttribute('viewBox')
+      .split(' ')
+      .map(Number);
+    const g = boundsFromWorkingCopy(makeWorkingCopy(importedGlyph, parseDToAnchors));
+    const content = Math.max(g.maxX - g.minX, g.maxY - g.minY);
+    expect(content / w).toBeLessThanOrEqual(0.5);
+  });
+
+  it('holds the viewBox PERFECTLY still while dragging an anchor away', () => {
+    renderEditor();
+    const svg = screen.getByTestId('motif-editor-canvas');
+    const before = svg.getAttribute('viewBox');
+    // Grab the (2,2) anchor — jsdom has no CTM, so client px == model units.
+    fireEvent.pointerDown(svg, { clientX: 2, clientY: 2, pointerId: 1 });
+    fireEvent.pointerMove(svg, { clientX: 60, clientY: 60, pointerId: 1 });
+    expect(svg.getAttribute('viewBox')).toBe(before); // no chase
+    fireEvent.pointerMove(svg, { clientX: 500, clientY: 500, pointerId: 1 });
+    expect(svg.getAttribute('viewBox')).toBe(before); // and no runaway
+  });
+
+  it('grows ON COMMIT (never during the gesture) when a point escaped the frame', () => {
+    renderEditor();
+    const svg = screen.getByTestId('motif-editor-canvas');
+    const before = svg.getAttribute('viewBox');
+    fireEvent.pointerDown(svg, { clientX: 2, clientY: 2, pointerId: 1 });
+    fireEvent.pointerMove(svg, { clientX: 500, clientY: 500, pointerId: 1 });
+    fireEvent.pointerUp(svg, { clientX: 500, clientY: 500, pointerId: 1 });
+    const [x, y, w, h] = svg.getAttribute('viewBox').split(' ').map(Number);
+    expect(svg.getAttribute('viewBox')).not.toBe(before);
+    expect(x + w).toBeGreaterThanOrEqual(500); // the moved anchor is reachable
+    expect(y + h).toBeGreaterThanOrEqual(500);
+    expect(w).toBe(h); // still square
+  });
+
+  it('UNDOING the escape restores the opening framing (no stranded speck)', () => {
+    renderEditor();
+    const svg = screen.getByTestId('motif-editor-canvas');
+    const opening = svg.getAttribute('viewBox');
+    fireEvent.pointerDown(svg, { clientX: 2, clientY: 2, pointerId: 1 });
+    fireEvent.pointerMove(svg, { clientX: 500, clientY: 500, pointerId: 1 });
+    fireEvent.pointerUp(svg, { clientX: 500, clientY: 500, pointerId: 1 });
+    expect(svg.getAttribute('viewBox')).not.toBe(opening);
+    fireEvent.keyDown(screen.getByTestId('motif-editor-dialog'), {
+      key: 'z',
+      metaKey: true,
+    });
+    expect(svg.getAttribute('viewBox')).toBe(opening);
+  });
+
+  it('does NOT move the frame for an edit that stays inside it', () => {
+    renderEditor();
+    const svg = screen.getByTestId('motif-editor-canvas');
+    const before = svg.getAttribute('viewBox');
+    fireEvent.pointerDown(svg, { clientX: 2, clientY: 2, pointerId: 1 });
+    fireEvent.pointerMove(svg, { clientX: 4, clientY: 4, pointerId: 1 });
+    fireEvent.pointerUp(svg, { clientX: 4, clientY: 4, pointerId: 1 });
+    expect(svg.getAttribute('viewBox')).toBe(before);
   });
 });

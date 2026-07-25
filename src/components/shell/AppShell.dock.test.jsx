@@ -33,13 +33,15 @@ function DockProbe() {
 }
 
 describe("AppShell dock restructure (WI-4)", () => {
-  it("right dock (default): renders the w-72 right column inside the body, no bottom row", () => {
+  it("right dock (default): renders the 288px right column inside the body, no bottom row", () => {
     localStorage.setItem(POSITION_KEY, "right");
     render(<AppShell />);
 
     const inspector = screen.getByRole("region", { name: "Inspector" });
     const rightColumn = inspector.parentElement;
-    expect(rightColumn.className).toContain("w-72");
+    // Width is now state-driven + resizable (see AppShell.inspectorResize.test),
+    // defaulting to the 288px rail the old `w-72` class hard-coded.
+    expect(rightColumn.style.width).toBe("288px");
     expect(rightColumn.className).toContain("flex");
     expect(rightColumn.className).toContain("flex-col");
     expect(rightColumn.className).toContain("shrink-0");
@@ -57,10 +59,14 @@ describe("AppShell dock restructure (WI-4)", () => {
     const bottomRow = screen.getByTestId("inspector-bottom-row");
     expect(bottomRow).toBeInTheDocument();
 
-    // The Inspector region now lives in the bottom row, not in a w-72 column.
+    // The Inspector region now lives in the bottom row, not in a fixed-width
+    // right column: its parent IS the bottom row, and carries no width style.
     const inspector = screen.getByRole("region", { name: "Inspector" });
     expect(bottomRow).toContainElement(inspector);
-    expect(inspector.parentElement.className).not.toContain("w-72");
+    expect(inspector.parentElement).toBe(bottomRow);
+    expect(inspector.parentElement.style.width).toBe("");
+    // ...and the right column's resize handle is gone with it.
+    expect(screen.queryByTestId("inspector-panel-resize")).not.toBeInTheDocument();
 
     // DOM order: body row, THEN bottom row, THEN status bar.
     const body = bodyRow();

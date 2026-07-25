@@ -9,6 +9,8 @@ import { describe, it, expect } from "vitest";
 import { render } from "@testing-library/react";
 import RhythmStrip from "./RhythmStrip";
 import { STARTER_CHIPS } from "../../lib/motif/starterChips";
+import { MOTIF_GLYPHS } from "../../lib/motif/glyphs";
+import { glyphBBox } from "../../lib/motif/glyphBounds";
 
 const chip = (id) => STARTER_CHIPS.find((c) => c.id === id);
 const chainOf = (id, host = "grid") => chip(id).build(host).binding.chain;
@@ -86,6 +88,58 @@ describe("RhythmStrip — vine sequence (worked example: base-at-origin leaf, 18
     const { container } = render(<RhythmStrip chain={chainOf("vine")} />);
     const rosettes = container.querySelectorAll('[data-mark="glyph"][data-glyph="rosette"]');
     expect(rosettes.length).toBeGreaterThanOrEqual(1);
+  });
+
+  // The de-root fix below must not disturb THIS reading. leaf/rosette omit
+  // `root`, so their de-root term is an identity and their transform has to
+  // stay byte-identical — pinned literally, because a drifting leaf transform
+  // is precisely how the above/below vine alternation would silently break.
+  it("root-less built-ins keep a byte-identical transform (no de-root term)", () => {
+    const { container } = render(<RhythmStrip chain={chainOf("vine")} />);
+    const leaves = container.querySelectorAll('[data-mark="glyph"][data-glyph="leaf"]');
+    const t = leaves[0].getAttribute("transform");
+    // translate · rotate · scale, and NOTHING after the scale.
+    expect(t).toMatch(/^translate\([^)]*\) rotate\([^)]*\) scale\([^)]*\)$/);
+    expect(t).not.toMatch(/translate\([^)]*\)\s*$/);
+  });
+});
+
+describe("RhythmStrip — imported glyphs are de-rooted onto the rule", () => {
+  // The bug: `viewRadius` is the max distance from a glyph's ROOT, not from its
+  // local origin. An SVG import keeps its source user space (the vector
+  // built-ins sit ~96 units across, centred near (55.5, 55.5)), so scaling
+  // without first sending the root to the origin flings the mark far off the
+  // 112×16 strip — it renders blank. placementMatrix does this on canvas; the
+  // strip has to mirror it.
+  const importedChain = (glyphRef) => [
+    { type: "route", roles: ["edge"], pathScope: "all" },
+    { type: "sequence", mode: "cycle", slots: [{ glyphRef }] },
+  ];
+
+  it("appends the root pre-transform for a rooted (imported) glyph", () => {
+    const { container } = render(<RhythmStrip chain={importedChain("slice100")} />);
+    const mark = container.querySelector('[data-mark="glyph"][data-glyph="slice100"]');
+    expect(mark).not.toBeNull();
+    const t = mark.getAttribute("transform");
+    // slice100's root is bbox bottom-centre (55.82, 84.38) — the trailing
+    // translate must negate it.
+    expect(t).toMatch(/translate\(-55\.82 -84\.38\)$/);
+  });
+
+  it("lands the drawn art on the rule instead of off-strip", () => {
+    const { container } = render(<RhythmStrip chain={importedChain("slice100")} />);
+    const mark = container.querySelector('[data-mark="glyph"][data-glyph="slice100"]');
+    const t = mark.getAttribute("transform");
+    const [, sx] = /scale\((-?[\d.]+)\)/.exec(t);
+    const [, rx, ry] = /translate\((-?[\d.]+) (-?[\d.]+)\)$/.exec(t);
+    const [, px] = /^translate\((-?[\d.]+)/.exec(t);
+    // The glyph's bbox centre, pushed through scale · de-root, must sit within
+    // the strip's 112×16 bounds rather than ~55*scale away from the mark.
+    const g = MOTIF_GLYPHS.slice100;
+    const b = glyphBBox(g);
+    const offset = Math.hypot((b.cx + Number(rx)) * sx, (b.cy + Number(ry)) * sx);
+    expect(offset).toBeLessThan(8); // within half the strip height of the mark
+    expect(Number(px)).toBeGreaterThan(0);
   });
 });
 

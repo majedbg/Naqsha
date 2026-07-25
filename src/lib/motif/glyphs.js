@@ -1,9 +1,19 @@
 // Motif glyph library — pure data, no p5/DOM/React.
 //
-// A glyph is authored in a LOCAL coordinate system centered at the origin
-// (0,0). `viewRadius` is the radius of the glyph's bounding circle in that
-// local space; the instancing stage (instancing.js) scales this up to a
-// placement's absolute footprint radius.
+// A glyph is authored in a LOCAL coordinate system. The ANCHOR of that system
+// is the glyph's `root` — NOT the origin — and `viewRadius` is the max distance
+// from the root to any glyph point; the instancing stage (instancing.js) scales
+// that up to a placement's absolute footprint radius after sending the root to
+// the origin (placementMatrix's trailing R(−root.angle)·T(−root)).
+//
+// The four hand-authored built-ins below omit `root`, so for THEM the anchor is
+// the origin and the art straddles it. That is a property of those four, not an
+// invariant of the format: every SVG import (the 58 vector built-ins, and any
+// user import) keeps its source document's user space, so its art can sit
+// anywhere — the vector built-ins all cluster around (55.5, 55.5). Anything
+// framing a glyph for DISPLAY must therefore measure the paths (see
+// glyphBounds.js) or de-root them; assuming an origin-centered box silently
+// clips or blanks every import.
 //
 // See docs/motif-adorn-arch-brief.md §8/§9 for house conventions.
 

@@ -44,8 +44,11 @@ function composeMatrix(m1, m2) {
 
 /**
  * Build the SVG-convention affine matrix that maps a glyph authored in local
- * coordinates (bounding-circle radius `viewRadius`, centered at the origin)
- * onto a concrete placement.
+ * coordinates onto a concrete placement. `viewRadius` is the bounding-circle
+ * radius measured from the glyph's ROOT (the origin only when the glyph omits a
+ * root — see glyphs.js; SVG imports keep their source user space and sit well
+ * away from it), which is why the root pre-transform below runs BEFORE the
+ * scale: it puts the centre of that circle at the origin.
  *
  * WI-2 — optional motif ROOT: a point `(root.x, root.y)` and growth-direction
  * `root.angle` (degrees), both in the glyph's LOCAL frame. The matrix maps the

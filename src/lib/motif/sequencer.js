@@ -285,3 +285,27 @@ export function isSequenceBlock(seq) {
   const hasZones = Array.isArray(seq.zones) && seq.zones.length > 0;
   return hasSlots || hasZones;
 }
+
+/**
+ * The Slots a Block holds, FLAT or ZONED — the one place the "a zoned block's
+ * slots are its zones' slots" reading rule lives, so no consumer has to know the
+ * two shapes. A flat block reads as its own `slots`; a zoned block (ADR 0008)
+ * reads as its zones' slots concatenated in zone order. Total and non-throwing:
+ * anything without either field (a route/everyN/… block, null, an array) reads
+ * as `[]`.
+ *
+ * FOR SET QUESTIONS ONLY — "which glyphs could this block stamp?", "is this
+ * glyph referenced?". The returned array must NOT be indexed by an Assignment's
+ * `slotIndex`: zoned indices are ZONE-LOCAL (dealZone indexes within one zone),
+ * so they do not address this flattened list. An Assignment already carries the
+ * resolved glyphRef/sizeScale/rotationOffset/flip — resolve from it, not here.
+ * @param {*} seq
+ * @returns {Slot[]}
+ */
+export function sequenceSlots(seq) {
+  if (seq == null || typeof seq !== 'object' || Array.isArray(seq)) return [];
+  if (Array.isArray(seq.zones)) {
+    return seq.zones.flatMap((z) => (z && Array.isArray(z.slots) ? z.slots : []));
+  }
+  return Array.isArray(seq.slots) ? seq.slots : [];
+}

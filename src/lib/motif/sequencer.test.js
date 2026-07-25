@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { dealSlots, isSequenceBlock } from './sequencer.js';
+import { dealSlots, isSequenceBlock, sequenceSlots } from './sequencer.js';
 
 // --- helpers -------------------------------------------------------------
 // Minimal survivor Anchor factory. dealSlots only reads `id` (random deal +
@@ -413,5 +413,35 @@ describe('isSequenceBlock — recognizes the ZONED form (gate that lets zoned bl
 
   it('rejects an empty zones array (nothing to deal ⇒ not a live sequence block)', () => {
     expect(isSequenceBlock({ type: 'sequence', zones: [] })).toBe(false);
+  });
+});
+
+describe('sequenceSlots — "the slots of a block", flat or zoned', () => {
+  it('a FLAT block reads as its own slots (same array contents, in order)', () => {
+    const slots = [{ glyphRef: 'A' }, { rest: true }];
+    expect(sequenceSlots({ type: 'sequence', slots })).toEqual(slots);
+  });
+
+  it('a ZONED block reads as its zones’ slots, concatenated in zone order', () => {
+    expect(
+      sequenceSlots({
+        type: 'sequence',
+        zones: [
+          { zone: 'apex', slots: [{ glyphRef: 'rosette' }] },
+          { zone: 'stem', slots: [{ glyphRef: 'leaf' }, { glyphRef: 'leaf', rotationOffset: 180 }] },
+        ],
+      }),
+    ).toEqual([
+      { glyphRef: 'rosette' },
+      { glyphRef: 'leaf' },
+      { glyphRef: 'leaf', rotationOffset: 180 },
+    ]);
+  });
+
+  it('never throws on absent/degenerate input — always an array', () => {
+    expect(sequenceSlots(null)).toEqual([]);
+    expect(sequenceSlots({ type: 'route', roles: ['edge'] })).toEqual([]);
+    expect(sequenceSlots({ type: 'sequence', zones: [{ zone: 'stem' }, null] })).toEqual([]);
+    expect(sequenceSlots([{ glyphRef: 'A' }])).toEqual([]); // an array is not a block
   });
 });

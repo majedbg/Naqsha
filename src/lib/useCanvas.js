@@ -12,7 +12,7 @@ import { capturePolylines } from './motif/capturePolylines';
 import { isEdgeHost } from './motif/hostKinds';
 import { isMotifLayer } from './motif/motifLayer';
 import { getGlyph } from './motif/glyphs';
-import { isSequenceBlock } from './motif/sequencer';
+import { isSequenceBlock, sequenceSlots } from './motif/sequencer';
 import { handlesFor } from './transform/handles';
 import { drawTextNode } from './text/drawTextNode';
 import { isTextLayer, textNodeFromLayer } from './text/textLayer';
@@ -491,18 +491,23 @@ export default function useCanvas(
       //     that doesn't resolve is simply absent from the map (MotifPattern skips
       //     that instance). Built-in-only motifs (no sequence) inject a map of just
       //     the base glyph → byte-identical (unsequenced placements never consult
-      //     the map).
+      //     the map). A ZONED sequence (ADR 0008) keeps its slots under
+      //     `zones[].slots` and carries NO flat `slots`, so the refs are read via
+      //     `sequenceSlots` — reading `block.slots` directly THREW here (the whole
+      //     frame aborts: this runs above the per-layer render guard below), and a
+      //     mere guard would silently drop every zone glyph from the map.
       if (isMotifLayer(layer)) {
         const baseGlyph = getGlyph(renderParams.glyphRef, customGlyphs);
         if (baseGlyph) renderParams = { ...renderParams, glyph: baseGlyph };
-        // Collect every glyphRef the layer could stamp: base + Sequencer slots.
+        // Collect every glyphRef the layer could stamp: base + Sequencer slots
+        // (flat slots, or every Zone's slots when the block is zoned).
         const refs = new Set();
         if (renderParams.glyphRef != null) refs.add(renderParams.glyphRef);
         const chain = layer.params?.binding?.chain;
         if (Array.isArray(chain)) {
           for (const block of chain) {
             if (!isSequenceBlock(block)) continue;
-            for (const slot of block.slots) {
+            for (const slot of sequenceSlots(block)) {
               if (slot && slot.glyphRef != null) refs.add(slot.glyphRef);
             }
           }

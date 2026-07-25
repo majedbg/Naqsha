@@ -169,8 +169,23 @@ describe('leaf glyph — base-at-origin hanging blade (design 2026-07)', () => {
 });
 
 describe('MOTIF_GLYPHS registry', () => {
-  it('has exactly 4 entries', () => {
-    expect(Object.keys(MOTIF_GLYPHS).length).toBe(4);
+  it('still contains the four hand-authored core glyphs', () => {
+    for (const id of ['leaf', 'dot', 'diamond', 'rosette']) {
+      expect(MOTIF_GLYPHS[id]).toBeDefined();
+      expect(MOTIF_GLYPHS[id].id).toBe(id);
+    }
+  });
+
+  // Core four + 58 vector-motif SVGs flattened in via vectorMotifsGlyphs.js.
+  it('has 62 entries (4 core + 58 vector motifs)', () => {
+    expect(Object.keys(MOTIF_GLYPHS).length).toBe(62);
+  });
+
+  it('every entry is keyed by its own id, with a positive viewRadius', () => {
+    for (const [key, g] of Object.entries(MOTIF_GLYPHS)) {
+      expect(g.id).toBe(key);
+      expect(g.viewRadius).toBeGreaterThan(0);
+    }
   });
 });
 

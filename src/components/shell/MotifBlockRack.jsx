@@ -22,7 +22,7 @@
 // C4. sequence is a minimal shell — its slot strip is C3. A `field` block has no
 // source picker yet (deferred), so it is inert until C3/C4/a later slice wires one.
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef, useId } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import {
@@ -54,7 +54,14 @@ import {
   removeSlot,
   reorderSlots,
   setSlot,
+  addZoneSlot,
+  removeZoneSlot,
+  reorderZoneSlots,
+  setZoneSlot,
+  setZoneMode,
+  setZoneEnds,
 } from "../../lib/motif/chainEditor";
+import { GlyphPickerFlyout } from "./GlyphPickerChip";
 import { getGlyph, MOTIF_GLYPHS } from "../../lib/motif/glyphs.js";
 import { sieveCounts } from "../../lib/motif/sieveCounts.js";
 import ScrubNumeral from "../ui/ScrubNumeral";
@@ -484,8 +491,11 @@ function SortableSlotChip({
   index,
   isRandom,
   customGlyphs,
+  libraryMotifs,
   baseGlyphRef,
   onEditGlyph,
+  onSwapGlyph,
+  onManageLibrary,
   onPatch,
   onRemove,
 }) {
@@ -502,6 +512,19 @@ function SortableSlotChip({
   const rr = slot?.rotationRandom;
   const angleOn = !!rr;
   const weight = slot?.weight != null ? slot.weight : 1;
+
+  // Slot glyph-swap picker (Feature B). The preview button IS the trigger; the
+  // flyout is the SAME GlyphPickerFlyout the row chip uses. `firstTile` pins the
+  // slot's CURRENT glyph as tile #1 with a pencil badge that opens the pen
+  // editor (the old direct-to-editor click). The trigger doubles as the
+  // outside-click root, so re-clicking it toggles rather than dismisses.
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const previewRef = useRef(null);
+  const pickerId = useId();
+  const closePicker = (restoreFocus = true) => {
+    setPickerOpen(false);
+    if (restoreFocus) previewRef.current?.focus();
+  };
 
   return (
     <div
@@ -543,22 +566,54 @@ function SortableSlotChip({
           Rest
         </div>
       ) : (
-        <button
-          type="button"
-          data-testid="motif-slot-edit"
-          aria-label="Edit slot glyph"
-          title="Edit this slot's glyph"
-          onClick={() => onEditGlyph(index, effectiveRef)}
-          className="flex h-10 items-center justify-center rounded-xs border border-hairline bg-paper-warm text-ink-soft hover:border-violet hover:text-ink"
-        >
-          <svg width="24" height="24" viewBox="-12 -12 24 24" aria-hidden="true">
-            {glyph?.paths?.[0]?.d ? (
-              <path d={glyph.paths[0].d} fill="none" stroke="currentColor" strokeWidth="1.5" />
-            ) : (
-              <circle r="6" fill="none" stroke="currentColor" strokeWidth="1" strokeDasharray="2 2" />
-            )}
-          </svg>
-        </button>
+        <>
+          <button
+            type="button"
+            ref={previewRef}
+            data-testid="motif-slot-edit"
+            aria-label="Swap slot glyph"
+            aria-haspopup="dialog"
+            aria-expanded={pickerOpen}
+            aria-controls={pickerId}
+            title="Swap this slot's glyph"
+            onClick={() => (pickerOpen ? closePicker() : setPickerOpen(true))}
+            className={`flex h-10 items-center justify-center rounded-xs border bg-paper-warm text-ink-soft hover:border-violet hover:text-ink ${
+              pickerOpen ? "border-accent/60" : "border-hairline"
+            }`}
+          >
+            <svg width="24" height="24" viewBox="-12 -12 24 24" aria-hidden="true">
+              {glyph?.paths?.[0]?.d ? (
+                <path d={glyph.paths[0].d} fill="none" stroke="currentColor" strokeWidth="1.5" />
+              ) : (
+                <circle r="6" fill="none" stroke="currentColor" strokeWidth="1" strokeDasharray="2 2" />
+              )}
+            </svg>
+          </button>
+          {pickerOpen && (
+            <GlyphPickerFlyout
+              onRequestClose={closePicker}
+              triggerRef={previewRef}
+              rootRef={previewRef}
+              flyoutId={pickerId}
+              glyphRef={effectiveRef}
+              customGlyphs={customGlyphs}
+              libraryMotifs={libraryMotifs}
+              onManageLibrary={onManageLibrary}
+              onPick={(payload) => onSwapGlyph(index, payload)}
+              firstTile={{
+                glyphId: effectiveRef,
+                glyph,
+                name: glyph?.name || effectiveRef || "Current",
+                onEdit: () => {
+                  // Close WITHOUT refocusing the preview — the pen editor takes
+                  // over focus — then open the editor for this slot.
+                  closePicker(false);
+                  onEditGlyph(index, effectiveRef);
+                },
+              }}
+            />
+          )}
+        </>
       )}
 
       {/* Weight — Random mode only (positional in Cycle). Rests carry a weight too. */}
@@ -645,21 +700,128 @@ function SortableSlotChip({
   );
 }
 
-function SequenceCardBody({
-  block,
-  seqIndex,
-  onEditChain,
-  customGlyphs,
-  baseGlyphRef,
-  onEditSlotGlyph,
+// Cycle | Random deal toggle, shared by the flat Sequencer and each Zone. The
+// Continuous checkbox (a CYCLE-mode control, documented no-op in Random — D10)
+// renders only when `continuousTestid` is supplied (the flat card; zones omit
+// it — their per-path restart is a zone-aware engine default per ADR 0008).
+function DealModeToggle({
+  mode,
+  continuous,
+  modeTestid,
+  continuousTestid,
+  onSetMode,
+  onSetContinuous,
 }) {
-  const slots = Array.isArray(block.slots) ? block.slots : [];
-  const isRandom = block.mode === "random";
+  const isRandom = (mode || "cycle") === "random";
+  return (
+    <div className="flex items-center gap-1" data-testid={modeTestid}>
+      {["cycle", "random"].map((m) => {
+        const active = (mode || "cycle") === m;
+        return (
+          <button
+            key={m}
+            type="button"
+            data-testid={`${modeTestid}-${m}`}
+            aria-pressed={active}
+            onClick={() => onSetMode(m)}
+            className={`rounded-xs border px-2 py-0.5 text-2xs font-medium capitalize transition-colors ${
+              active
+                ? "border-violet bg-violet/15 text-ink"
+                : "border-hairline bg-paper text-ink-soft hover:border-violet"
+            }`}
+          >
+            {m}
+          </button>
+        );
+      })}
+      {continuousTestid && !isRandom && (
+        <label className="ml-1 flex items-center gap-1 text-2xs text-ink-soft">
+          <input
+            type="checkbox"
+            data-testid={continuousTestid}
+            aria-label="Continuous across paths"
+            checked={!!continuous}
+            onChange={(e) => onSetContinuous(e.target.checked)}
+          />
+          <span>Continuous</span>
+        </label>
+      )}
+    </div>
+  );
+}
 
-  // Positional slot ids for the NESTED sortable (stable within a drag — a drag
-  // never adds/removes a slot). Separate sensors + DndContext from the block rack
-  // so a slot drag is fully isolated from its parent block's drag.
-  const slotIds = slots.map((_, i) => `slot-${i}`);
+// The Apex end-selector (ADR 0008): which strand end flowers — both / upper /
+// lower. Rendered as inline VECTOR arrows (never text arrows): a double-headed
+// vertical arrow for 'both', a single up/down arrow otherwise. The choice is
+// SPATIAL (y-then-x), never drawing order — the vertical arrow reads that.
+const END_OPTIONS = [
+  { value: "both", label: "Both ends", d: "M8 3v10M5 6l3-3 3 3M5 10l3 3 3-3" },
+  { value: "up", label: "Upper end", d: "M8 3v10M5 6l3-3 3 3" },
+  { value: "down", label: "Lower end", d: "M8 3v10M5 10l3 3 3-3" },
+];
+
+function EndSelector({ ends, onSetEnds }) {
+  const value = ends || "both";
+  return (
+    <div className="flex items-center gap-1" data-testid="motif-zone-ends">
+      {END_OPTIONS.map((o) => {
+        const active = value === o.value;
+        return (
+          <button
+            key={o.value}
+            type="button"
+            aria-label={o.label}
+            aria-pressed={active}
+            title={o.label}
+            onClick={() => onSetEnds(o.value)}
+            className={`flex h-6 w-6 items-center justify-center rounded-xs border transition-colors ${
+              active
+                ? "border-violet bg-violet/15 text-ink"
+                : "border-hairline bg-paper text-ink-soft hover:border-violet"
+            }`}
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.4"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d={o.d} />
+            </svg>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// The horizontal slot strip (nested, isolated dnd) + the + Glyph / + Rest
+// adders. Shared by the flat Sequencer and every Zone; the caller binds the
+// slot ops (flat vs zone-addressed) and passes a unique `idPrefix` so each
+// zone's drag ids never collide. Cross-strip drag is not supported — each strip
+// owns its own DndContext, so a drag never crosses a zone boundary.
+function SlotStrip({
+  slots,
+  isRandom,
+  idPrefix,
+  customGlyphs,
+  libraryMotifs,
+  baseGlyphRef,
+  onManageLibrary,
+  onReorder,
+  onAddGlyph,
+  onAddRest,
+  onSetSlot,
+  onRemoveSlot,
+  onEditSlot,
+  onSwapSlot,
+}) {
+  const slotIds = slots.map((_, i) => `${idPrefix}-${i}`);
   const slotSensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 5 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 5 } }),
@@ -671,52 +833,11 @@ function SequenceCardBody({
     const from = slotIds.indexOf(active.id);
     const to = slotIds.indexOf(over.id);
     if (from === -1 || to === -1) return;
-    onEditChain((c) => reorderSlots(c, seqIndex, from, to));
+    onReorder(from, to);
   };
 
-  const setMode = (mode) => onEditChain((c) => setBlock(c, seqIndex, { mode }));
-
   return (
-    <div className="space-y-2">
-      {/* Cycle | Random deal mode. */}
-      <div className="flex items-center gap-1" data-testid="motif-seq-mode">
-        {["cycle", "random"].map((m) => {
-          const active = (block.mode || "cycle") === m;
-          return (
-            <button
-              key={m}
-              type="button"
-              data-testid={`motif-seq-mode-${m}`}
-              aria-pressed={active}
-              onClick={() => setMode(m)}
-              className={`rounded-xs border px-2 py-0.5 text-2xs font-medium capitalize transition-colors ${
-                active
-                  ? "border-violet bg-violet/15 text-ink"
-                  : "border-hairline bg-paper text-ink-soft hover:border-violet"
-              }`}
-            >
-              {m}
-            </button>
-          );
-        })}
-        {/* Continuous — a CYCLE-mode control (documented no-op in Random, D10). */}
-        {!isRandom && (
-          <label className="ml-1 flex items-center gap-1 text-2xs text-ink-soft">
-            <input
-              type="checkbox"
-              data-testid="motif-seq-continuous"
-              aria-label="Continuous across paths"
-              checked={!!block.continuous}
-              onChange={(e) =>
-                onEditChain((c) => setBlock(c, seqIndex, { continuous: e.target.checked }))
-              }
-            />
-            <span>Continuous</span>
-          </label>
-        )}
-      </div>
-
-      {/* Horizontal slot strip (nested, isolated dnd). */}
+    <>
       <DndContext
         sensors={slotSensors}
         collisionDetection={closestCenter}
@@ -740,12 +861,13 @@ function SequenceCardBody({
                 index={i}
                 isRandom={isRandom}
                 customGlyphs={customGlyphs}
+                libraryMotifs={libraryMotifs}
                 baseGlyphRef={baseGlyphRef}
-                onEditGlyph={(slotIndex, glyphRef) =>
-                  onEditSlotGlyph(seqIndex, slotIndex, glyphRef)
-                }
-                onPatch={(patch) => onEditChain((c) => setSlot(c, seqIndex, i, patch))}
-                onRemove={() => onEditChain((c) => removeSlot(c, seqIndex, i))}
+                onManageLibrary={onManageLibrary}
+                onEditGlyph={(slotIndex, glyphRef) => onEditSlot(slotIndex, glyphRef)}
+                onSwapGlyph={(slotIndex, payload) => onSwapSlot(slotIndex, payload)}
+                onPatch={(patch) => onSetSlot(i, patch)}
+                onRemove={() => onRemoveSlot(i)}
               />
             ))}
           </div>
@@ -757,9 +879,7 @@ function SequenceCardBody({
           type="button"
           data-testid="motif-slot-add"
           aria-label="Add glyph slot"
-          onClick={() =>
-            onEditChain((c) => addSlot(c, seqIndex, { glyphRef: baseGlyphRef }))
-          }
+          onClick={onAddGlyph}
           className="rounded-xs border border-hairline bg-paper px-2 py-0.5 text-2xs text-ink-soft hover:border-violet hover:text-ink"
         >
           + Glyph
@@ -768,12 +888,163 @@ function SequenceCardBody({
           type="button"
           data-testid="motif-slot-add-rest"
           aria-label="Add rest"
-          onClick={() => onEditChain((c) => addSlot(c, seqIndex, { rest: true }))}
+          onClick={onAddRest}
           className="rounded-xs border border-hairline bg-paper px-2 py-0.5 text-2xs text-ink-soft hover:border-violet hover:text-ink"
         >
           + Rest
         </button>
       </div>
+    </>
+  );
+}
+
+// Maker-facing Zone vocabulary (CONTEXT.md — Apex/Stem). The ⓘ tooltip copy is
+// the short maker-facing explanation of each Zone.
+const ZONE_LABELS = { apex: "Apex", stem: "Stem" };
+const ZONE_TOOLTIPS = {
+  apex: "The ends of each path — where the vine flowers. A closed loop has no Apex.",
+  stem: "The body of the path — interior points and junctions, where leaves sprout.",
+};
+
+// One Zone SECTION of a zoned Sequencer (ADR 0008): a titled partition with its
+// own deal toggle, the Apex-only end-selector, and its own slot strip. Every
+// mutation is zone-addressed by the Zone's `zone` FIELD (never its array index).
+function ZoneSection({
+  zone,
+  seqIndex,
+  onEditChain,
+  customGlyphs,
+  libraryMotifs,
+  baseGlyphRef,
+  onManageLibrary,
+  onEditSlotGlyph,
+  onSwapSlotGlyph,
+}) {
+  const zoneId = zone.zone;
+  const slots = Array.isArray(zone.slots) ? zone.slots : [];
+  const isRandom = zone.mode === "random";
+  const isApex = zoneId === "apex";
+  const name = ZONE_LABELS[zoneId] || zoneId;
+
+  return (
+    <div
+      data-testid="motif-zone"
+      data-zone={zoneId}
+      className="space-y-2 rounded-xs border border-hairline/70 bg-paper/40 p-1.5"
+    >
+      <div className="flex items-center gap-1">
+        <span className="text-2xs font-semibold uppercase tracking-wider text-ink-soft">
+          {name}
+        </span>
+        {/* Info affordance — hover/focus tooltip explains the Zone (title idiom;
+            no reusable shell Tooltip to couple to). */}
+        <button
+          type="button"
+          data-testid="motif-zone-info"
+          aria-label={`About ${name}`}
+          title={ZONE_TOOLTIPS[zoneId] || ""}
+          className="flex h-4 w-4 items-center justify-center rounded-full border border-hairline text-2xs leading-none text-ink-soft/70 hover:text-ink"
+        >
+          <span aria-hidden="true">i</span>
+        </button>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <DealModeToggle
+          mode={zone.mode}
+          modeTestid="motif-zone-mode"
+          onSetMode={(m) => onEditChain((c) => setZoneMode(c, seqIndex, zoneId, { mode: m }))}
+        />
+        {isApex && (
+          <EndSelector
+            ends={zone.ends}
+            onSetEnds={(e) => onEditChain((c) => setZoneEnds(c, seqIndex, zoneId, e))}
+          />
+        )}
+      </div>
+
+      <SlotStrip
+        slots={slots}
+        isRandom={isRandom}
+        idPrefix={`zone-${zoneId}`}
+        customGlyphs={customGlyphs}
+        libraryMotifs={libraryMotifs}
+        baseGlyphRef={baseGlyphRef}
+        onManageLibrary={onManageLibrary}
+        onReorder={(f, t) => onEditChain((c) => reorderZoneSlots(c, seqIndex, zoneId, f, t))}
+        onAddGlyph={() => onEditChain((c) => addZoneSlot(c, seqIndex, zoneId, { glyphRef: baseGlyphRef }))}
+        onAddRest={() => onEditChain((c) => addZoneSlot(c, seqIndex, zoneId, { rest: true }))}
+        onSetSlot={(i, patch) => onEditChain((c) => setZoneSlot(c, seqIndex, zoneId, i, patch))}
+        onRemoveSlot={(i) => onEditChain((c) => removeZoneSlot(c, seqIndex, zoneId, i))}
+        onEditSlot={(i, ref) => onEditSlotGlyph(seqIndex, i, ref, zoneId)}
+        onSwapSlot={(i, payload) => onSwapSlotGlyph({ seqIndex, zone: zoneId, slotIndex: i }, payload)}
+      />
+    </div>
+  );
+}
+
+function SequenceCardBody({
+  block,
+  seqIndex,
+  onEditChain,
+  customGlyphs,
+  libraryMotifs,
+  baseGlyphRef,
+  onManageLibrary,
+  onEditSlotGlyph,
+  onSwapSlotGlyph,
+}) {
+  // ZONED (ADR 0008): one SECTION per Zone instead of the flat slot row.
+  if (Array.isArray(block.zones)) {
+    return (
+      <div className="space-y-2" data-testid="motif-seq-zones">
+        {block.zones.map((zone) => (
+          <ZoneSection
+            key={zone.zone}
+            zone={zone}
+            seqIndex={seqIndex}
+            onEditChain={onEditChain}
+            customGlyphs={customGlyphs}
+            libraryMotifs={libraryMotifs}
+            baseGlyphRef={baseGlyphRef}
+            onManageLibrary={onManageLibrary}
+            onEditSlotGlyph={onEditSlotGlyph}
+            onSwapSlotGlyph={onSwapSlotGlyph}
+          />
+        ))}
+      </div>
+    );
+  }
+
+  // FLAT — today's rendering exactly (one run of Slots over every survivor).
+  const slots = Array.isArray(block.slots) ? block.slots : [];
+  const isRandom = block.mode === "random";
+  return (
+    <div className="space-y-2">
+      <DealModeToggle
+        mode={block.mode}
+        continuous={block.continuous}
+        modeTestid="motif-seq-mode"
+        continuousTestid="motif-seq-continuous"
+        onSetMode={(m) => onEditChain((c) => setBlock(c, seqIndex, { mode: m }))}
+        onSetContinuous={(v) => onEditChain((c) => setBlock(c, seqIndex, { continuous: v }))}
+      />
+      <SlotStrip
+        slots={slots}
+        isRandom={isRandom}
+        idPrefix="slot"
+        customGlyphs={customGlyphs}
+        libraryMotifs={libraryMotifs}
+        baseGlyphRef={baseGlyphRef}
+        onManageLibrary={onManageLibrary}
+        onReorder={(f, t) => onEditChain((c) => reorderSlots(c, seqIndex, f, t))}
+        onAddGlyph={() => onEditChain((c) => addSlot(c, seqIndex, { glyphRef: baseGlyphRef }))}
+        onAddRest={() => onEditChain((c) => addSlot(c, seqIndex, { rest: true }))}
+        onSetSlot={(i, patch) => onEditChain((c) => setSlot(c, seqIndex, i, patch))}
+        onRemoveSlot={(i) => onEditChain((c) => removeSlot(c, seqIndex, i))}
+        onEditSlot={(i, ref) => onEditSlotGlyph(seqIndex, i, ref)}
+        onSwapSlot={(i, payload) => onSwapSlotGlyph({ seqIndex, slotIndex: i }, payload)}
+      />
     </div>
   );
 }
@@ -788,8 +1059,11 @@ function BlockCardBody({
   onPatch,
   onEditChain,
   customGlyphs,
+  libraryMotifs,
   baseGlyphRef,
+  onManageLibrary,
   onEditSlotGlyph,
+  onSwapSlotGlyph,
 }) {
   switch (block.type) {
     case "route":
@@ -818,8 +1092,11 @@ function BlockCardBody({
           seqIndex={index}
           onEditChain={onEditChain}
           customGlyphs={customGlyphs}
+          libraryMotifs={libraryMotifs}
           baseGlyphRef={baseGlyphRef}
+          onManageLibrary={onManageLibrary}
           onEditSlotGlyph={onEditSlotGlyph}
+          onSwapSlotGlyph={onSwapSlotGlyph}
         />
       );
     default:
@@ -933,8 +1210,11 @@ function SortableBlockCard({
   onRemove,
   onEditChain,
   customGlyphs,
+  libraryMotifs,
   baseGlyphRef,
+  onManageLibrary,
   onEditSlotGlyph,
+  onSwapSlotGlyph,
   // Anchor-sieve numbers for THIS block (nullable — only when host anchors were
   // resolvable). `stage` is {inCount, outCount}; `placedCount` is the terminal
   // Sequencer's non-rest placement count for its header chip.
@@ -1003,8 +1283,11 @@ function SortableBlockCard({
       onPatch={onPatch}
       onEditChain={onEditChain}
       customGlyphs={customGlyphs}
+      libraryMotifs={libraryMotifs}
       baseGlyphRef={baseGlyphRef}
+      onManageLibrary={onManageLibrary}
       onEditSlotGlyph={onEditSlotGlyph}
+      onSwapSlotGlyph={onSwapSlotGlyph}
     />
   );
 
@@ -1129,8 +1412,16 @@ export default function MotifBlockRack({
   armedRouteIndex = null,
   onArmRoute,
   customGlyphs,
+  libraryMotifs,
   baseGlyphRef,
+  onManageLibrary,
   onEditSlotGlyph,
+  // Slot glyph-swap (Feature B). `onSwapSlotGlyph(address, payload)` where
+  // address is {seqIndex, slotIndex} (flat) or {seqIndex, zone, slotIndex}
+  // (zoned) and payload is the GlyphPickerFlyout emission {kind, glyphId,
+  // glyph}. The parent (MotifDevice) owns the builtin/custom-vs-library commit
+  // routing; a bare caller may omit it (the picker still opens, swap is inert).
+  onSwapSlotGlyph = () => {},
 }) {
   const dock = useInspectorDockContext();
   // Orientation follows the rack's ACTUAL width, not the dock position. The rack
@@ -1254,8 +1545,11 @@ export default function MotifBlockRack({
                 onRemove={() => onEditChain((c) => removeBlock(c, i))}
                 onEditChain={onEditChain}
                 customGlyphs={customGlyphs}
+                libraryMotifs={libraryMotifs}
                 baseGlyphRef={baseGlyphRef}
+                onManageLibrary={onManageLibrary}
                 onEditSlotGlyph={onEditSlotGlyph}
+                onSwapSlotGlyph={onSwapSlotGlyph}
               />
             ))}
           </div>

@@ -125,9 +125,18 @@ function marksForChain(chain) {
   const everyN = blocks.find((b) => b && b.type === "everyN");
   const density = blocks.find((b) => b && b.type === "density");
 
-  // sequence — slots in order, repeated to ~TARGET_SLOTS positions.
-  if (sequence && Array.isArray(sequence.slots) && sequence.slots.length) {
-    const slots = sequence.slots;
+  // sequence — slots in order, repeated to ~TARGET_SLOTS positions. A ZONED
+  // sequence (ADR 0008 — `zones`, no flat `slots`) reads as its zones' slots in
+  // stored order (Apex then Stem for the Vine): the strip is a one-glance rhythm
+  // summary, not a placement preview, so flattening the zones is the honest
+  // small-space rendering of "flowers at the ends, leaves along the stem".
+  const seqSlots = sequence
+    ? Array.isArray(sequence.zones)
+      ? sequence.zones.flatMap((z) => (z && Array.isArray(z.slots) ? z.slots : []))
+      : sequence.slots
+    : null;
+  if (sequence && Array.isArray(seqSlots) && seqSlots.length) {
+    const slots = seqSlots;
     const positions = evenXs(TARGET_SLOTS);
     return positions.map((x, i) => {
       const slot = slots[i % slots.length];

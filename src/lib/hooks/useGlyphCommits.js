@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import { sequenceIndex, setSlotGlyphRef } from "../motif/chainEditor";
+import { sequenceIndex, setSlotGlyphRef, setZoneSlotGlyphRef } from "../motif/chainEditor";
 
 // useGlyphCommits — the write-owner for glyph commits (Wave 1, motif-session
 // deepening, #77). CONTEXT.md "Motifs": a Glyph Commit is writing a glyph into
@@ -68,23 +68,36 @@ export default function useGlyphCommits({
   // (the sequence is at-most-one and terminal), never captured at session-open
   // time. Aborts BEFORE the glyph write (no dangling half-commit, mirroring
   // commitNewGlyph's missing-layer guard) if the layer is gone, the binding isn't
-  // chain-form with a sequence, or slotIndex is out of range.
+  // chain-form with a sequence, or the slot address doesn't resolve.
+  //
+  // ZONED sequences (ADR 0008): `zone` addresses a Zone by id ('apex'|'stem'),
+  // and slotIndex indexes WITHIN that zone's slots (the same address form the
+  // rack's zone ops use). The address form must match the block form — a zone
+  // on a flat sequence (or vice versa: no zone on a zoned block, whose flat
+  // `slots` is absent) aborts rather than guessing, so a stale session locator
+  // can never rebind the wrong slot.
   const commitNewGlyphToSlot = useCallback(
-    (glyph, layerId, slotIndex) => {
+    (glyph, layerId, slotIndex, zone) => {
       const layer = layers.find((l) => l.id === layerId);
       if (!layer) return undefined;
       const binding = layer.params?.binding;
       const chain = binding?.chain;
       const seqIdx = sequenceIndex(chain);
       if (seqIdx === -1) return undefined; // not chain-form / no sequence to rebind
-      const slots = chain[seqIdx].slots;
+      const slots =
+        zone != null
+          ? chain[seqIdx].zones?.find((z) => z && z.zone === zone)?.slots
+          : chain[seqIdx].slots;
       if (!Array.isArray(slots) || slotIndex < 0 || slotIndex >= slots.length) {
-        return undefined; // out-of-range slot → no write
+        return undefined; // unresolved zone / out-of-range slot → no write
       }
       let newId;
       recordBatch(() => {
         newId = addCustomGlyph(glyph);
-        const nextChain = setSlotGlyphRef(chain, seqIdx, slotIndex, newId);
+        const nextChain =
+          zone != null
+            ? setZoneSlotGlyphRef(chain, seqIdx, zone, slotIndex, newId)
+            : setSlotGlyphRef(chain, seqIdx, slotIndex, newId);
         updateLayer(layerId, {
           params: { ...layer.params, binding: { ...binding, chain: nextChain } },
         });

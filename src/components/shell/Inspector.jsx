@@ -59,6 +59,10 @@ import {
   readChain,
   ensureChainForm,
 } from "../../lib/motif/motifLayer";
+import {
+  setSlotGlyphRef,
+  setZoneSlotGlyphRef,
+} from "../../lib/motif/chainEditor";
 import { MOTIF_GLYPHS } from "../../lib/motif/glyphs";
 import EtchStackRack from "./EtchStackRack";
 import EtchHighlightHold from "./EtchHighlightHold";
@@ -1029,8 +1033,42 @@ function MotifDevice({
   // `glyphRef` is the slot's effective ref (slot.glyphRef ?? base) resolved in
   // the card. seqIndex is unused by `open` (it derives the at-most-one sequence
   // from the binding) but kept in the signature for locality.
-  const openSlotEditorFor = (m, seqIndex, slotIndex, glyphRef) => {
-    onEditGlyph?.(m.id, glyphRef, { slotIndex });
+  const openSlotEditorFor = (m, seqIndex, slotIndex, glyphRef, zone) => {
+    // Flat slots keep opts EXACTLY {slotIndex} (the Wave-1 slot-commit contract,
+    // useGlyphCommits.commitNewGlyphToSlot). A zoned slot additionally carries
+    // its `zone` for a future zone-aware session; Wave-1 commit-back is flat-only
+    // (a known limitation — the editor OPENS on the zoned slot's glyph, but
+    // Save-as-copy commit-back is not yet wired for zones).
+    onEditGlyph?.(m.id, glyphRef, zone ? { slotIndex, zone } : { slotIndex });
+  };
+
+  // Swap a Sequencer SLOT's glyph via the flyout picker (Feature B, #79 Wave 3).
+  // `address` is {seqIndex, slotIndex} (flat) or {seqIndex, zone, slotIndex}
+  // (zoned); `picked` is the picker payload {kind, glyphId, glyph}.
+  //   • builtin / custom → point the slot's glyphRef through the editChain seam
+  //     (ONE undo entry, first-edit legacy→chain rewrite + no-op guard).
+  //   • library → copy-into-doc + point-the-slot as ONE undo entry, reusing the
+  //     SAME batched onUseLibraryGlyph seam the base-glyph pick uses — here the
+  //     `params` carry the swapped binding chain instead of a swapped base
+  //     glyphRef (placeFromLibrary applies params wholesale). Legacy two-call
+  //     fallback (copy + editChain) when Studio hasn't wired onUseLibraryGlyph.
+  const swapSlotGlyph = (m, address, picked) => {
+    const point = (chain) =>
+      address.zone
+        ? setZoneSlotGlyphRef(chain, address.seqIndex, address.zone, address.slotIndex, picked.glyphId)
+        : setSlotGlyphRef(chain, address.seqIndex, address.slotIndex, picked.glyphId);
+    if (picked.kind === "library" && onUseLibraryGlyph) {
+      const base = ensureChainForm(m.params?.binding);
+      onUseLibraryGlyph(picked.glyph, m.id, {
+        ...m.params,
+        binding: deepMergeBinding(base, { chain: point(base.chain) }),
+      });
+      return;
+    }
+    if (picked.kind === "library" && !customGlyphs?.[picked.glyphId]) {
+      onCopyLibraryGlyph?.(picked.glyph);
+    }
+    editChain(m, point);
   };
 
   // File-input mechanics only (Wave 3, #77): the read → parse → error → commit
@@ -1538,9 +1576,14 @@ function MotifDevice({
                         )
                       }
                       customGlyphs={customGlyphs}
+                      libraryMotifs={library}
                       baseGlyphRef={glyphRef}
-                      onEditSlotGlyph={(seqIndex, slotIndex, slotGlyphRef) =>
-                        openSlotEditorFor(m, seqIndex, slotIndex, slotGlyphRef)
+                      onManageLibrary={onOpenLibrary}
+                      onEditSlotGlyph={(seqIndex, slotIndex, slotGlyphRef, zone) =>
+                        openSlotEditorFor(m, seqIndex, slotIndex, slotGlyphRef, zone)
+                      }
+                      onSwapSlotGlyph={(address, picked) =>
+                        swapSlotGlyph(m, address, picked)
                       }
                     />
                   </div>

@@ -7,6 +7,15 @@
 // anchored flyout with search, recents, set tabs, and a thumbnail grid.
 // Click commits (one undo entry via the caller's existing rebind seam);
 // Escape or outside-click closes without committing.
+//
+// The anchored FLYOUT body (positioning + portal + outside-click + escape +
+// search / recents / set tabs / thumbnail grid) is extracted as the exported
+// `GlyphPickerFlyout` so a second trigger — a Sequencer SLOT's glyph preview
+// (Feature B, zoned Sequencer) — can reuse the exact same picker without
+// duplicating the machinery. The chip owns only its trigger + open state +
+// focus-return; the flyout owns everything anchored to that trigger. A slot
+// caller passes `firstTile` to pin the slot's CURRENT glyph as tile #1 with a
+// pencil "edit" badge (opens the pen editor) whose body-click just closes.
 import { useDeferredValue, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import GlyphThumb from "../ui/GlyphThumb";
@@ -57,32 +66,42 @@ function CloseIcon() {
     </svg>
   );
 }
+// The pencil "edit" badge that rides tile #1 (the slot's current glyph) — opens
+// the pen editor for that slot. Same crafted-inline-SVG idiom as the chevron.
+function PencilIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-2.5 w-2.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M14 6l4 4M4 20l1-4L16 5l3 3L8 19l-4 1z" />
+    </svg>
+  );
+}
 
-export default function GlyphPickerChip({
+// ── the anchored flyout body (portal + positioning + outside-click + escape) ──
+//
+// Rendered by BOTH the row chip and a Sequencer slot's glyph preview. It owns
+// no trigger — the caller passes `triggerRef` (the button it anchors to) and
+// `rootRef` (the containing element outside-click treats as "inside"), plus
+// `onRequestClose(restoreFocus)`. The caller mounts it only while open (so its
+// mount-time positioning reads the trigger's live rect), and query / set-tab /
+// recents state is local, resetting for free on unmount. `firstTile` (slot
+// case) pins the current glyph as tile #1 with a pencil badge; its body-click
+// just closes (it is already the current glyph).
+export function GlyphPickerFlyout({
+  onRequestClose,
+  triggerRef,
+  rootRef,
+  flyoutId,
   glyphRef,
   customGlyphs,
   libraryMotifs,
   onPick,
   onManageLibrary,
+  firstTile = null,
 }) {
-  const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [set, setSet] = useState("all");
   const [pos, setPos] = useState(null);
-  const rootRef = useRef(null);
-  const triggerRef = useRef(null);
   const flyoutRef = useRef(null);
-  const flyoutId = useId();
-
-  // Every close path routes through here so focus management stays in one place
-  // (WCAG 2.4.3): the trigger reclaims focus on close — EXCEPT "Manage library",
-  // which intentionally hands focus onward to the library panel (restoreFocus
-  // false there).
-  const close = (restoreFocus = true) => {
-    setOpen(false);
-    setQuery("");
-    if (restoreFocus) triggerRef.current?.focus();
-  };
 
   const entries = useMemo(
     () => buildGlyphEntries({ customGlyphs, libraryMotifs }),
@@ -94,30 +113,25 @@ export default function GlyphPickerChip({
     return m;
   }, [entries]);
 
-  const current = useMemo(
-    () => getGlyph(glyphRef, customGlyphs),
-    [glyphRef, customGlyphs]
-  );
-  const currentEntry = useMemo(() => byId.get(glyphRef), [byId, glyphRef]);
-  // Read localStorage ONCE per open (not on every render while the flyout is
-  // open, as the old inline `open ? readRecents()… : []` did). Recomputes only
-  // when the flyout opens or the pickable-set changes; recents themselves only
-  // move on commit, which closes the flyout, so a per-open read never goes stale.
+  // Read localStorage ONCE on open (the flyout mounts fresh each open, so a
+  // mount-time memo never goes stale — recents only move on commit, which
+  // closes the flyout). In the slot case the current glyph is pinned as tile #1,
+  // so it is excluded from recents too — otherwise clicking it as a recent chip
+  // would commit a same-value swap (a NEW slot object, not a no-op) and burn a
+  // phantom undo entry, the exact trap tile #1's body-click-closes rule avoids.
+  const currentTileId = firstTile?.glyphId;
   const recents = useMemo(
-    () => (open ? readRecents().filter((id) => byId.has(id)) : []),
-    [open, byId]
+    () => readRecents().filter((id) => byId.has(id) && id !== currentTileId),
+    [byId, currentTileId]
   );
 
   // Position the portaled flyout as position:fixed off the trigger's rect: flip
   // above when it would overflow the viewport bottom, clamp horizontally into
   // the viewport, and cap its height so it never exceeds the viewport even after
-  // flipping (internal overflow-y-auto scrolls the rest). Recompute on open and
-  // on resize/scroll while open (scroll uses capture — the trigger lives inside
-  // the inspector's own overflow-auto region, so scroll never reaches window).
+  // flipping (internal overflow-y-auto scrolls the rest). Recompute on mount and
+  // on resize/scroll (scroll uses capture — the trigger lives inside the
+  // inspector's own overflow-auto region, so scroll never reaches window).
   useLayoutEffect(() => {
-    // When closed the flyout is unmounted, so we leave pos stale and recompute it
-    // fresh on the next open (before paint) rather than setState-ing here.
-    if (!open) return undefined;
     const recompute = () => {
       const t = triggerRef.current;
       if (!t) return;
@@ -155,23 +169,21 @@ export default function GlyphPickerChip({
       window.removeEventListener("resize", recompute);
       window.removeEventListener("scroll", recompute, true);
     };
-  }, [open]);
+  }, [triggerRef]);
 
   // Outside-click closes without committing (the flyout is not modal). With the
   // flyout portaled to <body>, its native events still bubble to window, so
-  // containment must treat clicks inside EITHER the chip (trigger) or the
-  // portaled flyout as inside — DOM ancestry of the chip alone no longer covers
-  // the flyout.
+  // containment must treat clicks inside EITHER the anchor (trigger/root) or the
+  // portaled flyout as inside.
   useEffect(() => {
-    if (!open) return undefined;
     const onDown = (e) => {
       if (rootRef.current?.contains(e.target)) return;
       if (flyoutRef.current?.contains(e.target)) return;
-      close();
+      onRequestClose(true);
     };
     window.addEventListener("pointerdown", onDown);
     return () => window.removeEventListener("pointerdown", onDown);
-  }, [open]);
+  }, [rootRef, onRequestClose]);
 
   // Defer the query so each keystroke doesn't synchronously re-filter and
   // re-reconcile the whole thumbnail grid (useDeferredValue, not a manual
@@ -191,8 +203,217 @@ export default function GlyphPickerChip({
   const commit = (entry) => {
     pushRecent(entry.glyphId);
     onPick(entry.payload);
-    close(true);
+    onRequestClose(true);
   };
+
+  // Slot case: the current glyph is pinned as tile #1, so the remaining grid
+  // excludes it (never a duplicate); the base grid marks the current entry with
+  // a ring in place.
+  const gridEntries = firstTile
+    ? visible.filter((e) => e.glyphId !== firstTile.glyphId)
+    : visible;
+
+  return createPortal(
+    <div
+      ref={flyoutRef}
+      data-testid="glyph-picker-flyout"
+      id={flyoutId}
+      role="dialog"
+      aria-label="Choose a motif"
+      data-placement={pos?.placement ?? "bottom"}
+      onKeyDown={(e) => {
+        // Escape closes from ANYWHERE in the flyout, not only the search input;
+        // stopPropagation so an ancestor Escape handler doesn't also fire.
+        if (e.key === "Escape") {
+          e.stopPropagation();
+          onRequestClose(true);
+        }
+      }}
+      style={{
+        position: "fixed",
+        left: pos?.left,
+        width: pos?.width,
+        top: pos?.top,
+        bottom: pos?.bottom,
+        maxHeight: pos?.maxHeight,
+      }}
+      className="z-30 overflow-y-auto rounded-cell border border-hairline bg-paper p-2 shadow-pop"
+    >
+      <div className="mb-1.5 flex items-center gap-1.5">
+        <input
+          autoFocus
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search motifs…"
+          aria-label="Search motifs"
+          className="min-w-0 flex-1 rounded-xs border border-hairline bg-paper-warm px-1.5 py-1 text-xs outline-none focus:border-ink-soft"
+        />
+        <button
+          type="button"
+          aria-label="Close picker"
+          onClick={() => onRequestClose(true)}
+          className="-my-2 -mr-1 flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-xs text-ink-soft hover:text-ink"
+        >
+          <CloseIcon />
+        </button>
+      </div>
+
+      {recents.length > 0 && (
+        <div className="mb-1.5 flex items-center gap-1">
+          <span className="mr-0.5 text-2xs uppercase tracking-wider text-ink-soft">
+            Recent
+          </span>
+          {recents.map((id) => (
+            <button
+              key={id}
+              type="button"
+              aria-label={byId.get(id).name}
+              title={byId.get(id).name}
+              onClick={() => commit(byId.get(id))}
+              className="-m-1 flex min-h-11 min-w-11 items-center justify-center rounded-xs p-0.5 text-ink hover:bg-paper-warm"
+            >
+              <GlyphThumb glyph={byId.get(id).glyph} size={20} />
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="mb-1.5 flex flex-wrap gap-1">
+        {SETS.map((s) => (
+          <button
+            key={s.id}
+            type="button"
+            aria-pressed={set === s.id}
+            onClick={() => setSet(s.id)}
+            className={`-my-2 inline-flex min-h-11 items-center rounded-full px-1.5 py-0.5 text-2xs transition-colors duration-fast ${
+              set === s.id
+                ? "bg-ink text-paper"
+                : "text-ink-soft hover:bg-paper-warm hover:text-ink"
+            }`}
+          >
+            {s.label}
+          </button>
+        ))}
+      </div>
+
+      <div className="grid max-h-44 grid-cols-4 gap-1 overflow-y-auto">
+        {/* Slot case — tile #1 is the slot's CURRENT glyph: marked current
+            (ring), wearing a pencil badge (opens the pen editor). Clicking its
+            BODY just closes (it's already the current glyph — never a swap, so
+            no phantom undo entry). */}
+        {firstTile && (
+          <div
+            data-testid="motif-slot-current"
+            className="relative flex flex-col items-center justify-center gap-0.5 rounded-xs bg-paper-warm p-1 ring-1 ring-accent"
+          >
+            <button
+              type="button"
+              data-testid="motif-slot-edit-pen"
+              aria-label="Edit glyph"
+              title="Edit this slot's glyph"
+              onClick={(e) => {
+                e.stopPropagation();
+                firstTile.onEdit();
+              }}
+              className="absolute left-0.5 top-0.5 z-10 flex h-4 w-4 items-center justify-center rounded-full border border-hairline bg-paper text-ink-soft hover:text-ink"
+            >
+              <PencilIcon />
+            </button>
+            <button
+              type="button"
+              aria-label={`Current glyph — ${firstTile.name}`}
+              title={firstTile.name}
+              onClick={() => onRequestClose(true)}
+              className="flex min-h-11 w-full flex-col items-center justify-center gap-0.5"
+            >
+              <GlyphThumb glyph={firstTile.glyph} size={26} className="text-ink" />
+              <span className="w-full truncate text-center text-2xs text-ink-soft">
+                {firstTile.name}
+              </span>
+            </button>
+          </div>
+        )}
+        {gridEntries.map((e) => (
+          <button
+            key={e.key}
+            type="button"
+            data-testid={`glyph-option-${e.glyphId}`}
+            title={e.name}
+            onClick={() => commit(e)}
+            className={`flex min-h-11 flex-col items-center justify-center gap-0.5 rounded-xs p-1 transition-colors duration-fast hover:bg-paper-warm ${
+              e.glyphId === glyphRef ? "bg-paper-warm ring-1 ring-accent" : ""
+            }`}
+          >
+            <GlyphThumb glyph={e.glyph} size={26} className="text-ink" />
+            <span className="w-full truncate text-center text-2xs text-ink-soft">
+              {e.name}
+            </span>
+          </button>
+        ))}
+        {gridEntries.length === 0 && !firstTile && (
+          <span className="col-span-4 py-3 text-center text-2xs text-ink-soft">
+            No matches
+          </span>
+        )}
+      </div>
+
+      {onManageLibrary && (
+        <div className="mt-1.5 border-t border-hairline pt-1.5">
+          <button
+            type="button"
+            onClick={() => {
+              // Intentionally does NOT restore focus to the trigger — the parent
+              // moves the user into the library panel.
+              onRequestClose(false);
+              onManageLibrary();
+            }}
+            className="text-2xs text-accent hover:underline"
+          >
+            Manage library…
+          </button>
+        </div>
+      )}
+    </div>,
+    document.body
+  );
+}
+
+export default function GlyphPickerChip({
+  glyphRef,
+  customGlyphs,
+  libraryMotifs,
+  onPick,
+  onManageLibrary,
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef(null);
+  const triggerRef = useRef(null);
+  const flyoutId = useId();
+
+  // Every close path routes through here so focus management stays in one place
+  // (WCAG 2.4.3): the trigger reclaims focus on close — EXCEPT "Manage library",
+  // which intentionally hands focus onward to the library panel (restoreFocus
+  // false there).
+  const close = (restoreFocus = true) => {
+    setOpen(false);
+    if (restoreFocus) triggerRef.current?.focus();
+  };
+
+  const entries = useMemo(
+    () => buildGlyphEntries({ customGlyphs, libraryMotifs }),
+    [customGlyphs, libraryMotifs]
+  );
+  const byId = useMemo(() => {
+    const m = new Map();
+    for (const e of entries) m.set(e.glyphId, e);
+    return m;
+  }, [entries]);
+
+  const current = useMemo(
+    () => getGlyph(glyphRef, customGlyphs),
+    [glyphRef, customGlyphs]
+  );
+  const currentEntry = useMemo(() => byId.get(glyphRef), [byId, glyphRef]);
 
   return (
     <div className="relative min-w-0 flex-1" ref={rootRef}>
@@ -227,133 +448,18 @@ export default function GlyphPickerChip({
         </span>
       </button>
 
-      {open && createPortal(
-        <div
-          ref={flyoutRef}
-          data-testid="glyph-picker-flyout"
-          id={flyoutId}
-          role="dialog"
-          aria-label="Choose a motif"
-          data-placement={pos?.placement ?? "bottom"}
-          onKeyDown={(e) => {
-            // Escape closes from ANYWHERE in the flyout, not only the search
-            // input; stopPropagation so an ancestor Escape handler doesn't also
-            // fire on the same key.
-            if (e.key === "Escape") {
-              e.stopPropagation();
-              close();
-            }
-          }}
-          style={{
-            position: "fixed",
-            left: pos?.left,
-            width: pos?.width,
-            top: pos?.top,
-            bottom: pos?.bottom,
-            maxHeight: pos?.maxHeight,
-          }}
-          className="z-30 overflow-y-auto rounded-cell border border-hairline bg-paper p-2 shadow-pop"
-        >
-          <div className="mb-1.5 flex items-center gap-1.5">
-            <input
-              autoFocus
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search motifs…"
-              aria-label="Search motifs"
-              className="min-w-0 flex-1 rounded-xs border border-hairline bg-paper-warm px-1.5 py-1 text-xs outline-none focus:border-ink-soft"
-            />
-            <button
-              type="button"
-              aria-label="Close picker"
-              onClick={() => close()}
-              className="-my-2 -mr-1 flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-xs text-ink-soft hover:text-ink"
-            >
-              <CloseIcon />
-            </button>
-          </div>
-
-          {recents.length > 0 && (
-            <div className="mb-1.5 flex items-center gap-1">
-              <span className="mr-0.5 text-2xs uppercase tracking-wider text-ink-soft">
-                Recent
-              </span>
-              {recents.map((id) => (
-                <button
-                  key={id}
-                  type="button"
-                  aria-label={byId.get(id).name}
-                  title={byId.get(id).name}
-                  onClick={() => commit(byId.get(id))}
-                  className="-m-1 flex min-h-11 min-w-11 items-center justify-center rounded-xs p-0.5 text-ink hover:bg-paper-warm"
-                >
-                  <GlyphThumb glyph={byId.get(id).glyph} size={20} />
-                </button>
-              ))}
-            </div>
-          )}
-
-          <div className="mb-1.5 flex flex-wrap gap-1">
-            {SETS.map((s) => (
-              <button
-                key={s.id}
-                type="button"
-                aria-pressed={set === s.id}
-                onClick={() => setSet(s.id)}
-                className={`-my-2 inline-flex min-h-11 items-center rounded-full px-1.5 py-0.5 text-2xs transition-colors duration-fast ${
-                  set === s.id
-                    ? "bg-ink text-paper"
-                    : "text-ink-soft hover:bg-paper-warm hover:text-ink"
-                }`}
-              >
-                {s.label}
-              </button>
-            ))}
-          </div>
-
-          <div className="grid max-h-44 grid-cols-4 gap-1 overflow-y-auto">
-            {visible.map((e) => (
-              <button
-                key={e.key}
-                type="button"
-                data-testid={`glyph-option-${e.glyphId}`}
-                title={e.name}
-                onClick={() => commit(e)}
-                className={`flex min-h-11 flex-col items-center justify-center gap-0.5 rounded-xs p-1 transition-colors duration-fast hover:bg-paper-warm ${
-                  e.glyphId === glyphRef ? "bg-paper-warm ring-1 ring-accent" : ""
-                }`}
-              >
-                <GlyphThumb glyph={e.glyph} size={26} className="text-ink" />
-                <span className="w-full truncate text-center text-2xs text-ink-soft">
-                  {e.name}
-                </span>
-              </button>
-            ))}
-            {visible.length === 0 && (
-              <span className="col-span-4 py-3 text-center text-2xs text-ink-soft">
-                No matches
-              </span>
-            )}
-          </div>
-
-          {onManageLibrary && (
-            <div className="mt-1.5 border-t border-hairline pt-1.5">
-              <button
-                type="button"
-                onClick={() => {
-                  // Intentionally does NOT restore focus to the trigger — the
-                  // parent moves the user into the library panel.
-                  close(false);
-                  onManageLibrary();
-                }}
-                className="text-2xs text-accent hover:underline"
-              >
-                Manage library…
-              </button>
-            </div>
-          )}
-        </div>,
-        document.body
+      {open && (
+        <GlyphPickerFlyout
+          onRequestClose={close}
+          triggerRef={triggerRef}
+          rootRef={rootRef}
+          flyoutId={flyoutId}
+          glyphRef={glyphRef}
+          customGlyphs={customGlyphs}
+          libraryMotifs={libraryMotifs}
+          onPick={onPick}
+          onManageLibrary={onManageLibrary}
+        />
       )}
     </div>
   );

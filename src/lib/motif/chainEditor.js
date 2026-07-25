@@ -186,6 +186,131 @@ export function setSlotGlyphRef(chain, seqIndex, slotIndex, glyphRef) {
   return setSlot(chain, seqIndex, slotIndex, { glyphRef });
 }
 
+// ── Zoned Sequencer ops (ADR-0008) ───────────────────────────────────────────
+//
+// The terminal `sequence` block may partition its survivor set into named Zones
+// (`apex`, `stem`) via an optional `zones` array (presence of `zones` = zoned;
+// the flat `slots`/`mode`/`continuous` fields are absent when zoned). Each Zone
+// carries its own `slots` plus its own deal (`mode`, `continuous`) and — for the
+// Apex — an `ends` selector.
+//
+// These ops are the zone-addressed siblings of the flat slot ops above and honor
+// the SAME no-op / rejection contract: a Zone is addressed by its `zone` FIELD
+// (not its array index — order is not part of the address), and an invalid
+// seqIndex, a non-sequence target, a flat (un-zoned) sequence, an unknown zoneId,
+// or an out-of-range slotIndex returns the INPUT ARRAY UNCHANGED (same ref). Every
+// accepted edit produces a new chain (via setBlock) with a new `zones` array in
+// which only the addressed Zone object is rebuilt — untouched Zones (and their
+// slots) keep their identity, so editing the Apex never churns the Stem.
+
+// Resolve the Zone with `zone === zoneId` inside the sequence block at `seqIndex`.
+// Returns { zones, zoneIndex } or null when the target isn't a zoned sequence or
+// the id is absent.
+function zoneAt(list, seqIndex, zoneId) {
+  const seq = seqBlockAt(list, seqIndex);
+  if (!seq || !Array.isArray(seq.zones)) return null;
+  const zoneIndex = seq.zones.findIndex((z) => z && z.zone === zoneId);
+  if (zoneIndex === -1) return null;
+  return { zones: seq.zones, zoneIndex };
+}
+
+// Write `nextZone` back at `zoneIndex`, keeping every sibling Zone by reference,
+// then commit via setBlock (new sequence block; sibling blocks keep identity).
+function writeZone(list, seqIndex, zones, zoneIndex, nextZone) {
+  const nextZones = zones.map((z, i) => (i === zoneIndex ? nextZone : z));
+  return setBlock(list, seqIndex, { zones: nextZones });
+}
+
+/** Append a slot to the addressed Zone of the sequence block at `seqIndex`. */
+export function addZoneSlot(chain, seqIndex, zoneId, slot) {
+  const list = chain || [];
+  const found = zoneAt(list, seqIndex, zoneId);
+  if (!found) return list;
+  const { zones, zoneIndex } = found;
+  const zone = zones[zoneIndex];
+  const slots = Array.isArray(zone.slots) ? zone.slots : [];
+  return writeZone(list, seqIndex, zones, zoneIndex, { ...zone, slots: [...slots, slot] });
+}
+
+/** Remove the slot at `slotIndex` from the addressed Zone; out-of-range ⇒ same ref. */
+export function removeZoneSlot(chain, seqIndex, zoneId, slotIndex) {
+  const list = chain || [];
+  const found = zoneAt(list, seqIndex, zoneId);
+  if (!found) return list;
+  const { zones, zoneIndex } = found;
+  const zone = zones[zoneIndex];
+  const slots = Array.isArray(zone.slots) ? zone.slots : [];
+  if (slotIndex < 0 || slotIndex >= slots.length) return list;
+  const next = slots.slice();
+  next.splice(slotIndex, 1);
+  return writeZone(list, seqIndex, zones, zoneIndex, { ...zone, slots: next });
+}
+
+/** Move the slot at `from` to `to` within the addressed Zone; degenerate ⇒ same ref. */
+export function reorderZoneSlots(chain, seqIndex, zoneId, from, to) {
+  const list = chain || [];
+  const found = zoneAt(list, seqIndex, zoneId);
+  if (!found) return list;
+  const { zones, zoneIndex } = found;
+  const zone = zones[zoneIndex];
+  const slots = Array.isArray(zone.slots) ? zone.slots : [];
+  if (
+    from < 0 ||
+    from >= slots.length ||
+    to < 0 ||
+    to >= slots.length ||
+    from === to
+  ) {
+    return list;
+  }
+  return writeZone(list, seqIndex, zones, zoneIndex, { ...zone, slots: arrayMove(slots, from, to) });
+}
+
+/** Shallow-merge `patch` into the slot at `slotIndex` of the addressed Zone. */
+export function setZoneSlot(chain, seqIndex, zoneId, slotIndex, patch) {
+  const list = chain || [];
+  const found = zoneAt(list, seqIndex, zoneId);
+  if (!found) return list;
+  const { zones, zoneIndex } = found;
+  const zone = zones[zoneIndex];
+  const slots = Array.isArray(zone.slots) ? zone.slots : [];
+  if (slotIndex < 0 || slotIndex >= slots.length) return list;
+  const next = slots.map((s, i) => (i === slotIndex ? { ...s, ...patch } : s));
+  return writeZone(list, seqIndex, zones, zoneIndex, { ...zone, slots: next });
+}
+
+/** Point the slot at `slotIndex` of the addressed Zone at `glyphRef`. Same contract as setZoneSlot. */
+export function setZoneSlotGlyphRef(chain, seqIndex, zoneId, slotIndex, glyphRef) {
+  return setZoneSlot(chain, seqIndex, zoneId, slotIndex, { glyphRef });
+}
+
+/**
+ * Shallow-merge a deal `patch` (may carry `{mode}` and/or `{continuous}`) into the
+ * addressed Zone. An identical-value patch (every key already matches) returns the
+ * SAME ref — clicking a deal that is already lit must not burn an undo entry.
+ */
+export function setZoneMode(chain, seqIndex, zoneId, patch) {
+  const list = chain || [];
+  const found = zoneAt(list, seqIndex, zoneId);
+  if (!found) return list;
+  const { zones, zoneIndex } = found;
+  const zone = zones[zoneIndex];
+  const changes = Object.keys(patch || {}).some((k) => zone[k] !== patch[k]);
+  if (!changes) return list;
+  return writeZone(list, seqIndex, zones, zoneIndex, { ...zone, ...patch });
+}
+
+/** Set the Apex `ends` selector ('both'|'up'|'down'); an identical value ⇒ same ref. */
+export function setZoneEnds(chain, seqIndex, zoneId, ends) {
+  const list = chain || [];
+  const found = zoneAt(list, seqIndex, zoneId);
+  if (!found) return list;
+  const { zones, zoneIndex } = found;
+  const zone = zones[zoneIndex];
+  if (zone.ends === ends) return list;
+  return writeZone(list, seqIndex, zones, zoneIndex, { ...zone, ends });
+}
+
 // ── Route pickedPaths op (C4) ────────────────────────────────────────────────
 //
 // The Route card's `picked` path scope filters anchors by `meta.pathIndex`

@@ -23,7 +23,24 @@
 // So we canonicalize BOTH chains to a behavior-equivalent form — fill each
 // block's engine defaults, drop inert/volatile keys, sort roles — then structural
 // deep-equal (key-order-independent). A `bypass:true`, a changed `n`/`density`/
-// role, or a swapped slot glyph are all REAL behavior ⇒ preserved ⇒ 'custom'.
+// role, an added/removed block, or a route change are all REAL structure ⇒
+// preserved ⇒ 'custom'.
+//
+// ── MODE IDENTITY SPLITS BY PRESET KIND (ADR 0008) ───────────────────────────
+// This module DELIBERATELY REVERSES its prior "a swapped slot glyph ⇒ custom"
+// contract. A mode's identity now depends on whether its terminal `sequence` is
+// flat or zoned:
+//   • FLAT sequence (Alternate x‑o, Sparse scatter, Border march): identity is
+//     the RHYTHM, glyph-agnostic. `canonicalSlot` OMITS `glyphRef` — swapping the
+//     diamond for a dot KEEPS the mode. But the rhythm still counts: adding a
+//     slot, deleting a rest, or a modifier change (size/rotation/weight/flip/
+//     rotationRandom) is a new rhythm ⇒ 'custom'. Slots are never ignored
+//     wholesale — x‑o's identity IS its two-step pattern.
+//   • ZONED sequence (Vine): identity is the ZONE SKELETON — Route + block
+//     structure + the sorted set of zone ids. Everything INSIDE a zone (glyphs,
+//     slot counts, deal mode, ends, continuous, modifiers, rests) is the maker's
+//     content and never flips the mode. A `zoned:true` marker on the canonical
+//     block means a zoned sequence can NEVER equal a flat one, nor vice versa.
 //
 // PLACEMENT IS IGNORED ENTIRELY: `binding.placement` (sizing/orientation/flip) is
 // a placement tweak, not a mode — two motifs on the same mode may size
@@ -118,10 +135,23 @@ function canonicalBlock(block) {
       out.hasField = !!b.field;
       break;
     case 'sequence':
-      out.mode = b.mode != null ? b.mode : 'cycle';
-      out.continuous = !!b.continuous;
-      out.seed = b.seed != null ? b.seed : 1;
-      out.slots = Array.isArray(b.slots) ? b.slots.map(canonicalSlot) : [];
+      if (Array.isArray(b.zones)) {
+        // ZONED (ADR 0008): identity is the Zone SKELETON only — the presence and
+        // set of zones. Glyphs, slot counts, deal mode, ends, continuous,
+        // modifiers and rests INSIDE a zone are the maker's content and never
+        // affect the mode. `zoned:true` is a marker so a zoned sequence can never
+        // structurally equal a flat one (different key set). Zone ids are sorted:
+        // authoring order is not identity. Worked example — the Vine canonicalizes
+        // to { type:'sequence', zoned:true, zones:['apex','stem'] }.
+        out.zoned = true;
+        out.zones = b.zones.map((z) => (z && z.zone != null ? z.zone : null)).sort();
+      } else {
+        // FLAT: identity is the rhythm (see canonicalSlot — glyph-agnostic).
+        out.mode = b.mode != null ? b.mode : 'cycle';
+        out.continuous = !!b.continuous;
+        out.seed = b.seed != null ? b.seed : 1;
+        out.slots = Array.isArray(b.slots) ? b.slots.map(canonicalSlot) : [];
+      }
       break;
     default:
       break; // unknown block type: type-only (lenient; matches nothing but itself)
@@ -130,15 +160,19 @@ function canonicalBlock(block) {
 }
 
 /**
- * Canonicalize a Sequencer slot. `flip` is left AS-SPECIFIED (undefined ≠ false —
- * the engine's flipSpecified distinction), included only when present, so an
- * unspecified flip on both sides matches while specified-vs-unspecified differ.
+ * Canonicalize a FLAT Sequencer slot. `glyphRef` is DELIBERATELY OMITTED (ADR
+ * 0008): a flat mode's identity is its rhythm, glyph-agnostic — swapping the
+ * diamond for a dot keeps "Alternate x‑o". What still counts is the rhythm and
+ * modifiers: `rest` (a rest vs a glyph is a different step; removing/adding a
+ * slot is a count change), sizeScale/rotationOffset/weight/rotationRandom/flip.
+ * `flip` is left AS-SPECIFIED (undefined ≠ false — the engine's flipSpecified
+ * distinction), included only when present, so an unspecified flip on both sides
+ * matches while specified-vs-unspecified differ.
  */
 function canonicalSlot(slot) {
   const s = slot || {};
   const out = {
     rest: !!s.rest,
-    glyphRef: s.glyphRef != null ? s.glyphRef : null,
     sizeScale: s.sizeScale != null ? s.sizeScale : 1,
     rotationOffset: s.rotationOffset != null ? s.rotationOffset : 0,
     weight: s.weight != null ? s.weight : 1,

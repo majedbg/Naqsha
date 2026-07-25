@@ -80,10 +80,13 @@ describe('modeForMotif — one-field mutations ⇒ custom', () => {
     expect(modeForMotif(binding, EDGE_HOST)).toBe('custom');
   });
 
-  it('slot glyph swapped ⇒ custom (alternate-xo)', () => {
+  it('flat slot glyph swapped ⇒ mode HOLDS (alternate-xo; identity is the rhythm, glyph-agnostic — ADR 0008)', () => {
+    // REVERSES the pre-ADR-0008 "swapped slot glyph ⇒ custom" contract: a flat
+    // mode's identity is its rhythm (glyph, rest), not which glyph fills a step.
+    // Swapping the diamond for a dot keeps "Alternate x‑o".
     const { binding } = STARTER_CHIPS.find((c) => c.id === 'alternate-xo').build(SEMANTIC_HOST);
     binding.chain[1].slots[0].glyphRef = 'dot';
-    expect(modeForMotif(binding, SEMANTIC_HOST)).toBe('custom');
+    expect(modeForMotif(binding, SEMANTIC_HOST)).toBe('alternate-xo');
   });
 
   it('route roles changed ⇒ custom (vine)', () => {
@@ -96,6 +99,86 @@ describe('modeForMotif — one-field mutations ⇒ custom', () => {
     const { binding } = STARTER_CHIPS.find((c) => c.id === 'sparse-scatter').build(EDGE_HOST);
     binding.chain.push({ type: 'everyN', n: 2, offset: 0 });
     expect(modeForMotif(binding, EDGE_HOST)).toBe('custom');
+  });
+});
+
+describe('modeForMotif — ZONED identity is the Zone skeleton (Vine; ADR 0008)', () => {
+  // The Vine's canonical form is the SKELETON only:
+  //   { type: 'sequence', zoned: true, zones: ['apex', 'stem'] }   (zone ids sorted)
+  // Everything INSIDE a zone — glyphs, slot counts, deal mode, ends, continuous,
+  // modifiers, rests — is the maker's content and never flips the mode.
+  const vineBinding = (host = SEMANTIC_HOST) =>
+    STARTER_CHIPS.find((c) => c.id === 'vine').build(host).binding;
+  const seqOf = (binding) => binding.chain.find((b) => b.type === 'sequence');
+
+  it('removing a zone ⇒ custom (skeleton {apex,stem} ≠ {apex})', () => {
+    // DRIVER: without skeleton canonicalization both sides collapse to the flat
+    // path (slots:[] on each) and this wrongly reads 'vine'. The skeleton branch
+    // is what makes the zone SET load-bearing.
+    const binding = vineBinding();
+    const seq = seqOf(binding);
+    seq.zones = seq.zones.filter((z) => z.zone !== 'stem'); // now zones:['apex']
+    expect(modeForMotif(binding, SEMANTIC_HOST)).toBe('custom');
+  });
+
+  it('glyph swap INSIDE a zone ⇒ still vine (glyphs are maker content)', () => {
+    const binding = vineBinding();
+    seqOf(binding).zones.find((z) => z.zone === 'stem').slots[0].glyphRef = 'dot';
+    expect(modeForMotif(binding, SEMANTIC_HOST)).toBe('vine');
+  });
+
+  it('adding a slot to a zone ⇒ still vine (slot count is maker content)', () => {
+    const binding = vineBinding();
+    seqOf(binding).zones.find((z) => z.zone === 'stem').slots.push({ glyphRef: 'rosette' });
+    expect(modeForMotif(binding, SEMANTIC_HOST)).toBe('vine');
+  });
+
+  it('changing a zone mode/ends/continuous ⇒ still vine (deal is maker content)', () => {
+    const binding = vineBinding();
+    const apex = seqOf(binding).zones.find((z) => z.zone === 'apex');
+    apex.mode = 'random';
+    apex.ends = 'up';
+    apex.continuous = false;
+    expect(modeForMotif(binding, SEMANTIC_HOST)).toBe('vine');
+  });
+
+  it('de-zoning (zones → flat slots) ⇒ custom (a flat sequence is a different skeleton)', () => {
+    const binding = vineBinding();
+    binding.chain[1] = {
+      type: 'sequence',
+      mode: 'cycle',
+      slots: [{ glyphRef: 'rosette' }, { glyphRef: 'leaf' }],
+    };
+    expect(modeForMotif(binding, SEMANTIC_HOST)).toBe('custom');
+  });
+
+  it('adding a chain block to the vine ⇒ custom (chain structure changed)', () => {
+    const binding = vineBinding();
+    binding.chain.push({ type: 'everyN', n: 2, offset: 0 });
+    expect(modeForMotif(binding, SEMANTIC_HOST)).toBe('custom');
+  });
+
+  it('a zoned sequence never matches a FLAT chip (zoned marker guarantees it)', () => {
+    // Alternate-xo's route (roles:['crossing']) but a ZONED sequence grafted on.
+    // Matches neither alternate-xo (its sequence is flat) nor vine (route roles
+    // differ) ⇒ custom.
+    const { binding } = STARTER_CHIPS.find((c) => c.id === 'alternate-xo').build(SEMANTIC_HOST);
+    binding.chain[1] = {
+      type: 'sequence',
+      zones: [
+        { zone: 'apex', mode: 'cycle', slots: [{ glyphRef: 'diamond' }] },
+        { zone: 'stem', mode: 'cycle', slots: [{ rest: true }] },
+      ],
+    };
+    expect(modeForMotif(binding, SEMANTIC_HOST)).toBe('custom');
+  });
+
+  it('a flat rhythm change on a flat chip ⇒ custom (glyph-agnostic ≠ slot-agnostic)', () => {
+    // Alternate-xo is [glyph, rest]. Dropping the rest is a NEW rhythm (one step,
+    // not two) ⇒ custom — even though a glyph SWAP would have held the mode.
+    const { binding } = STARTER_CHIPS.find((c) => c.id === 'alternate-xo').build(SEMANTIC_HOST);
+    binding.chain[1].slots = [{ glyphRef: 'diamond' }]; // rest removed
+    expect(modeForMotif(binding, SEMANTIC_HOST)).toBe('custom');
   });
 });
 

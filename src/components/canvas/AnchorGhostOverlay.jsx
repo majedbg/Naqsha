@@ -151,7 +151,11 @@ export default function AnchorGhostOverlay({
   // nothing (graceful).
   const anchors = useMemo(() => {
     if (!host) return null;
-    if (MOTIF_HOSTS.has(host.patternType)) {
+    // A single-axis grid is a params-aware EDGE host (hostKinds) — route it to the
+    // edge branch below so the ghost dots land ALONG each line, matching the real
+    // render, instead of the semantic extractor's 2 tip dots per line.
+    const edgeMode = isEdgeHost(host.patternType, host.params);
+    if (!edgeMode && MOTIF_HOSTS.has(host.patternType)) {
       if (host.patternType === 'voronoi') {
         const geo = patternInstances[host.id]?.motifHostGeometry;
         if (!geo) return null;
@@ -170,7 +174,7 @@ export default function AnchorGhostOverlay({
     // useCanvas), resampled with the motif's OWN edgeOpts so the ghost dots land
     // where the glyphs would. Each edge anchor carries meta.pathIndex (the pick
     // key). Absent capture (host not yet probed / hidden) → null → no ghost.
-    if (isEdgeHost(host.patternType)) {
+    if (edgeMode) {
       const hostPaths = patternInstances[host.id]?.motifHostGeometry?.hostPaths;
       if (!hostPaths || !hostPaths.length) return null;
       const edgeOpts = motif?.params?.edgeOpts || { spacing: 24 };
@@ -192,7 +196,7 @@ export default function AnchorGhostOverlay({
     if (!anchors || !motif) return [];
     // Edge-host guard (C4): the edge branch is pick-oriented (colored by
     // pickedPaths), never placed/candidate, so it needs no placements — skip.
-    if (host && isEdgeHost(host.patternType)) return [];
+    if (host && isEdgeHost(host.patternType, host.params)) return [];
     const binding = motif.params.binding || {};
     const { survivors, sequence } = resolveSelection(binding, anchors, {
       canvasW,
@@ -218,7 +222,7 @@ export default function AnchorGhostOverlay({
   // motif's Route card is armed ("Pick on canvas"), so it's an intentional
   // affordance, not clutter on every edge-host selection (a dense flowfield can
   // emit hundreds of anchors).
-  if (isEdgeHost(host.patternType)) {
+  if (isEdgeHost(host.patternType, host.params)) {
     const armed = !!motifPick && motifPick.layerId === motif.id;
     if (!armed) return null;
     // Color dots by membership in the ARMED route block's pickedPaths. readChain

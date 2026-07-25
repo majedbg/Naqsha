@@ -99,8 +99,8 @@ function renderPro() {
 }
 
 function activateTextTool() {
-  const strip = screen.getByRole("region", { name: "Tool strip" });
-  fireEvent.click(within(strip).getByRole("button", { name: /text/i }));
+  // Tools live in the canvas tab now (motif-shell D), not the rail region.
+  fireEvent.click(screen.getByRole("button", { name: "Text (T)" }));
 }
 
 describe("StudioRoute — text edit lifecycle (phase 5 integration)", () => {

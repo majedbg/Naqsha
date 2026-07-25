@@ -4,6 +4,7 @@ import {
   resampleByArcLength,
   anchorId,
   sampleEdgeAnchors,
+  MIN_EDGE_SPACING,
 } from './anchors.js';
 
 function square(size = 40) {
@@ -205,5 +206,27 @@ describe('sampleEdgeAnchors — ordering', () => {
 describe('anchorId', () => {
   it('is deterministic and colon-joined', () => {
     expect(anchorId('edge', 0, 3)).toBe('edge:0:3');
+  });
+});
+
+describe('sampleEdgeAnchors — spacing floor (post-crash hardening §6)', () => {
+  // A long straight open line. A pathological sub-floor spacing must be clamped
+  // to MIN_EDGE_SPACING so it can't sample a runaway anchor count and reintroduce
+  // the placement explosion the MAX_PLACEMENTS cap guards downstream.
+  const line = [{ points: [{ x: 0, y: 0 }, { x: 1000, y: 0 }], closed: false }];
+
+  it('clamps a sub-floor spacing up to MIN_EDGE_SPACING', () => {
+    const floored = sampleEdgeAnchors(line, { spacing: 0.5 });
+    const atFloor = sampleEdgeAnchors(line, { spacing: MIN_EDGE_SPACING });
+    // A 0.5px request is treated EXACTLY as MIN_EDGE_SPACING — no explosion.
+    expect(floored.length).toBe(atFloor.length);
+    // …and far fewer anchors than the unclamped 0.5px request would produce
+    // (~2001) — the floor cut it by ~8x.
+    expect(floored.length).toBeLessThan(1000);
+  });
+
+  it('leaves an above-floor spacing untouched', () => {
+    // 1000 / 50 = 20 gaps → 21 samples (open path includes both endpoints).
+    expect(sampleEdgeAnchors(line, { spacing: 50 }).length).toBe(21);
   });
 });

@@ -115,6 +115,38 @@ describe('buildSelectables — text layers', () => {
   });
 });
 
+describe('buildSelectables — per-node font resolver', () => {
+  let font;
+  beforeAll(() => {
+    font = loadWorkSans();
+  });
+
+  const layerA = {
+    id: 'a', type: 'text', visible: true,
+    params: defaultTextParams({ text: 'A', x: 10, y: 10, fontSize: 48, fontId: 'font-a' }),
+  };
+  const layerB = {
+    id: 'b', type: 'text', visible: true,
+    params: defaultTextParams({ text: 'B', x: 10, y: 100, fontSize: 48, fontId: 'font-b' }),
+  };
+
+  it('resolves EACH text layer with its own fontId when font is a resolver', () => {
+    const seen = [];
+    const resolveFont = (id) => { seen.push(id); return font; };
+    const sels = buildSelectables({ layers: [layerA, layerB], font: resolveFont, canvasW: W, canvasH: H });
+    expect(sels.map((s) => s.id)).toEqual(['a', 'b']);
+    // Each node was measured with ITS OWN fontId (not a single shared font).
+    expect(seen).toEqual(['font-a', 'font-b']);
+  });
+
+  it('skips a layer whose font is not resolvable yet (resolver → null), keeping others', () => {
+    // font-a loaded, font-b still streaming (null) → only 'a' is selectable.
+    const resolveFont = (id) => (id === 'font-a' ? font : null);
+    const sels = buildSelectables({ layers: [layerA, layerB], font: resolveFont, canvasW: W, canvasH: H });
+    expect(sels.map((s) => s.id)).toEqual(['a']);
+  });
+});
+
 describe('buildSelectables — import layers', () => {
   // A 40×40 square anchored at (10,20): the selection box must hug THIS, not the
   // whole canvas, so its handles stay on-screen.

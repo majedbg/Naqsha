@@ -5,6 +5,13 @@ import Inspector from "../components/shell/Inspector";
 import LayerTree from "../components/shell/LayerTree";
 import MenuBar from "../components/shell/MenuBar";
 import ToolStrip from "../components/shell/ToolStrip";
+// Motif-shell (D, docs/motif-flow-audit-2026-07.md): the left rail becomes a
+// surface switcher (Layers / Motifs), the tools re-home to a tab over the
+// canvas, and the Motifs surface is the app-level library with drag-apply.
+import LeftRailNav from "../components/shell/LeftRailNav";
+import MotifLibraryPanel from "../components/shell/MotifLibraryPanel";
+import MotifDropLayer from "../components/canvas/MotifDropLayer";
+import { importMotif } from "../lib/motif/importMotif";
 import ControlBar from "../components/shell/ControlBar";
 import StatusBar from "../components/shell/StatusBar";
 import OperationsPanel from "../components/shell/OperationsPanel";
@@ -21,16 +28,22 @@ import useActiveTool from "../lib/hooks/useActiveTool";
 import useShowAdmin from "../lib/hooks/useShowAdmin";
 import useCanvasView from "../lib/hooks/useCanvasView";
 import useColorView from "../lib/hooks/useColorView";
+import useTraceSweep from "../lib/hooks/useTraceSweep";
 import { use3DPreview } from "../lib/three3d/use3DPreview";
 import { use3DLensEntry } from "../lib/three3d/use3DLensEntry";
 import { selectedMaterialForScene } from "../lib/three3d/selectedMaterial";
 import ColorViewControl from "../components/canvas/ColorViewControl";
 import useSvgImport from "../lib/hooks/useSvgImport";
 import ConfirmDialog from "../components/ui/ConfirmDialog";
+import NewDocumentDialog from "../components/ui/NewDocumentDialog";
+import { resolveNewDocumentActions } from "../lib/newDocument";
 import DocumentSetupDialog from "../components/shell/DocumentSetupDialog";
 import { EXAMPLES } from "../examples";
 import ExamplesGallery from "../components/sidebar/ExamplesGallery";
 import RightPanel from "../components/RightPanel";
+// PROTOTYPE (throwaway) — motif-DEVICE layout variants. DEV-only, inert
+// without ?variant=A|B|C. Delete together with motif-prototypes/.
+import MotifPrototypeOverlay from "../components/shell/motif-prototypes/MotifPrototypeOverlay";
 import LayerGroupModal from "../components/LayerGroupModal";
 import CloudSaveModal from "../components/CloudSaveModal";
 import PatternPickerModal from "../components/PatternPickerModal";
@@ -39,7 +52,9 @@ import StudioSubmitModal from "../components/org/StudioSubmitModal";
 import MotifEditorModal from "../components/motif-editor/MotifEditorModal";
 import MaterialEvaluationDialog from "../components/evaluation/MaterialEvaluationDialog";
 import { parseDToAnchors, anchorsToD } from "../lib/motif/pathModel";
-import { applyPickedPathToggle } from "../lib/motif/motifLayer";
+import { applyPickedPathToggle, isMotifLayer } from "../lib/motif/motifLayer";
+import { isMotifHost } from "../lib/motif/hostKinds";
+import { defaultMotifAddOpts } from "../lib/motif/defaultBinding";
 import useMotifEditorSession from "../lib/hooks/useMotifEditorSession";
 import useGlyphCommits from "../lib/hooks/useGlyphCommits";
 
@@ -65,11 +80,13 @@ import {
   deletePanel,
   duplicatePanel,
   clearPanelLayers,
+  normalizePanels,
 } from "../lib/panels";
 import { exportPanelsZip } from "../lib/panelExport";
 import { isTextLayer } from "../lib/text/textLayer";
 import { persistEtchSource } from "../lib/etch/etchSourceStorage";
-import { useFont } from "../lib/text/fontRegistry";
+import { useFonts } from "../lib/text/fontRegistry";
+import { registerBuiltInSingleLineFonts } from "../lib/text/singleLineFonts";
 import { useAuth } from "../lib/AuthContext";
 import useGlobalMotifLibrary from "../lib/hooks/useGlobalMotifLibrary";
 import { canUseGlobalLibrary } from "../lib/motifLibraryEntitlement";
@@ -130,15 +147,17 @@ export default function Studio({ submitOrg = null } = {}) {
   // motifs (empty when logged-out/offline) and exposes `promote` for "Save to my
   // library". The premium entitlement is a scaffold that ships ON-for-all
   // (canUseGlobalLibrary → true); the LOGIN gate is enforced at the button.
-  const { motifs: libraryMotifs, promote: promoteMotif } =
-    useGlobalMotifLibrary(user);
+  const {
+    motifs: libraryMotifs,
+    promote: promoteMotif,
+    remove: removeLibraryMotif,
+    error: libraryError,
+  } = useGlobalMotifLibrary(user);
   const canSaveToLibrary = canUseGlobalLibrary({ user, tier });
   // Admin entry point, relocated into the MenuBar now that TopNav no longer
   // renders over the studio route (the standalone Naqsha bar was dropped).
   const navigate = useNavigate();
   const showAdmin = useShowAdmin();
-  // Resolved opentype font for exporting text-layer glyph outlines (phase 6).
-  const { font: textFont } = useFont();
   const savedCanvas = loadCanvasState();
 
   // === UI chrome (modals + examples) ===
@@ -348,9 +367,12 @@ export default function Studio({ submitOrg = null } = {}) {
     setCustomGlyphs,
     // Pen-editor Save seam (WI-P2-2). `updateCustomGlyph` (Save → all N layers
     // restamp via the render seam) lands in WI-P2-1b; optional-chained below so
-    // this slice works before that store WI merges. (`deleteCustomGlyph` also
-    // ships there, but this WI has no Delete affordance, so it's not pulled in.)
+    // this slice works before that store WI merges.
     updateCustomGlyph,
+    // Motif-shell (D): the library panel's guarded delete — its only caller.
+    // The panel disables delete while glyphUseCount > 0, so this can never
+    // create a dangling glyphRef.
+    deleteCustomGlyph,
     // Naqsha Panels (WI-6). The panel array + setter are owned by useLayers (it
     // also persists `panels` to `sonoform-panels` and each `layer.panelId` to
     // `sonoform-layers` automatically). Studio threads them into cloud
@@ -419,6 +441,24 @@ export default function Studio({ submitOrg = null } = {}) {
   useEffect(() => {
     layersRef.current = layers;
   }, [layers]);
+
+  // Per-node font resolution: loads every font the layers reference (plus the
+  // default) and returns a synchronous `resolveFont(fontId) → Font`. Threaded
+  // into the live preview surfaces AND the export handlers. Export must stay
+  // SYNCHRONOUS (the File→New flow exports THEN blanks the doc in the same tick,
+  // and the ⌘E receipt reads the just-written file) — so we can't await here;
+  // `useFonts` instead eagerly preloads every in-use font on mount/layers-change,
+  // so by the time an export is reachable the resolver holds the real glyphs.
+  // While a font is still streaming, resolveFont falls back to the default (a
+  // brief canvas flash; steady state — the only realistic export moment — is
+  // correct).
+  const { resolveFont } = useFonts(layers);
+
+  // Register the built-in single-line (engraving) fonts once, so they appear in
+  // the font picker's "Engraving" group. Idempotent; notifies catalog subscribers.
+  useEffect(() => {
+    registerBuiltInSingleLineFonts();
+  }, []);
   const captureAssignments = useCallback(() => {
     const map = {};
     for (const l of layersRef.current) map[l.id] = l.operationId;
@@ -587,6 +627,27 @@ export default function Studio({ submitOrg = null } = {}) {
       loadLayerSet(newLayers);
     },
     [loadLayerSet, setCustomGlyphs]
+  );
+
+  // Document loads that must also (re)build the panels array. loadDocumentLayers
+  // only swaps `layers`; a loaded/seeded layer therefore keeps createLayer's null
+  // panelId while `panels` stays stale — ORPHANED: still drawn on the 2D canvas
+  // (effectiveVisible falls back to no-panel) but absent from the panel-grouped
+  // LayerTree AND the per-panel 3D preview. The cloud loader already normalizes +
+  // setPanels inline (useCloudPersistence); this is the SAME step for every other
+  // genuine load — onboarding seeds, saved groups, examples, share links. Docs
+  // that carry a panels array pass it through to preserve structure; those that
+  // don't (the common case) seed a fresh Panel 1 via normalizePanels(null, …).
+  const loadDocumentWithPanels = useCallback(
+    (newLayers, newCustomGlyphs = {}, incomingPanels = null) => {
+      const { panels: normPanels, layers: normLayers } = normalizePanels(
+        incomingPanels,
+        Array.isArray(newLayers) ? newLayers : []
+      );
+      loadDocumentLayers(normLayers, newCustomGlyphs);
+      setPanels(normPanels);
+    },
+    [loadDocumentLayers, setPanels]
   );
 
   // === Tier-2 cloud history persistence (undo-history-plan §7, S9) ===
@@ -1007,7 +1068,7 @@ export default function Studio({ submitOrg = null } = {}) {
       colorView: colorView.colorView,
       panels: activeProfileId === "laser" ? panels : [],
       customGlyphs,
-      textFont,
+      textFont: resolveFont,
     }),
     [
       layers,
@@ -1019,7 +1080,7 @@ export default function Studio({ submitOrg = null } = {}) {
       colorView.colorView,
       panels,
       customGlyphs,
-      textFont,
+      resolveFont,
     ],
   );
 
@@ -1107,6 +1168,25 @@ export default function Studio({ submitOrg = null } = {}) {
   // 1:1 "what etches" preview hero (Raster Etch S9, #88) re-renders when a bitmap
   // resolves async — it reads the SAME buffer that exports (grilled decision 4).
   const [etchBitmaps, setEtchBitmaps] = useState({});
+  // Per-motif-layer placement-budget stats (layerId → {total, placed}) for the
+  // Inspector's MotifDevice "no silent cap" warning (2026-07-19 post-crash
+  // hardening, docs §6). Only truncated motif layers appear. Surfaced up from
+  // useCanvas via RightPanel, mirroring etchBitmaps.
+  const [motifPlacementStats, setMotifPlacementStats] = useState({});
+  // Per-motif-layer placement POSITIONS (layerId → ordered [{x,y,radius}]) for the
+  // Trace sweep (issue #91). Surfaced up from useCanvas via RightPanel; feeds both
+  // the in-canvas TraceOverlay and useTraceSweep's per-motif count.
+  const [motifPlacements, setMotifPlacements] = useState({});
+  // Trace sweep controller (issue #91). Owns {activeMotifId, progressIndex,
+  // playing, mode}; advances the lit prefix at a constant ~15/sec, one trace at a
+  // time, and honors prefers-reduced-motion (manual scrubber, no autoplay). Count
+  // per motif is read live off motifPlacements at press time. Lives at Studio
+  // level because BOTH the canvas overlay (via RightPanel) and the Inspector row
+  // (Trace button + lit-row RhythmStrip marker) consume it.
+  const trace = useTraceSweep({
+    getCount: (id) => motifPlacements[id]?.length ?? 0,
+    prefersReducedMotion,
+  });
 
   // === Run Plan (Wave-3 Lane I, PRD #73) ===
   // The plan is a shell-morph: AppShell provides the open/closed state around the
@@ -1235,6 +1315,155 @@ export default function Studio({ submitOrg = null } = {}) {
     layers,
     customGlyphs,
   });
+
+  // ── Motif-shell (D, docs/motif-flow-audit-2026-07.md) ────────────────────
+  // Which surface the left column shows: 'layers' (the object tree) or
+  // 'motifs' (the library panel). Persisted per device; `\` toggles.
+  const [leftSurface, setLeftSurface] = useState(() => {
+    try {
+      return localStorage.getItem("sonoform-left-surface") === "motifs"
+        ? "motifs"
+        : "layers";
+    } catch {
+      return "layers";
+    }
+  });
+  const changeLeftSurface = useCallback((surface) => {
+    setLeftSurface(surface);
+    try {
+      localStorage.setItem("sonoform-left-surface", surface);
+    } catch {
+      /* private mode — session-only is fine */
+    }
+  }, []);
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key !== "\\" || e.metaKey || e.ctrlKey || e.altKey) return;
+      const t = e.target;
+      if (
+        t instanceof HTMLElement &&
+        (t.tagName === "INPUT" ||
+          t.tagName === "TEXTAREA" ||
+          t.tagName === "SELECT" ||
+          t.isContentEditable)
+      )
+        return;
+      setLeftSurface((s) => {
+        const next = s === "layers" ? "motifs" : "layers";
+        try {
+          localStorage.setItem("sonoform-left-surface", next);
+        } catch {
+          /* private mode */
+        }
+        return next;
+      });
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  // Live library drag (payload | null), the canvas badge under the cursor
+  // (mirrored into the panel's mini tree — the two-way validation), and the
+  // apply confirmation/error toast (auto-clears).
+  const [motifDrag, setMotifDrag] = useState(null);
+  const [dragHoverHostId, setDragHoverHostId] = useState(null);
+  const [motifToast, setMotifToast] = useState(null);
+  useEffect(() => {
+    if (!motifToast) return undefined;
+    const t = setTimeout(() => setMotifToast(null), 2600);
+    return () => clearTimeout(t);
+  }, [motifToast]);
+
+  // Apply a dragged library entry to a host as ONE undo entry. A library
+  // glyph needs its document copy first (idempotent), so copy + add-layer are
+  // folded into one recordBatch window; built-in/custom glyphs are already in
+  // reach and addMotifLayer records its own single structural entry. Defaults
+  // come from the SAME defaultMotifAddOpts the device's "+ Add Motif" uses.
+  const applyGlyphToHost = useCallback(
+    (payload, hostLayerId) => {
+      const host = layers.find((l) => l.id === hostLayerId);
+      if (!host) return;
+      let res = { ok: false };
+      const opts = defaultMotifAddOpts(host.patternType, payload.glyphId);
+      if (payload.kind === "library") {
+        recordBatch(() => {
+          glyphCommits.copyGlyphToDoc(payload.glyph);
+          res = addMotifLayer(hostLayerId, opts);
+        });
+      } else {
+        res = addMotifLayer(hostLayerId, opts);
+      }
+      setMotifToast(
+        res.ok
+          ? {
+              kind: "ok",
+              text: `${payload.glyph?.name || "Motif"} → ${host.name || host.patternType}`,
+            }
+          : { kind: "error", text: res.error || "Couldn't add motif." }
+      );
+      setMotifDrag(null);
+      setDragHoverHostId(null);
+    },
+    [layers, recordBatch, glyphCommits, addMotifLayer]
+  );
+
+  // Canvas drop = apply to the SELECTED host (the agreed disambiguation rule);
+  // a non-host selection gets an explanatory error instead of a silent no-op.
+  const handleMotifCanvasDrop = useCallback(() => {
+    if (!motifDrag) return;
+    const selected = layers.find((l) => l.id === selectedLayerId) || null;
+    if (selected && isMotifHost(selected.patternType) && !isMotifLayer(selected)) {
+      applyGlyphToHost(motifDrag, selected.id);
+    } else {
+      setMotifToast({
+        kind: "error",
+        text: "Not applied — select a grid / spiral / recursive layer first.",
+      });
+      setMotifDrag(null);
+      setDragHoverHostId(null);
+    }
+  }, [motifDrag, layers, selectedLayerId, applyGlyphToHost]);
+
+  // Library-panel SVG import: parse → document glyph store, no layer bind
+  // (that's what dragging is for). Same importMotif parser as the device row
+  // path; errors surface in the same toast the apply paths use.
+  const importSvgToLibrary = useCallback(
+    async (file) => {
+      let text;
+      try {
+        text = await file.text();
+      } catch {
+        setMotifToast({ kind: "error", text: "Could not read that file." });
+        return;
+      }
+      const result = importMotif(text);
+      if (!result.ok) {
+        setMotifToast({
+          kind: "error",
+          text: result.error || "Could not import this SVG.",
+        });
+        return;
+      }
+      const name =
+        result.glyph.name || file.name.replace(/\.svg$/i, "") || "Imported motif";
+      addCustomGlyph({ ...result.glyph, name });
+      setMotifToast({ kind: "ok", text: `Imported "${name}" — drag it onto a host.` });
+    },
+    [addCustomGlyph]
+  );
+
+  // Cap-aware wrapper for every device add path (audit 2026-07 bug 8: chips
+  // and "+ Add Motif" ignored the {ok:false} return, so at the layer cap a
+  // tap did nothing with zero explanation).
+  const handleAddMotif = useCallback(
+    (hostLayerId, opts) => {
+      const res = addMotifLayer(hostLayerId, opts);
+      if (!res.ok)
+        setMotifToast({ kind: "error", text: res.error || "Couldn't add motif." });
+      return res;
+    },
+    [addMotifLayer]
+  );
 
   // Motif Edit Session (Wave 2, #77) — owns the pen-editor lifecycle (open's
   // fork decision, openNew, importFromFile, Save/Save-as-copy/Cancel) that used
@@ -1708,7 +1937,8 @@ export default function Studio({ submitOrg = null } = {}) {
       // Operation library so an Etch's embedded-bitmap colour resolves through
       // its engrave Operation (same as the canvas), not a hardcoded layer colour.
       operations,
-      font: textFont,
+      // Per-node resolver so each text layer exports in its OWN typeface.
+      font: resolveFont,
     });
   };
 
@@ -1732,8 +1962,9 @@ export default function Studio({ submitOrg = null } = {}) {
         // Operation library so an Etch's embedded-bitmap colour resolves through
         // its engrave Operation (same as the canvas), not a hardcoded layer colour.
         operations,
-        // Resolved font so text layers export their glyph outlines (phase 6).
-        font: textFont,
+        // Per-node resolver so text layers export their glyph outlines in each
+        // layer's OWN typeface (phase 6 / per-node fonts).
+        font: resolveFont,
       }
     );
   };
@@ -1797,6 +2028,105 @@ export default function Studio({ submitOrg = null } = {}) {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
+  // === File → New: start a fresh document (issue: New was mislabelled) ===
+  // `onNew` used to ADD a pattern to the current document. It now starts a NEW
+  // document. The blank the owner wants is not a dead canvas: it's zero layers on
+  // ONE empty panel, with the pattern picker auto-opened so New ends by letting
+  // the user choose their first pattern into a clean document.
+  //
+  // The load-bearing rule: NEVER blank until the chosen save path has
+  // demonstrably completed (localStorage autosave IS the document; resetDocument
+  // overwrites it). Discard blanks now; Save blanks only on save success; Export
+  // blanks after the SVG is produced; Cancel/Esc keep the document.
+  const [newDocOpen, setNewDocOpen] = useState(false);
+  // "Blank the document once the in-flight cloud save succeeds" — the gate that
+  // keeps Save→New from discarding work before it is safe.
+  const [pendingNewAfterSave, setPendingNewAfterSave] = useState(false);
+
+  // The actual reset. Mirrors handleOnboardingNewSession's document swap (clear
+  // undo history, reset optimizations to "none applied", flush a clean snapshot
+  // via resetDocument) but for File → New: an EMPTY document (resetDocument([]) →
+  // normalizePanels seeds exactly one empty panel), onboarding is NOT re-armed,
+  // and currentDesignId is dropped so the fresh document is INDEPENDENT — the
+  // just-saved design keeps its own cloud row and the blank never autosaves over
+  // it (a null id keeps the first save explicit). Ends by opening the picker.
+  const startNewDocument = useCallback(() => {
+    historyRef.current?.clear();
+    hydrateOptimizations();
+    resetDocument([], {}, serializeApplied(hydrateApplied()));
+    setCurrentDesignId(null);
+    setPendingPanelId(undefined);
+    setUI("showPatternPicker", true);
+  }, [resetDocument, hydrateOptimizations, setCurrentDesignId, setUI]);
+
+  // Entry point wired to the File ▸ New menu item. No unsaved work → skip the
+  // prompt and start fresh; otherwise open the multi-action prompt.
+  const handleFileNew = useCallback(() => {
+    if (isDirty() || nameDirty) setNewDocOpen(true);
+    else startNewDocument();
+  }, [isDirty, nameDirty, startNewDocument]);
+
+  // The prompt's chosen action. Discard blanks now; Export writes the SVG
+  // (synchronous — the file is produced before we blank) then blanks; Save arms
+  // the success gate (guest → sign-in, which preserves the doc across the OAuth
+  // redirect and does NOT blank); Cancel keeps the document.
+  const handleNewDocAction = useCallback(
+    (id) => {
+      if (id === "cancel") {
+        setNewDocOpen(false);
+        return;
+      }
+      if (id === "discard") {
+        setNewDocOpen(false);
+        startNewDocument();
+        return;
+      }
+      if (id === "export") {
+        setNewDocOpen(false);
+        runExport(true);
+        startNewDocument();
+        return;
+      }
+      if (id === "save") {
+        setNewDocOpen(false);
+        // Guest: no cloud to save to yet. Route to sign-in (a full OAuth
+        // redirect) and PRESERVE the document — an in-memory "resume New" intent
+        // can't survive the navigation, and blanking would cost their work.
+        if (!user) {
+          signIn();
+          return;
+        }
+        // Signed-in: arm the gate, then trigger the save. The blank fires only
+        // when saveState edges saving→saved (see the effect below).
+        setPendingNewAfterSave(true);
+        handleSaveToCloud({ manual: true });
+      }
+    },
+    [startNewDocument, runExport, user, signIn, handleSaveToCloud]
+  );
+
+  // Save-success gate for Save → New. Edge-triggered on the saving→saved
+  // transition (a LEVEL check on "saved" is unsafe — saveState lingers at "saved"
+  // across later edits, so it could blank unsaved work). On a real success we
+  // blank + open the picker; on "error" we abort the New and keep the document.
+  const prevSaveStateRef = useRef(saveState);
+  useEffect(() => {
+    const prev = prevSaveStateRef.current;
+    prevSaveStateRef.current = saveState;
+    if (!pendingNewAfterSave) return;
+    if (prev === "saving" && saveState === "saved") {
+      setPendingNewAfterSave(false);
+      startNewDocument();
+    } else if (saveState === "error") {
+      setPendingNewAfterSave(false);
+    }
+  }, [saveState, pendingNewAfterSave, startNewDocument]);
+
+  const newDocActions = resolveNewDocumentActions({
+    dirty: isDirty() || nameDirty,
+    signedIn: !!user,
+  });
+
   // Per-panel ZIP export (Naqsha Panels WI-6, spec §3). Laser-only affordance:
   // bundles one SVG per VISIBLE panel + a combined SVG into a timestamped ZIP.
   // Mirrors handleExportAll's option shape; `exportLayer` spreads each layer so
@@ -1811,7 +2141,7 @@ export default function Studio({ submitOrg = null } = {}) {
         manifest: buildExportManifest(),
         optimizations: appliedOptimizations,
         profileId: machineProfile,
-        font: textFont,
+        font: resolveFont,
       },
     });
   };
@@ -1855,7 +2185,13 @@ export default function Studio({ submitOrg = null } = {}) {
   const handleLoadGroup = (group) => {
     // WI-3: a saved group carries its custom-glyph store; default {} resets the
     // store for a pre-WI-3 group (no field) so it never inherits current glyphs.
-    loadDocumentLayers(group.layers, group.customGlyphs ?? {});
+    // Pin the loaded layers to panels (group.panels when present, else a fresh
+    // Panel 1) so they're never orphaned off the LayerTree / 3D preview.
+    loadDocumentWithPanels(
+      group.layers,
+      group.customGlyphs ?? {},
+      group.panels ?? null
+    );
     if (group.canvasW && group.canvasH) {
       applyCanvasSize(group.canvasW, group.canvasH);
     }
@@ -1873,7 +2209,12 @@ export default function Studio({ submitOrg = null } = {}) {
       if (!cfg?.layers) return;
       // WI-3: a curated example may bundle custom glyphs; default {} resets the
       // store for examples that don't (the common case) rather than leaking.
-      loadDocumentLayers(cfg.layers, cfg.customGlyphs ?? {});
+      // Pin to panels so the example's layers aren't orphaned off LayerTree / 3D.
+      loadDocumentWithPanels(
+        cfg.layers,
+        cfg.customGlyphs ?? {},
+        cfg.panels ?? null
+      );
       if (typeof cfg.bgColor === "string") setBgColor(cfg.bgColor);
       if (cfg.canvasW && cfg.canvasH) {
         applyCanvasSize(cfg.canvasW, cfg.canvasH);
@@ -1990,6 +2331,37 @@ export default function Studio({ submitOrg = null } = {}) {
             </button>
           </div>
         )}
+        {/* Motif-shell (D): the real ToolStrip re-homed as a rounded tab
+            protruding from the left panel edge onto the canvas — same
+            activeTool state, so hotkeys and the control bar are unchanged.
+            Pro shell only (legacy layout keeps no strip, as before). The
+            canvas's left ~48px is reserved chrome space: nothing else may
+            float there (the color-view control sits bottom-left below it). */}
+        {toolStripSlot && (
+          <div
+            data-testid="canvas-toolstrip-tab"
+            className="absolute left-0 top-12 z-30 max-h-[calc(100%-3.5rem)] overflow-y-auto rounded-r-cell border border-l-0 border-hairline bg-paper shadow-sm"
+          >
+            <ToolStrip activeTool={activeTool} onToolChange={setActiveTool} />
+          </div>
+        )}
+        {/* Motif-shell (D): canvas half of the library drag-apply — the
+            full-surface drop zone (applies to the SELECTED host), the per-host
+            badge stack (hover mirrors into the panel's mini tree), and the
+            apply toast. Inert while no drag is live and no toast is showing. */}
+        <MotifDropLayer
+          motifDrag={motifDrag}
+          layers={layers}
+          selectedLayerId={selectedLayerId}
+          hoverHostId={dragHoverHostId}
+          onHoverHost={setDragHoverHostId}
+          onDropOnHost={(hostId) => motifDrag && applyGlyphToHost(motifDrag, hostId)}
+          onDropOnCanvas={handleMotifCanvasDrop}
+          toast={motifToast}
+        />
+        {/* PROTOTYPE (throwaway) — motif-device layout variants + A/B/C
+            switcher over the canvas. Inert without ?variant=A|B|C (DEV). */}
+        <MotifPrototypeOverlay />
         <RightPanel
           layers={layers}
           // Operation library + active profile → canvas strokes match export
@@ -2034,6 +2406,14 @@ export default function Studio({ submitOrg = null } = {}) {
           // Surfaces the resolved single-source Etch bitmaps for the Inspector's
           // 1:1 "what etches" preview hero (#88) — same buffer that exports.
           onEtchBitmapsChange={setEtchBitmaps}
+          // Per-motif-layer placement-budget stats for the MotifDevice "no
+          // silent cap" warning (2026-07-19, docs §6).
+          onMotifPlacementStatsChange={setMotifPlacementStats}
+          // Trace sweep (issue #91): positions flow UP for useTraceSweep's count;
+          // the active motif + lit prefix flow DOWN to drive the in-canvas overlay.
+          onMotifPlacementsChange={setMotifPlacements}
+          traceActiveMotifId={trace.activeMotifId}
+          traceProgressIndex={trace.progressIndex}
           canvasContainerRef={canvasContainerRef}
           bgColor={bgColor}
           onBgColorChange={handleBgColorChange}
@@ -2157,7 +2537,7 @@ export default function Studio({ submitOrg = null } = {}) {
             own parallel layer-state path. */}
         <GuestOnboarding
           isGuest={!user && tier === "guest"}
-          onLoadSeed={loadDocumentLayers}
+          onLoadSeed={loadDocumentWithPanels}
           activeLayer={layers.find((l) => l.id === selectedLayerId) || layers[0] || null}
           onUpdateLayer={updateLayer}
           lensTipUsed={lensTipUsed}
@@ -2211,6 +2591,14 @@ export default function Studio({ submitOrg = null } = {}) {
         </div>
       )}
 
+      {/* File → New prompt (unsaved-work guard). Renders only when the document
+          is dirty; a clean New skips it entirely. */}
+      <NewDocumentDialog
+        open={newDocOpen}
+        actions={newDocActions}
+        onAction={handleNewDocAction}
+      />
+
       {/* New-layer pattern picker (the "periodic table") */}
       <PatternPickerModal
         open={ui.showPatternPicker}
@@ -2219,7 +2607,10 @@ export default function Studio({ submitOrg = null } = {}) {
           // Thread the pending panel (per-panel add) into the new layer; a
           // global/flat add leaves it undefined → addLayer ignores it and the
           // normalizer assigns the layer. Reset after so it never leaks again.
-          addLayer(id, { panelId: pendingPanelId });
+          const outcome = addLayer(id, { panelId: pendingPanelId });
+          // Select the just-created layer so the Inspector shows IT, not the
+          // previously-selected pattern (which would otherwise linger).
+          if (outcome?.ok) setSelectedLayerId(outcome.id);
           setPendingPanelId(undefined);
           setUI("showPatternPicker", false);
         }}
@@ -2251,7 +2642,12 @@ export default function Studio({ submitOrg = null } = {}) {
         <CloudSaveModal
           onLoad={handleLoadCloudDesign}
           onLoadConfig={(config) => {
-            if (config.layers) loadDocumentLayers(config.layers);
+            if (config.layers)
+              loadDocumentWithPanels(
+                config.layers,
+                config.customGlyphs ?? {},
+                config.panels ?? null
+              );
             if (config.canvasW && config.canvasH) {
               applyCanvasSize(config.canvasW, config.canvasH);
             }
@@ -2291,13 +2687,7 @@ export default function Studio({ submitOrg = null } = {}) {
       {menuSlot &&
         createPortal(
           <MenuBar
-            onNew={() => {
-              // Global "New layer" — clear any pending per-panel target so the
-              // layer is added unassigned (normalizer homes it), never leaking a
-              // stale panel id from a prior per-panel add.
-              setPendingPanelId(undefined);
-              setUI("showPatternPicker", true);
-            }}
+            onNew={handleFileNew}
             onOpen={() => setUI("showLoadModal", true)}
             onExamples={() => setUI("showExamples", !showExamples)}
             onImport={handleImportClick}
@@ -2369,13 +2759,15 @@ export default function Studio({ submitOrg = null } = {}) {
           menuSlot
         )}
 
-      {/* Pro-shell tool strip (B6 / #9). Portaled into the shell's Tool strip
-          region when the slot is present; renders nothing in the legacy layout
-          (slot is null → no-op). Active-tool state is owned by Studio so it also
-          drives the contextual control bar below. */}
+      {/* Pro-shell left rail (motif-shell, D — supersedes the B6 tool strip in
+          this region). The w-12 rail now switches the left column's SURFACE
+          (Layers / Motifs, Ableton-browser style); the tools themselves render
+          as a tab protruding onto the canvas (see the canvas region below), so
+          they stay one glance away without costing a full-height column.
+          Renders nothing in the legacy layout (slot null → no-op). */}
       {toolStripSlot &&
         createPortal(
-          <ToolStrip activeTool={activeTool} onToolChange={setActiveTool} />,
+          <LeftRailNav surface={leftSurface} onSurfaceChange={changeLeftSurface} />,
           toolStripSlot
         )}
 
@@ -2447,6 +2839,15 @@ export default function Studio({ submitOrg = null } = {}) {
             // hero (#88) — the SAME buffer that exports (no second resolve). Null
             // while resolving / for non-Etch layers → the hero self-hides.
             etchBitmap={etchBitmaps[inspectorTargetId] ?? null}
+            // Placement-budget stats (layerId → {total, placed}) for the
+            // MotifDevice "no silent cap" warning (2026-07-19, docs §6). The
+            // WHOLE map is threaded (not just the selected id) because the
+            // device renders on the HOST and lists its adorning motif children.
+            motifPlacementStats={motifPlacementStats}
+            // Trace sweep (issue #91): the controller the MotifDevice rows read —
+            // per-row Trace button (toggle), the lit-row RhythmStrip marker (frac),
+            // and the reduced-motion scrubber (mode/scrub). null-safe downstream.
+            trace={trace}
             // Active document unit (#13) — length-tagged params display/convert
             // in this unit; values stay px in layer state.
             unit={unit}
@@ -2475,7 +2876,7 @@ export default function Studio({ submitOrg = null } = {}) {
             // Motif device (host Inspector) — add a motif adorning the selected
             // host, and remove a motif via the same delete handler the object
             // tree uses (removeLayer / onDeleteLayer).
-            onAddMotif={addMotifLayer}
+            onAddMotif={handleAddMotif}
             onRemoveLayer={removeLayer}
             // WI-5: the Motif device lists imported glyphs (customGlyphs) in its
             // picker (read-only prop — writes route through the session/commits
@@ -2510,6 +2911,9 @@ export default function Studio({ submitOrg = null } = {}) {
             // the ephemeral pick target shared with the canvas overlay.
             motifPick={motifPick}
             onMotifPick={setMotifPick}
+            // Motif-shell (D): the glyph-picker flyout's "Manage library…"
+            // jumps the left column to the Motifs surface.
+            onOpenLibrary={() => changeLeftSurface("motifs")}
           />
           ),
           inspectorSlot
@@ -2520,7 +2924,31 @@ export default function Studio({ submitOrg = null } = {}) {
           renders nothing in the legacy layout (slot null → no-op). Drives live
           selection (consumed by the Inspector above) and the document profile /
           operation-library remap. */}
+      {/* Motif-shell (D): the left column's content follows the rail —
+          'motifs' swaps the tree for the library panel (compact read-only
+          drop-tree + thumbnail grid); 'layers' renders the untouched tree. */}
       {objectTreeSlot &&
+        leftSurface === "motifs" &&
+        createPortal(
+          <MotifLibraryPanel
+            layers={layers}
+            selectedLayerId={selectedLayerId}
+            onUpdateLayer={updateLayer}
+            customGlyphs={customGlyphs}
+            libraryMotifs={libraryMotifs}
+            libraryError={libraryError}
+            motifDrag={motifDrag}
+            onMotifDragChange={setMotifDrag}
+            dragHoverHostId={dragHoverHostId}
+            onApplyToHost={applyGlyphToHost}
+            onImportSvg={importSvgToLibrary}
+            onDeleteCustomGlyph={deleteCustomGlyph}
+            onDeleteLibraryMotif={removeLibraryMotif}
+          />,
+          objectTreeSlot
+        )}
+      {objectTreeSlot &&
+        leftSurface === "layers" &&
         createPortal(
           <LayerTree
             layers={layers}
@@ -2551,7 +2979,14 @@ export default function Studio({ submitOrg = null } = {}) {
               setPendingPanelId(panelId);
               setUI("showPatternPicker", true);
             }}
-            addDisabled={layers.length >= (limits.maxLayers ?? Infinity)}
+            // Fix 2 (docs §6): motifs are exempt from the tier cap, so the "+ New"
+            // add-pattern row only greys out when NON-motif layers hit the cap —
+            // otherwise a host with adorning motifs would falsely block adding a
+            // pattern. Mirrors useLayers.addLayer's non-motif count.
+            addDisabled={
+              layers.filter((l) => !isMotifLayer(l)).length >=
+              (limits.maxLayers ?? Infinity)
+            }
             // Naqsha Panels grouped tier (WI-6, spec §5) — LASER-ONLY. Passing []
             // in plotter/dragCutter makes LayerTree render the flat list (its
             // grouped tier renders only when panels.length > 0), so non-laser
@@ -2748,7 +3183,8 @@ export default function Studio({ submitOrg = null } = {}) {
             onClose={() => setLibraryOpen(false)}
             onUseInStudio={(patternId) => {
               setLibraryOpen(false);
-              addLayer(patternId);
+              const outcome = addLayer(patternId);
+              if (outcome?.ok) setSelectedLayerId(outcome.id);
             }}
             onNewExtraction={() => {
               extractFromLibraryRef.current = true;

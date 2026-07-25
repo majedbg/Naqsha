@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { capturePolylines } from './capturePolylines.js';
+import Grid from '../patterns/Grid.js';
+import { RecordingContext, P5Adapter } from '../patterns/drawingContext.js';
+import { mulberry32 } from '../patterns/rng.js';
+import { sampleEdgeAnchors } from './anchors.js';
 
 // Helper: assert a point is close to (x,y) (folded float math).
 function near(pt, x, y) {
@@ -135,6 +139,60 @@ describe('capturePolylines', () => {
     expect(paths).toEqual([]);
   });
 
+  it('flattens a bezierOrder(3)+bezierVertex cubic into on-curve polyline points', () => {
+    // A single cubic from (0,0) with controls (0,100),(100,100) to (100,0).
+    const paths = capturePolylines([
+      { op: 'beginShape', args: [] },
+      { op: 'vertex', args: [0, 0] },
+      { op: 'bezierOrder', args: [3] },
+      { op: 'bezierVertex', args: [0, 100] },   // c1
+      { op: 'bezierVertex', args: [100, 100] },  // c2
+      { op: 'bezierVertex', args: [100, 0] },    // end (on-curve)
+      { op: 'endShape', args: [] },
+    ]);
+    expect(paths).toHaveLength(1);
+    const pts = paths[0].points;
+    // Start anchor pinned, endpoint pinned exactly, control points never emitted.
+    near(pts[0], 0, 0);
+    near(pts[pts.length - 1], 100, 0);
+    expect(pts.some((p) => p.x === 0 && p.y === 100)).toBe(false);
+    expect(pts.some((p) => p.x === 100 && p.y === 100)).toBe(false);
+    // Adaptive flattening emits several intermediate on-curve points; the true
+    // B(0.5) = (50,75) must have a near neighbour.
+    expect(pts.length).toBeGreaterThan(3);
+    const nearestMid = Math.min(...pts.map((p) => Math.hypot(p.x - 50, p.y - 75)));
+    expect(nearestMid).toBeLessThan(0.15);
+  });
+
+  it('folds bezier control points through the CTM before flattening', () => {
+    // translate(10,20) then a cubic whose endpoint is local (5,0) → absolute (15,20).
+    const paths = capturePolylines([
+      { op: 'translate', args: [10, 20] },
+      { op: 'beginShape', args: [] },
+      { op: 'vertex', args: [0, 0] },
+      { op: 'bezierOrder', args: [3] },
+      { op: 'bezierVertex', args: [0, 5] },
+      { op: 'bezierVertex', args: [5, 5] },
+      { op: 'bezierVertex', args: [5, 0] },
+      { op: 'endShape', args: [] },
+    ]);
+    near(paths[0].points[0], 10, 20);
+    near(paths[0].points[paths[0].points.length - 1], 15, 20);
+  });
+
+  it('ignores a bezierVertex with no preceding on-curve anchor', () => {
+    const paths = capturePolylines([
+      { op: 'beginShape', args: [] },
+      { op: 'bezierOrder', args: [3] },
+      { op: 'bezierVertex', args: [0, 100] },
+      { op: 'bezierVertex', args: [100, 100] },
+      { op: 'bezierVertex', args: [100, 0] },
+      { op: 'endShape', args: [] },
+    ]);
+    // No anchor to root the curve → nothing usable → dropped (<2 vertices).
+    expect(paths).toEqual([]);
+  });
+
   it('handles multiple symmetry copies (each push/translate/rotate emits its own path)', () => {
     // Mimics applySymmetryDraw with n=2: two translated+rotated copies.
     const calls = [];
@@ -153,5 +211,157 @@ describe('capturePolylines', () => {
     // copy 1: rotated 180° → (10,0)→(-10,0)→+T=(40,50); (20,0)→(-20,0)→(30,50)
     near(paths[1].points[0], 40, 50);
     near(paths[1].points[1], 30, 50);
+  });
+});
+
+// INTEGRATION — the real feature seam the vine-along-a-column relies on: a
+// single-axis Grid's generate() draws its lines with ctx.line INSIDE
+// applySymmetryDraw's push/translate/rotate/pop wrapper, and capturePolylines
+// must fold those through the CTM into non-empty, canvas-absolute hostPaths. Unit
+// tests that inject hostPaths directly never exercise this; this drives a REAL
+// Grid through the SAME record format the production P5Adapter emits (Recording
+// context records identical {op,args}) and the REAL capturePolylines. Without
+// this, an empty-capture regression would silently relocate the "nothing appears"
+// bug one stage upstream.
+describe('capturePolylines — real single-axis Grid host (vine seam)', () => {
+  const W = 800;
+  const H = 600;
+  function captureGrid(params) {
+    const ctx = new RecordingContext({ seed: 7 });
+    new Grid().generateWithContext(ctx, 7, params, W, H, '#000000', 100);
+    return capturePolylines(ctx.calls);
+  }
+
+  it('columns-only grid captures one polyline per vertical column', () => {
+    const cols = 5;
+    const paths = captureGrid({ cols, rows: 4, spacing: 60, drawHorizontal: 0 });
+    // One straight line per drawn vertical (cols+1 line positions in a grid).
+    expect(paths.length).toBeGreaterThanOrEqual(cols);
+    // Each is a vertical segment (near-constant x, y spans a range) in absolute
+    // canvas coords (centered lattice folded by applySymmetryDraw's translate).
+    for (const p of paths) {
+      expect(p.points.length).toBeGreaterThanOrEqual(2);
+      const [a, b] = [p.points[0], p.points[p.points.length - 1]];
+      expect(Math.abs(a.x - b.x)).toBeLessThan(1e-6); // vertical: x constant
+      expect(Math.abs(a.y - b.y)).toBeGreaterThan(50); // real vertical extent
+      expect(a.x).toBeGreaterThan(0); // folded to absolute canvas space, not centered
+      expect(a.x).toBeLessThan(W);
+    }
+  });
+
+  it('rows-only grid captures horizontal polylines', () => {
+    const paths = captureGrid({ cols: 4, rows: 5, spacing: 60, drawVertical: 0 });
+    expect(paths.length).toBeGreaterThan(0);
+    for (const p of paths) {
+      const [a, b] = [p.points[0], p.points[p.points.length - 1]];
+      expect(Math.abs(a.y - b.y)).toBeLessThan(1e-6); // horizontal: y constant
+      expect(Math.abs(a.x - b.x)).toBeGreaterThan(50);
+    }
+  });
+
+  it('captured columns feed sampleEdgeAnchors — anchors distribute ALONG each line', () => {
+    const paths = captureGrid({ cols: 3, rows: 4, spacing: 80, drawHorizontal: 0 });
+    // This is what MotifPattern does in edge mode. Multiple samples per line means
+    // leaves march UP the column — the whole point of the feature.
+    const anchors = sampleEdgeAnchors(paths, { spacing: 40 });
+    expect(anchors.length).toBeGreaterThan(paths.length); // >1 anchor per line
+    expect(anchors.every((an) => an.role === 'edge')).toBe(true);
+    // Anchors on a given path share x (vertical) but differ in y (distributed up).
+    const byPath = new Map();
+    for (const an of anchors) {
+      const k = an.meta.pathIndex;
+      if (!byPath.has(k)) byPath.set(k, []);
+      byPath.get(k).push(an);
+    }
+    const someLineHasSpread = [...byPath.values()].some((group) => {
+      const ys = group.map((g) => g.y);
+      return Math.max(...ys) - Math.min(...ys) > 50;
+    });
+    expect(someLineHasSpread).toBe(true);
+  });
+
+  it('a two-axis grid captures BOTH families (baseline — still works)', () => {
+    const paths = captureGrid({ cols: 4, rows: 4, spacing: 60 });
+    expect(paths.length).toBeGreaterThan(0);
+  });
+
+  // A WARP-modulated single-axis grid draws its lines with bezierVertex (curved).
+  // capturePolylines now flattens those Béziers (shared adaptive flattenCubic) so
+  // the vine follows the warped edge — the Phase-2 unblock. The captured polyline
+  // must be genuinely CURVED (its interior bows off the straight chord between its
+  // endpoints), not a 2-point straight segment.
+  it('a WARP-modulated single-axis grid captures CURVED polylines the vine can follow', () => {
+    // Minimal constant-gradient warp field so Grid takes its warpMod branch.
+    const field = { sampleGradient: () => ({ dx: 0.5, dy: 0.5 }) };
+    const modulation = { channel: 'warp', field, amount: 1 };
+    const paths = captureGrid({
+      cols: 5,
+      rows: 4,
+      spacing: 60,
+      drawHorizontal: 0,
+      warpNodes: 6,
+      modulation,
+    });
+    expect(paths.length).toBeGreaterThan(0);
+    // At least one captured line bows off the straight chord between its endpoints
+    // (proof the Bézier curvature survived flattening, not a straight fallback).
+    const bows = paths.some((p) => {
+      const pts = p.points;
+      if (pts.length < 3) return false;
+      const a = pts[0];
+      const b = pts[pts.length - 1];
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const mag = Math.hypot(dx, dy) || 1;
+      let maxOff = 0;
+      for (const pt of pts) {
+        const off = Math.abs(dy * pt.x - dx * pt.y + b.x * a.y - b.y * a.x) / mag;
+        maxOff = Math.max(maxOff, off);
+      }
+      return maxOff > 1; // more than a px of curvature
+    });
+    expect(bows).toBe(true);
+    // And the flattened curve is dense enough for arc-length sampling to march
+    // leaves ALONG it (not just 2 endpoints).
+    expect(Math.max(...paths.map((p) => p.points.length))).toBeGreaterThan(3);
+  });
+});
+
+// PRODUCTION PROBE PATH — the vine only works end-to-end if the record-mode
+// P5Adapter (what useCanvas uses, NOT RecordingContext) actually records the
+// bezierOrder/bezierVertex ops. This drives a REAL warped Grid through a
+// draw:false, record:true P5Adapter (deterministic fake p5, RNG delegated) and
+// asserts capturePolylines yields a non-empty CURVED polyline — guards against
+// the capturePolylines change going green while the production probe stays broken.
+describe('capturePolylines — warped Grid through the record-mode P5Adapter (production probe)', () => {
+  function makeFakeP5() {
+    let r = mulberry32(1);
+    let n = mulberry32(0x9e3779b9);
+    return {
+      TWO_PI: Math.PI * 2, PI: Math.PI, HALF_PI: Math.PI / 2,
+      CLOSE: 'P5_CLOSE', CENTER: 'P5_CENTER', ROUND: 'P5_ROUND',
+      randomSeed(s) { r = mulberry32(s | 0); },
+      noiseSeed(s) { n = mulberry32(((s | 0) ^ 0x1234567) >>> 0); },
+      random(a, b) { const u = r(); if (a === undefined) return u; if (b === undefined) return u * a; return a + u * (b - a); },
+      noise() { return n(); },
+      color: () => ({ setAlpha() {} }),
+      red: () => 0, green: () => 0, blue: () => 0, map: (v) => v,
+    };
+  }
+
+  it('records + flattens bezierVertex ops into a non-empty curved capture', () => {
+    const field = { sampleGradient: () => ({ dx: 0.5, dy: 0.5 }) };
+    const modulation = { channel: 'warp', field, amount: 1 };
+    const ctx = new P5Adapter(makeFakeP5(), { draw: false, record: true });
+    new Grid().generateWithContext(ctx, 7, {
+      cols: 5, rows: 4, spacing: 60, drawHorizontal: 0, warpNodes: 6, modulation,
+    }, 800, 600, '#000000', 100);
+
+    // The probe MUST have recorded the curve ops (not silently dropped them).
+    expect(ctx.calls.some((c) => c.op === 'bezierVertex')).toBe(true);
+
+    const paths = capturePolylines(ctx.calls);
+    expect(paths.length).toBeGreaterThan(0);
+    expect(Math.max(...paths.map((p) => p.points.length))).toBeGreaterThan(3);
   });
 });

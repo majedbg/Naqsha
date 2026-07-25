@@ -58,6 +58,11 @@ export default {
       },
       fontSize: {
         // Match tokens.css type scale — 11 / 13 / 15 / 19 / 28 / 42
+        // 2xs (10px) is the ONE sanctioned step below xs, for dense micro-labels
+        // (motif rail, glyph-picker chips, library grid captions). rem-based so it
+        // still responds to the user's browser font-size; 10px is the legibility
+        // floor — nothing below it. Replaces the ad-hoc text-[7px..10px] literals.
+        '2xs': ['0.625rem',  { lineHeight: '1.4'  }],
         xs:   ['0.6875rem', { lineHeight: '1.35' }],
         sm:   ['0.8125rem', { lineHeight: '1.45' }],
         base: ['0.9375rem', { lineHeight: '1.55' }],
@@ -81,6 +86,15 @@ export default {
         xs:   '2px',
         sm:   '4px',
         md:   '6px',
+      },
+      boxShadow: {
+        // The house elevation for floating surfaces (popovers, menus, the
+        // glyph-picker flyout) — a two-layer cast: a tight contact shadow plus
+        // a soft ambient, both in the theme-flipping `--shadow-color` (ink on
+        // paper, never black). Referenced directly (not via the token() helper,
+        // which only injects <alpha-value> for color utilities); the alpha is
+        // baked into the var in tokens.css so it flips light↔dark.
+        pop: '0 1px 2px var(--shadow-color), 0 8px 24px var(--shadow-color)',
       },
       transitionTimingFunction: {
         'out-quart': 'cubic-bezier(0.25, 1, 0.5, 1)',

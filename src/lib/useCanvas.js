@@ -12,10 +12,11 @@ import { capturePolylines } from './motif/capturePolylines';
 import { isEdgeHost } from './motif/hostKinds';
 import { isMotifLayer } from './motif/motifLayer';
 import { getGlyph } from './motif/glyphs';
-import { isSequenceBlock } from './motif/sequencer';
+import { isSequenceBlock, sequenceSlots } from './motif/sequencer';
 import { handlesFor } from './transform/handles';
 import { drawTextNode } from './text/drawTextNode';
 import { isTextLayer, textNodeFromLayer } from './text/textLayer';
+import { asResolver } from './text/fontRegistry';
 import { importLayerPivot } from './scene/placement';
 import { buildSelectables } from './scene/selectables';
 import { resolveCanvasColor, sheetBackground, offSheetDimFactor, effectiveMaterialId } from './materialPreview';
@@ -27,6 +28,25 @@ import { resolveEtchBitmap, etchCacheNeedsResolve } from './etch/etchSource';
 import { resolveHold } from './etch/etchHold';
 import { createAdaptiveRenderScheduler } from './adaptiveRenderScheduler';
 import { isFrameStatsEnabled } from './onboarding/frameStatsFlag';
+
+// Recording (edge-capture) hosts whose WARP modulation is resolved from a GUIDE
+// layer into renderParams for the paint pass, NOT stored on host.params. The
+// capture probe below therefore has to inject the SAME resolved modulation, or it
+// draws unwarped geometry while the canvas draws warped — motif anchors then sit
+// on stale geometry (the D1 fail-unsafe ~24px drift, #103). Extending this beyond
+// grid to flowfield + topographic makes the probe SYMMETRIC with paint:
+//   • grid (single-axis) — draws bezierVertex when warped; capturePolylines now
+//     RECORDS + adaptively flattens those (shared flattenCubic, #111) → the vine
+//     samples the exact-to-paint curve (the single-axis warped-grid vine works).
+//   • flowfield / topographic — emit plain ctx.vertex; capture records the warped
+//     flow lines / contours → anchors land on the painted geometry (D1 fixed).
+// Byte-identity holds with no warp channel present: all three patterns branch ONLY
+// on modulation.channel==='warp' at geometry-build time (grid: warp vs straight
+// line; flowfield/topographic: the stackWarpDisplacement block), so injecting a
+// composed modulation carrying only non-warp channels is a geometric no-op. Warp
+// is RNG-free and applied AFTER all noise/random consumption, so the probe never
+// shifts the host's painted realization.
+const WARP_CAPTURE_HOSTS = new Set(['grid', 'flowfield', 'topographic']);
 
 // Pivoted node transform shared by render + selection chrome. Matches the SVG
 // `translate(x y) translate(cx cy) rotate scale translate(-cx -cy)` form emitted
@@ -45,6 +65,48 @@ function applyNodeTransform(p, t, cx, cy) {
   if (t.rotation) p.rotate(p.radians(t.rotation));
   if (t.scale != null && t.scale !== 1) p.scale(t.scale);
   p.translate(-cx, -cy);
+}
+
+// Value-equality for the surfaced motif placement-budget map (2026-07-19). Keyed
+// by layer id → {total, placed}. Used to churn-guard setMotifPlacementStats so a
+// motif layer that keeps truncating at the same counts never forces a re-render
+// (mirrors the etchBitmaps prune's reference guard).
+function motifStatsEqual(a, b) {
+  const ak = Object.keys(a);
+  const bk = Object.keys(b);
+  if (ak.length !== bk.length) return false;
+  for (const k of ak) {
+    const av = a[k];
+    const bv = b[k];
+    if (!bv || av.total !== bv.total || av.placed !== bv.placed) return false;
+  }
+  return true;
+}
+
+// Value-equality for the surfaced motif placement-POSITIONS map (Trace sweep,
+// issue #91). Keyed layerId → ordered [{x,y,radius}]. MotifPattern.generate
+// rebuilds a FRESH positions array every render, so a churn guard is essential:
+// without it an unrelated edit (another layer drag) that re-runs renderAll would
+// hand a new-reference-but-identical array to the Trace overlay every frame. The
+// compare is O(total) but only over motif layers and only inside the setState
+// updater — the same order of work the stats guard already does. Mirrors
+// motifStatsEqual; the extra inner loop is the price of value (not count) identity
+// (two different layouts can share a count but never a point list).
+function motifPlacementsEqual(a, b) {
+  const ak = Object.keys(a);
+  const bk = Object.keys(b);
+  if (ak.length !== bk.length) return false;
+  for (const k of ak) {
+    const av = a[k];
+    const bv = b[k];
+    if (!bv || av.length !== bv.length) return false;
+    for (let i = 0; i < av.length; i++) {
+      if (av[i].x !== bv[i].x || av[i].y !== bv[i].y || av[i].radius !== bv[i].radius) {
+        return false;
+      }
+    }
+  }
+  return true;
 }
 
 export default function useCanvas(
@@ -123,6 +185,23 @@ export default function useCanvas(
   // and registered via makeEtchInstance for export, never a second resolve — so
   // the hero shows bit-for-bit what exports (grilled decision 4).
   const [etchBitmaps, setEtchBitmaps] = useState({});
+  // Motif placement-budget stats (2026-07-19 post-crash hardening): layerId →
+  // {total, placed} for every motif layer whose placements were TRUNCATED by
+  // MAX_PLACEMENTS. Surfaced as STATE (like etchBitmaps) so the Inspector's
+  // MotifDevice can render a "no silent cap" warning on the affected card. Only
+  // truncated layers appear; the map is rebuilt fresh each render and churn-
+  // guarded (motifStatsEqual) so it never triggers a redundant re-render.
+  const [motifPlacementStats, setMotifPlacementStats] = useState({});
+  // Motif placement POSITIONS (Trace sweep, issue #91): layerId → the ordered,
+  // post-cap [{x,y,radius}] each motif layer actually drew. Surfaced as STATE so
+  // the Trace overlay (mounted inside RightPanel's scaled canvas box, sharing the
+  // artwork coordinate space like AnchorGhostOverlay) can light a growing prefix
+  // in placement order, and so Studio's useTraceSweep can read a motif's count.
+  // Unlike motifPlacementStats (truncated-only), this holds EVERY motif layer that
+  // placed anything — Trace works for the common, non-truncated case too. Rebuilt
+  // fresh each render and churn-guarded (motifPlacementsEqual) against re-render
+  // storms. Bounded by MAX_PLACEMENTS per layer.
+  const [motifPlacements, setMotifPlacements] = useState({});
   const renderAllRef = useRef(null);
   // Live transform/selection read inside renderAll WITHOUT entering its dep
   // array — keeps renderAll's identity stable so the 150ms param-debounce
@@ -188,15 +267,37 @@ export default function useCanvas(
       // host reseeds at the top of generate() → this probe never shifts its paint
       // (same no-divergence guarantee as the voronoi probe below). A SEMANTIC host
       // (voronoi) keeps the existing noDraw probe + motifHostGeometry read.
-      const recording = isEdgeHost(host.patternType);
+      const recording = isEdgeHost(host.patternType, host.params);
       const probeCtx = recording
         ? new P5Adapter(p, { draw: false, record: true })
         : noDrawCtx;
+      // FAITHFUL CAPTURE for a WARP-applying capture host (grid single-axis,
+      // flowfield, topographic — WARP_CAPTURE_HOSTS): the host's warp modulation is
+      // resolved from a GUIDE layer into renderParams for the main draw (see
+      // ~line 437), NOT stored on host.params. If the probe ran bare host.params it
+      // would capture UNWARPED geometry while the canvas paints WARPED — and the
+      // motif would arc-length-sample glyphs onto stale geometry, floating them off
+      // the visible curve / flow lines / contours (the D1 fail-unsafe ~24px drift, #103).
+      // Inject the SAME resolved modulation so the probe's geometry matches paint,
+      // symmetric with the paint pass:
+      //   • grid warped → draws bezierVertex, which capturePolylines FLATTENS (shared
+      //     adaptive flattenCubic, device-dot tolerance) into exact-to-paint polylines
+      //     the single-axis warped-grid vine samples along (#111).
+      //   • flowfield / topographic warped → emit plain ctx.vertex → captured on the
+      //     warped flow lines / contours → anchors track the painted geometry (#110).
+      // All three branch ONLY on modulation.channel==='warp' at build time and warp
+      // consumes no RNG (applied after all noise/random), so this is byte-identical
+      // capture with no warp channel present and every non-warp channel.
+      let probeParams = host.params;
+      if (recording && WARP_CAPTURE_HOSTS.has(host.patternType)) {
+        const hostMod = composeModulationParam(resolveModulationsForTarget(host, layers));
+        if (hostMod) probeParams = { ...host.params, modulation: hostMod };
+      }
       p.push(); // defensive matrix isolation — probe never draws, but be safe
       probe.generateWithContext(
         probeCtx,
         host.seed,
-        host.params,
+        probeParams,
         canvasW,
         canvasH,
         resolveCanvasColor(host, { operations, outputMode, colorView, panels }),
@@ -312,9 +413,12 @@ export default function useCanvas(
       // No PatternClass instance is registered (none exists), like orphan-B.
       // Without a resolved font we can't draw; export is handled in a later phase.
       if (isTextLayer(layer)) {
-        if (!vis || !font) continue;
         const nodeData = textNodeFromLayer(layer);
-        drawTextNode(p, nodeData, font, nodeTransforms[layer.id]);
+        // `font` is either a single Font (legacy) or a per-node resolver; pick
+        // THIS node's font so each text layer renders in its own typeface.
+        const nodeFont = asResolver(font)(nodeData.fontId);
+        if (!vis || !nodeFont) continue;
+        drawTextNode(p, nodeData, nodeFont, nodeTransforms[layer.id]);
         continue;
       }
 
@@ -387,18 +491,23 @@ export default function useCanvas(
       //     that doesn't resolve is simply absent from the map (MotifPattern skips
       //     that instance). Built-in-only motifs (no sequence) inject a map of just
       //     the base glyph → byte-identical (unsequenced placements never consult
-      //     the map).
+      //     the map). A ZONED sequence (ADR 0008) keeps its slots under
+      //     `zones[].slots` and carries NO flat `slots`, so the refs are read via
+      //     `sequenceSlots` — reading `block.slots` directly THREW here (the whole
+      //     frame aborts: this runs above the per-layer render guard below), and a
+      //     mere guard would silently drop every zone glyph from the map.
       if (isMotifLayer(layer)) {
         const baseGlyph = getGlyph(renderParams.glyphRef, customGlyphs);
         if (baseGlyph) renderParams = { ...renderParams, glyph: baseGlyph };
-        // Collect every glyphRef the layer could stamp: base + Sequencer slots.
+        // Collect every glyphRef the layer could stamp: base + Sequencer slots
+        // (flat slots, or every Zone's slots when the block is zoned).
         const refs = new Set();
         if (renderParams.glyphRef != null) refs.add(renderParams.glyphRef);
         const chain = layer.params?.binding?.chain;
         if (Array.isArray(chain)) {
           for (const block of chain) {
             if (!isSequenceBlock(block)) continue;
-            for (const slot of block.slots) {
+            for (const slot of sequenceSlots(block)) {
               if (slot && slot.glyphRef != null) refs.add(slot.glyphRef);
             }
           }
@@ -420,7 +529,7 @@ export default function useCanvas(
       // hosts don't set it themselves). Absent capture → no attach → the overlay
       // renders no edge ghost (graceful). Guarded to edge hosts so it never
       // clobbers a semantic host's own motifHostGeometry.
-      if (isEdgeHost(layer.patternType) && hostGeometry[layer.id]?.hostPaths) {
+      if (isEdgeHost(layer.patternType, layer.params) && hostGeometry[layer.id]?.hostPaths) {
         instance.motifHostGeometry = { hostPaths: hostGeometry[layer.id].hostPaths };
       }
 
@@ -440,21 +549,33 @@ export default function useCanvas(
 
       // Center-pivot transform (move/resize/rotate). Wraps the layer's bg fill
       // AND its draw so both move together and match the exported SVG group.
+      //
+      // Per-layer render guard: a single layer that throws mid-draw (e.g. a p5
+      // API misuse reaching endShape) must NOT abort the whole frame — the outer
+      // renderAll already ran p.clear()+p.background(), so an uncaught throw here
+      // blanks EVERY layer, not just the culprit. try/finally keeps the p5 matrix
+      // stack balanced (pop always runs even on throw); catch logs and lets the
+      // loop continue so the other layers still paint.
       p.push();
-      applyNodeTransform(p, nodeTransforms[layer.id], canvasW / 2, canvasH / 2);
+      try {
+        applyNodeTransform(p, nodeTransforms[layer.id], canvasW / 2, canvasH / 2);
 
-      // Draw layer background fill if bgOpacity > 0
-      if (layer.bgOpacity > 0) {
-        const bgAlpha = Math.round((layer.bgOpacity / 100) * 255);
-        const bgC = p.color(layer.bgColor);
-        bgC.setAlpha(bgAlpha);
-        p.noStroke();
-        p.fill(bgC);
-        p.rect(0, 0, canvasW, canvasH);
+        // Draw layer background fill if bgOpacity > 0
+        if (layer.bgOpacity > 0) {
+          const bgAlpha = Math.round((layer.bgOpacity / 100) * 255);
+          const bgC = p.color(layer.bgColor);
+          bgC.setAlpha(bgAlpha);
+          p.noStroke();
+          p.fill(bgC);
+          p.rect(0, 0, canvasW, canvasH);
+        }
+
+        instance.generateWithContext(drawCtx, layer.seed, renderParams, canvasW, canvasH, resolveCanvasColor(layer, { operations, outputMode, colorView, panels }), drawOpacity);
+      } catch (err) {
+        console.warn(`Naqsha: layer ${layer.id} (${layer.patternType}) failed to render; skipping it so the rest of the document still paints.`, err);
+      } finally {
+        p.pop();
       }
-
-      instance.generateWithContext(drawCtx, layer.seed, renderParams, canvasW, canvasH, resolveCanvasColor(layer, { operations, outputMode, colorView, panels }), drawOpacity);
-      p.pop();
     }
 
     // Selection chrome (canvas-drawn): bbox outline + 8 resize handles + 1
@@ -519,6 +640,37 @@ export default function useCanvas(
 
     instancesRef.current = newInstances;
     setPatternInstances(newInstances);
+
+    // Motif placement-budget stats (2026-07-19, docs §6). Each MotifPattern
+    // instance stashes `lastPlacementStats {total, placed}` during generate()
+    // (both the visible and hidden/export paths run it). Rebuild the truncated-
+    // only map fresh each render and surface it up as state; churn-guarded so an
+    // unchanged truncation never re-renders (mirror etchBitmaps). Entries drop
+    // automatically when a layer stops truncating (built fresh, not merged), so
+    // a stale amber warning can't persist after the user lowers density.
+    const nextMotifStats = {};
+    // Trace sweep (issue #91): the ordered placement positions for EVERY motif
+    // layer that placed anything (not just truncated ones — Trace's common case is
+    // an un-capped motif). Read off the SAME resolved instance the stats come from,
+    // so the overlay lights exactly what drew. Churn-guarded below.
+    const nextMotifPlacements = {};
+    for (const layer of layers) {
+      if (!isMotifLayer(layer)) continue;
+      const st = newInstances[layer.id]?.lastPlacementStats;
+      if (st && st.total > st.placed) {
+        nextMotifStats[layer.id] = { total: st.total, placed: st.placed };
+      }
+      const pos = newInstances[layer.id]?.lastPlacementPositions;
+      if (pos && pos.length > 0) {
+        nextMotifPlacements[layer.id] = pos;
+      }
+    }
+    setMotifPlacementStats((prev) =>
+      motifStatsEqual(prev, nextMotifStats) ? prev : nextMotifStats
+    );
+    setMotifPlacements((prev) =>
+      motifPlacementsEqual(prev, nextMotifPlacements) ? prev : nextMotifPlacements
+    );
     // `font` resolves asynchronously (null → Font); it's in the deps so when it
     // arrives renderAll gets a new identity, the debounce effect re-fires, and
     // text actually paints. Changes once, so it doesn't churn the param-debounce.
@@ -742,5 +894,5 @@ export default function useCanvas(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [transforms, selectedNodeId]);
 
-  return { patternInstances, etchBitmaps };
+  return { patternInstances, etchBitmaps, motifPlacementStats, motifPlacements };
 }

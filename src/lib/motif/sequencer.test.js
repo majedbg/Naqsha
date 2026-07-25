@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { dealSlots } from './sequencer.js';
+import { dealSlots, isSequenceBlock, sequenceSlots } from './sequencer.js';
 
 // --- helpers -------------------------------------------------------------
 // Minimal survivor Anchor factory. dealSlots only reads `id` (random deal +
@@ -267,5 +267,181 @@ describe('dealSlots — rotationRandom spread shape (hashRng, channel "rot")', (
     const cyc = dealSlots(one, seqBlock({ mode: 'cycle', seed: 8, slots }));
     const rnd = dealSlots(one, seqBlock({ mode: 'random', seed: 8, slots }));
     expect(cyc[0].rotationRandomDelta).toBe(rnd[0].rotationRandomDelta);
+  });
+});
+
+// --- ZONED sequencer (ADR 0008) -----------------------------------------
+// Zone-aware fixtures need explicit roles + spatial coords, so these build
+// anchors directly rather than through the flat-form `mkA`/`row` helpers.
+function mkZ(id, { role = 'edge', s = 0, x = 0, y = 0, pathIndex = 0, closed = false } = {}) {
+  return { id, role, x, y, tangent: 0, normal: 0, s, meta: { pathIndex, closed } };
+}
+
+describe('dealSlots — zoned: Apex cycle defaults CONTINUOUS (flowers walk across strands)', () => {
+  it('indexes the Apex slots continuously across paths (per-path restart would pin every strand to slot 0)', () => {
+    // 3 paths, each a tip (Apex) + two edge samples (Stem). Because a tip exists,
+    // edges stay Stem (no terminus derivation).
+    const survivors = [
+      mkZ('tip:0', { role: 'tip', pathIndex: 0 }),
+      mkZ('edge:0:a', { role: 'edge', pathIndex: 0 }),
+      mkZ('edge:0:b', { role: 'edge', pathIndex: 0 }),
+      mkZ('tip:1', { role: 'tip', pathIndex: 1 }),
+      mkZ('edge:1:a', { role: 'edge', pathIndex: 1 }),
+      mkZ('edge:1:b', { role: 'edge', pathIndex: 1 }),
+      mkZ('tip:2', { role: 'tip', pathIndex: 2 }),
+      mkZ('edge:2:a', { role: 'edge', pathIndex: 2 }),
+      mkZ('edge:2:b', { role: 'edge', pathIndex: 2 }),
+    ];
+    const assigns = dealSlots(survivors, {
+      type: 'sequence',
+      seed: 1,
+      zones: [
+        { zone: 'apex', slots: [{ glyphRef: 'F1' }, { glyphRef: 'F2' }, { glyphRef: 'F3' }] },
+        { zone: 'stem', slots: [{ glyphRef: 'L' }] },
+      ],
+    });
+    // Apex walks F1→F2→F3 across the three strands; Stem is all L.
+    // Per-path restart on the Apex would instead give F1,F1,F1 — the anti-case.
+    expect(assigns.map((a) => a.glyphRef)).toEqual([
+      'F1', 'L', 'L',
+      'F2', 'L', 'L',
+      'F3', 'L', 'L',
+    ]);
+  });
+});
+
+describe('dealSlots — zoned: Stem cycle defaults per-path RESTART (the x-o-x-o invariant)', () => {
+  it('restarts the Stem cycle at each path (closed loops ⇒ all Stem, no Apex)', () => {
+    // path 0: 3 stem samples, path 1: 2 — closed loops so every edge is Stem and
+    // the terminus rule never fires. Restart gives x,o,x | x,o; a continuous
+    // deal would instead give x,o,x,o,x (the anti-case, differing at idx 3 & 4).
+    const survivors = [
+      mkZ('e:0:0', { role: 'edge', pathIndex: 0, closed: true }),
+      mkZ('e:0:1', { role: 'edge', pathIndex: 0, closed: true }),
+      mkZ('e:0:2', { role: 'edge', pathIndex: 0, closed: true }),
+      mkZ('e:1:0', { role: 'edge', pathIndex: 1, closed: true }),
+      mkZ('e:1:1', { role: 'edge', pathIndex: 1, closed: true }),
+    ];
+    const assigns = dealSlots(survivors, {
+      type: 'sequence',
+      seed: 1,
+      zones: [{ zone: 'stem', slots: [{ glyphRef: 'x' }, { glyphRef: 'o' }] }],
+    });
+    expect(assigns.map((a) => a.glyphRef)).toEqual(['x', 'o', 'x', 'x', 'o']);
+    expect(assigns.map((a) => a.rest)).toEqual([false, false, false, false, false]);
+  });
+});
+
+describe('dealSlots — zoned: random deal is per-anchor-id stable within a Zone', () => {
+  it('dropping a NON-LAST Stem anchor keeps every other anchor’s slot (hash over anchor.id)', () => {
+    const mkStem = (i) => mkZ(`e:0:${i}`, { role: 'edge', pathIndex: 0, closed: true });
+    const survivors = Array.from({ length: 12 }, (_, i) => mkStem(i));
+    const seq = {
+      type: 'sequence',
+      seed: 5,
+      zones: [
+        {
+          zone: 'stem',
+          mode: 'random',
+          slots: [{ glyphRef: 'A' }, { glyphRef: 'B' }, { glyphRef: 'C' }],
+        },
+      ],
+    };
+    const before = dealSlots(survivors, seq);
+    const beforeMap = Object.fromEntries(survivors.map((s, i) => [s.id, before[i].glyphRef]));
+    const dropped = survivors.filter((_, i) => i !== 3); // remove a non-last anchor
+    const after = dealSlots(dropped, seq);
+    dropped.forEach((s, i) => {
+      expect(after[i].glyphRef).toBe(beforeMap[s.id]); // unchanged slot per surviving id
+    });
+  });
+});
+
+describe('dealSlots — zoned: a Rest slot inside a Zone CONSUMES a cycle step', () => {
+  it('advances the Stem cycle index through a Rest (a real gap: A, rest, A, rest)', () => {
+    const survivors = Array.from({ length: 4 }, (_, i) =>
+      mkZ(`e:0:${i}`, { role: 'edge', pathIndex: 0, closed: true }),
+    );
+    const assigns = dealSlots(survivors, {
+      type: 'sequence',
+      seed: 1,
+      zones: [{ zone: 'stem', slots: [{ glyphRef: 'A' }, { rest: true }] }],
+    });
+    expect(assigns.map((a) => a.rest)).toEqual([false, true, false, true]);
+    expect(assigns.map((a) => a.glyphRef)).toEqual(['A', undefined, 'A', undefined]);
+    expect(assigns.map((a) => a.slotIndex)).toEqual([0, 1, 0, 1]);
+  });
+});
+
+describe('dealSlots — zoned: anchors in NO Zone rest (cells, and Apex dropped by the ends filter)', () => {
+  it('rests cells and the Apex member removed by ends:up (stamp nothing)', () => {
+    // One OPEN path with two tips (a tip exists ⇒ edges stay Stem), plus a cell.
+    const survivors = [
+      mkZ('tip:0:hi', { role: 'tip', x: 0, y: 0, pathIndex: 0 }),
+      mkZ('edge:0:a', { role: 'edge', x: 0, y: 3, pathIndex: 0 }),
+      mkZ('cell:0', { role: 'cell', x: 0, y: 5, pathIndex: 0 }),
+      mkZ('edge:0:b', { role: 'edge', x: 0, y: 7, pathIndex: 0 }),
+      mkZ('tip:0:lo', { role: 'tip', x: 0, y: 10, pathIndex: 0 }),
+    ];
+    const assigns = dealSlots(survivors, {
+      type: 'sequence',
+      seed: 1,
+      zones: [
+        { zone: 'apex', ends: 'up', slots: [{ glyphRef: 'F' }] },
+        { zone: 'stem', slots: [{ glyphRef: 'L' }] },
+      ],
+    });
+    // ends:up keeps the upper tip (y=0); the lower tip (y=10) and the cell rest.
+    expect(assigns.map((a) => a.glyphRef)).toEqual(['F', 'L', undefined, 'L', undefined]);
+    expect(assigns.map((a) => a.rest)).toEqual([false, false, true, false, true]);
+  });
+});
+
+describe('isSequenceBlock — recognizes the ZONED form (gate that lets zoned blocks reach dealSlots)', () => {
+  it('accepts a block whose deal is a non-empty zones array (no flat slots)', () => {
+    // The placement engine gates the dealSlots call on this predicate; a zoned
+    // block carries `zones` and NO `slots`, so it must be recognized here or the
+    // zoned deal is unreachable.
+    expect(
+      isSequenceBlock({ type: 'sequence', zones: [{ zone: 'stem', slots: [{ glyphRef: 'A' }] }] }),
+    ).toBe(true);
+  });
+
+  it('rejects a block with neither slots nor zones (degenerate ⇒ engine legacy fallback)', () => {
+    expect(isSequenceBlock({ type: 'sequence' })).toBe(false);
+  });
+
+  it('rejects an empty zones array (nothing to deal ⇒ not a live sequence block)', () => {
+    expect(isSequenceBlock({ type: 'sequence', zones: [] })).toBe(false);
+  });
+});
+
+describe('sequenceSlots — "the slots of a block", flat or zoned', () => {
+  it('a FLAT block reads as its own slots (same array contents, in order)', () => {
+    const slots = [{ glyphRef: 'A' }, { rest: true }];
+    expect(sequenceSlots({ type: 'sequence', slots })).toEqual(slots);
+  });
+
+  it('a ZONED block reads as its zones’ slots, concatenated in zone order', () => {
+    expect(
+      sequenceSlots({
+        type: 'sequence',
+        zones: [
+          { zone: 'apex', slots: [{ glyphRef: 'rosette' }] },
+          { zone: 'stem', slots: [{ glyphRef: 'leaf' }, { glyphRef: 'leaf', rotationOffset: 180 }] },
+        ],
+      }),
+    ).toEqual([
+      { glyphRef: 'rosette' },
+      { glyphRef: 'leaf' },
+      { glyphRef: 'leaf', rotationOffset: 180 },
+    ]);
+  });
+
+  it('never throws on absent/degenerate input — always an array', () => {
+    expect(sequenceSlots(null)).toEqual([]);
+    expect(sequenceSlots({ type: 'route', roles: ['edge'] })).toEqual([]);
+    expect(sequenceSlots({ type: 'sequence', zones: [{ zone: 'stem' }, null] })).toEqual([]);
+    expect(sequenceSlots([{ glyphRef: 'A' }])).toEqual([]); // an array is not a block
   });
 });

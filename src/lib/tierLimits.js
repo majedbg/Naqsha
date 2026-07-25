@@ -119,6 +119,10 @@ export function checkGate(tier, feature, value) {
     }
 
     case 'layers': {
+      // `value` is the prospective layer count to gate. Fix 2 (docs §6): motifs
+      // are EXEMPT from the tier cap, so callers must pass a NON-MOTIF count here
+      // (e.g. `layers.filter(l => !isMotifLayer(l)).length + 1`) — this pure gate
+      // can't see the layer objects, so the motif exemption lives at the caller.
       const count = value || 1;
       const allowed = count <= limits.maxLayers;
       // Post-flatten only guests can trip this; signed-in users have 6 layers.

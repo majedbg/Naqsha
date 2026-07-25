@@ -1,6 +1,6 @@
 import { applySymmetryDraw, wrapSVGSymmetry } from './symmetryUtils';
 import { Pattern } from './drawingContext';
-import { stackWarpDisplacement } from '../fields/warp';
+import { buildWarpedPolygon } from './recursiveSides';
 
 export default class RecursiveGeometry extends Pattern {
   constructor() {
@@ -26,6 +26,10 @@ export default class RecursiveGeometry extends Pattern {
       startAngle = 0,
       offsetX = 0,
       offsetY = 0,
+      // Bend slider (ticket #116). Default 2 — NOT grid's 6 — so enabling warp
+      // keeps today's straight-corner behaviour (K=2, byte-identical); the artist
+      // raises it to bend the edges. K<3 is the only runtime gate (see below).
+      warpNodes = 2,
     } = params;
 
     const cx = canvasW / 2;
@@ -104,36 +108,62 @@ export default class RecursiveGeometry extends Pattern {
     recurse(0, 0, startRadius, 0, clampedDepth);
 
     // --- WARP modulation (geometry-build time) --------------------------------
-    // A guide field supplied via params.modulation (channel:'warp') displaces the
-    // recursive polygon vertices along the field gradient, AFTER the full recursion
-    // and BEFORE both the SVG-path build and drawBase, so canvas and SVG warp
-    // identically. The geometry is origin-centered (recurse starts at 0,0), so the
-    // unit-domain mapping uses canvasW/2. When warpMod is null the vertices are
-    // untouched → byte-identical to the unmodulated path.
+    // A guide field supplied via params.modulation (channel:'warp') warps the
+    // recursive polygons, AFTER the full recursion and BEFORE both the SVG-path
+    // build and drawBase, so canvas and SVG warp identically. The subdivision +
+    // curve build lives in the SHARED recursive core (recursiveSides.js) that the
+    // recursive extractor will also call, so reconstructed anchors are exact-to-
+    // paint by construction. Two modes, gated ONLY on warpNodes K:
+    //   K = 2 → vertices-only: corners warp, sides stay STRAIGHT (poly.verts is
+    //           replaced with the warped corners; the M/L/Z + vertex/CLOSE emit
+    //           below is byte-identical to the pre-bendable warp behaviour).
+    //   K ≥ 3 → bendable edges: each side becomes a Catmull-Rom curve through K
+    //           warped nodes (poly.sides), drawn as C-segments / bezierVertex.
+    // The geometry is origin-centered (recurse starts at 0,0). When warpMod is
+    // null nothing is touched → byte-identical to the unmodulated path.
     const mod = params?.modulation;
     const warpMod = mod && mod.channel === 'warp' && mod.field ? mod : null;
     if (warpMod) {
+      // Phase 2b: vector-SUM every warp source (N=1 → single, byte-identical).
+      const warpSources = warpMod.sources ?? [warpMod];
       for (const poly of this._polygons) {
-        for (const pt of poly.verts) {
-          const u = (pt.x + canvasW / 2) / canvasW;
-          const v = (pt.y + canvasH / 2) / canvasH;
-          // Phase 2b: vector-SUM every warp source (N=1 → single, byte-identical).
-          const { dx, dy } = stackWarpDisplacement(warpMod.sources ?? [warpMod], u, v);
-          pt.x += dx;
-          pt.y += dy;
-        }
+        const built = buildWarpedPolygon(poly.verts, {
+          warpSources,
+          canvasW,
+          canvasH,
+          warpNodes,
+        });
+        if (built.mode === 'vertices') poly.verts = built.verts;
+        else poly.sides = built.sides;
       }
     }
 
-    // Build SVG path strings from the (possibly warped) polygon vertices.
+    // Build SVG path strings from the (possibly warped) polygon geometry. Bendable
+    // polygons (poly.sides) emit one continuous curved <path>: M at the first
+    // side's start, then every side's C-segments in order (adjacent sides share
+    // their warped corner, so no intermediate M is needed), closed with Z.
     for (const poly of this._polygons) {
-      const parts = poly.verts.map((v, i) =>
-        i === 0
-          ? `M${v.x.toFixed(2)} ${v.y.toFixed(2)}`
-          : `L${v.x.toFixed(2)} ${v.y.toFixed(2)}`
-      );
-      parts.push('Z');
-      this.svgElements.push({ pathD: parts.join(' '), strokeWeight: poly.sw });
+      let pathD;
+      if (poly.sides) {
+        const f = (n) => n.toFixed(2);
+        const { start } = poly.sides[0];
+        let d = `M${f(start.x)} ${f(start.y)}`;
+        for (const side of poly.sides) {
+          for (const s of side.segments) {
+            d += ` C${f(s.c1.x)} ${f(s.c1.y)} ${f(s.c2.x)} ${f(s.c2.y)} ${f(s.end.x)} ${f(s.end.y)}`;
+          }
+        }
+        pathD = `${d} Z`;
+      } else {
+        const parts = poly.verts.map((v, i) =>
+          i === 0
+            ? `M${v.x.toFixed(2)} ${v.y.toFixed(2)}`
+            : `L${v.x.toFixed(2)} ${v.y.toFixed(2)}`
+        );
+        parts.push('Z');
+        pathD = parts.join(' ');
+      }
+      this.svgElements.push({ pathD, strokeWeight: poly.sw });
     }
 
     const drawBase = () => {
@@ -145,11 +175,29 @@ export default class RecursiveGeometry extends Pattern {
 
       for (const poly of this._polygons) {
         ctx.strokeWeight(poly.sw);
-        ctx.beginShape();
-        for (const v of poly.verts) {
-          ctx.vertex(v.x, v.y);
+        if (poly.sides) {
+          // Bendable: one closed shape, start vertex then every side's cubic
+          // bezierVertex triples (same {start, segments} that drive the SVG C
+          // string → canvas == SVG). p5 2.x cubic API: bezierOrder(3) + three
+          // 1-point bezierVertex calls (c1, c2, end); anchor is the prior point.
+          ctx.beginShape();
+          ctx.vertex(poly.sides[0].start.x, poly.sides[0].start.y);
+          for (const side of poly.sides) {
+            for (const s of side.segments) {
+              ctx.bezierOrder(3);
+              ctx.bezierVertex(s.c1.x, s.c1.y);
+              ctx.bezierVertex(s.c2.x, s.c2.y);
+              ctx.bezierVertex(s.end.x, s.end.y);
+            }
+          }
+          ctx.endShape(ctx.CLOSE);
+        } else {
+          ctx.beginShape();
+          for (const v of poly.verts) {
+            ctx.vertex(v.x, v.y);
+          }
+          ctx.endShape(ctx.CLOSE);
         }
-        ctx.endShape(ctx.CLOSE);
       }
     };
 

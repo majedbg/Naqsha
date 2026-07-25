@@ -17,7 +17,9 @@ import { getGlyph } from './glyphs.js';
 
 const W = 800;
 const H = 600;
-const LEAF_D = 'M0,-10 L7,-4 L8,5 L2,10 L-6,6 L-7,-2 L-2,-8 Z';
+// Verbatim copy of the built-in leaf `d` (glyphs.js) — the render oracle for the
+// path emission assertions below. Updated for the base-at-origin leaf (2026-07).
+const LEAF_D = 'M0,0 L6,-6 L14,-5 L20,-0.5 L18,3 L11,4.5 L4,3 Z';
 
 // --- Real Grid host params (centered 4×4 lattice, 60px pitch, 20px margin). ---
 const gridParams = { cols: 4, rows: 4, spacing: 60, margin: 20 };

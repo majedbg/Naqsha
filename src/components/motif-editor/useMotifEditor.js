@@ -20,17 +20,21 @@
 // this slice to its landing).
 
 import { useState, useCallback, useRef } from 'react';
+import { glyphUsedByLayerCount } from '../../lib/motif/glyphUsage';
 
 /** Default root for glyphs (e.g. built-ins) that carry none: origin, no angle. */
 export const DEFAULT_ROOT = { x: 0, y: 0, angle: 0 };
 
 /**
- * Layers referencing this glyph by id (a motif layer binds via params.glyphRef).
- * Drives the modal's "used by N layers" badge. Pure — lives here (not in the
- * component file) so the modal stays a components-only module (react-refresh).
+ * Layers referencing this glyph by id. Drives the modal's "used by N layers"
+ * badge. Delegates to the shared glyphUsage counter so SEQUENCER-SLOT refs
+ * count too — the old base-ref-only filter told the user an in-place Save was
+ * isolated while it silently restamped slots sharing the id (audit 2026-07
+ * bug 3). Pure — lives here (not in the component file) so the modal stays a
+ * components-only module (react-refresh).
  */
 export function usedByCount(layers, glyphId) {
-  return (layers || []).filter((l) => l?.params?.glyphRef === glyphId).length;
+  return glyphUsedByLayerCount(layers, glyphId);
 }
 
 /**
@@ -271,24 +275,29 @@ export default function useMotifEditor(glyph, ops = {}) {
   // Undo/redo pop/repush whole-working-copy snapshots on the MODAL-LOCAL stacks
   // only — never document history. Selection is cleared: a snapshot swap can
   // strand indices at anchors that no longer exist.
+  // Returns the RESTORED working copy (null when the stack was empty) so callers
+  // can resettle view-only state — notably the modal's viewing frame, which grows
+  // on commit and must be able to shrink back when the growth is undone.
   const undo = useCallback(() => {
-    if (undoStack.length === 0) return;
+    if (undoStack.length === 0) return null;
     const prev = undoStack[undoStack.length - 1];
     baselineRef.current = null;
     setRedoStack((r) => [...r, working]);
     setUndoStack(undoStack.slice(0, -1));
     setWorking(prev);
     setSelection([]);
+    return prev;
   }, [undoStack, working]);
 
   const redo = useCallback(() => {
-    if (redoStack.length === 0) return;
+    if (redoStack.length === 0) return null;
     const nextWc = redoStack[redoStack.length - 1];
     baselineRef.current = null;
     setUndoStack((u) => [...u, working]);
     setRedoStack(redoStack.slice(0, -1));
     setWorking(nextWc);
     setSelection([]);
+    return nextWc;
   }, [redoStack, working]);
 
   const serialize = useCallback(

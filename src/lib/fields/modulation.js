@@ -36,6 +36,26 @@ export function applyRange(s, range = { min: -1, max: 1 }) {
   return min + ((s + 1) / 2) * (max - min);
 }
 
+/**
+ * Preview transfer for the FieldOverlay heatmap readout. DELEGATES to the real
+ * `modulationTransfer` so the readout can never drift from the output pipeline —
+ * it applies the SAME device-level transfer controls (range → +offset → shape
+ * ease → steps terrace) in the SAME order. The ONLY thing it omits is per-map
+ * `amount`: the readout is device-level (shared across every mapped target),
+ * so there is no single amount to show — `modulationTransfer` defaults amount to
+ * 1, a pure vertical scale that would not change the heatmap's structure anyway.
+ * All controls default to their neutral values, so a caller that passes only a
+ * range (or nothing) gets plain `applyRange` back, byte-identical to before.
+ * Output may leave [-1,1] once biased/eased; signedColor clamps, so it saturates.
+ * @param {number} s - signed field value, normally in [-1,1]
+ * @param {{offset?:number, range?:{min:number,max:number}, shape?:number, steps?:number}} [cfg]
+ * @returns {number}
+ */
+export function previewValue(s, { offset = 0, range, shape = 0, steps = 0 } = {}) {
+  // amount intentionally omitted → modulationTransfer's default of 1.
+  return modulationTransfer(s, { offset, range, shape, steps });
+}
+
 export function modulationTransfer(s, cfg = {}) {
   const {
     amount = 1,

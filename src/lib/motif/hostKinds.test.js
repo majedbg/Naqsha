@@ -42,4 +42,70 @@ describe('hostKinds', () => {
     expect(isMotifHost('text')).toBe(false);
     expect(isMotifHost('import')).toBe(false);
   });
+
+  describe('params-aware isEdgeHost — single-axis grid', () => {
+    it('a two-axis grid (default / both drawn) is NOT an edge host', () => {
+      expect(isEdgeHost('grid', {})).toBe(false); // defaults: both axes drawn
+      expect(isEdgeHost('grid', { drawVertical: 1, drawHorizontal: 1 })).toBe(false);
+    });
+
+    it('a columns-only grid (drawHorizontal 0) IS an edge host', () => {
+      expect(isEdgeHost('grid', { drawHorizontal: 0 })).toBe(true);
+    });
+
+    it('a rows-only grid (drawVertical 0) IS an edge host', () => {
+      expect(isEdgeHost('grid', { drawVertical: 0 })).toBe(true);
+    });
+
+    it('a grid with NEITHER axis drawn is NOT an edge host (nothing to sample)', () => {
+      expect(isEdgeHost('grid', { drawVertical: 0, drawHorizontal: 0 })).toBe(false);
+    });
+
+    it('uses the >=0.5 draw gate, matching Grid.js', () => {
+      expect(isEdgeHost('grid', { drawVertical: 1, drawHorizontal: 0.4 })).toBe(true); // h off
+      expect(isEdgeHost('grid', { drawVertical: 0.6, drawHorizontal: 0.6 })).toBe(false); // both on
+    });
+
+    it('omitting params keeps pure by-type behaviour (byte-identical single-arg)', () => {
+      expect(isEdgeHost('grid')).toBe(false);
+      expect(isEdgeHost('flowfield')).toBe(true);
+    });
+
+    it('single-axis logic applies ONLY to grid, not other semantic hosts', () => {
+      expect(isEdgeHost('recursive', { drawHorizontal: 0 })).toBe(false);
+      expect(isEdgeHost('voronoi', { drawVertical: 0 })).toBe(false);
+    });
+  });
+
+  describe('params-aware isSemanticHost — the complement for grid', () => {
+    it('a single-axis grid is NOT semantic (routes through edge capture)', () => {
+      expect(isSemanticHost('grid', { drawHorizontal: 0 })).toBe(false);
+      expect(isSemanticHost('grid', { drawVertical: 0 })).toBe(false);
+    });
+
+    it('a two-axis grid IS semantic', () => {
+      expect(isSemanticHost('grid', {})).toBe(true);
+      expect(isSemanticHost('grid', { drawVertical: 1, drawHorizontal: 1 })).toBe(true);
+    });
+
+    it('single-arg stays semantic for grid (back-compat for by-type callers)', () => {
+      // defaultBinding/starterChips call by type alone; the render-time edge
+      // override + coerceEdgeRoles fix a grid that later goes single-axis, so the
+      // by-type answer is intentionally the two-axis default.
+      expect(isSemanticHost('grid')).toBe(true);
+    });
+
+    it('is the exact complement of isEdgeHost for a grid (never both, never neither for one axis)', () => {
+      for (const params of [{}, { drawHorizontal: 0 }, { drawVertical: 0 }]) {
+        // Exactly one of the two is true (except the both-off degenerate case).
+        expect(isSemanticHost('grid', params)).toBe(!isEdgeHost('grid', params));
+      }
+    });
+
+    it('non-grid semantic hosts are unaffected by params', () => {
+      expect(isSemanticHost('spiral', { drawHorizontal: 0 })).toBe(true);
+      expect(isSemanticHost('voronoi', { drawVertical: 0 })).toBe(true);
+      expect(isSemanticHost('flowfield', {})).toBe(false);
+    });
+  });
 });

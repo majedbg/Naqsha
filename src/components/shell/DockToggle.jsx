@@ -22,7 +22,9 @@ function ChevronIcon({ collapsed }) {
       stroke="currentColor"
       strokeWidth="3"
       aria-hidden="true"
-      className={`transition-transform duration-fast ${collapsed ? "-rotate-90" : ""}`}
+      className={`transition-transform duration-fast ${
+        collapsed ? "-rotate-90" : ""
+      }`}
     >
       <polyline points="6 9 12 15 18 9" />
     </svg>
@@ -78,14 +80,16 @@ export default function DockToggle() {
   return (
     <div
       data-testid="inspector-dock-header"
-      className="flex items-center justify-end gap-1"
+      className="flex items-center justify-end gap-1 ml-auto mt-2 mr-2"
     >
       {/* Collapse chevron — only meaningful in the bottom shelf (the right dock
           is always its full height). */}
       {isBottom && (
         <button
           type="button"
-          aria-label={dock.collapsed ? "Expand properties" : "Collapse properties"}
+          aria-label={
+            dock.collapsed ? "Expand properties" : "Collapse properties"
+          }
           onClick={() => dock.toggleCollapsed?.()}
           className="shrink-0 text-ink-soft hover:text-ink"
         >

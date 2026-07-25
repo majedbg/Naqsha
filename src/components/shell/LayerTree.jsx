@@ -421,8 +421,14 @@ function LayerRow({
           onSelect(layer.id);
         }
       }}
+      // Selected row reads unambiguously as "this is what the Inspector shows":
+      // the muted wash (darker in light, brighter in dark) plus an inset saffron
+      // ring — saffron is the selection/interactive token (violet is reserved for
+      // focus). ring-inset avoids the layout shift a real border would cause.
       className={`flex items-center gap-1.5 rounded-xs px-1.5 py-1 cursor-pointer transition-colors duration-fast ${
-        selected ? "bg-muted" : "hover:bg-paper-warm"
+        selected
+          ? "bg-muted ring-1 ring-inset ring-accent/70"
+          : "hover:bg-paper-warm"
       }`}
     >
       {/* Drag handle (reorder). Native DnD is finicky in jsdom; the handle wraps

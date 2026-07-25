@@ -3,6 +3,7 @@ import useCanvas from "../lib/useCanvas";
 import CanvasChrome from "./canvas/CanvasChrome";
 import PlotOverlay from "./canvas/PlotOverlay";
 import AnchorGhostOverlay from "./canvas/AnchorGhostOverlay";
+import TraceOverlay from "./shell/TraceOverlay";
 import FieldOverlay from "./FieldOverlay";
 import { chladniField } from "../lib/fields/chladniField";
 import { fieldForLayer } from "../lib/fields/fieldRegistry";
@@ -20,7 +21,7 @@ import {
 } from "../lib/tools/transformGestures";
 import { ROTATE_OFFSET } from "../lib/transform/handles";
 import { ghostSvg } from "../lib/scene/placement";
-import { useFont } from "../lib/text/fontRegistry";
+import { useFonts } from "../lib/text/fontRegistry";
 // Three-free lazy host for the 3D preview (S1). Canvas3DHost itself imports no
 // three.js — it React.lazy-loads the inner Scene3D, so importing it here never
 // pulls three into the 2D bundle.
@@ -59,7 +60,6 @@ import { resolveActiveTargets } from "../lib/three3d/drape";
 const IDENTITY = { x: 0, y: 0, rotation: 0, scale: 1 };
 
 const BG_PRESETS = [
-  { color: "#0a1628", label: "Dark Blue" },
   { color: "#ffffff", label: "White" },
   { color: "#000000", label: "Black" },
 ];
@@ -140,6 +140,19 @@ export default function RightPanel({
   // parent for the Inspector's 1:1 "what etches" preview hero (Raster Etch S9,
   // #88). Optional — legacy/test callers that don't pass it skip the hero.
   onEtchBitmapsChange,
+  // Surfaces per-motif-layer placement-budget stats (layerId → {total, placed})
+  // for the Inspector's MotifDevice "no silent cap" warning (2026-07-19, docs
+  // §6). Only truncated motif layers appear. Optional — legacy/test callers that
+  // omit it skip the warning.
+  onMotifPlacementStatsChange,
+  // Trace sweep (issue #91). Surfaces the ordered per-motif placement positions
+  // (layerId → [{x,y,radius}]) up to Studio so its useTraceSweep can read a
+  // motif's count. `traceActiveMotifId` + `traceProgressIndex` come back DOWN from
+  // that hook to drive the in-canvas TraceOverlay (mounted inside the scaled box
+  // below). All optional — omitting them renders no trace marks.
+  onMotifPlacementsChange,
+  traceActiveMotifId = null,
+  traceProgressIndex = 0,
   bgColor,
   onBgColorChange,
   unit = 'mm',
@@ -275,11 +288,13 @@ export default function RightPanel({
   // (flag-OFF) transform string stays byte-identical.
   const panTransform = externalPan ? `translate(${pan.x}px, ${pan.y}px) ` : "";
 
-  // Resolve the default text font (async; null until loaded). Threaded into
-  // useCanvas so text layers can render their outlines.
-  const { font: textFont } = useFont();
+  // Per-node font resolution: load every font referenced by the layers (plus the
+  // default) and expose `resolveFont(fontId) → Font`. Threaded (in place of the
+  // old single default font) into canvas render, hit-testing, the 3D mark build
+  // and the edit overlay so each text layer draws/exports in its OWN typeface.
+  const { resolveFont } = useFonts(layers);
 
-  const { patternInstances, etchBitmaps } = useCanvas(
+  const { patternInstances, etchBitmaps, motifPlacementStats, motifPlacements } = useCanvas(
     containerRef,
     layers,
     canvasW,
@@ -287,7 +302,7 @@ export default function RightPanel({
     bgColor,
     transforms,
     selectedNodeId,
-    textFont,
+    resolveFont,
     operations,
     machineProfile,
     colorView,
@@ -329,7 +344,7 @@ export default function RightPanel({
       patternInstances,
       canvasW,
       canvasH,
-      svgOpts: { font: textFont },
+      svgOpts: { font: resolveFont },
       // Material-lens appearance: lets the reaction layer light fluorescent
       // grooves (markGlow → emissiveIntensity); null lens → no glow anywhere.
       appearance: selectedMaterial ? resolveAppearance(selectedMaterial) : null,
@@ -339,7 +354,7 @@ export default function RightPanel({
       panelVisibility: livePanelVisibility,
       layerVisibility: liveLayerVisibility,
     });
-  }, [threeDSnapshot, patternInstances, canvasW, canvasH, textFont, selectedMaterial, livePanelMaterials, livePanelVisibility, liveLayerVisibility]);
+  }, [threeDSnapshot, patternInstances, canvasW, canvasH, resolveFont, selectedMaterial, livePanelMaterials, livePanelVisibility, liveLayerVisibility]);
 
   // Surface B (S8): the relief source field. Resolved 2D-side from the focus
   // guide layer via fieldForLayer (three-free; LRU-cached internally so this is
@@ -409,6 +424,21 @@ export default function RightPanel({
   useEffect(() => {
     if (onEtchBitmapsChange) onEtchBitmapsChange(etchBitmaps);
   }, [etchBitmaps, onEtchBitmapsChange]);
+
+  // Surface per-motif-layer placement-budget stats to the parent so the
+  // Inspector's MotifDevice can show a "no silent cap" warning (2026-07-19).
+  // Mirrors the etch surfacing above.
+  useEffect(() => {
+    if (onMotifPlacementStatsChange) onMotifPlacementStatsChange(motifPlacementStats);
+  }, [motifPlacementStats, onMotifPlacementStatsChange]);
+
+  // Surface per-motif-layer placement POSITIONS to the parent so Studio's
+  // useTraceSweep can read a motif's count (Trace sweep, issue #91). The map is
+  // churn-guarded in useCanvas, so this fires only when the placements actually
+  // change — no per-frame parent churn. Mirrors the stats surfacing above.
+  useEffect(() => {
+    if (onMotifPlacementsChange) onMotifPlacementsChange(motifPlacements);
+  }, [motifPlacements, onMotifPlacementsChange]);
 
   // Expose canvas container so parent can grab thumbnails
   useEffect(() => {
@@ -684,7 +714,7 @@ export default function RightPanel({
       const pt = toCanvasPoint(e.clientX, e.clientY);
       if (!pt) return;
       const liveTransforms = transformsLiveRef.current || {};
-      const selectables = buildSelectables({ layers, canvasW, canvasH, font: textFont });
+      const selectables = buildSelectables({ layers, canvasW, canvasH, font: resolveFont });
 
       // 1) If a layer is selected, its rotate/resize handles take priority over
       //    re-selecting/moving — a handle hit starts a transform WITHOUT changing
@@ -732,7 +762,7 @@ export default function RightPanel({
       };
       capturePointer(e);
     },
-    [placing, onPlaceAsset, handActive, selectActive, textActive, toCanvasPoint, layers, canvasW, canvasH, selectedNodeId, onSelect, textFont, stopGlide]
+    [placing, onPlaceAsset, handActive, selectActive, textActive, toCanvasPoint, layers, canvasW, canvasH, selectedNodeId, onSelect, resolveFont, stopGlide]
   );
 
   const handlePointerMove = useCallback(
@@ -814,7 +844,7 @@ export default function RightPanel({
       const pt = toCanvasPoint(e.clientX, e.clientY);
       if (!pt) return;
       const liveTransforms = transformsLiveRef.current || {};
-      const selectables = buildSelectables({ layers, canvasW, canvasH, font: textFont });
+      const selectables = buildSelectables({ layers, canvasW, canvasH, font: resolveFont });
       const id = pickTopmost(pt, selectables, liveTransforms);
       if (!id) return;
       const sel = selectables.find((s) => s.id === id);
@@ -822,7 +852,7 @@ export default function RightPanel({
       dragRef.current = null; // cancel any move armed by the preceding pointerdown — NO commit
       onRequestEdit(id);
     },
-    [selectActive, textActive, toCanvasPoint, layers, canvasW, canvasH, textFont, onRequestEdit]
+    [selectActive, textActive, toCanvasPoint, layers, canvasW, canvasH, resolveFont, onRequestEdit]
   );
 
   return (
@@ -884,13 +914,16 @@ export default function RightPanel({
             with the drawn glyphs at any zoom. Rendered only when an edit is open,
             the editing layer still exists + is a text layer, and the font is
             loaded (it sizes the textarea from the laid-out glyph box). */}
-        {editingNodeId && textFont && (() => {
+        {editingNodeId && (() => {
           const eLayer = layers.find((l) => l.id === editingNodeId);
           if (!eLayer || !isTextLayer(eLayer)) return null;
+          const eNode = textNodeFromLayer(eLayer);
+          const eFont = resolveFont(eNode.fontId); // this node's OWN font
+          if (!eFont) return null; // not loaded yet → overlay sizes from glyphs
           return (
             <TextEditOverlay
-              node={textNodeFromLayer(eLayer)}
-              font={textFont}
+              node={eNode}
+              font={eFont}
               onEditText={onEditText}
               onExitEdit={onExitEdit}
             />
@@ -983,6 +1016,19 @@ export default function RightPanel({
           patternInstances={patternInstances}
           motifPick={motifPick}
           onTogglePickedPath={onTogglePickedPath}
+        />
+        {/* Trace sweep marks (issue #91). Sibling of the p5 surface INSIDE the
+            scaled box, so its canvas-coord rings inherit scale(finalScale)+pan and
+            land on the drawn instances. Renders nothing unless a motif is being
+            traced (activeMotifId set + progressIndex > 0), so it costs the canvas
+            nothing at rest. Positions come from THIS panel's own useCanvas —
+            already the churn-guarded map surfaced to Studio — indexed by the active
+            motif the sweep hook drives. */}
+        <TraceOverlay
+          positions={traceActiveMotifId ? motifPlacements[traceActiveMotifId] : null}
+          progressIndex={traceProgressIndex}
+          canvasW={canvasW}
+          canvasH={canvasH}
         />
       </div>
 

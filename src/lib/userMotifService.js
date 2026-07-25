@@ -13,6 +13,13 @@
 
 import { supabase } from './supabase';
 
+// Upper bound on how many library rows a single load pulls into memory. The
+// picker/panel render a thumbnail per row, so an unbounded select would grow
+// render cost and payload linearly with a power user's whole history. 500 is a
+// generous ceiling (far past any realistic curated library) that keeps the
+// query — and the grid it feeds — bounded. Exported so it's documented + tested.
+export const MOTIF_LIBRARY_LIMIT = 500;
+
 // ── Pure mappers (glyph ⇄ row) ──────────────────────────────────────────────
 
 /**
@@ -71,7 +78,8 @@ export async function loadUserMotifs(userId) {
     .from('user_motifs')
     .select('id, name, glyph, created_at, updated_at')
     .eq('user_id', userId)
-    .order('updated_at', { ascending: false });
+    .order('updated_at', { ascending: false })
+    .limit(MOTIF_LIBRARY_LIMIT);
   if (error) throw error;
   return (data || []).map(rowToLibraryMotif);
 }

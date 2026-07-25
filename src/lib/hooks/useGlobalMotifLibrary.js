@@ -2,6 +2,7 @@ import { useCallback, useEffect, useReducer, useRef } from "react";
 import {
   loadUserMotifs,
   saveUserMotif,
+  deleteUserMotif,
 } from "../userMotifService";
 
 // useGlobalMotifLibrary — P4-3 (svg-motif-editor DECISIONS D1)
@@ -34,6 +35,8 @@ function reducer(state, action) {
       return { motifs: [], loading: false, error: action.error };
     case "prepend":
       return { ...state, motifs: [action.motif, ...state.motifs] };
+    case "removed":
+      return { ...state, motifs: state.motifs.filter((m) => m.id !== action.id) };
     case "promoteError":
       return { ...state, error: action.error };
     default:
@@ -94,11 +97,30 @@ export default function useGlobalMotifLibrary(user) {
     [userId]
   );
 
+  // Remove a library row (motif-shell, D — the library panel's delete). Same
+  // graceful contract as promote: optimistic-after-success, never throws to
+  // the caller; a service rejection lands in `error` and the row stays.
+  const remove = useCallback(
+    async (motifId) => {
+      if (!userId) return false;
+      try {
+        await deleteUserMotif(motifId, userId);
+        dispatch({ type: "removed", id: motifId });
+        return true;
+      } catch (error) {
+        dispatch({ type: "promoteError", error });
+        return false;
+      }
+    },
+    [userId]
+  );
+
   return {
     motifs: state.motifs,
     loading: state.loading,
     error: state.error,
     promote,
+    remove,
     refresh,
   };
 }

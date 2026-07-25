@@ -4,6 +4,7 @@ import {
   densityWeight,
   stackDensityWeight,
   applyRange,
+  previewValue,
 } from "./modulation";
 import { ScalarField } from "./ScalarField";
 
@@ -13,6 +14,65 @@ import { ScalarField } from "./ScalarField";
 // device-level range replaces the old per-map polarity toggle. It returns a
 // signed contribution; consumers map it to a channel (density: weight = 1 +
 // contribution).
+// previewValue is the heatmap-readout transfer. It DELEGATES to
+// modulationTransfer (so it can't drift), applying every device-level control —
+// range → +offset → shape → steps — and omitting only per-map `amount`. These
+// tests pin the math INDEPENDENTLY (not `previewValue === modulationTransfer`,
+// which the delegation makes tautological).
+describe("previewValue", () => {
+  it("equals applyRange when all controls are neutral / omitted (byte-identical readout)", () => {
+    for (const s of [-1, -0.4, 0, 0.7, 1]) {
+      const range = { min: -1, max: 1 };
+      expect(previewValue(s, { range })).toBeCloseTo(applyRange(s, range));
+      expect(previewValue(s, { offset: 0, range })).toBeCloseTo(
+        applyRange(s, range)
+      );
+    }
+  });
+  it("adds offset AFTER the range remap", () => {
+    const range = { min: 0, max: 1 };
+    for (const s of [-1, 0, 1]) {
+      expect(previewValue(s, { offset: 0.25, range })).toBeCloseTo(
+        applyRange(s, range) + 0.25
+      );
+    }
+  });
+  it("applies the shape ease after offset (hand-computed)", () => {
+    // range identity, offset 0, shape 1 → exponent 3: shapeEase(0.5,1)=0.5^3=0.125
+    const range = { min: -1, max: 1 };
+    expect(previewValue(0.5, { range, shape: 1 })).toBeCloseTo(0.125);
+    // negative side keeps sign: shapeEase(-0.5,1) = -(0.5^3) = -0.125
+    expect(previewValue(-0.5, { range, shape: 1 })).toBeCloseTo(-0.125);
+  });
+  it("terraces into bands via steps (hand-computed quantization)", () => {
+    // range identity → v=0.3; steps 2 → round(0.3*2)/2 = round(0.6)/2 = 1/2 = 0.5
+    const range = { min: -1, max: 1 };
+    expect(previewValue(0.3, { range, steps: 2 })).toBeCloseTo(0.5);
+    // v=0.1; round(0.2)/2 = 0/2 = 0
+    expect(previewValue(0.1, { range, steps: 2 })).toBeCloseTo(0);
+  });
+  it("NEVER applies per-map amount — the device-level readout is amount-invariant", () => {
+    // amount would scale modulationTransfer's output; previewValue must ignore it.
+    const range = { min: -1, max: 1 };
+    const base = previewValue(0.4, { range, offset: 0.1, shape: 0.5, steps: 3 });
+    for (const amount of [0, 1, 5, 99]) {
+      expect(
+        previewValue(0.4, { range, offset: 0.1, shape: 0.5, steps: 3, amount })
+      ).toBeCloseTo(base);
+    }
+    // And base equals modulationTransfer at amount:1 (the value the readout shows).
+    expect(base).toBeCloseTo(
+      modulationTransfer(0.4, {
+        range,
+        offset: 0.1,
+        shape: 0.5,
+        steps: 3,
+        amount: 1,
+      })
+    );
+  });
+});
+
 describe("applyRange", () => {
   it("is identity for the full range [-1,1]", () => {
     for (const s of [-1, -0.5, 0, 0.3, 1]) {

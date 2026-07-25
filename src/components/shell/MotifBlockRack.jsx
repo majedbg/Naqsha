@@ -22,6 +22,7 @@
 // C4. sequence is a minimal shell — its slot strip is C3. A `field` block has no
 // source picker yet (deferred), so it is inert until C3/C4/a later slice wires one.
 
+import { useState, useMemo, useRef, useId } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import {
@@ -40,6 +41,7 @@ import {
   sortableKeyboardCoordinates,
 } from "@dnd-kit/sortable";
 import { useInspectorDockContext } from "./inspectorDockContext";
+import { useMeasuredWidth } from "../../lib/hooks/useMeasuredWidth";
 import {
   makeBlock,
   canAddBlock,
@@ -52,8 +54,19 @@ import {
   removeSlot,
   reorderSlots,
   setSlot,
+  addZoneSlot,
+  removeZoneSlot,
+  reorderZoneSlots,
+  setZoneSlot,
+  setZoneMode,
+  setZoneEnds,
 } from "../../lib/motif/chainEditor";
+import { GlyphPickerFlyout } from "./GlyphPickerChip";
 import { getGlyph, MOTIF_GLYPHS } from "../../lib/motif/glyphs.js";
+import { sieveCounts } from "../../lib/motif/sieveCounts.js";
+import ScrubNumeral from "../ui/ScrubNumeral";
+import CadenceStripControl from "../ui/CadenceStripControl";
+import RoleGlyphToggles from "../ui/RoleGlyphToggles";
 
 // Human labels for each block type (add-menu + card header).
 const BLOCK_LABELS = {
@@ -67,6 +80,20 @@ const BLOCK_LABELS = {
 
 // Add-menu order. Sequencer last (it is the terminal block).
 const ADDABLE_TYPES = ["route", "everyN", "skip", "density", "field", "sequence"];
+
+// Blocks that COLLAPSE to a one-line row (Variant D): grip · chevron+name ·
+// inline summary control · anchor chip · power. The chevron unfolds the SAME
+// detail card body beneath. Skip/Field stay as full cards (no compact summary
+// vocabulary is specified for them); the Sequencer is always expanded — it is the
+// payload — but carries an "N placed" chip in its header.
+const COLLAPSIBLE_TYPES = new Set(["route", "everyN", "density"]);
+
+// The RoleBadge visual family fallback when the rack isn't told the host kind
+// (tests / legacy callers): semantic hosts read as a lattice, edge hosts a stroke.
+// The real device threads the exact badgeKindForHost(patternType) in.
+function fallbackHostKind(hostIsSemantic) {
+  return hostIsSemantic ? "lattice" : "stroke";
+}
 
 const ROLE_OPTIONS_SEMANTIC = [
   { key: "crossing", label: "Crossings" },
@@ -136,7 +163,7 @@ function RouteCardBody({
         {roleOptions.map((r) => (
           <label
             key={r.key}
-            className="flex items-center gap-1 text-[11px] text-ink-soft"
+            className="flex items-center gap-1 text-xs text-ink-soft"
           >
             <input
               type="checkbox"
@@ -164,7 +191,7 @@ function RouteCardBody({
               data-testid={`motif-route-scope-${o.key}`}
               aria-pressed={active}
               onClick={() => setScope(o.key)}
-              className={`rounded-xs border px-2 py-0.5 text-[10px] font-medium transition-colors ${
+              className={`rounded-xs border px-2 py-0.5 text-2xs font-medium transition-colors ${
                 active
                   ? "border-violet bg-violet/15 text-ink"
                   : "border-hairline bg-paper text-ink-soft hover:border-violet"
@@ -193,7 +220,7 @@ function RouteCardBody({
               aria-pressed={armed}
               aria-label="Pick paths on canvas"
               onClick={() => onSetArmed(!armed)}
-              className={`rounded-xs border px-2 py-0.5 text-[10px] font-medium transition-colors ${
+              className={`rounded-xs border px-2 py-0.5 text-2xs font-medium transition-colors ${
                 armed
                   ? "border-violet bg-violet/15 text-ink"
                   : "border-hairline bg-paper text-ink-soft hover:border-violet"
@@ -204,7 +231,7 @@ function RouteCardBody({
           )}
           <span
             data-testid="motif-route-picked-summary"
-            className="text-[10px] tabular-nums text-ink-soft num"
+            className="text-2xs tabular-nums text-ink-soft num"
           >
             {picked.length} picked
           </span>
@@ -213,7 +240,7 @@ function RouteCardBody({
               type="button"
               data-testid="motif-route-picked-clear"
               onClick={() => onPatch({ pickedPaths: [] })}
-              className="text-[10px] text-ink-soft underline hover:text-ink"
+              className="text-2xs text-ink-soft underline hover:text-ink"
             >
               Clear
             </button>
@@ -229,8 +256,20 @@ function EveryNCardBody({ block, onPatch }) {
   const offset = block.offset ?? 0;
   return (
     <div className="space-y-1.5">
+      {/* The SAME cadence component as the collapsed summary, larger — clicking a
+          beat shifts the OFFSET onto that beat (n unchanged). */}
+      <div className="space-y-1">
+        <p className="text-2xs text-ink-soft/70">Cadence — tap a beat to shift the offset</p>
+        <CadenceStripControl
+          n={n}
+          offset={offset}
+          beats={12}
+          size="lg"
+          onCommit={(off) => onPatch({ offset: off })}
+        />
+      </div>
       <div className="flex flex-wrap items-center gap-3">
-        <label className="flex items-center gap-1.5 text-[11px] text-ink-soft">
+        <label className="flex items-center gap-1.5 text-xs text-ink-soft">
           <span className="whitespace-nowrap">Every</span>
           <input
             type="number"
@@ -244,10 +283,10 @@ function EveryNCardBody({ block, onPatch }) {
               const next = Number.isFinite(raw) && raw >= 1 ? Math.round(raw) : 1;
               onPatch({ n: next });
             }}
-            className="w-12 rounded-xs border border-hairline bg-paper px-1 py-0.5 text-[11px] text-ink outline-none focus:border-violet num"
+            className="w-12 rounded-xs border border-hairline bg-paper px-1 py-0.5 text-xs text-ink outline-none focus:border-violet num"
           />
         </label>
-        <label className="flex items-center gap-1.5 text-[11px] text-ink-soft">
+        <label className="flex items-center gap-1.5 text-xs text-ink-soft">
           <span className="whitespace-nowrap">Offset</span>
           <input
             type="number"
@@ -261,11 +300,11 @@ function EveryNCardBody({ block, onPatch }) {
               const next = Number.isFinite(raw) && raw >= 0 ? Math.round(raw) : 0;
               onPatch({ offset: next });
             }}
-            className="w-12 rounded-xs border border-hairline bg-paper px-1 py-0.5 text-[11px] text-ink outline-none focus:border-violet num"
+            className="w-12 rounded-xs border border-hairline bg-paper px-1 py-0.5 text-xs text-ink outline-none focus:border-violet num"
           />
         </label>
       </div>
-      <label className="flex items-center gap-1.5 text-[11px] text-ink-soft">
+      <label className="flex items-center gap-1.5 text-xs text-ink-soft">
         <input
           type="checkbox"
           data-testid="motif-block-continuous"
@@ -299,7 +338,7 @@ function SkipCardBody({ block, onPatch }) {
             aria-label={`Step ${i + 1} ${on ? "skip" : "keep"}`}
             aria-pressed={on}
             onClick={() => setStep(i, !on)}
-            className={`h-6 w-6 rounded-xs border text-[10px] font-medium transition-colors ${
+            className={`h-6 w-6 rounded-xs border text-2xs font-medium transition-colors ${
               on
                 ? "border-violet bg-violet/15 text-ink"
                 : "border-hairline bg-paper text-ink-soft hover:border-violet"
@@ -313,7 +352,7 @@ function SkipCardBody({ block, onPatch }) {
           data-testid="motif-block-skip-add"
           aria-label="Add step"
           onClick={addStep}
-          className="h-6 w-6 rounded-xs border border-hairline bg-paper text-[11px] text-ink-soft hover:border-violet hover:text-ink"
+          className="h-6 w-6 rounded-xs border border-hairline bg-paper text-xs text-ink-soft hover:border-violet hover:text-ink"
         >
           +
         </button>
@@ -323,13 +362,13 @@ function SkipCardBody({ block, onPatch }) {
             data-testid="motif-block-skip-remove"
             aria-label="Remove step"
             onClick={removeStep}
-            className="h-6 w-6 rounded-xs border border-hairline bg-paper text-[11px] text-ink-soft hover:border-violet hover:text-ink"
+            className="h-6 w-6 rounded-xs border border-hairline bg-paper text-xs text-ink-soft hover:border-violet hover:text-ink"
           >
             −
           </button>
         )}
       </div>
-      <p className="text-[10px] text-ink-soft/60">× skip · • keep (cycles)</p>
+      <p className="text-2xs text-ink-soft/60">× skip · • keep (cycles)</p>
     </div>
   );
 }
@@ -340,7 +379,7 @@ function DensityCardBody({ block, onPatch }) {
   const rngMode = block.rngMode || "hash";
   return (
     <div className="space-y-1.5">
-      <label className="flex items-center gap-2 text-[11px] text-ink-soft">
+      <label className="flex items-center gap-2 text-xs text-ink-soft">
         <span className="w-12 whitespace-nowrap">Density</span>
         <input
           type="range"
@@ -358,7 +397,7 @@ function DensityCardBody({ block, onPatch }) {
         </span>
       </label>
       <div className="flex flex-wrap items-center gap-3">
-        <label className="flex items-center gap-1.5 text-[11px] text-ink-soft">
+        <label className="flex items-center gap-1.5 text-xs text-ink-soft">
           <span className="whitespace-nowrap">Seed</span>
           <input
             type="number"
@@ -370,17 +409,17 @@ function DensityCardBody({ block, onPatch }) {
               const raw = Number(e.target.value);
               onPatch({ seed: Number.isFinite(raw) ? Math.round(raw) : 1 });
             }}
-            className="w-16 rounded-xs border border-hairline bg-paper px-1 py-0.5 text-[11px] text-ink outline-none focus:border-violet num"
+            className="w-16 rounded-xs border border-hairline bg-paper px-1 py-0.5 text-xs text-ink outline-none focus:border-violet num"
           />
         </label>
-        <label className="flex items-center gap-1.5 text-[11px] text-ink-soft">
+        <label className="flex items-center gap-1.5 text-xs text-ink-soft">
           <span className="whitespace-nowrap">RNG</span>
           <select
             data-testid="motif-block-rngmode"
             aria-label="RNG mode"
             value={rngMode}
             onChange={(e) => onPatch({ rngMode: e.target.value })}
-            className="rounded-xs border border-hairline bg-paper px-1 py-0.5 text-[11px] text-ink outline-none focus:border-violet"
+            className="rounded-xs border border-hairline bg-paper px-1 py-0.5 text-xs text-ink outline-none focus:border-violet"
           >
             <option value="hash">Hash (stable)</option>
             <option value="sequential">Sequential</option>
@@ -395,7 +434,7 @@ function FieldCardBody({ block, onPatch }) {
   const threshold = block.threshold ?? 0.5;
   return (
     <div className="space-y-1.5">
-      <label className="flex items-center gap-2 text-[11px] text-ink-soft">
+      <label className="flex items-center gap-2 text-xs text-ink-soft">
         <span className="w-14 whitespace-nowrap">Threshold</span>
         <input
           type="range"
@@ -412,7 +451,7 @@ function FieldCardBody({ block, onPatch }) {
           {Number(threshold).toFixed(2)}
         </span>
       </label>
-      <label className="flex items-center gap-1.5 text-[11px] text-ink-soft">
+      <label className="flex items-center gap-1.5 text-xs text-ink-soft">
         <input
           type="checkbox"
           data-testid="motif-block-invert"
@@ -422,7 +461,7 @@ function FieldCardBody({ block, onPatch }) {
         />
         <span>Invert</span>
       </label>
-      <p className="text-[10px] text-ink-soft/60">Field source · deferred</p>
+      <p className="text-2xs text-ink-soft/60">Field source · deferred</p>
     </div>
   );
 }
@@ -452,8 +491,11 @@ function SortableSlotChip({
   index,
   isRandom,
   customGlyphs,
+  libraryMotifs,
   baseGlyphRef,
   onEditGlyph,
+  onSwapGlyph,
+  onManageLibrary,
   onPatch,
   onRemove,
 }) {
@@ -471,6 +513,19 @@ function SortableSlotChip({
   const angleOn = !!rr;
   const weight = slot?.weight != null ? slot.weight : 1;
 
+  // Slot glyph-swap picker (Feature B). The preview button IS the trigger; the
+  // flyout is the SAME GlyphPickerFlyout the row chip uses. `firstTile` pins the
+  // slot's CURRENT glyph as tile #1 with a pencil badge that opens the pen
+  // editor (the old direct-to-editor click). The trigger doubles as the
+  // outside-click root, so re-clicking it toggles rather than dismisses.
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const previewRef = useRef(null);
+  const pickerId = useId();
+  const closePicker = (restoreFocus = true) => {
+    setPickerOpen(false);
+    if (restoreFocus) previewRef.current?.focus();
+  };
+
   return (
     <div
       ref={setNodeRef}
@@ -485,7 +540,7 @@ function SortableSlotChip({
           type="button"
           data-testid="motif-slot-grip"
           aria-label="Drag to reorder slot"
-          className="cursor-grab touch-none text-[10px] text-ink-soft/60 hover:text-ink"
+          className="cursor-grab touch-none text-2xs text-ink-soft/60 hover:text-ink"
           {...attributes}
           {...listeners}
         >
@@ -506,32 +561,64 @@ function SortableSlotChip({
       {isRest ? (
         <div
           data-testid="motif-slot-rest"
-          className="flex h-10 items-center justify-center rounded-xs border border-dashed border-hairline text-[10px] font-medium uppercase tracking-wider text-ink-soft/70"
+          className="flex h-10 items-center justify-center rounded-xs border border-dashed border-hairline text-2xs font-medium uppercase tracking-wider text-ink-soft/70"
         >
           Rest
         </div>
       ) : (
-        <button
-          type="button"
-          data-testid="motif-slot-edit"
-          aria-label="Edit slot glyph"
-          title="Edit this slot's glyph"
-          onClick={() => onEditGlyph(index, effectiveRef)}
-          className="flex h-10 items-center justify-center rounded-xs border border-hairline bg-paper-warm text-ink-soft hover:border-violet hover:text-ink"
-        >
-          <svg width="24" height="24" viewBox="-12 -12 24 24" aria-hidden="true">
-            {glyph?.paths?.[0]?.d ? (
-              <path d={glyph.paths[0].d} fill="none" stroke="currentColor" strokeWidth="1.5" />
-            ) : (
-              <circle r="6" fill="none" stroke="currentColor" strokeWidth="1" strokeDasharray="2 2" />
-            )}
-          </svg>
-        </button>
+        <>
+          <button
+            type="button"
+            ref={previewRef}
+            data-testid="motif-slot-edit"
+            aria-label="Swap slot glyph"
+            aria-haspopup="dialog"
+            aria-expanded={pickerOpen}
+            aria-controls={pickerId}
+            title="Swap this slot's glyph"
+            onClick={() => (pickerOpen ? closePicker() : setPickerOpen(true))}
+            className={`flex h-10 items-center justify-center rounded-xs border bg-paper-warm text-ink-soft hover:border-violet hover:text-ink ${
+              pickerOpen ? "border-accent/60" : "border-hairline"
+            }`}
+          >
+            <svg width="24" height="24" viewBox="-12 -12 24 24" aria-hidden="true">
+              {glyph?.paths?.[0]?.d ? (
+                <path d={glyph.paths[0].d} fill="none" stroke="currentColor" strokeWidth="1.5" />
+              ) : (
+                <circle r="6" fill="none" stroke="currentColor" strokeWidth="1" strokeDasharray="2 2" />
+              )}
+            </svg>
+          </button>
+          {pickerOpen && (
+            <GlyphPickerFlyout
+              onRequestClose={closePicker}
+              triggerRef={previewRef}
+              rootRef={previewRef}
+              flyoutId={pickerId}
+              glyphRef={effectiveRef}
+              customGlyphs={customGlyphs}
+              libraryMotifs={libraryMotifs}
+              onManageLibrary={onManageLibrary}
+              onPick={(payload) => onSwapGlyph(index, payload)}
+              firstTile={{
+                glyphId: effectiveRef,
+                glyph,
+                name: glyph?.name || effectiveRef || "Current",
+                onEdit: () => {
+                  // Close WITHOUT refocusing the preview — the pen editor takes
+                  // over focus — then open the editor for this slot.
+                  closePicker(false);
+                  onEditGlyph(index, effectiveRef);
+                },
+              }}
+            />
+          )}
+        </>
       )}
 
       {/* Weight — Random mode only (positional in Cycle). Rests carry a weight too. */}
       {isRandom && (
-        <label className="flex items-center gap-1 text-[9px] text-ink-soft">
+        <label className="flex items-center gap-1 text-2xs text-ink-soft">
           <span className="shrink-0">wt</span>
           <input
             type="range"
@@ -552,7 +639,7 @@ function SortableSlotChip({
 
       {/* Angle randomization — glyph slots only (a Rest has no rotation). */}
       {!isRest && (
-        <label className="flex items-center gap-1 text-[9px] text-ink-soft">
+        <label className="flex items-center gap-1 text-2xs text-ink-soft">
           <input
             type="checkbox"
             data-testid="motif-slot-anglerand"
@@ -571,7 +658,7 @@ function SortableSlotChip({
       )}
       {!isRest && angleOn && (
         <div className="space-y-1">
-          <label className="flex items-center gap-1 text-[9px] text-ink-soft">
+          <label className="flex items-center gap-1 text-2xs text-ink-soft">
             <span className="shrink-0">±°</span>
             <input
               type="range"
@@ -599,7 +686,7 @@ function SortableSlotChip({
             onChange={(e) =>
               onPatch({ rotationRandom: { ...rr, spread: e.target.value } })
             }
-            className="w-full rounded-xs border border-hairline bg-paper px-1 py-0.5 text-[9px] text-ink outline-none focus:border-violet"
+            className="w-full rounded-xs border border-hairline bg-paper px-1 py-0.5 text-2xs text-ink outline-none focus:border-violet"
           >
             {SPREAD_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>
@@ -613,21 +700,128 @@ function SortableSlotChip({
   );
 }
 
-function SequenceCardBody({
-  block,
-  seqIndex,
-  onEditChain,
-  customGlyphs,
-  baseGlyphRef,
-  onEditSlotGlyph,
+// Cycle | Random deal toggle, shared by the flat Sequencer and each Zone. The
+// Continuous checkbox (a CYCLE-mode control, documented no-op in Random — D10)
+// renders only when `continuousTestid` is supplied (the flat card; zones omit
+// it — their per-path restart is a zone-aware engine default per ADR 0008).
+function DealModeToggle({
+  mode,
+  continuous,
+  modeTestid,
+  continuousTestid,
+  onSetMode,
+  onSetContinuous,
 }) {
-  const slots = Array.isArray(block.slots) ? block.slots : [];
-  const isRandom = block.mode === "random";
+  const isRandom = (mode || "cycle") === "random";
+  return (
+    <div className="flex items-center gap-1" data-testid={modeTestid}>
+      {["cycle", "random"].map((m) => {
+        const active = (mode || "cycle") === m;
+        return (
+          <button
+            key={m}
+            type="button"
+            data-testid={`${modeTestid}-${m}`}
+            aria-pressed={active}
+            onClick={() => onSetMode(m)}
+            className={`rounded-xs border px-2 py-0.5 text-2xs font-medium capitalize transition-colors ${
+              active
+                ? "border-violet bg-violet/15 text-ink"
+                : "border-hairline bg-paper text-ink-soft hover:border-violet"
+            }`}
+          >
+            {m}
+          </button>
+        );
+      })}
+      {continuousTestid && !isRandom && (
+        <label className="ml-1 flex items-center gap-1 text-2xs text-ink-soft">
+          <input
+            type="checkbox"
+            data-testid={continuousTestid}
+            aria-label="Continuous across paths"
+            checked={!!continuous}
+            onChange={(e) => onSetContinuous(e.target.checked)}
+          />
+          <span>Continuous</span>
+        </label>
+      )}
+    </div>
+  );
+}
 
-  // Positional slot ids for the NESTED sortable (stable within a drag — a drag
-  // never adds/removes a slot). Separate sensors + DndContext from the block rack
-  // so a slot drag is fully isolated from its parent block's drag.
-  const slotIds = slots.map((_, i) => `slot-${i}`);
+// The Apex end-selector (ADR 0008): which strand end flowers — both / upper /
+// lower. Rendered as inline VECTOR arrows (never text arrows): a double-headed
+// vertical arrow for 'both', a single up/down arrow otherwise. The choice is
+// SPATIAL (y-then-x), never drawing order — the vertical arrow reads that.
+const END_OPTIONS = [
+  { value: "both", label: "Both ends", d: "M8 3v10M5 6l3-3 3 3M5 10l3 3 3-3" },
+  { value: "up", label: "Upper end", d: "M8 3v10M5 6l3-3 3 3" },
+  { value: "down", label: "Lower end", d: "M8 3v10M5 10l3 3 3-3" },
+];
+
+function EndSelector({ ends, onSetEnds }) {
+  const value = ends || "both";
+  return (
+    <div className="flex items-center gap-1" data-testid="motif-zone-ends">
+      {END_OPTIONS.map((o) => {
+        const active = value === o.value;
+        return (
+          <button
+            key={o.value}
+            type="button"
+            aria-label={o.label}
+            aria-pressed={active}
+            title={o.label}
+            onClick={() => onSetEnds(o.value)}
+            className={`flex h-6 w-6 items-center justify-center rounded-xs border transition-colors ${
+              active
+                ? "border-violet bg-violet/15 text-ink"
+                : "border-hairline bg-paper text-ink-soft hover:border-violet"
+            }`}
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.4"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d={o.d} />
+            </svg>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// The horizontal slot strip (nested, isolated dnd) + the + Glyph / + Rest
+// adders. Shared by the flat Sequencer and every Zone; the caller binds the
+// slot ops (flat vs zone-addressed) and passes a unique `idPrefix` so each
+// zone's drag ids never collide. Cross-strip drag is not supported — each strip
+// owns its own DndContext, so a drag never crosses a zone boundary.
+function SlotStrip({
+  slots,
+  isRandom,
+  idPrefix,
+  customGlyphs,
+  libraryMotifs,
+  baseGlyphRef,
+  onManageLibrary,
+  onReorder,
+  onAddGlyph,
+  onAddRest,
+  onSetSlot,
+  onRemoveSlot,
+  onEditSlot,
+  onSwapSlot,
+}) {
+  const slotIds = slots.map((_, i) => `${idPrefix}-${i}`);
   const slotSensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 5 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 5 } }),
@@ -639,52 +833,11 @@ function SequenceCardBody({
     const from = slotIds.indexOf(active.id);
     const to = slotIds.indexOf(over.id);
     if (from === -1 || to === -1) return;
-    onEditChain((c) => reorderSlots(c, seqIndex, from, to));
+    onReorder(from, to);
   };
 
-  const setMode = (mode) => onEditChain((c) => setBlock(c, seqIndex, { mode }));
-
   return (
-    <div className="space-y-2">
-      {/* Cycle | Random deal mode. */}
-      <div className="flex items-center gap-1" data-testid="motif-seq-mode">
-        {["cycle", "random"].map((m) => {
-          const active = (block.mode || "cycle") === m;
-          return (
-            <button
-              key={m}
-              type="button"
-              data-testid={`motif-seq-mode-${m}`}
-              aria-pressed={active}
-              onClick={() => setMode(m)}
-              className={`rounded-xs border px-2 py-0.5 text-[10px] font-medium capitalize transition-colors ${
-                active
-                  ? "border-violet bg-violet/15 text-ink"
-                  : "border-hairline bg-paper text-ink-soft hover:border-violet"
-              }`}
-            >
-              {m}
-            </button>
-          );
-        })}
-        {/* Continuous — a CYCLE-mode control (documented no-op in Random, D10). */}
-        {!isRandom && (
-          <label className="ml-1 flex items-center gap-1 text-[10px] text-ink-soft">
-            <input
-              type="checkbox"
-              data-testid="motif-seq-continuous"
-              aria-label="Continuous across paths"
-              checked={!!block.continuous}
-              onChange={(e) =>
-                onEditChain((c) => setBlock(c, seqIndex, { continuous: e.target.checked }))
-              }
-            />
-            <span>Continuous</span>
-          </label>
-        )}
-      </div>
-
-      {/* Horizontal slot strip (nested, isolated dnd). */}
+    <>
       <DndContext
         sensors={slotSensors}
         collisionDetection={closestCenter}
@@ -696,7 +849,7 @@ function SequenceCardBody({
             className="flex flex-nowrap items-start gap-1.5 overflow-x-auto pb-1"
           >
             {slots.length === 0 && (
-              <p className="py-2 text-[10px] text-ink-soft/60">
+              <p className="py-2 text-2xs text-ink-soft/60">
                 No slots — add a glyph or a rest.
               </p>
             )}
@@ -708,12 +861,13 @@ function SequenceCardBody({
                 index={i}
                 isRandom={isRandom}
                 customGlyphs={customGlyphs}
+                libraryMotifs={libraryMotifs}
                 baseGlyphRef={baseGlyphRef}
-                onEditGlyph={(slotIndex, glyphRef) =>
-                  onEditSlotGlyph(seqIndex, slotIndex, glyphRef)
-                }
-                onPatch={(patch) => onEditChain((c) => setSlot(c, seqIndex, i, patch))}
-                onRemove={() => onEditChain((c) => removeSlot(c, seqIndex, i))}
+                onManageLibrary={onManageLibrary}
+                onEditGlyph={(slotIndex, glyphRef) => onEditSlot(slotIndex, glyphRef)}
+                onSwapGlyph={(slotIndex, payload) => onSwapSlot(slotIndex, payload)}
+                onPatch={(patch) => onSetSlot(i, patch)}
+                onRemove={() => onRemoveSlot(i)}
               />
             ))}
           </div>
@@ -725,10 +879,8 @@ function SequenceCardBody({
           type="button"
           data-testid="motif-slot-add"
           aria-label="Add glyph slot"
-          onClick={() =>
-            onEditChain((c) => addSlot(c, seqIndex, { glyphRef: baseGlyphRef }))
-          }
-          className="rounded-xs border border-hairline bg-paper px-2 py-0.5 text-[10px] text-ink-soft hover:border-violet hover:text-ink"
+          onClick={onAddGlyph}
+          className="rounded-xs border border-hairline bg-paper px-2 py-0.5 text-2xs text-ink-soft hover:border-violet hover:text-ink"
         >
           + Glyph
         </button>
@@ -736,12 +888,163 @@ function SequenceCardBody({
           type="button"
           data-testid="motif-slot-add-rest"
           aria-label="Add rest"
-          onClick={() => onEditChain((c) => addSlot(c, seqIndex, { rest: true }))}
-          className="rounded-xs border border-hairline bg-paper px-2 py-0.5 text-[10px] text-ink-soft hover:border-violet hover:text-ink"
+          onClick={onAddRest}
+          className="rounded-xs border border-hairline bg-paper px-2 py-0.5 text-2xs text-ink-soft hover:border-violet hover:text-ink"
         >
           + Rest
         </button>
       </div>
+    </>
+  );
+}
+
+// Maker-facing Zone vocabulary (CONTEXT.md — Apex/Stem). The ⓘ tooltip copy is
+// the short maker-facing explanation of each Zone.
+const ZONE_LABELS = { apex: "Apex", stem: "Stem" };
+const ZONE_TOOLTIPS = {
+  apex: "The ends of each path — where the vine flowers. A closed loop has no Apex.",
+  stem: "The body of the path — interior points and junctions, where leaves sprout.",
+};
+
+// One Zone SECTION of a zoned Sequencer (ADR 0008): a titled partition with its
+// own deal toggle, the Apex-only end-selector, and its own slot strip. Every
+// mutation is zone-addressed by the Zone's `zone` FIELD (never its array index).
+function ZoneSection({
+  zone,
+  seqIndex,
+  onEditChain,
+  customGlyphs,
+  libraryMotifs,
+  baseGlyphRef,
+  onManageLibrary,
+  onEditSlotGlyph,
+  onSwapSlotGlyph,
+}) {
+  const zoneId = zone.zone;
+  const slots = Array.isArray(zone.slots) ? zone.slots : [];
+  const isRandom = zone.mode === "random";
+  const isApex = zoneId === "apex";
+  const name = ZONE_LABELS[zoneId] || zoneId;
+
+  return (
+    <div
+      data-testid="motif-zone"
+      data-zone={zoneId}
+      className="space-y-2 rounded-xs border border-hairline/70 bg-paper/40 p-1.5"
+    >
+      <div className="flex items-center gap-1">
+        <span className="text-2xs font-semibold uppercase tracking-wider text-ink-soft">
+          {name}
+        </span>
+        {/* Info affordance — hover/focus tooltip explains the Zone (title idiom;
+            no reusable shell Tooltip to couple to). */}
+        <button
+          type="button"
+          data-testid="motif-zone-info"
+          aria-label={`About ${name}`}
+          title={ZONE_TOOLTIPS[zoneId] || ""}
+          className="flex h-4 w-4 items-center justify-center rounded-full border border-hairline text-2xs leading-none text-ink-soft/70 hover:text-ink"
+        >
+          <span aria-hidden="true">i</span>
+        </button>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <DealModeToggle
+          mode={zone.mode}
+          modeTestid="motif-zone-mode"
+          onSetMode={(m) => onEditChain((c) => setZoneMode(c, seqIndex, zoneId, { mode: m }))}
+        />
+        {isApex && (
+          <EndSelector
+            ends={zone.ends}
+            onSetEnds={(e) => onEditChain((c) => setZoneEnds(c, seqIndex, zoneId, e))}
+          />
+        )}
+      </div>
+
+      <SlotStrip
+        slots={slots}
+        isRandom={isRandom}
+        idPrefix={`zone-${zoneId}`}
+        customGlyphs={customGlyphs}
+        libraryMotifs={libraryMotifs}
+        baseGlyphRef={baseGlyphRef}
+        onManageLibrary={onManageLibrary}
+        onReorder={(f, t) => onEditChain((c) => reorderZoneSlots(c, seqIndex, zoneId, f, t))}
+        onAddGlyph={() => onEditChain((c) => addZoneSlot(c, seqIndex, zoneId, { glyphRef: baseGlyphRef }))}
+        onAddRest={() => onEditChain((c) => addZoneSlot(c, seqIndex, zoneId, { rest: true }))}
+        onSetSlot={(i, patch) => onEditChain((c) => setZoneSlot(c, seqIndex, zoneId, i, patch))}
+        onRemoveSlot={(i) => onEditChain((c) => removeZoneSlot(c, seqIndex, zoneId, i))}
+        onEditSlot={(i, ref) => onEditSlotGlyph(seqIndex, i, ref, zoneId)}
+        onSwapSlot={(i, payload) => onSwapSlotGlyph({ seqIndex, zone: zoneId, slotIndex: i }, payload)}
+      />
+    </div>
+  );
+}
+
+function SequenceCardBody({
+  block,
+  seqIndex,
+  onEditChain,
+  customGlyphs,
+  libraryMotifs,
+  baseGlyphRef,
+  onManageLibrary,
+  onEditSlotGlyph,
+  onSwapSlotGlyph,
+}) {
+  // ZONED (ADR 0008): one SECTION per Zone instead of the flat slot row.
+  if (Array.isArray(block.zones)) {
+    return (
+      <div className="space-y-2" data-testid="motif-seq-zones">
+        {block.zones.map((zone) => (
+          <ZoneSection
+            key={zone.zone}
+            zone={zone}
+            seqIndex={seqIndex}
+            onEditChain={onEditChain}
+            customGlyphs={customGlyphs}
+            libraryMotifs={libraryMotifs}
+            baseGlyphRef={baseGlyphRef}
+            onManageLibrary={onManageLibrary}
+            onEditSlotGlyph={onEditSlotGlyph}
+            onSwapSlotGlyph={onSwapSlotGlyph}
+          />
+        ))}
+      </div>
+    );
+  }
+
+  // FLAT — today's rendering exactly (one run of Slots over every survivor).
+  const slots = Array.isArray(block.slots) ? block.slots : [];
+  const isRandom = block.mode === "random";
+  return (
+    <div className="space-y-2">
+      <DealModeToggle
+        mode={block.mode}
+        continuous={block.continuous}
+        modeTestid="motif-seq-mode"
+        continuousTestid="motif-seq-continuous"
+        onSetMode={(m) => onEditChain((c) => setBlock(c, seqIndex, { mode: m }))}
+        onSetContinuous={(v) => onEditChain((c) => setBlock(c, seqIndex, { continuous: v }))}
+      />
+      <SlotStrip
+        slots={slots}
+        isRandom={isRandom}
+        idPrefix="slot"
+        customGlyphs={customGlyphs}
+        libraryMotifs={libraryMotifs}
+        baseGlyphRef={baseGlyphRef}
+        onManageLibrary={onManageLibrary}
+        onReorder={(f, t) => onEditChain((c) => reorderSlots(c, seqIndex, f, t))}
+        onAddGlyph={() => onEditChain((c) => addSlot(c, seqIndex, { glyphRef: baseGlyphRef }))}
+        onAddRest={() => onEditChain((c) => addSlot(c, seqIndex, { rest: true }))}
+        onSetSlot={(i, patch) => onEditChain((c) => setSlot(c, seqIndex, i, patch))}
+        onRemoveSlot={(i) => onEditChain((c) => removeSlot(c, seqIndex, i))}
+        onEditSlot={(i, ref) => onEditSlotGlyph(seqIndex, i, ref)}
+        onSwapSlot={(i, payload) => onSwapSlotGlyph({ seqIndex, slotIndex: i }, payload)}
+      />
     </div>
   );
 }
@@ -756,8 +1059,11 @@ function BlockCardBody({
   onPatch,
   onEditChain,
   customGlyphs,
+  libraryMotifs,
   baseGlyphRef,
+  onManageLibrary,
   onEditSlotGlyph,
+  onSwapSlotGlyph,
 }) {
   switch (block.type) {
     case "route":
@@ -786,8 +1092,96 @@ function BlockCardBody({
           seqIndex={index}
           onEditChain={onEditChain}
           customGlyphs={customGlyphs}
+          libraryMotifs={libraryMotifs}
           baseGlyphRef={baseGlyphRef}
+          onManageLibrary={onManageLibrary}
           onEditSlotGlyph={onEditSlotGlyph}
+          onSwapSlotGlyph={onSwapSlotGlyph}
+        />
+      );
+    default:
+      return null;
+  }
+}
+
+// ── anchor-count chip ────────────────────────────────────────────────────────
+//
+// Per-block `in→out`: how many anchors ENTER this stage vs SURVIVE it, read from
+// sieveCounts (the engine's real stage semantics). PRE-CAP by construction — the
+// downstream MAX_PLACEMENTS truncation stays the truth of the placement-budget
+// warning, never this chip (docs §6). A DROP (out < in) is normal (no tone), but
+// a DEAD block (in > 0, out === 0 — nothing survives) reads tone-mild: it is the
+// honest answer to "why is nothing showing?".
+function AnchorCountChip({ inCount, outCount }) {
+  const dead = inCount > 0 && outCount === 0;
+  return (
+    <span
+      data-testid="motif-block-anchor-chip"
+      title={`${inCount} anchors in · ${outCount} kept`}
+      className={`shrink-0 rounded-xs px-1 text-2xs tabular-nums num ${
+        dead ? "text-tone-mild" : "text-ink-soft"
+      }`}
+    >
+      {inCount}
+      <span aria-hidden="true">→</span>
+      {outCount}
+    </span>
+  );
+}
+
+// The inline EDITABLE summary shown on a collapsed row — the compact-control
+// vocabulary wired to the SAME onPatch (editChain) seam the unfolded detail uses,
+// so a collapsed edit and an unfolded edit are indistinguishable to the model.
+function BlockSummaryControl({ block, roleOptions, hostKind, onPatch }) {
+  switch (block.type) {
+    case "route": {
+      const roles = Array.isArray(block.roles) ? block.roles : [];
+      const toggleRole = (key) => {
+        const next = roles.includes(key)
+          ? roles.filter((r) => r !== key)
+          : [...roles, key];
+        onPatch({ roles: next.length ? next : null });
+      };
+      return (
+        <RoleGlyphToggles
+          hostKind={hostKind}
+          options={roleOptions}
+          roles={roles}
+          onToggle={toggleRole}
+        />
+      );
+    }
+    case "everyN":
+      return (
+        <div className="flex items-center gap-1.5">
+          <CadenceStripControl
+            n={block.n ?? 1}
+            offset={block.offset ?? 0}
+            beats={12}
+            onCommit={(offset) => onPatch({ offset })}
+          />
+          <ScrubNumeral
+            value={block.n ?? 1}
+            min={1}
+            max={12}
+            step={1}
+            label="Every Nth"
+            testId="motif-summary-n"
+            onCommit={(n) => onPatch({ n })}
+          />
+        </div>
+      );
+    case "density":
+      return (
+        <ScrubNumeral
+          value={block.density ?? 1}
+          min={0}
+          max={1}
+          step={0.05}
+          label="Density"
+          testId="motif-summary-density"
+          format={(v) => Number(v).toFixed(2)}
+          onCommit={(density) => onPatch({ density })}
         />
       );
     default:
@@ -808,6 +1202,7 @@ function SortableBlockCard({
   index,
   roleOptions,
   hostIsSemantic,
+  hostKind,
   armed,
   onSetArmed,
   onPatch,
@@ -815,8 +1210,16 @@ function SortableBlockCard({
   onRemove,
   onEditChain,
   customGlyphs,
+  libraryMotifs,
   baseGlyphRef,
+  onManageLibrary,
   onEditSlotGlyph,
+  onSwapSlotGlyph,
+  // Anchor-sieve numbers for THIS block (nullable — only when host anchors were
+  // resolvable). `stage` is {inCount, outCount}; `placedCount` is the terminal
+  // Sequencer's non-rest placement count for its header chip.
+  stage = null,
+  placedCount = null,
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id });
@@ -826,6 +1229,130 @@ function SortableBlockCard({
     ...(isDragging ? { zIndex: 10, opacity: 0.85 } : null),
   };
   const bypassed = !!block.bypass;
+  const collapsible = COLLAPSIBLE_TYPES.has(block.type);
+  // Disclosure state is per-block component state (default collapsed). The rack
+  // doesn't persist disclosure anywhere else, so component state is the match.
+  const [open, setOpen] = useState(false);
+
+  const grip = (
+    <button
+      type="button"
+      data-testid="motif-block-grip"
+      aria-label="Drag to reorder"
+      className="cursor-grab touch-none text-ink-soft/60 hover:text-ink"
+      {...attributes}
+      {...listeners}
+    >
+      <span aria-hidden="true">⠿</span>
+    </button>
+  );
+  const power = (
+    <button
+      type="button"
+      data-testid="motif-block-bypass"
+      aria-label={bypassed ? "Enable block" : "Bypass block"}
+      aria-pressed={bypassed}
+      title={bypassed ? "Enable block" : "Bypass block"}
+      onClick={onBypass}
+      className={`shrink-0 rounded-xs px-1 text-xs ${
+        bypassed ? "text-ink-soft/50" : "text-ink-soft hover:text-ink"
+      }`}
+    >
+      <span aria-hidden="true">⏻</span>
+    </button>
+  );
+  const remove = (
+    <button
+      type="button"
+      data-testid="motif-block-remove"
+      aria-label="Remove block"
+      onClick={onRemove}
+      className="shrink-0 rounded-xs px-1 text-xs text-ink-soft hover:text-ink"
+    >
+      ×
+    </button>
+  );
+  const body = (
+    <BlockCardBody
+      block={block}
+      index={index}
+      roleOptions={roleOptions}
+      hostIsSemantic={hostIsSemantic}
+      armed={armed}
+      onSetArmed={onSetArmed}
+      onPatch={onPatch}
+      onEditChain={onEditChain}
+      customGlyphs={customGlyphs}
+      libraryMotifs={libraryMotifs}
+      baseGlyphRef={baseGlyphRef}
+      onManageLibrary={onManageLibrary}
+      onEditSlotGlyph={onEditSlotGlyph}
+      onSwapSlotGlyph={onSwapSlotGlyph}
+    />
+  );
+
+  // ── collapsible one-line row (route / everyN / density) ────────────────────
+  if (collapsible) {
+    return (
+      <div
+        ref={setNodeRef}
+        style={style}
+        data-testid="motif-block"
+        data-block-type={block.type}
+        className={`shrink-0 rounded-cell border ${
+          bypassed ? "border-hairline bg-paper/60 opacity-60" : "border-hairline bg-paper"
+        } min-w-[160px]`}
+      >
+        {/* One-line header that WRAPS when narrow: below ~a rail's worth of width
+            the summary control (Route's role toggles / everyN strip) would
+            otherwise collapse its container to 0 and paint its fixed-width
+            buttons left over the block name. flex-wrap + a content-sized summary
+            (no min-w-0 below) drops it to a second line instead of overlapping. */}
+        <div className="flex min-h-[28px] flex-wrap items-center gap-1.5 px-2 py-1">
+          {grip}
+          <button
+            type="button"
+            data-testid="motif-block-disclosure"
+            aria-expanded={open}
+            aria-label={open ? "Fold block" : "Unfold block"}
+            title={open ? "Fold block" : "Unfold block"}
+            onClick={() => setOpen((o) => !o)}
+            // Negative-margin hit-area pad (branch convention) so the chevron/name
+            // tap target clears ~44px effective without growing the row.
+            className="-my-1.5 flex shrink-0 items-center gap-1 rounded-xs py-1.5 outline-none focus-visible:ring-2 focus-visible:ring-violet"
+          >
+            <span
+              aria-hidden="true"
+              className="inline-block text-2xs leading-none text-ink-soft transition-transform duration-fast"
+              style={{ transform: open ? "rotate(90deg)" : "rotate(0deg)" }}
+            >
+              ▸
+            </span>
+            <span className="text-xs font-medium text-ink">
+              {BLOCK_LABELS[block.type] || block.type}
+            </span>
+          </button>
+          <div className="flex flex-1 items-center justify-end">
+            <BlockSummaryControl
+              block={block}
+              roleOptions={roleOptions}
+              hostKind={hostKind}
+              onPatch={onPatch}
+            />
+          </div>
+          {stage && (
+            <AnchorCountChip inCount={stage.inCount} outCount={stage.outCount} />
+          )}
+          {power}
+          {remove}
+        </div>
+        {open && <div className="border-t border-hairline px-2 py-2">{body}</div>}
+      </div>
+    );
+  }
+
+  // ── full card (skip / field / sequence — always expanded) ──────────────────
+  const isSequence = block.type === "sequence";
   return (
     <div
       ref={setNodeRef}
@@ -837,55 +1364,22 @@ function SortableBlockCard({
       } min-w-[160px]`}
     >
       <div className="mb-1.5 flex items-center gap-1.5">
-        <button
-          type="button"
-          data-testid="motif-block-grip"
-          aria-label="Drag to reorder"
-          className="cursor-grab touch-none text-ink-soft/60 hover:text-ink"
-          {...attributes}
-          {...listeners}
-        >
-          <span aria-hidden="true">⠿</span>
-        </button>
-        <span className="flex-1 truncate text-[11px] font-semibold uppercase tracking-wider text-ink-soft">
+        {grip}
+        <span className="flex-1 truncate text-xs font-semibold uppercase tracking-wider text-ink-soft">
           {BLOCK_LABELS[block.type] || block.type}
         </span>
-        <button
-          type="button"
-          data-testid="motif-block-bypass"
-          aria-label={bypassed ? "Enable block" : "Bypass block"}
-          aria-pressed={bypassed}
-          title={bypassed ? "Enable block" : "Bypass block"}
-          onClick={onBypass}
-          className={`shrink-0 rounded-xs px-1 text-xs ${
-            bypassed ? "text-ink-soft/50" : "text-ink-soft hover:text-ink"
-          }`}
-        >
-          <span aria-hidden="true">⏻</span>
-        </button>
-        <button
-          type="button"
-          data-testid="motif-block-remove"
-          aria-label="Remove block"
-          onClick={onRemove}
-          className="shrink-0 rounded-xs px-1 text-xs text-ink-soft hover:text-ink"
-        >
-          ×
-        </button>
+        {isSequence && placedCount != null && (
+          <span
+            data-testid="motif-seq-placed"
+            className="shrink-0 text-2xs tabular-nums text-ink-soft num"
+          >
+            {placedCount} placed
+          </span>
+        )}
+        {power}
+        {remove}
       </div>
-      <BlockCardBody
-        block={block}
-        index={index}
-        roleOptions={roleOptions}
-        hostIsSemantic={hostIsSemantic}
-        armed={armed}
-        onSetArmed={onSetArmed}
-        onPatch={onPatch}
-        onEditChain={onEditChain}
-        customGlyphs={customGlyphs}
-        baseGlyphRef={baseGlyphRef}
-        onEditSlotGlyph={onEditSlotGlyph}
-      />
+      {body}
     </div>
   );
 }
@@ -896,6 +1390,21 @@ export default function MotifBlockRack({
   chain,
   onEditChain,
   hostIsSemantic = true,
+  // RoleBadge visual family for the host (badgeKindForHost — 'lattice'|'stroke').
+  // Threaded from MotifDevice so the Route summary's role marks match the mode
+  // column's; a bare caller falls back to the semantic/edge split.
+  hostKind,
+  // Resolved host anchors (nullable) for the per-block sieve chips. When present,
+  // sieveCounts replays the engine's stage semantics to show each block's
+  // in→out; when null (edge/voronoi hosts whose geometry is render-captured, or
+  // no host), the rack simply shows no chips. PRE-CAP — the placement-budget
+  // warning stays the truth about MAX_PLACEMENTS (docs §6).
+  anchors = null,
+  // The motif's post-chain include/exclude overrides (ADR-0004), threaded verbatim
+  // to sieveCounts so the Sequencer's "N placed" matches the canvas's POST-override
+  // survivor set. Per-stage chips stay PRE-override (sieveCounts only applies
+  // overrides to selected/placed) — the correct split per the chip contract.
+  overrides = null,
   // Canvas-pick arm state (C4): the block index (in this chain) whose route card
   // is armed as the active pick target, or null. Ephemeral (Studio component
   // state, never persisted). `onArmRoute(indexOrNull)` sets/clears it — passing
@@ -903,19 +1412,62 @@ export default function MotifBlockRack({
   armedRouteIndex = null,
   onArmRoute,
   customGlyphs,
+  libraryMotifs,
   baseGlyphRef,
+  onManageLibrary,
   onEditSlotGlyph,
+  // Slot glyph-swap (Feature B). `onSwapSlotGlyph(address, payload)` where
+  // address is {seqIndex, slotIndex} (flat) or {seqIndex, zone, slotIndex}
+  // (zoned) and payload is the GlyphPickerFlyout emission {kind, glyphId,
+  // glyph}. The parent (MotifDevice) owns the builtin/custom-vs-library commit
+  // routing; a bare caller may omit it (the picker still opens, swap is inert).
+  onSwapSlotGlyph = () => {},
 }) {
   const dock = useInspectorDockContext();
-  const orientation = dock?.dockPosition === "bottom" ? "horizontal" : "vertical";
+  // Orientation follows the rack's ACTUAL width, not the dock position. The rack
+  // always sits in a NARROW sub-column — the w-28 mode column beside it on the
+  // rail, a ~256px module on the shelf — so the old "bottom shelf ⇒ horizontal"
+  // rule cramped the chain into a scroll strip you paged through one 160px card
+  // at a time. Go horizontal only when there's genuine room for a left→right
+  // chain (≥2 cards); fall back to the dock hint before the first measurement
+  // (jsdom / SSR / first paint) so the unmeasured default stays deterministic.
+  const [rackRef, rackWidth] = useMeasuredWidth();
+  const HORIZONTAL_MIN = 340; // ≈ 2 × min-w-[160px] cards + gap
+  const orientation =
+    rackWidth != null
+      ? rackWidth >= HORIZONTAL_MIN
+        ? "horizontal"
+        : "vertical"
+      : dock?.dockPosition === "bottom"
+        ? "horizontal"
+        : "vertical";
 
   // On an edge host, Route only offers the Edges role (semantic crossing/tip/cell
   // anchors don't exist there) — mirror MotifDevice's roleOptions scoping.
   const roleOptions = hostIsSemantic
     ? ROLE_OPTIONS_SEMANTIC
     : ROLE_OPTIONS_SEMANTIC.filter((r) => r.key === "edge");
+  const badgeKind = hostKind || fallbackHostKind(hostIsSemantic);
 
   const blocks = Array.isArray(chain) ? chain : [];
+
+  // Per-block anchor sieve (nullable). Memoized on [chain, anchors]; a bad/empty
+  // anchor set degrades to no chips rather than throwing. `stageByIndex` maps a
+  // block's chain index to its {inCount, outCount}; `placed` is the terminal
+  // Sequencer's non-rest placement count.
+  const sieve = useMemo(() => {
+    if (!Array.isArray(anchors)) return null;
+    try {
+      return sieveCounts(chain, anchors, overrides ? { overrides } : {});
+    } catch {
+      return null;
+    }
+  }, [chain, anchors, overrides]);
+  const stageByIndex = useMemo(() => {
+    const map = new Map();
+    if (sieve) for (const s of sieve.stages) map.set(s.blockIndex, s);
+    return map;
+  }, [sieve]);
   // Stable ids for the sortable set (positional — the chain has no block ids and
   // never mutates mid-drag).
   const ids = blocks.map((_, i) => `block-${i}`);
@@ -946,7 +1498,7 @@ export default function MotifBlockRack({
   );
 
   return (
-    <div className="space-y-2" data-testid="motif-rack" data-orientation={orientation}>
+    <div ref={rackRef} className="space-y-2" data-testid="motif-rack" data-orientation={orientation}>
       <DndContext
         sensors={sensors}
         collisionDetection={closestCenter}
@@ -964,7 +1516,11 @@ export default function MotifBlockRack({
             className={
               orientation === "horizontal"
                 ? "flex flex-nowrap gap-2 overflow-x-auto pb-1"
-                : "flex flex-col gap-2"
+                : // overflow-x-auto is a FLOOR: after the row stacks (P1) the
+                  // vertical rack gets full width and the min-w-[160px] cards fit,
+                  // but if it's ever narrower than a card this scrolls the rack
+                  // instead of pushing a scrollbar onto the whole inspector.
+                  "flex flex-col gap-2 overflow-x-auto"
             }
           >
             {blocks.map((block, i) => (
@@ -975,6 +1531,11 @@ export default function MotifBlockRack({
                 index={i}
                 roleOptions={roleOptions}
                 hostIsSemantic={hostIsSemantic}
+                hostKind={badgeKind}
+                stage={stageByIndex.get(i) || null}
+                placedCount={
+                  block.type === "sequence" && sieve ? sieve.placed : null
+                }
                 armed={armedRouteIndex === i}
                 onSetArmed={
                   onArmRoute ? (next) => onArmRoute(next ? i : null) : undefined
@@ -984,8 +1545,11 @@ export default function MotifBlockRack({
                 onRemove={() => onEditChain((c) => removeBlock(c, i))}
                 onEditChain={onEditChain}
                 customGlyphs={customGlyphs}
+                libraryMotifs={libraryMotifs}
                 baseGlyphRef={baseGlyphRef}
+                onManageLibrary={onManageLibrary}
                 onEditSlotGlyph={onEditSlotGlyph}
+                onSwapSlotGlyph={onSwapSlotGlyph}
               />
             ))}
           </div>
@@ -1006,7 +1570,7 @@ export default function MotifBlockRack({
           onEditChain((c) => addBlock(c, makeBlock(type)));
           e.target.value = "";
         }}
-        className="w-full rounded-xs border border-hairline bg-paper-warm px-1 py-0.5 text-[11px] text-ink outline-none focus:border-violet"
+        className="w-full rounded-xs border border-hairline bg-paper-warm px-1 py-0.5 text-xs text-ink outline-none focus:border-violet"
       >
         <option value="">+ Add block</option>
         {addTypes.map((t) => (

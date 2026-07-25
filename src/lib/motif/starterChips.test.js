@@ -59,6 +59,20 @@ describe('STARTER_CHIPS — curated set', () => {
     expect(ids.has('sparse-scatter')).toBe(true);
     expect(ids.has('border-march')).toBe(true);
   });
+
+  it('labels are plain names — no emoji (Variant D: notation carries the meaning)', () => {
+    // The mode-selector rows show the label as a plain name; the RhythmStrip
+    // carries the glyph notation, and the naqsheh brief bans emoji in chrome.
+    const byId = Object.fromEntries(STARTER_CHIPS.map((c) => [c.id, c.label]));
+    expect(byId.vine).toBe('Vine');
+    // Alternate keeps its notation-free name (the hyphenated x‑o is not emoji).
+    expect(byId['alternate-xo']).toBe('Alternate x‑o');
+    // No chip label carries a pictographic/emoji code point.
+    const emoji = /\p{Extended_Pictographic}/u;
+    for (const chip of STARTER_CHIPS) {
+      expect(emoji.test(chip.label)).toBe(false);
+    }
+  });
 });
 
 // Representative hosts for the two branches, exercised via patternType (the
@@ -99,12 +113,17 @@ describe.each(STARTER_CHIPS)('chip $id', (chip) => {
       expect(getGlyph(built.glyphRef)).toBeTruthy();
       expect(MOTIF_GLYPHS[built.glyphRef]).toBeTruthy();
       for (const block of built.binding.chain) {
-        if (block.type === 'sequence') {
-          for (const slot of block.slots) {
-            if (slot.rest) continue;
-            expect(getGlyph(slot.glyphRef)).toBeTruthy();
-            expect(MOTIF_GLYPHS[slot.glyphRef]).toBeTruthy();
-          }
+        if (block.type !== 'sequence') continue;
+        // A sequence is EITHER flat (`slots`) OR zoned (`zones[].slots`); collect
+        // glyph-bearing slots from both shapes so the built-in guarantee covers
+        // the zoned Vine as well as the flat chips.
+        const slots = Array.isArray(block.zones)
+          ? block.zones.flatMap((z) => z.slots)
+          : block.slots;
+        for (const slot of slots) {
+          if (slot.rest) continue;
+          expect(getGlyph(slot.glyphRef)).toBeTruthy();
+          expect(MOTIF_GLYPHS[slot.glyphRef]).toBeTruthy();
         }
       }
     }
@@ -115,7 +134,10 @@ describe.each(STARTER_CHIPS)('chip $id', (chip) => {
     expect(built.anchorMode).toBe('semantic');
     const route = built.binding.chain.find((b) => b.type === 'route');
     expect(route).toBeTruthy();
-    expect(route.roles).toEqual(['crossing']); // grid produces crossing
+    // The zoned Vine routes the UNION of the roles its two Zones consume
+    // (Apex:tip ∪ Stem:edge,crossing); the flat chips keep the single grid
+    // default. Either way the semantic branch never widens to closed/picked.
+    expect(route.roles).toEqual(chip.id === 'vine' ? ['crossing', 'edge', 'tip'] : ['crossing']);
     expect(['all', 'open']).toContain(route.pathScope);
   });
 
@@ -155,8 +177,17 @@ describe('spiral host — chip route defaults to a LIVE role, not the dead cross
     expect(built.anchorMode).toBe('semantic'); // spiral is still a semantic host
     const route = built.binding.chain.find((b) => b.type === 'route');
     expect(route).toBeTruthy();
-    expect(route.roles).toEqual(['edge']);
-    expect(route.roles).not.toContain('crossing'); // the pre-fix dead default
+    if (chip.id === 'vine') {
+      // The Vine forces the fixed Zone-union roles on EVERY semantic host. It may
+      // carry 'crossing' even on a default spiral (which emits none) WITHOUT the
+      // dead-default bug the other chips guard against: the union also holds
+      // 'edge'/'tip', which a spiral DOES produce, so its selection is never
+      // empty (see "every chip PLACES on a default-spiral-shaped anchor set").
+      expect(route.roles).toEqual(['crossing', 'edge', 'tip']);
+    } else {
+      expect(route.roles).toEqual(['edge']);
+      expect(route.roles).not.toContain('crossing'); // the pre-fix dead default
+    }
   });
 
   it('every chip PLACES on a default-spiral-shaped anchor set (edge role, open arms)', () => {
@@ -183,12 +214,54 @@ describe('alternate-xo chip', () => {
   });
 });
 
-describe('vine chip', () => {
-  it('is a cycle sequence [rosette, leaf, leaf]', () => {
-    const { binding } = STARTER_CHIPS.find((c) => c.id === 'vine').build('grid');
-    const seq = binding.chain.find((b) => b.type === 'sequence');
-    expect(seq.mode).toBe('cycle');
-    expect(seq.slots.map((s) => s.glyphRef)).toEqual(['rosette', 'leaf', 'leaf']);
+describe('vine chip — ZONED sequencer (ADR 0008: flower at the Apex, leaf along the Stem)', () => {
+  const vineSeq = (patternType = 'grid') => {
+    const { binding } = STARTER_CHIPS.find((c) => c.id === 'vine').build(patternType);
+    return binding.chain.find((b) => b.type === 'sequence');
+  };
+
+  it('sequence is ZONED: carries a zones array, and NO flat slots/mode/continuous', () => {
+    const seq = vineSeq();
+    expect(Array.isArray(seq.zones)).toBe(true);
+    expect(seq.zones.map((z) => z.zone)).toEqual(['apex', 'stem']);
+    // A zoned block is never simultaneously flat (schema contract).
+    expect(seq.slots).toBeUndefined();
+    expect(seq.mode).toBeUndefined();
+    expect(seq.continuous).toBeUndefined();
+  });
+
+  it('apex zone flowers: cycle, continuous across paths, both ends, a single rosette slot', () => {
+    const apex = vineSeq().zones.find((z) => z.zone === 'apex');
+    expect(apex).toEqual({
+      zone: 'apex',
+      mode: 'cycle',
+      continuous: true,
+      ends: 'both',
+      slots: [{ glyphRef: 'rosette' }],
+    });
+  });
+
+  // Stem alternation (design 2026-07): consecutive leaves alternate sides of the
+  // host line — the SECOND leaf is turned 180° so the stem reads leaf-above,
+  // leaf-below. `rotationOffset` is in DEGREES (placementEngine adds it to the
+  // degree-valued rotation; see placementEngine.test.js "path policy uses normal
+  // (rotation = deg(normal) + offset)"), so a half-turn is exactly 180.
+  it('stem zone leaves: cycle of two leaves, the second turned 180°', () => {
+    const stem = vineSeq().zones.find((z) => z.zone === 'stem');
+    expect(stem).toEqual({
+      zone: 'stem',
+      mode: 'cycle',
+      slots: [{ glyphRef: 'leaf' }, { glyphRef: 'leaf', rotationOffset: 180 }],
+    });
+  });
+
+  it('base glyphRef stays rosette + union route roles on a semantic host', () => {
+    const { glyphRef, binding } = STARTER_CHIPS.find((c) => c.id === 'vine').build('grid');
+    expect(glyphRef).toBe('rosette');
+    const route = binding.chain.find((b) => b.type === 'route');
+    // Both zones draw survivors from the SAME route; the union of the roles Apex
+    // (tip) and Stem (edge ∪ crossing) consume must all be routed in.
+    expect(route.roles).toEqual(['crossing', 'edge', 'tip']);
   });
 });
 

@@ -38,6 +38,38 @@ import { resolvePlacements } from './placementEngine.js';
 import { getGlyph } from './glyphs.js';
 import { placementMatrix, applyMatrix, matrixToSVG } from './instancing.js';
 
+// EDGE-MODE ROLE COERCION. In edge mode the only anchor role that exists is
+// 'edge' (sampleEdgeAnchors tags every anchor role:'edge', anchors.js), so a
+// ROUTE/selection role filter naming any OTHER role filters EVERYTHING out. This
+// bites a grid that became a single-axis EDGE host at render (resolveMotifHost)
+// while its binding still carries the baked semantic default roles:['crossing']
+// (hostKinds defaultRolesForHost) — the vine would place nothing. Normalize such
+// stale roles to ['edge']. A role already `null` (all-pass) or exactly ['edge']
+// is left untouched — so this is a byte-identical no-op for native edge hosts
+// and only un-bakes a grid's 'crossing'. Clones; never mutates the stored binding.
+const roleIsEdgeSafe = (roles) =>
+  roles == null || (Array.isArray(roles) && roles.length === 1 && roles[0] === 'edge');
+
+function coerceEdgeRoles(binding) {
+  if (!binding || typeof binding !== 'object') return binding;
+  let changed = false;
+  const out = { ...binding };
+  if (Array.isArray(binding.chain)) {
+    out.chain = binding.chain.map((block) => {
+      if (block && block.type === 'route' && !roleIsEdgeSafe(block.roles)) {
+        changed = true;
+        return { ...block, roles: ['edge'] };
+      }
+      return block;
+    });
+  }
+  if (binding.selection && !roleIsEdgeSafe(binding.selection.roles)) {
+    out.selection = { ...binding.selection, roles: ['edge'] };
+    changed = true;
+  }
+  return changed ? out : binding;
+}
+
 export default class MotifPattern extends Pattern {
   /**
    * Resolve motif placements and dual-emit them to the p5 canvas (via ctx) and
@@ -46,6 +78,16 @@ export default class MotifPattern extends Pattern {
    */
   generate(ctx, seed, params, canvasW, canvasH, color, opacity) {
     this.svgElements = [];
+    // Placement-budget stats for the render seam's "no silent cap" warning
+    // (2026-07-19, docs §6). Reset to null every generate; set from
+    // resolvePlacements below whenever we actually place. An early return (no
+    // resolvable glyph / no anchors) leaves it null → no warning.
+    this.lastPlacementStats = null;
+    // Ordered, POST-CAP placement positions for the Trace sweep (issue #91).
+    // Reset every generate; filled from the SAME `placements` the draw loop below
+    // stamps, so the overlay's marks land on exactly what's drawn. An early return
+    // leaves it null → the Trace overlay simply has nothing to light for this layer.
+    this.lastPlacementPositions = null;
 
     const p = params || {};
     // Glyph resolution (WI-3 + B1 multi-glyph). Two injected sources, both from
@@ -104,7 +146,10 @@ export default class MotifPattern extends Pattern {
     // decision, so B1 passes a TOP-LEVEL `binding.overrides` through if present
     // (undefined otherwise) and does NOT invent a schema. For legacy bindings
     // the compile path overwrites this with the compiled overrides anyway.
-    const binding = p.binding || {};
+    // In edge mode, un-bake any stale non-edge route roles (e.g. a single-axis
+    // grid whose binding still says ['crossing']) so the role filter passes the
+    // edge anchors. No-op for semantic mode and for already-edge bindings.
+    const binding = anchorMode === 'edge' ? coerceEdgeRoles(p.binding || {}) : p.binding || {};
     const { survivors, sequence } = resolveSelection(binding, anchors, {
       canvasW,
       canvasH,
@@ -118,7 +163,21 @@ export default class MotifPattern extends Pattern {
     // `boundary` from opts, so passing just `{boundary}` is byte-identical.
     const placementConfig = { ...(binding.placement || {}) };
     if (sequence) placementConfig.sequence = sequence;
-    const { placements } = resolvePlacements(survivors, placementConfig, { boundary });
+    const { placements, placementStats } = resolvePlacements(survivors, placementConfig, { boundary });
+    // Surface the budget stats so useCanvas can read `instance.lastPlacementStats`
+    // after generate() and mirror truncation up to the Inspector (etchBitmaps
+    // seam). placementStats is always present from resolvePlacements.
+    this.lastPlacementStats = placementStats || null;
+    // Ordered placement positions for the Trace sweep (issue #91). `placements` is
+    // already the accepted, post-cap, placement-order list, so mapping x/y/radius
+    // here yields exactly what the draw loop stamps — the overlay lights a prefix
+    // of it in sync with the sweep. Only x/y/radius are surfaced (a ring per
+    // instance needs no rotation/glyph); memory is bounded by MAX_PLACEMENTS.
+    this.lastPlacementPositions = placements.map((pl) => ({
+      x: pl.x,
+      y: pl.y,
+      radius: pl.radius,
+    }));
 
     // Canvas style — mirror ImportedPath: one resolved color, alpha from opacity.
     const alpha = Math.round((Math.max(0, Math.min(100, opacity ?? 100)) / 100) * 255);

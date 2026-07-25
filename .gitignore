@@ -32,5 +32,8 @@ scripts-out
 .env*.local
 docs/material-references/
 
-# Playwright MCP session debris (committed verification screenshots stay tracked)
-.playwright-mcp/
+# Playwright MCP browser-session artifacts — the auto-dumped, timestamped
+# page snapshots and console logs. Scoped (not the whole dir): deliberate
+# verification screenshots (s2-/s5b-/…-verification) ARE committed there.
+.playwright-mcp/page-*
+.playwright-mcp/console-*

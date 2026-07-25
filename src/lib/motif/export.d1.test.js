@@ -35,7 +35,9 @@ const DIAGONAL_HOST = [{ points: [{ x: 100, y: 100 }, { x: 300, y: 300 }], close
 
 // Verbatim built-in glyph `d` (mirrors glyphs.js) — asserting the RIGHT glyph
 // reached the RIGHT slot, which parity alone cannot catch.
-const LEAF_D = 'M0,-10 L7,-4 L8,5 L2,10 L-6,6 L-7,-2 L-2,-8 Z';
+// Verbatim copy of the built-in leaf `d` (glyphs.js) used as an export oracle.
+// Updated for the base-at-origin hanging-blade leaf (2026-07).
+const LEAF_D = 'M0,0 L6,-6 L14,-5 L20,-0.5 L18,3 L11,4.5 L4,3 Z';
 const DOT_D =
   'M3,0 L2.1213,2.1213 L0,3 L-2.1213,2.1213 L-3,0 L-2.1213,-2.1213 L0,-3 L2.1213,-2.1213 Z';
 

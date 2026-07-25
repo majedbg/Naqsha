@@ -11,10 +11,17 @@
 // Inspector's Edit button forwards (layerId, glyphRef) verbatim, with no
 // fork/draft-construction logic of its own and no store writes at click time.
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import Inspector from '../shell/Inspector';
 import { MOTIF_TYPE, createMotifParams } from '../../lib/motif/motifLayer';
+
+// The device now defaults OPEN with a persisted disclosure (motif-shell D);
+// these tests predate that and open it with an explicit toggle click, so
+// start each one collapsed.
+beforeEach(() => {
+  localStorage.setItem('sonoform-motif-device-open', '0');
+});
 
 vi.mock('../../lib/AuthContext', () => ({
   useAuth: () => ({ tier: 'studio' }),

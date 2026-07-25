@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { textEngraveWarnings, MIN_CAP_HEIGHT_MM } from './engraveCheck.js';
+import { textEngraveWarnings, MIN_CAP_HEIGHT_MM, DOUBLE_LINE_MESSAGE } from './engraveCheck.js';
 import { loadWorkSans } from '../../test/loadWorkSans.js';
 
 const font = loadWorkSans();
@@ -47,5 +47,29 @@ describe('textEngraveWarnings', () => {
   it('exposes the default floor constant', () => {
     expect(typeof MIN_CAP_HEIGHT_MM).toBe('number');
     expect(MIN_CAP_HEIGHT_MM).toBeGreaterThan(0);
+  });
+});
+
+describe('textEngraveWarnings — double-line caution', () => {
+  it('warns for an OUTLINE font in OUTLINE engrave mode', () => {
+    const w = textEngraveWarnings(node({ fontSize: 200, renderMode: 'outline' }), font, { fontKind: 'outline' });
+    const dl = w.find((x) => x.code === 'double-line');
+    expect(dl).toBeTruthy();
+    expect(dl.message).toBe(DOUBLE_LINE_MESSAGE);
+  });
+
+  it('does NOT warn in Fill mode (fill rasterizes solid — no double line)', () => {
+    const w = textEngraveWarnings(node({ fontSize: 200, renderMode: 'fill' }), font, { fontKind: 'outline' });
+    expect(w.some((x) => x.code === 'double-line')).toBe(false);
+  });
+
+  it('never warns for a single-line font, even in outline mode (that is its point)', () => {
+    const w = textEngraveWarnings(node({ fontSize: 200, renderMode: 'outline' }), font, { fontKind: 'single-line' });
+    expect(w.some((x) => x.code === 'double-line')).toBe(false);
+  });
+
+  it('stays silent when the font kind is unknown (conservative)', () => {
+    const w = textEngraveWarnings(node({ fontSize: 200, renderMode: 'outline' }), font);
+    expect(w.some((x) => x.code === 'double-line')).toBe(false);
   });
 });

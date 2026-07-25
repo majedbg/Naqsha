@@ -151,16 +151,15 @@ describe('Grid warp modulation', () => {
       modulation: { field: risingField(), channel: 'warp', amount: 2 },
     });
 
-    // Collect canvas numeric args in order: vertex -> M point; bezierVertex -> C.
+    // Collect canvas numeric args in order. p5 2.x: `bezierVertex` takes ONE
+    // point per call (c1, then c2, then end for a cubic — see bezierOrder(3)),
+    // so each call contributes exactly two numbers. `bezierOrder` carries no
+    // coordinates and is skipped. `vertex` is the opening M point.
     const canvasNums = [];
     for (const c of ctx.calls) {
       if (c.op === 'vertex') canvasNums.push(fmt(c.args[0]), fmt(c.args[1]));
       else if (c.op === 'bezierVertex') {
-        canvasNums.push(
-          fmt(c.args[0]), fmt(c.args[1]),
-          fmt(c.args[2]), fmt(c.args[3]),
-          fmt(c.args[4]), fmt(c.args[5])
-        );
+        canvasNums.push(fmt(c.args[0]), fmt(c.args[1]));
       }
     }
 
@@ -181,12 +180,37 @@ describe('Grid warp modulation', () => {
     expect(canvasNums).toEqual(svgNums);
   });
 
-  it('records bezierVertex calls through the RecordingContext under warp', () => {
+  it('draws each cubic via the p5 2.x curve API (bezierOrder(3) + three 1-point bezierVertex calls)', () => {
+    // Regression: the app runs p5 2.2.3, whose shape API takes ONE point per
+    // bezierVertex with the degree set by bezierOrder(). The old 1.x 6-arg form
+    // threw inside endShape() and blanked the whole canvas whenever a field
+    // guide warped the grid. Assert the emitted call stream is the 2.x shape:
+    // every bezierVertex carries exactly ONE point (2 numeric args), and each
+    // run of three is preceded by a bezierOrder(3).
     const { ctx } = run({
       ...BASE_PARAMS,
       modulation: { field: risingField(), channel: 'warp', amount: 2 },
     });
+
     const bez = ctx.calls.filter((c) => c.op === 'bezierVertex');
     expect(bez.length).toBeGreaterThan(0);
+    // p5 2.x: one point (2 args) per call — never the legacy 6-arg form.
+    for (const c of bez) expect(c.args).toHaveLength(2);
+
+    // bezierVertex count is a multiple of 3 (one cubic = 3 calls), and at least
+    // one bezierOrder(3) is emitted per shape's curve run.
+    expect(bez.length % 3).toBe(0);
+    const orders = ctx.calls.filter((c) => c.op === 'bezierOrder');
+    expect(orders.length).toBeGreaterThan(0);
+    for (const c of orders) expect(c.args[0]).toBe(3);
+
+    // Structural check: between beginShape/endShape, a bezierOrder always
+    // precedes the bezierVertex triples (no bezierVertex before any order).
+    let sawOrder = false;
+    for (const c of ctx.calls) {
+      if (c.op === 'beginShape') sawOrder = false;
+      if (c.op === 'bezierOrder') sawOrder = true;
+      if (c.op === 'bezierVertex') expect(sawOrder).toBe(true);
+    }
   });
 });

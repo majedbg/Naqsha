@@ -1,5 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
-import { gridLinePositions } from '../gridGeometry.js';
+import { gridLinePositions, gridWarpCurves } from '../gridGeometry.js';
+import { ScalarField } from '../../fields/ScalarField.js';
+import { catmullRomToBezier } from '../catmullRomBezier.js';
+import * as warpModule from '../../fields/warp.js';
 
 // gridLinePositions is the pure, RNG-injected core of Grid's line layout in an
 // ORIGIN-CENTERED frame. Contract pinned here:
@@ -100,6 +103,132 @@ describe('gridLinePositions — jitter RNG contract', () => {
     );
     for (let i = 0; i < xJittered.length; i++) {
       expect(xJittered[i]).toBeCloseTo(xPositions[i] + 5, 10);
+    }
+  });
+});
+
+// gridWarpCurves is the shared warp-node build + Catmull-Rom curve core. Given a
+// set of straight lines, a warp channel, canvas dims and warpNodes, it returns
+// one { nodes, start, segments } curve per line. It is the SINGLE source of the
+// warped grid geometry: the renderer paints from it and the extractor
+// reconstructs from it. Contract pinned here:
+//   - K = clamp(round(warpNodes), 2..24) nodes per line.
+//   - Endpoints (k=0, k=K-1) are PINNED to the straight line; interior nodes are
+//     displaced by stackWarpDisplacement at unit coords (node.x+cw/2)/cw etc.
+//   - The Catmull-Rom curve is catmullRomToBezier(nodes) — full precision, no
+//     rounding in the core (formatting is the renderer's job).
+
+const risingField = () =>
+  ScalarField.fromFunction((u) => 2 * (u - 0.5), { nx: 65, ny: 65 });
+
+describe('gridWarpCurves — warp-node build + Catmull-Rom core', () => {
+  const CW = 800;
+  const CH = 600;
+  // A vertical line and a horizontal line in the origin-centred frame.
+  const lines = [
+    { x1: 40, y1: -100, x2: 40, y2: 100 }, // vertical
+    { x1: -120, y1: 20, x2: 120, y2: 20 }, // horizontal
+  ];
+
+  it('returns one curve per line with K = clamp(round(warpNodes),2..24) nodes', () => {
+    const warpMod = { field: risingField(), channel: 'warp', amount: 3 };
+    const curves = gridWarpCurves(lines, warpMod, { canvasW: CW, canvasH: CH, warpNodes: 6 });
+    expect(curves).toHaveLength(lines.length);
+    for (const c of curves) {
+      expect(c.nodes).toHaveLength(6);
+      expect(c.segments).toHaveLength(6 - 1); // K-1 cubic segments
+      expect(c.start).toEqual({ x: c.nodes[0].x, y: c.nodes[0].y });
+    }
+  });
+
+  it('clamps warpNodes into [2,24] and rounds', () => {
+    const warpMod = { field: risingField(), channel: 'warp', amount: 1 };
+    expect(gridWarpCurves(lines, warpMod, { canvasW: CW, canvasH: CH, warpNodes: 0 })[0].nodes)
+      .toHaveLength(2);
+    expect(gridWarpCurves(lines, warpMod, { canvasW: CW, canvasH: CH, warpNodes: 100 })[0].nodes)
+      .toHaveLength(24);
+    expect(gridWarpCurves(lines, warpMod, { canvasW: CW, canvasH: CH, warpNodes: 5.6 })[0].nodes)
+      .toHaveLength(6);
+  });
+
+  it('pins endpoints to the straight line (k=0 and k=K-1 undisplaced)', () => {
+    const warpMod = { field: risingField(), channel: 'warp', amount: 3 };
+    const curves = gridWarpCurves(lines, warpMod, { canvasW: CW, canvasH: CH, warpNodes: 8 });
+    curves.forEach((c, i) => {
+      const l = lines[i];
+      const first = c.nodes[0];
+      const last = c.nodes[c.nodes.length - 1];
+      expect(first).toEqual({ x: l.x1, y: l.y1 });
+      expect(last).toEqual({ x: l.x2, y: l.y2 });
+    });
+  });
+
+  it('displaces at least one interior node off the straight line', () => {
+    const warpMod = { field: risingField(), channel: 'warp', amount: 3 };
+    const curves = gridWarpCurves(lines, warpMod, { canvasW: CW, canvasH: CH, warpNodes: 8 });
+    let moved = false;
+    curves.forEach((c, li) => {
+      const l = lines[li];
+      c.nodes.forEach((node, k) => {
+        if (k === 0 || k === c.nodes.length - 1) return;
+        const t = k / (c.nodes.length - 1);
+        const ux = l.x1 + (l.x2 - l.x1) * t;
+        const uy = l.y1 + (l.y2 - l.y1) * t;
+        if (Math.abs(node.x - ux) > 1e-9 || Math.abs(node.y - uy) > 1e-9) moved = true;
+      });
+    });
+    expect(moved).toBe(true);
+  });
+
+  it('derives interior displacement SOLELY from stackWarpDisplacement (D2)', () => {
+    // Behavioral D2 proof: every interior node's displacement off the straight
+    // line equals stackWarpDisplacement(sources, u, v) EXACTLY — no parallel or
+    // extra warp math. Recompute the primitive independently and compare.
+    const warpMod = { field: risingField(), channel: 'warp', amount: 2 };
+    const K = 6;
+    const curves = gridWarpCurves(lines, warpMod, { canvasW: CW, canvasH: CH, warpNodes: K });
+    curves.forEach((c, li) => {
+      const l = lines[li];
+      c.nodes.forEach((node, k) => {
+        const t = k / (K - 1);
+        const sx = l.x1 + (l.x2 - l.x1) * t; // straight node x
+        const sy = l.y1 + (l.y2 - l.y1) * t; // straight node y
+        if (k === 0 || k === K - 1) {
+          expect(node.x).toBe(sx); // pinned — zero displacement
+          expect(node.y).toBe(sy);
+          return;
+        }
+        const u = (sx + CW / 2) / CW;
+        const v = (sy + CH / 2) / CH;
+        const { dx, dy } = warpModule.stackWarpDisplacement([warpMod], u, v);
+        expect(node.x).toBe(sx + dx);
+        expect(node.y).toBe(sy + dy);
+      });
+    });
+  });
+
+  it('resolves warpMod.sources ?? [warpMod] as the stack source list', () => {
+    const single = { field: risingField(), channel: 'warp', amount: 1 };
+    // sources absent → the lone warpMod is the source: displacement must equal
+    // stackWarpDisplacement([warpMod], …).
+    const noSources = gridWarpCurves(lines, single, { canvasW: CW, canvasH: CH, warpNodes: 4 });
+    // sources present with the SAME single entry → identical result (proves the
+    // core reads `.sources` when present, not the outer object).
+    const withSources = gridWarpCurves(
+      lines,
+      { channel: 'warp', sources: [single] },
+      { canvasW: CW, canvasH: CH, warpNodes: 4 },
+    );
+    expect(withSources.map((c) => c.nodes)).toEqual(noSources.map((c) => c.nodes));
+  });
+
+  it('curve equals catmullRomToBezier(nodes) — no rounding in the core', () => {
+    const warpMod = { field: risingField(), channel: 'warp', amount: 3 };
+    const curves = gridWarpCurves(lines, warpMod, { canvasW: CW, canvasH: CH, warpNodes: 7 });
+    for (const c of curves) {
+      const expected = catmullRomToBezier(c.nodes);
+      expect(c.start).toEqual(expected.start);
+      expect(c.segments).toEqual(expected.segments);
     }
   });
 });

@@ -114,7 +114,7 @@ describe('useCanvas — Voronoi motif placement is order-independent (seam fix)'
 // never appear in the output — so asserting BOTH built-in glyph `d` strings
 // appear proves the map was built AND consumed end-to-end.
 describe('useCanvas — motif chain injects the multi-glyph glyphs map', () => {
-  const LEAF_D = 'M0,-10';
+  const LEAF_D = 'M0,0 L6,-6'; // base-at-origin leaf's distinctive opening (2026-07)
   const DOT_D = 'M3,0 L2.1213';
 
   const chainMotif = {
@@ -142,5 +142,39 @@ describe('useCanvas — motif chain injects the multi-glyph glyphs map', () => {
     const svg = result.current.patternInstances.cm.svgElements.join('');
     expect(svg).toContain(LEAF_D); // slot 0
     expect(svg).toContain(DOT_D); // slot 1 — only present if 'dot' was mapped
+  });
+});
+
+// Trace sweep positions seam (issue #91). useCanvas surfaces every motif layer's
+// ordered, post-cap placement positions so the Trace overlay can light a growing
+// prefix and Studio's useTraceSweep can read the motif's count. Drives the REAL
+// render (VoronoiCells host + MotifPattern) and asserts the positions map matches
+// what actually drew (one instance per svgElement).
+describe('useCanvas — motifPlacements (Trace sweep positions seam)', () => {
+  it('surfaces ordered {x,y,radius} for a placed motif (count matches drawn instances)', async () => {
+    const { result } = harness([voronoiHost, motif]);
+    await waitFor(() => {
+      expect(result.current.patternInstances.mo?.svgElements.length).toBeGreaterThan(0);
+    });
+    const positions = result.current.motifPlacements.mo;
+    expect(Array.isArray(positions)).toBe(true);
+    // One position per drawn instance (per svgElement).
+    expect(positions.length).toBe(result.current.patternInstances.mo.svgElements.length);
+    for (const p of positions) {
+      expect(typeof p.x).toBe('number');
+      expect(typeof p.y).toBe('number');
+      expect(typeof p.radius).toBe('number');
+      // Inside the artwork coordinate space the overlay renders in.
+      expect(p.x).toBeGreaterThanOrEqual(0);
+      expect(p.x).toBeLessThanOrEqual(W);
+    }
+  });
+
+  it('omits layers that are not motifs (host is absent from the map)', async () => {
+    const { result } = harness([voronoiHost, motif]);
+    await waitFor(() => {
+      expect(result.current.motifPlacements.mo?.length).toBeGreaterThan(0);
+    });
+    expect(result.current.motifPlacements.vh).toBeUndefined();
   });
 });

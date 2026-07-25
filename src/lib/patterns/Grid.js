@@ -1,8 +1,6 @@
 import { applySymmetryDraw } from './symmetryUtils';
 import { Pattern } from './drawingContext';
-import { stackWarpDisplacement } from '../fields/warp';
-import { catmullRomToBezier } from './catmullRomBezier';
-import { gridLinePositions } from './gridGeometry';
+import { gridLinePositions, gridWarpCurves } from './gridGeometry';
 
 export default class Grid extends Pattern {
   generate(ctx, seed, params, canvasW, canvasH, color, opacity) {
@@ -55,37 +53,21 @@ export default class Grid extends Pattern {
     // --- WARP modulation (geometry-build time) --------------------------------
     // A guide field supplied via params.modulation (channel:'warp') replaces each
     // straight grid line with a smooth Catmull-Rom bezier <path> that follows the
-    // field. A straight line has only 2 endpoints and cannot warp, so a warped
-    // line SUBDIVIDES into K nodes; interior nodes are displaced along the field
-    // gradient while the two ENDPOINTS stay pinned (tidy plotter frame). warp
-    // consumes NO RNG — the `lines`/jitter build above is untouched, so the
-    // unmodulated output stays byte-identical. The SAME {start, segments} feeds
-    // both the SVG <path> and the p5 beginShape/bezierVertex draw (canvas == SVG).
+    // field. The warp-node build + Catmull-Rom curve now lives in the SHARED
+    // gridGeometry core (`gridWarpCurves`) so the motif extractor reconstructs
+    // the identical curve — exact-to-paint by construction. warp consumes NO RNG,
+    // so moving it there keeps the unmodulated (and modulated) output byte-
+    // identical. The SAME {start, segments} feeds both the SVG <path> and the p5
+    // beginShape/bezierVertex draw (canvas == SVG); formatting stays here.
     const mod = params?.modulation;
     const warpMod = mod && mod.channel === 'warp' && mod.field ? mod : null;
 
     const warpPaths = []; // { start, segments } per line, for drawBase
 
     if (warpMod) {
-      const K = Math.max(2, Math.min(24, Math.round(warpNodes)));
       const fmt = (n) => n.toFixed(2);
-      for (const l of lines) {
-        const nodes = [];
-        for (let k = 0; k < K; k++) {
-          const t = k / (K - 1);
-          const node = { x: l.x1 + (l.x2 - l.x1) * t, y: l.y1 + (l.y2 - l.y1) * t };
-          // Pin endpoints: displace only interior nodes k=1..K-2.
-          if (k > 0 && k < K - 1) {
-            const u = (node.x + canvasW / 2) / canvasW;
-            const v = (node.y + canvasH / 2) / canvasH;
-            // Phase 2b: vector-SUM every warp source (N=1 → single, byte-identical).
-            const { dx, dy } = stackWarpDisplacement(warpMod.sources ?? [warpMod], u, v);
-            node.x += dx;
-            node.y += dy;
-          }
-          nodes.push(node);
-        }
-        const { start, segments } = catmullRomToBezier(nodes);
+      const curves = gridWarpCurves(lines, warpMod, { canvasW, canvasH, warpNodes });
+      for (const { start, segments } of curves) {
         let d = `M${fmt(start.x)},${fmt(start.y)}`;
         for (const s of segments) {
           d += ` C${fmt(s.c1.x)},${fmt(s.c1.y)} ${fmt(s.c2.x)},${fmt(s.c2.y)} ${fmt(s.end.x)},${fmt(s.end.y)}`;
@@ -115,7 +97,14 @@ export default class Grid extends Pattern {
           ctx.beginShape();
           ctx.vertex(start.x, start.y);
           for (const s of segments) {
-            ctx.bezierVertex(s.c1.x, s.c1.y, s.c2.x, s.c2.y, s.end.x, s.end.y);
+            // p5 2.x curve API (BREAKING vs 1.x): a cubic is bezierOrder(3) plus
+            // three 1-point bezierVertex calls (c1, c2, end); the anchor is the
+            // current position (prior vertex / curve end). The old 6-arg form
+            // threw inside endShape() on p5 2.2.3 and blanked the whole canvas.
+            ctx.bezierOrder(3);
+            ctx.bezierVertex(s.c1.x, s.c1.y);
+            ctx.bezierVertex(s.c2.x, s.c2.y);
+            ctx.bezierVertex(s.end.x, s.end.y);
           }
           ctx.endShape();
         }

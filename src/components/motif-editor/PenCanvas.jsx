@@ -364,17 +364,46 @@ export default function PenCanvas({
 
   // Wheel → zoom ABOUT THE CURSOR: keep the model point under the pointer fixed
   // while scaling. Clamped so the view can't invert or run away.
-  function onWheel(e) {
-    e.preventDefault?.();
-    const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+  //
+  // The step is PROPORTIONAL to the wheel delta, not a fixed 1.1× per event: a
+  // trackpad emits dozens of small wheel events per two-finger swipe, so a flat
+  // per-event factor compounded into a runaway zoom-out from one flick. ctrl+wheel
+  // is the pinch gesture (browsers synthesise it) — same maths, larger constant.
+  function zoomAtCursor(e) {
+    // deltaMode: 0 = px, 1 = lines, 2 = pages. Normalise to px-ish.
+    const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1;
+    const dy = (e.deltaY || 0) * unit;
+    if (!dy) return;
+    const k = e.ctrlKey ? 0.01 : 0.002;
+    // Cap a single event's step so one coarse mouse notch can't leap the view.
+    const factor = Math.min(1.5, Math.max(1 / 1.5, Math.exp(-dy * k)));
+    const p = toView(e); // cursor in view space (constant across the zoom) — read
+    // the DOM HERE, not inside the setState updater (which must stay pure).
     setView((prev) => {
       const scale = Math.min(40, Math.max(0.05, prev.scale * factor));
-      const p = toView(e); // cursor in view space (constant across the zoom)
       const mx = (p.x - prev.tx) / prev.scale;
       const my = (p.y - prev.ty) / prev.scale;
       return { scale, tx: p.x - scale * mx, ty: p.y - scale * my };
     });
   }
+
+  // Registered NATIVELY with { passive: false }: React attaches `onWheel` at the
+  // root as a PASSIVE listener, so `e.preventDefault()` inside a JSX onWheel is a
+  // silent no-op — the page/ancestor kept scrolling underneath the zoom, which is
+  // half of "the panel is no longer in view".
+  useEffect(() => {
+    const el = svgRef.current;
+    if (!el) return undefined;
+    const handler = (e) => {
+      e.preventDefault();
+      zoomAtCursor(e);
+    };
+    el.addEventListener('wheel', handler, { passive: false });
+    return () => el.removeEventListener('wheel', handler);
+    // zoomAtCursor closes over nothing stateful (toView reads the ref; setView is
+    // functional), so binding once is correct.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function onPointerMove(e) {
     const drag = dragRef.current;
@@ -523,7 +552,6 @@ export default function PenCanvas({
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onDoubleClick={onDoubleClick}
-      onWheel={onWheel}
     >
       <defs>
         <pattern

@@ -3,7 +3,7 @@
 // (grid/recursive/spiral/voronoi). Exercises the device through the public <Inspector>,
 // plus the exported deepMergeBinding helper's partial-patch invariant.
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, within } from "@testing-library/react";
 import Inspector from "./Inspector";
 import { InspectorDockProvider } from "./inspectorDockContext";
@@ -18,6 +18,15 @@ import { reorderChain } from "../../lib/motif/chainEditor";
 vi.mock("../../lib/AuthContext", () => ({
   useAuth: () => ({ tier: "studio" }),
 }));
+
+// The device now defaults OPEN and persists its disclosure per device via
+// localStorage (motif-shell D — the audit's re-collapse-on-remount fix).
+// These UI-seam tests predate that and drive the device through an explicit
+// open click, so start each one collapsed; the default itself is covered by
+// its own test below.
+beforeEach(() => {
+  localStorage.setItem("sonoform-motif-device-open", "0");
+});
 
 function hostLayer(id = "host1", patternType = "grid") {
   return {
@@ -124,26 +133,31 @@ describe("MotifDevice", () => {
     expect(screen.getAllByTestId("motif-row")).toHaveLength(1);
   });
 
-  it("is collapsed by default and reveals its body when the toggle is clicked", () => {
+  it("defaults OPEN with no stored preference; a collapse persists across remounts (motif-shell D)", () => {
+    // No stored preference — the fresh-device default.
+    localStorage.removeItem("sonoform-motif-device-open");
     const motif = motifLayer("m1", "host1", defaultBinding);
-    render(
-      <Inspector
-        layers={[hostLayer("host1", "grid"), motif]}
-        selectedLayerId="host1"
-        onUpdateLayer={() => {}}
-        onChangeLayerPattern={() => {}}
-      />
-    );
-    // Device (with its toggle) is present, but the body is hidden.
+    const props = {
+      layers: [hostLayer("host1", "grid"), motif],
+      selectedLayerId: "host1",
+      onUpdateLayer: () => {},
+      onChangeLayerPattern: () => {},
+    };
+    const { unmount } = render(<Inspector {...props} />);
     const toggle = screen.getByTestId("motif-toggle");
-    expect(toggle).toHaveAttribute("aria-expanded", "false");
-    expect(screen.queryByTestId("motif-row")).toBeNull();
-    expect(screen.queryByTestId("motif-add")).toBeNull();
-    // Expanding reveals the body.
-    fireEvent.click(toggle);
     expect(toggle).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByTestId("motif-add")).toBeInTheDocument();
     expect(screen.getAllByTestId("motif-row")).toHaveLength(1);
+    // Collapse, then remount (SelectedLayerInspector remounts on every
+    // selection change — the old useState(false) re-collapsed each time;
+    // now the user's choice survives the remount instead).
+    fireEvent.click(toggle);
+    expect(screen.queryByTestId("motif-row")).toBeNull();
+    unmount();
+    render(<Inspector {...props} />);
+    expect(screen.getByTestId("motif-toggle")).toHaveAttribute(
+      "aria-expanded",
+      "false"
+    );
   });
 
   it("Add Motif calls onAddMotif with the host id and a sensible default binding", () => {
@@ -201,7 +215,13 @@ describe("MotifDevice", () => {
       />
     );
     fireEvent.click(screen.getByTestId("motif-toggle"));
-    // Add 'edge' (crossing already on, from the compiled Route block).
+    // Route collapses to a one-line row (Variant D) — unfold it to reach the
+    // detail role checkboxes. Add 'edge' (crossing already on, from the compiled
+    // Route block).
+    const routeCard = screen
+      .getAllByTestId("motif-block")
+      .find((c) => c.getAttribute("data-block-type") === "route");
+    fireEvent.click(within(routeCard).getByTestId("motif-block-disclosure"));
     fireEvent.click(screen.getByTestId("motif-block-role-edge"));
     expect(onUpdateLayer).toHaveBeenCalledTimes(1);
     const [, patch] = onUpdateLayer.mock.calls[0];
@@ -226,6 +246,12 @@ describe("MotifDevice", () => {
       />
     );
     fireEvent.click(screen.getByTestId("motif-toggle"));
+    // Every N collapses to a one-line row (Variant D) — unfold it to reach the
+    // detail number input.
+    const everyNCard = screen
+      .getAllByTestId("motif-block")
+      .find((c) => c.getAttribute("data-block-type") === "everyN");
+    fireEvent.click(within(everyNCard).getByTestId("motif-block-disclosure"));
     fireEvent.change(screen.getByTestId("motif-block-n"), {
       target: { value: "4" },
     });
@@ -261,19 +287,18 @@ describe("MotifDevice", () => {
       />
     );
     fireEvent.click(screen.getByTestId("motif-toggle"));
-    // Built-in AND custom both selectable.
-    expect(screen.getByRole("option", { name: "Leaf" })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "My Vine" })).toBeInTheDocument();
+    // The chip opens the flyout picker; built-in AND custom both offered.
+    fireEvent.click(screen.getByTestId("motif-glyph"));
+    expect(screen.getByTestId("glyph-option-leaf")).toBeInTheDocument();
+    expect(screen.getByTestId("glyph-option-cg-1")).toBeInTheDocument();
 
-    fireEvent.change(screen.getByTestId("motif-glyph"), {
-      target: { value: "cg-1" },
-    });
+    fireEvent.click(screen.getByTestId("glyph-option-cg-1"));
     const [id, patch] = onUpdateLayer.mock.calls.at(-1);
     expect(id).toBe("m1");
     expect(patch.params.glyphRef).toBe("cg-1");
   });
 
-  it("resolves a CUSTOM glyphRef for the row (select value + swatch path)", () => {
+  it("resolves a CUSTOM glyphRef for the row (chip value + thumbnail path)", () => {
     const customGlyphs = { "cg-9": customGlyph("cg-9", "Custom Fern") };
     const motif = motifLayer("m1", "host1", defaultBinding);
     motif.params.glyphRef = "cg-9"; // this motif points at the custom glyph
@@ -287,10 +312,14 @@ describe("MotifDevice", () => {
       />
     );
     fireEvent.click(screen.getByTestId("motif-toggle"));
-    // The select holds the custom id (option exists) and shows its name.
-    expect(screen.getByTestId("motif-glyph")).toHaveValue("cg-9");
-    expect(screen.getByRole("option", { name: "Custom Fern" })).toBeInTheDocument();
-    // getGlyph(glyphRef, customGlyphs) resolved → swatch draws the custom `d`.
+    // The chip carries the custom id and shows its resolved name.
+    expect(screen.getByTestId("motif-glyph")).toHaveAttribute(
+      "data-glyph",
+      "cg-9"
+    );
+    expect(screen.getByTestId("motif-glyph")).toHaveTextContent("Custom Fern");
+    // getGlyph(glyphRef, customGlyphs) resolved → the thumbnail draws the
+    // custom `d`.
     const row = screen.getByTestId("motif-row");
     expect(row.querySelector('path[d="M0,0 L4,4"]')).not.toBeNull();
   });
@@ -398,13 +427,12 @@ describe("MotifDevice", () => {
       />
     );
     fireEvent.click(screen.getByTestId("motif-toggle"));
-    // The library motif is offered as an option.
-    expect(
-      screen.getByRole("option", { name: "Saved Vine" })
-    ).toBeInTheDocument();
-    fireEvent.change(screen.getByTestId("motif-glyph"), {
-      target: { value: "lib-uuid-1" },
-    });
+    // The library motif is offered in the flyout picker.
+    fireEvent.click(screen.getByTestId("motif-glyph"));
+    expect(screen.getByTestId("glyph-option-lib-uuid-1")).toHaveTextContent(
+      "Saved Vine"
+    );
+    fireEvent.click(screen.getByTestId("glyph-option-lib-uuid-1"));
     // COPY-on-use: the library glyph is copied into the document keyed by uuid…
     expect(onCopyLibraryGlyph).toHaveBeenCalledTimes(1);
     expect(onCopyLibraryGlyph.mock.calls[0][0].id).toBe("lib-uuid-1");
@@ -414,7 +442,7 @@ describe("MotifDevice", () => {
     expect(patch.params.glyphRef).toBe("lib-uuid-1");
   });
 
-  it('hides the "My library" optgroup when the library is empty', () => {
+  it("an empty library contributes no options to the picker", () => {
     const motif = motifLayer("m1", "host1", defaultBinding);
     render(
       <Inspector
@@ -426,7 +454,11 @@ describe("MotifDevice", () => {
       />
     );
     fireEvent.click(screen.getByTestId("motif-toggle"));
-    expect(screen.queryByText("My library")).toBeNull();
+    fireEvent.click(screen.getByTestId("motif-glyph"));
+    // Filtering to the (empty) My-library set shows the empty state, not
+    // phantom rows.
+    fireEvent.click(screen.getByRole("button", { name: "My library" }));
+    expect(screen.getByText("No matches")).toBeInTheDocument();
   });
 
   it("P5-2: when onUseLibraryGlyph is wired, a library select routes through the ONE batched callback (single undo), not the two-call path", () => {
@@ -447,9 +479,8 @@ describe("MotifDevice", () => {
       />
     );
     fireEvent.click(screen.getByTestId("motif-toggle"));
-    fireEvent.change(screen.getByTestId("motif-glyph"), {
-      target: { value: "lib-uuid-1" },
-    });
+    fireEvent.click(screen.getByTestId("motif-glyph"));
+    fireEvent.click(screen.getByTestId("glyph-option-lib-uuid-1"));
     // Single batched seam: exactly one call, carrying glyph + layer + params.
     expect(onUseLibraryGlyph).toHaveBeenCalledTimes(1);
     const [glyph, layerId, params] = onUseLibraryGlyph.mock.calls[0];
@@ -477,9 +508,8 @@ describe("MotifDevice", () => {
       />
     );
     fireEvent.click(screen.getByTestId("motif-toggle"));
-    fireEvent.change(screen.getByTestId("motif-glyph"), {
-      target: { value: "lib-uuid-2" },
-    });
+    fireEvent.click(screen.getByTestId("motif-glyph"));
+    fireEvent.click(screen.getByTestId("glyph-option-lib-uuid-2"));
     // Already in the doc → no redundant copy (just a rebind).
     expect(onCopyLibraryGlyph).not.toHaveBeenCalled();
   });
@@ -673,6 +703,9 @@ describe("MotifBlockRack (C2)", () => {
     );
     unmount();
 
+    // Re-seed collapsed: the first expand persisted the disclosure OPEN
+    // (motif-shell D), so without this the click below would close it.
+    localStorage.setItem("sonoform-motif-device-open", "0");
     // Bottom shelf → horizontal.
     render(
       <InspectorDockProvider value={{ dockPosition: "bottom" }}>
@@ -816,6 +849,9 @@ describe("Sequencer card (C3)", () => {
     );
     expect(screen.queryByTestId("motif-slot-weight")).toBeNull();
     unmount();
+    // Re-seed collapsed: the first expand persisted the disclosure OPEN
+    // (motif-shell D), so the helper's open-click would otherwise close it.
+    localStorage.setItem("sonoform-motif-device-open", "0");
     // Random → a weight slider per slot, INCLUDING the rest.
     expandSeq(
       <Inspector
@@ -937,7 +973,10 @@ describe("Sequencer card (C3)", () => {
     expect(seqOf(patch).slots).toEqual([{ glyphRef: "leaf" }, { rest: true }]);
   });
 
-  it("tapping a slot glyph opens the editor with SLOT CONTEXT (layer id, slot glyphRef, slotIndex)", () => {
+  // Feature B (Wave 3, #79): the slot preview click now opens the glyph-swap
+  // PICKER; the pen editor is reached via tile #1's pencil badge. Updated from
+  // the C3 direct-to-editor click (the one sanctioned change — see report).
+  it("the pencil badge on the picker's current tile opens the editor with SLOT CONTEXT", () => {
     const onEditGlyph = vi.fn();
     const motif = seqMotif("m1", "host1", {
       slots: [{ glyphRef: "leaf" }, { glyphRef: "flower" }],
@@ -951,7 +990,11 @@ describe("Sequencer card (C3)", () => {
         onEditGlyph={onEditGlyph}
       />
     );
-    fireEvent.click(screen.getAllByTestId("motif-slot-edit")[1]); // tap slot 1 (flower)
+    // Click the slot-1 (flower) preview → opens the picker (NOT the editor).
+    fireEvent.click(screen.getAllByTestId("motif-slot-edit")[1]);
+    expect(onEditGlyph).not.toHaveBeenCalled();
+    // Tile #1 = the slot's current glyph, wearing the pencil badge → editor.
+    fireEvent.click(screen.getByTestId("motif-slot-edit-pen"));
     expect(onEditGlyph).toHaveBeenCalledTimes(1);
     const [layerId, glyphRef, opts] = onEditGlyph.mock.calls[0];
     expect(layerId).toBe("m1");
@@ -959,7 +1002,7 @@ describe("Sequencer card (C3)", () => {
     expect(opts).toEqual({ slotIndex: 1 });
   });
 
-  it("tapping a modifier-only slot (no glyphRef) opens the editor on the BASE glyph", () => {
+  it("the pencil badge on a modifier-only slot (no glyphRef) opens the editor on the BASE glyph", () => {
     const onEditGlyph = vi.fn();
     // slot 0 has no glyphRef → renders + forks from the base ('leaf').
     const motif = seqMotif("m1", "host1", { slots: [{ sizeScale: 2 }] });
@@ -973,10 +1016,157 @@ describe("Sequencer card (C3)", () => {
       />
     );
     fireEvent.click(screen.getByTestId("motif-slot-edit"));
+    fireEvent.click(screen.getByTestId("motif-slot-edit-pen"));
     const [layerId, glyphRef, opts] = onEditGlyph.mock.calls[0];
     expect(layerId).toBe("m1");
     expect(glyphRef).toBe("leaf"); // base fallback
     expect(opts).toEqual({ slotIndex: 0 });
+  });
+});
+
+// ── Wave 3 (#79): slot glyph-swap commit wiring (Feature B) ───────────────────
+describe("Slot glyph-swap commit wiring (Feature B)", () => {
+  function seqMotif(id, hostId, slots) {
+    return {
+      id,
+      name: id,
+      type: MOTIF_TYPE,
+      patternType: MOTIF_TYPE,
+      params: createMotifParams({
+        hostLayerId: hostId,
+        glyphRef: "leaf",
+        binding: {
+          chain: [
+            { type: "route", roles: ["crossing"], pathScope: "all" },
+            { type: "sequence", mode: "cycle", slots },
+          ],
+          placement: defaultBinding.placement,
+        },
+      }),
+      randomizeKeys: [],
+      paramsCache: {},
+    };
+  }
+  function zonedMotif(id, hostId) {
+    return {
+      id,
+      name: id,
+      type: MOTIF_TYPE,
+      patternType: MOTIF_TYPE,
+      params: createMotifParams({
+        hostLayerId: hostId,
+        glyphRef: "leaf",
+        binding: {
+          chain: [
+            { type: "route", roles: ["crossing"], pathScope: "all" },
+            {
+              type: "sequence",
+              zones: [
+                { zone: "apex", mode: "cycle", ends: "both", slots: [{ glyphRef: "flower" }] },
+                { zone: "stem", mode: "cycle", slots: [{ glyphRef: "leaf" }] },
+              ],
+            },
+          ],
+          placement: defaultBinding.placement,
+        },
+      }),
+      randomizeKeys: [],
+      paramsCache: {},
+    };
+  }
+  const libMotif = (glyphId, name) => ({
+    id: glyphId,
+    name,
+    glyph: {
+      id: glyphId,
+      name,
+      tradition: "custom",
+      paths: [{ d: "M1,1 L9,9", closed: false }],
+      viewRadius: 6,
+      root: { x: 0, y: 0, angle: 0 },
+    },
+  });
+  const seqOf = (patch) =>
+    patch.params.binding.chain.find((b) => b.type === "sequence");
+  const openDevice = () => fireEvent.click(screen.getByTestId("motif-toggle"));
+
+  it("a BUILTIN slot pick writes the slot glyphRef through editChain (one onUpdateLayer)", () => {
+    const onUpdateLayer = vi.fn();
+    render(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), seqMotif("m1", "host1", [{ glyphRef: "leaf" }])]}
+        selectedLayerId="host1"
+        onUpdateLayer={onUpdateLayer}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    openDevice();
+    fireEvent.click(screen.getByTestId("motif-slot-edit")); // open the slot picker
+    fireEvent.click(screen.getByTestId("glyph-option-diamond")); // swap to a builtin
+    expect(onUpdateLayer).toHaveBeenCalledTimes(1);
+    const [id, patch] = onUpdateLayer.mock.calls.at(-1);
+    expect(id).toBe("m1");
+    expect(seqOf(patch).slots[0].glyphRef).toBe("diamond");
+    expect(patch.params.binding.selection).toBeUndefined();
+  });
+
+  it("a LIBRARY slot pick routes through onUseLibraryGlyph carrying the slot-pointed binding (one undo)", () => {
+    const onUseLibraryGlyph = vi.fn();
+    const onCopyLibraryGlyph = vi.fn();
+    const onUpdateLayer = vi.fn();
+    render(
+      <Inspector
+        layers={[
+          hostLayer("host1", "grid"),
+          seqMotif("m1", "host1", [{ glyphRef: "leaf" }, { glyphRef: "flower" }]),
+        ]}
+        selectedLayerId="host1"
+        onUpdateLayer={onUpdateLayer}
+        onChangeLayerPattern={() => {}}
+        customGlyphs={{}}
+        libraryMotifs={[libMotif("lib-1", "Saved Vine")]}
+        onUseLibraryGlyph={onUseLibraryGlyph}
+        onCopyLibraryGlyph={onCopyLibraryGlyph}
+      />
+    );
+    openDevice();
+    fireEvent.click(screen.getAllByTestId("motif-slot-edit")[1]); // slot 1 (flower)
+    fireEvent.click(screen.getByTestId("glyph-option-lib-1"));
+    // ONE batched seam — copy-into-doc + point-the-slot fold into a single undo.
+    expect(onUseLibraryGlyph).toHaveBeenCalledTimes(1);
+    const [glyph, layerId, params] = onUseLibraryGlyph.mock.calls[0];
+    expect(glyph.id).toBe("lib-1");
+    expect(layerId).toBe("m1");
+    const seq = params.binding.chain.find((b) => b.type === "sequence");
+    expect(seq.slots[1].glyphRef).toBe("lib-1"); // the slot now points at the copy
+    expect(seq.slots[0].glyphRef).toBe("leaf"); // sibling slot untouched
+    expect(params.glyphRef).toBe("leaf"); // base glyph unchanged (slot swap, not base)
+    // The legacy two-call path is NOT also fired (would be a second undo entry).
+    expect(onCopyLibraryGlyph).not.toHaveBeenCalled();
+    expect(onUpdateLayer).not.toHaveBeenCalled();
+  });
+
+  it("a ZONED slot pick writes via setZoneSlotGlyphRef (zone-addressed, one onUpdateLayer)", () => {
+    const onUpdateLayer = vi.fn();
+    render(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), zonedMotif("m1", "host1")]}
+        selectedLayerId="host1"
+        onUpdateLayer={onUpdateLayer}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    openDevice();
+    const stem = screen
+      .getAllByTestId("motif-zone")
+      .find((s) => s.getAttribute("data-zone") === "stem");
+    fireEvent.click(within(stem).getByTestId("motif-slot-edit"));
+    fireEvent.click(screen.getByTestId("glyph-option-diamond"));
+    const [, patch] = onUpdateLayer.mock.calls.at(-1);
+    const seq = seqOf(patch);
+    expect(seq.zones.find((z) => z.zone === "stem").slots[0].glyphRef).toBe("diamond");
+    // Apex zone untouched.
+    expect(seq.zones.find((z) => z.zone === "apex").slots[0].glyphRef).toBe("flower");
   });
 });
 
@@ -1001,6 +1191,14 @@ describe("Route card path scope + canvas-pick (C4)", () => {
   function expand(ui) {
     const r = render(ui);
     fireEvent.click(screen.getByTestId("motif-toggle"));
+    // Route collapses to a one-line row (Variant D); its path-scope + canvas-pick
+    // detail these C4 tests drive live in the unfolded body — open it.
+    const routeCard = screen
+      .getAllByTestId("motif-block")
+      .find((c) => c.getAttribute("data-block-type") === "route");
+    if (routeCard) {
+      fireEvent.click(within(routeCard).getByTestId("motif-block-disclosure"));
+    }
     return r;
   }
 
@@ -1164,5 +1362,192 @@ describe("Route card path scope + canvas-pick (C4)", () => {
     );
     fireEvent.click(screen.getByTestId("motif-route-scope-all"));
     expect(onMotifPick).toHaveBeenCalledWith(null);
+  });
+});
+
+// Placement-budget "no silent cap" warning (2026-07-19 post-crash hardening,
+// docs §6). MAX_PLACEMENTS truncation is surfaced up (useCanvas → RightPanel →
+// Studio → Inspector) as `motifPlacementStats[layerId] = {total, placed}`; the
+// affected motif card shows an amber warning. Absent/equal stats → no warning.
+describe("MotifDevice — placement-budget warning", () => {
+  const openDevice = (ui) => {
+    const r = render(ui);
+    fireEvent.click(screen.getByTestId("motif-toggle"));
+    return r;
+  };
+
+  it("renders the amber warning on a truncated motif card", () => {
+    const motif = motifLayer("m1", "host1", defaultBinding);
+    openDevice(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+        motifPlacementStats={{ m1: { total: 12345, placed: 2000 } }}
+      />
+    );
+    const warning = screen.getByTestId("motif-placement-warning");
+    expect(warning).toBeInTheDocument();
+    // Localized counts + guidance copy.
+    expect(warning).toHaveTextContent("Showing 2,000 of 12,345 placements");
+    expect(warning).toHaveTextContent("reduce density or host complexity");
+    // Color-token contract: tone-mild tokens so dark mode inverts (raw
+    // amber-* would stay light and glow on the indigo dark paper).
+    expect(warning.className).toContain("border-tone-mild/40");
+    expect(warning.className).toContain("bg-tone-mild/10");
+    expect(warning.className).toContain("text-tone-mild");
+    expect(warning.className).not.toContain("amber");
+  });
+
+  it("hides the warning when no stats are supplied for the motif", () => {
+    const motif = motifLayer("m1", "host1", defaultBinding);
+    openDevice(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+        // No entry for m1 → not truncated → no warning.
+        motifPlacementStats={{}}
+      />
+    );
+    expect(screen.getByTestId("motif-row")).toBeInTheDocument();
+    expect(screen.queryByTestId("motif-placement-warning")).toBeNull();
+  });
+});
+
+// Typography pass — the motif device region must ride the sanctioned type scale
+// (text-2xs / text-xs), not ad-hoc text-[Npx] literals, and its small secondary
+// text must be full-opacity ink-soft (not /70) for contrast. Scoped to the motif
+// subtree so ModulatorDevice / other Inspector regions (deliberately left alone)
+// don't leak into the sweep.
+describe("MotifDevice — type scale (typography pass)", () => {
+  const openHost = (extraProps = {}) => {
+    const motif = motifLayer("m1", "host1", defaultBinding);
+    const r = render(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+        {...extraProps}
+      />
+    );
+    fireEvent.click(screen.getByTestId("motif-toggle"));
+    return r;
+  };
+
+  it("empty-host Start-with label rides text-2xs at full-opacity ink-soft (not /70)", () => {
+    // The "Quick start" chip row was replaced by the Variant-D mode column; on an
+    // empty host that column is introduced by a "Start with" label.
+    render(
+      <Inspector
+        layers={[hostLayer("host1", "grid")]}
+        selectedLayerId="host1"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    fireEvent.click(screen.getByTestId("motif-toggle"));
+    const label = screen.getByText("Start with");
+    expect(label.className).toContain("text-2xs");
+    expect(label.className).toContain("text-ink-soft");
+    expect(label.className).not.toContain("text-ink-soft/");
+  });
+
+  it("+ Add Motif and Size/Flip controls ride text-xs (11px sanctioned step)", () => {
+    openHost();
+    expect(screen.getByTestId("motif-add").className).toContain("text-xs");
+    // Size row label + numeric input.
+    const sizeLabel = screen.getByText("Size").closest("label");
+    expect(sizeLabel.className).toContain("text-xs");
+    expect(screen.getByTestId("motif-size").className).toContain("text-xs");
+    expect(screen.getByText("Flip").closest("label").className).toContain("text-xs");
+  });
+
+  it("the row action buttons (import / new / edit) ride text-xs", () => {
+    openHost();
+    for (const id of ["motif-import", "motif-new", "motif-edit"]) {
+      const btn = screen.getByTestId(id);
+      expect(btn.className).toContain("text-xs");
+      expect(btn.className).not.toMatch(/text-\[\d+px\]/);
+    }
+  });
+
+  it("placement-budget warning rides text-xs, not an arbitrary px size", () => {
+    openHost({ motifPlacementStats: { m1: { total: 12345, placed: 2000 } } });
+    const warning = screen.getByTestId("motif-placement-warning");
+    expect(warning.className).toContain("text-xs");
+    expect(warning.className).not.toMatch(/text-\[\d+px\]/);
+  });
+
+  it("the empty-host hint is full-opacity ink-soft at text-xs (contrast)", () => {
+    // A host with no motifs → the "No motifs on this host." line renders.
+    render(
+      <Inspector
+        layers={[hostLayer("host1", "grid")]}
+        selectedLayerId="host1"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    fireEvent.click(screen.getByTestId("motif-toggle"));
+    const hint = screen.getByText("No motifs on this host.");
+    expect(hint.className).toContain("text-xs");
+    expect(hint.className).toContain("text-ink-soft");
+    expect(hint.className).not.toContain("text-ink-soft/");
+  });
+
+  it("the collapsed count badge is full-opacity ink-soft (not /70)", () => {
+    // Collapsed (beforeEach stores "0") + a motif → the "· 1" count shows.
+    render(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motifLayer("m1", "host1", defaultBinding)]}
+        selectedLayerId="host1"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    // Not expanded → no rows, but the toggle's count badge is present.
+    expect(screen.queryByTestId("motif-row")).toBeNull();
+    const device = screen.getByTestId("motif-device");
+    expect(device.innerHTML).not.toContain("text-ink-soft/");
+  });
+
+  it("renders no arbitrary text-[Npx] font-size class in the Inspector-owned motif chrome", () => {
+    // Empty-host, device open → renders the toggle/chevron, the empty hint, the
+    // "Start with" mode column and + Add Motif, but NO motif-row (hence no nested
+    // MotifBlockRack, which is a separate, out-of-scope file). This keeps the
+    // sweep scoped to the text Inspector.jsx owns in the motif device.
+    render(
+      <Inspector
+        layers={[hostLayer("host1", "grid")]}
+        selectedLayerId="host1"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    fireEvent.click(screen.getByTestId("motif-toggle"));
+    const device = screen.getByTestId("motif-device");
+    expect(device.innerHTML).not.toMatch(/text-\[\d+px\]/);
+  });
+
+  it("the motif-layer-info panel (motif layer selected) rides text-xs", () => {
+    // When a MOTIF layer itself is selected, MotifDevice self-hides and the
+    // motif-layer-info block renders instead — still part of the motif region.
+    render(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motifLayer("m1", "host1", defaultBinding)]}
+        selectedLayerId="m1"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    const info = screen.getByTestId("motif-layer-info");
+    expect(info.innerHTML).not.toMatch(/text-\[\d+px\]/);
+    // The descriptive paragraph carries the sanctioned xs step.
+    const para = info.querySelector("p");
+    expect(para.className).toContain("text-xs");
   });
 });

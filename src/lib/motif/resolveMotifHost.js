@@ -16,6 +16,10 @@
 
 import { isMotifLayer, motifHostId } from './motifLayer.js';
 import { isEdgeHost } from './hostKinds.js';
+import {
+  resolveModulationsForTarget,
+  composeModulationParam,
+} from '../fields/resolveModulationForTarget.js';
 
 /**
  * Extra render params a motif layer needs, or null when the layer is not a
@@ -37,10 +41,27 @@ export function resolveMotifHostParams(layer, layers, hostGeometry = {}) {
   const hostId = motifHostId(layer);
   const host = hostId ? layers.find((l) => l.id === hostId) : null;
   if (!host) return null; // dangling host → tolerate (motif renders nothing)
+  // B seam (#112) — resolve the host's OWN modulation IN-PLACE, via the EXACT
+  // same composition the capture probe (useCanvas ~L270) and the paint pass
+  // (useCanvas ~L437-439) run: composeModulationParam(resolveModulationsForTarget
+  // (host, layers)). Today the math extractors (semanticAnchors / gridAnchors)
+  // reconstruct from STRAIGHT host.params — modulation is resolved at render time
+  // and never stored on params, so they never learn a warp channel is active and
+  // silently place anchors on stale unwarped geometry. Folding the composite into
+  // hostParams.modulation surfaces that channel to the extractor's warp guard
+  // (`params.modulation.channel==='warp'`), matching the warp the paint pass sees.
+  // This slice only SURFACES warp; the extractors that consume it are later slices.
+  //   • Pure + order-INDEPENDENT: resolveModulationsForTarget reads the `layers`
+  //     array directly (guide → target maps), never the reverse render order.
+  //   • No modulation → composeModulationParam returns undefined → hostParams is
+  //     the SAME host.params reference (byte-identical to pre-#112; regression
+  //     fixture). The spread (never a mutation) also leaves host.params untouched.
+  const hostMod = composeModulationParam(resolveModulationsForTarget(host, layers));
+  const hostParams = hostMod ? { ...host.params, modulation: hostMod } : host.params;
   // hostSeed threads the grid host's layer seed to the semantic extractor, which
   // feeds makeP5Random(hostSeed) into the geometry core to reproduce the LIVE-p5
   // jittered / symmetry-replicated lattice (see semanticAnchors GRID header).
-  const out = { hostPatternType: host.patternType, hostParams: host.params, hostSeed: host.seed };
+  const out = { hostPatternType: host.patternType, hostParams, hostSeed: host.seed };
   if (host.patternType === 'voronoi') {
     // Forward the WHOLE captured host geometry: drawnEdges + sites (the
     // boundary-hardened seam the extractor prefers) and/or legacy drawnCells.
@@ -51,10 +72,11 @@ export function resolveMotifHostParams(layer, layers, hostGeometry = {}) {
       if (geom.sites) out.sites = geom.sites;
       if (geom.drawnCells) out.drawnCells = geom.drawnCells; // legacy
     }
-  } else if (isEdgeHost(host.patternType)) {
-    // B2 — arbitrary-edge host (flowfield/wave/…): the host has NO semantic
-    // extractor, so FORCE edge anchoring and forward the polylines captured by
-    // the record-mode prepass (capturePolylines) as `hostPaths`. anchorMode:'edge'
+  } else if (isEdgeHost(host.patternType, host.params)) {
+    // B2 — arbitrary-edge host (flowfield/wave/…) OR a single-axis grid (params-
+    // aware isEdgeHost): the host has NO usable semantic extractor for this case,
+    // so FORCE edge anchoring and forward the polylines captured by the record-
+    // mode prepass (capturePolylines) as `hostPaths`. anchorMode:'edge'
     // overrides whatever the binding stored (motifs are created with the
     // 'semantic' default) so the motif samples generic Edge anchors along the
     // host's drawn geometry. Absent hostPaths (host not yet probed) → omit → the

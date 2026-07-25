@@ -1,7 +1,13 @@
+import { useRef, useState } from "react";
 import Select from "./ui/Select";
 import NumberInput from "./ui/NumberInput";
 import ColorPicker from "./ui/ColorPicker";
-import { listFonts } from "../lib/text/fontRegistry";
+import {
+  useFontCatalog,
+  groupFontOptions,
+  getFontMeta,
+  registerUploadedFont,
+} from "../lib/text/fontRegistry";
 import { capHeightPx, effectiveFontSize } from "../lib/text/fitText";
 import { textEngraveWarnings } from "../lib/text/engraveCheck";
 import { pxToUnit, unitToPx } from "../lib/units";
@@ -12,8 +18,6 @@ import { pxToUnit, unitToPx } from "../lib/units";
 // undoable action and re-layout happens automatically (TextNode.layout reads
 // these fields). Engrave-only per workshop model: color = engrave paint,
 // fill/outline = the two engrave sub-modes (no cut/score role selector).
-
-const FONT_OPTIONS = listFonts().map((f) => ({ value: f.id, label: f.label }));
 
 // Minimum authored size in px — keeps the glyphs visible/selectable if a user
 // types 0 into the mm field.
@@ -53,6 +57,28 @@ function Segmented({ label, value, options, onChange }) {
 }
 
 export default function TextPropertiesPanel({ node, font, onUpdate }) {
+  // Reactive font catalog (re-renders when a font is uploaded), grouped into
+  // category optgroups for the picker. Hooks run before the early return.
+  const catalog = useFontCatalog();
+  const fontGroups = groupFontOptions(catalog);
+  const fileRef = useRef(null);
+  const [uploadErr, setUploadErr] = useState(null);
+
+  // Upload a .ttf/.otf/.woff, parse + register it (session-only), then select it
+  // on the current node. WOFF2 / unreadable files surface an inline message.
+  async function handleUpload(e) {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // reset so re-picking the same file re-fires change
+    if (!file) return;
+    setUploadErr(null);
+    try {
+      const { id } = await registerUploadedFont(file);
+      onUpdate({ fontId: id });
+    } catch (err) {
+      setUploadErr(err?.message || "Could not read this font file.");
+    }
+  }
+
   if (!node) return null;
 
   // The field shows the AUTHORED size; the cap readout shows the ACTUAL engraved
@@ -63,7 +89,9 @@ export default function TextPropertiesPanel({ node, font, onUpdate }) {
   const sizeMm = pxToUnit(node.fontSize || 0, "mm");
   const capMm = pxToUnit(capHeightPx(font, effSize), "mm");
   const widthLimited = effSize < (node.fontSize || 0) - 1e-3;
-  const warnings = textEngraveWarnings(node, font);
+  // The font's kind gates the double-line engrave caution (outline fonts only).
+  const fontKind = getFontMeta(node.fontId)?.kind;
+  const warnings = textEngraveWarnings(node, font, { fontKind });
 
   return (
     <div className="space-y-4 rounded-md border border-hairline bg-paper-warm p-3">
@@ -78,24 +106,44 @@ export default function TextPropertiesPanel({ node, font, onUpdate }) {
 
       {/* Type group — font + physical size */}
       <div className="space-y-2.5">
-        {FONT_OPTIONS.length > 1 ? (
-          <Select
-            label="Font"
-            value={node.fontId}
-            options={FONT_OPTIONS}
-            onChange={(v) => onUpdate({ fontId: v })}
+        <Select
+          label="Font"
+          value={node.fontId}
+          options={fontGroups}
+          onChange={(v) => onUpdate({ fontId: v })}
+        />
+
+        {/* Upload your own font (session-only). The embedded note explains the
+            double-line behaviour uploaded (outline) fonts have in engrave mode —
+            per the ask — so it's understood before the file is even chosen. */}
+        <div className="flex flex-col gap-1">
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".ttf,.otf,.woff,font/ttf,font/otf,font/woff"
+            className="hidden"
+            aria-label="Upload font file"
+            onChange={handleUpload}
           />
-        ) : (
-          // A one-option dropdown reads as broken — show the single bundled font
-          // as a static field until the catalog grows (then this becomes a Select).
-          <div className="flex flex-col gap-1">
-            <span className="text-xs text-ink-soft">Font</span>
-            <div className="flex items-baseline justify-between rounded border border-hairline bg-muted px-2 py-1.5">
-              <span className="text-xs text-ink">{FONT_OPTIONS[0]?.label ?? node.fontId}</span>
-              <span className="text-[10px] text-ink-soft">more soon</span>
-            </div>
-          </div>
-        )}
+          <button
+            type="button"
+            onClick={() => fileRef.current?.click()}
+            className="w-full rounded border border-dashed border-hairline bg-muted px-2 py-1.5 text-xs text-ink-soft hover:text-ink hover:border-ink-soft transition-colors"
+          >
+            ↑ Upload font (.ttf, .otf, .woff)
+          </button>
+          <p className="text-[10px] leading-snug text-ink-soft">
+            Uploaded fonts stay in this session. They’re <b>outline</b> fonts, so
+            in <b>Outline</b> engrave mode every stroke is traced on both edges and
+            comes out as a <b>double line</b> — use <b>Fill</b>, or an{" "}
+            <b>Engraving (single-line)</b> font, for a single stroke.
+          </p>
+          {uploadErr && (
+            <p role="alert" className="text-[10px] leading-snug text-tone-strong">
+              {uploadErr}
+            </p>
+          )}
+        </div>
 
         <div className="flex items-end gap-2">
           <div className="flex-1">

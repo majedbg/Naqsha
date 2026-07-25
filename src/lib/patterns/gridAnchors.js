@@ -33,6 +33,7 @@
 import { gridLinePositions } from './gridGeometry';
 import { toSymmetryCount } from './symmetryUtils';
 import { anchorId } from '../motif/anchors.js';
+import { gridWarpAnchorsCentered } from './gridWarpAnchors.js';
 
 const HALF_PI = Math.PI / 2;
 const TWO_PI = Math.PI * 2;
@@ -66,13 +67,17 @@ const TWO_PI = Math.PI * 2;
  * @param {(min:number, max:number) => number} rng - p5-compatible random; the
  *   caller injects makeP5Random(seed). MUST be fresh (undrawn) so the jitter
  *   stream matches the pattern's / latticeForLayer's reconstruction.
- * @param {object} [opts] - reserved for future use; currently unused.
- * @returns {Array<Anchor>|null} anchors, or `null` for warp modulation (an
- *   arbitrary field displaces interior nodes off the lattice — unverifiable),
- *   or `[]` when nothing is drawn.
+ * @param {object} [opts] - per-caller inputs. `opts.canvasW` / `opts.canvasH`
+ *   (canvas px) enable WARP-AWARE reconstruction (Option C, #117): with them a
+ *   warp channel no longer returns null but reconstructs anchors from the drawn
+ *   warped curves (see gridWarpAnchorsCentered). WITHOUT them (e.g. the lattice
+ *   seam, which has no canvas dims) a warp channel still returns null — byte-
+ *   identical to the pre-#117 behaviour.
+ * @returns {Array<Anchor>|null} anchors, `null` for a warp channel when no canvas
+ *   dims are supplied (unverifiable without the drawn geometry), or `[]` when
+ *   nothing is drawn.
  */
 export function gridAnchorsCentered(params, rng, opts = {}) {
-  void opts; // reserved.
   const {
     cols = 12,
     rows = 12,
@@ -85,11 +90,22 @@ export function gridAnchorsCentered(params, rng, opts = {}) {
     drawVertical = 1,
   } = params || {};
 
-  // Warp displaces interior nodes off the straight lattice by an arbitrary
-  // field — unverifiable, so refuse to emit (mirrors semanticAnchors line 102).
-  // Checked BEFORE gridLinePositions so early-return paths draw no randomness.
+  // WARP (Option C, #117): when a warp channel is active AND canvas dims are
+  // known (the motif seam supplies them), reconstruct anchors from the DRAWN
+  // warped curves — crossings by reconstruct-and-intersect, edges on-curve,
+  // cells by point-warp + FD frame — so motifs track the bent grid (exact-to-
+  // paint via the shared gridWarpCurves core). Without canvas dims (the lattice
+  // seam) we keep the pre-#117 null: an arbitrary field displaces interior nodes
+  // off the straight lattice and we cannot verify coincidence. Checked BEFORE
+  // gridLinePositions so the null path draws no randomness.
   const mod = params && params.modulation;
-  if (mod && mod.channel === 'warp' && mod.field) return null;
+  if (mod && mod.channel === 'warp' && mod.field) {
+    const { canvasW, canvasH } = opts || {};
+    if (Number.isFinite(canvasW) && Number.isFinite(canvasH)) {
+      return gridWarpAnchorsCentered(params, rng, { canvasW, canvasH });
+    }
+    return null;
+  }
 
   const hasV = drawVertical >= 0.5;
   const hasH = drawHorizontal >= 0.5;

@@ -245,7 +245,9 @@ export default function MobileStudio() {
         open={showPicker}
         onClose={() => setShowPicker(false)}
         onPick={(id) => {
-          addLayer(id);
+          const outcome = addLayer(id);
+          // Select the new layer so the inspector follows the just-added pattern.
+          if (outcome?.ok) setSelectedLayerId(outcome.id);
           setShowPicker(false);
         }}
       />

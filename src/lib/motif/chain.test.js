@@ -585,3 +585,63 @@ describe('runSelectionChain — no input mutation', () => {
     expect(chain).toEqual(chainSnapshot);
   });
 });
+
+// ========================================================================
+// onStage trace hook (opt-in; drives sieveCounts.js) — behavior byte-
+// identical when absent, per-filter (blockIndex, type, inCount, outCount,
+// bypassed) callback in ORIGINAL chain order when present, never fired for
+// the terminal sequence block.
+// ========================================================================
+describe('runSelectionChain — onStage trace hook', () => {
+  it('fires once per filter block in original chain order with in/out counts', () => {
+    const anchors = edgeRow(12); // a0..a11
+    const chain = [
+      { type: 'route', roles: ['edge'] }, // 12 -> 12
+      { type: 'everyN', n: 3, offset: 0 }, // 12 -> 4 (a0,a3,a6,a9)
+    ];
+    const seen = [];
+    runSelectionChain(anchors, chain, { onStage: (e) => seen.push(e) });
+    expect(seen.map((e) => [e.blockIndex, e.type, e.inCount, e.outCount, e.bypassed])).toEqual([
+      [0, 'route', 12, 12, false],
+      [1, 'everyN', 12, 4, false],
+    ]);
+  });
+
+  it('preserves ORIGINAL block index across a partitioned sequence block', () => {
+    const anchors = edgeRow(6);
+    const chain = [
+      { type: 'sequence', slots: [{ glyphRef: 'x' }] }, // index 0 — partitioned out, NOT traced
+      { type: 'route', roles: ['edge'] }, // index 1
+      { type: 'everyN', n: 2, offset: 0 }, // index 2
+    ];
+    const seen = [];
+    runSelectionChain(anchors, chain, { onStage: (e) => seen.push(e) });
+    expect(seen.map((e) => [e.blockIndex, e.type])).toEqual([
+      [1, 'route'],
+      [2, 'everyN'],
+    ]);
+  });
+
+  it('reports a bypassed filter as pass-through (inCount === outCount, bypassed:true)', () => {
+    const anchors = edgeRow(6);
+    const chain = [{ type: 'everyN', n: 3, offset: 0, bypass: true }];
+    const seen = [];
+    const { survivors } = runSelectionChain(anchors, chain, { onStage: (e) => seen.push(e) });
+    expect(survivors).toHaveLength(6); // bypass ⇒ no narrowing
+    expect(seen).toEqual([{ blockIndex: 0, block: chain[0], type: 'everyN', inCount: 6, outCount: 6, bypassed: true }]);
+  });
+
+  it('is byte-identical to a run WITHOUT the hook (result unchanged)', () => {
+    const anchors = twoPathInterleaved(5);
+    const chain = [
+      { type: 'route', roles: ['edge'] },
+      { type: 'everyN', n: 2, offset: 0 },
+      { type: 'sequence', slots: [{ glyphRef: 'x' }] },
+    ];
+    const withHook = runSelectionChain(anchors, chain, { onStage: () => {} });
+    const without = runSelectionChain(anchors, chain);
+    expect(ids(withHook.survivors)).toEqual(ids(without.survivors));
+    expect(withHook.sequence).toBe(without.sequence);
+    expect(withHook.orphans).toEqual(without.orphans);
+  });
+});

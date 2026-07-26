@@ -96,8 +96,19 @@ body {
 /* === Native range input — styled via tokens ===
  * The Slider component uses a hidden range input for keyboard access and
  * overlays its own visual thumb. But any raw <input type="range"> in the
- * app still uses this base styling so nothing looks broken. */
-input[type="range"] {
+ * app still uses this base styling so nothing looks broken.
+ *
+ * WRAPPED IN :where() ON PURPOSE. A bare `input[type="range"]` selector is
+ * specificity (0,1,1) — it outranks every single-class override, including
+ * Tailwind utilities (0,1,0). That silently defeated `h-full` on the Slider
+ * primitive: the drag surface collapsed to the 4px declared here and, being
+ * over-constrained by `inset-0`, pinned itself to the top of the row, so the
+ * painted cell could only be grabbed from its top half. `.mod-range` below
+ * hit the same trap and had to be written as `input[type="range"].mod-range`
+ * to fight back. :where() makes these rules specificity-ZERO defaults: they
+ * still paint every raw range input, but any component class now wins by
+ * simply existing. Do not unwrap them. */
+:where(input[type="range"]) {
   -webkit-appearance: none;
   appearance: none;
   height: 4px;
@@ -107,7 +118,7 @@ input[type="range"] {
   cursor: pointer;
 }
 
-input[type="range"]::-webkit-slider-thumb {
+:where(input[type="range"])::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
   width: 14px;
@@ -117,7 +128,7 @@ input[type="range"]::-webkit-slider-thumb {
   cursor: pointer;
 }
 
-input[type="range"]::-moz-range-thumb {
+:where(input[type="range"])::-moz-range-thumb {
   width: 14px;
   height: 14px;
   background: var(--ink);
@@ -140,10 +151,12 @@ input[type="range"]::-moz-range-thumb {
  * thin. Colors map to the colormap anchors so identity survives a cross:
  * max = garnet (+1 anchor), min = sapphire (−1 anchor).
  *
- * Selectors are written as `input[type="range"].mod-range…` on purpose: the
- * generic `input[type="range"]` base rules below have higher specificity than a
- * bare class, so a plain `.mod-range` would lose the height (collapsing to 4px)
- * and keep the default ink-square thumb. The qualified selector wins. */
+ * Selectors are written as `input[type="range"].mod-range…` for historical
+ * reasons: the generic base rules above USED to outrank a bare class, so a
+ * plain `.mod-range` lost the height (collapsing to 4px) and kept the default
+ * ink-square thumb. Those base rules are now :where()-wrapped (specificity 0),
+ * so the qualification is belt-and-braces rather than load-bearing — but it
+ * costs nothing and keeps these rules winning regardless. */
 input[type="range"].mod-range {
   -webkit-appearance: none;
   appearance: none;
@@ -282,6 +295,10 @@ input[type="range"].mod-range-min::-moz-range-thumb     { background: rgb(17, 10
     -webkit-overflow-scrolling: touch;
   }
 
+  /* Raw range inputs only. The Slider/CommitSlider primitives declare
+     `touch-action: pan-y` in their own (0,2,0) rule, which outranks this
+     (0,1,2) selector — deliberately: `none` here meant a touch that landed on
+     a slider while trying to scroll the panel changed the value instead. */
   .mobile-panel-content input[type="range"] {
     touch-action: none;
   }

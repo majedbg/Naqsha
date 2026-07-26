@@ -171,7 +171,7 @@ export default function CommitSlider({
           the native input LAST so it captures every pointer event above the
           custom visuals. Prevents the painted cell from stealing click
           targets from the underlying drag handle. */}
-      <div className="slider-track-region relative h-[22px] flex items-center">
+      <div className="slider-track-region relative h-[28px] flex items-center">
         <svg
           className="slider-graticule absolute inset-x-0 top-1/2 -translate-y-1/2 h-2.5 pointer-events-none"
           viewBox="0 0 100 10"
@@ -227,7 +227,9 @@ export default function CommitSlider({
         />
 
         {/* Native input — LAST in DOM, fully invisible but fully interactive.
-            Generous 24px invisible native thumb widens the drag hit area. */}
+            Generous 24px invisible native thumb widens the drag hit area.
+            Sizing (height, touch-action) lives in the style block below —
+            NOT in Tailwind utilities: see the height note there. */}
         <input
           id={id}
           type="range"
@@ -238,8 +240,7 @@ export default function CommitSlider({
           onChange={(e) => onChange(snapToStep(parseFloat(e.target.value)))}
           onKeyDown={handleKeyDown}
           disabled={disabled}
-          className="slider-input absolute inset-0 w-full h-full opacity-0 cursor-pointer disabled:cursor-not-allowed"
-          style={{ touchAction: 'manipulation' }}
+          className="slider-input absolute inset-0 w-full opacity-0 cursor-pointer disabled:cursor-not-allowed"
           aria-label={label}
           title={tooltip ? undefined : 'Arrow: step · Shift: coarse · Option: fine'}
         />
@@ -247,29 +248,40 @@ export default function CommitSlider({
 
       <style>{`
         /* Native input sits on top and is fully invisible, but its native
-           thumb is generous (24×22px) so clicks near the painted cell
-           reliably start a drag on all browsers. */
+           thumb is generous (24×28px) so clicks near the painted cell
+           reliably start a drag on all browsers.
+
+           HEIGHT MUST BE DECLARED HERE, not with Tailwind's h-full — the
+           bare input[type="range"] base rule in index.css is (0,1,1)
+           and outranks a bare utility class (0,1,0). When h-full lost, the
+           input collapsed to 4px pinned to the top of the row and the
+           painted cell was grabbable from its top half only. This selector
+           is (0,2,0) and wins. Mirrors Slider.jsx — keep the two in step. */
         .slider-root .slider-input {
           -webkit-appearance: none;
           appearance: none;
           background: transparent;
           margin: 0;
+          height: 100%;
+          /* pan-y, not manipulation: a horizontal touch drag belongs to the
+             slider, while vertical page/panel scroll still passes through. */
+          touch-action: pan-y;
         }
         .slider-root .slider-input::-webkit-slider-runnable-track {
           background: transparent;
-          height: 22px;
+          height: 28px;
           border: none;
         }
         .slider-root .slider-input::-moz-range-track {
           background: transparent;
-          height: 22px;
+          height: 28px;
           border: none;
         }
         .slider-root .slider-input::-webkit-slider-thumb {
           -webkit-appearance: none;
           appearance: none;
           width: 24px;
-          height: 22px;
+          height: 28px;
           background: transparent;
           border: none;
           cursor: grab;
@@ -278,7 +290,7 @@ export default function CommitSlider({
         .slider-root .slider-input:active::-webkit-slider-thumb { cursor: grabbing; }
         .slider-root .slider-input::-moz-range-thumb {
           width: 24px;
-          height: 22px;
+          height: 28px;
           background: transparent;
           border: none;
           cursor: grab;

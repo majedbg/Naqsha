@@ -230,7 +230,7 @@ export default function Slider({
           none), then the native input LAST so it unambiguously captures
           every pointer event. The native thumb is styled generous-and-
           invisible so clicks anywhere near the painted cell start a drag. */}
-      <div className="slider-track-region relative h-[22px] flex items-center">
+      <div className="slider-track-region relative h-[28px] flex items-center">
         {/* Graticule — 9 ticks marking 8 even subdivisions of the range.
             Fades in on hover / focus. */}
         <svg
@@ -272,7 +272,9 @@ export default function Slider({
             captures every pointer event. Opacity-0 but fully interactive.
             The invisible native thumb is widened to ~24px so the drag
             gesture still starts when the cursor lands near the painted
-            cell, even if pixel-perfect registration drifts by a few pixels. */}
+            cell, even if pixel-perfect registration drifts by a few pixels.
+            Sizing (height, touch-action) lives in the style block below —
+            NOT in Tailwind utilities: see the height note there. */}
         <input
           id={id}
           type="range"
@@ -283,8 +285,7 @@ export default function Slider({
           onChange={(e) => onChange(snapToStep(parseFloat(e.target.value)))}
           onKeyDown={handleKeyDown}
           disabled={disabled}
-          className="slider-input absolute inset-0 w-full h-full opacity-0 cursor-pointer disabled:cursor-not-allowed"
-          style={{ touchAction: 'manipulation' }}
+          className="slider-input absolute inset-0 w-full opacity-0 cursor-pointer disabled:cursor-not-allowed"
           aria-label={label}
           title={tooltip ? undefined : 'Arrow: step · Shift: coarse · Option: fine'}
         />
@@ -292,30 +293,46 @@ export default function Slider({
 
       <style>{`
         /* Native input sits on top and is fully invisible, but its native
-           thumb is generous (24×22px) so clicks near the painted cell
+           thumb is generous (24×28px) so clicks near the painted cell
            reliably start a drag. Without this, clicking the painted cell
-           can land on the native track (jump, don't drag) on some browsers. */
+           can land on the native track (jump, don't drag) on some browsers.
+
+           HEIGHT MUST BE DECLARED HERE, not with Tailwind's h-full. The
+           global base rule in index.css is a bare input[type="range"] —
+           specificity (0,1,1) — which outranks any bare utility class
+           (0,1,0). With h-full losing, the input collapsed to the base 4px
+           and, because inset-0 plus an explicit height is over-constrained,
+           CSS dropped 'bottom' and parked that 4px box at the TOP of the
+           row. The 28px shadow track then centred on it, so the live drag
+           band sat ~9px above the row and died 2px below the line: the
+           painted cell was grabbable from its top half only. This selector
+           is (0,2,0) and wins. index.css now wraps its base rules in
+           :where() as a second line of defence — keep both. */
         .slider-root .slider-input {
           -webkit-appearance: none;
           appearance: none;
           background: transparent;
           margin: 0;
+          height: 100%;
+          /* pan-y, not manipulation: a horizontal touch drag belongs to the
+             slider, while vertical page/panel scroll still passes through. */
+          touch-action: pan-y;
         }
         .slider-root .slider-input::-webkit-slider-runnable-track {
           background: transparent;
-          height: 22px;
+          height: 28px;
           border: none;
         }
         .slider-root .slider-input::-moz-range-track {
           background: transparent;
-          height: 22px;
+          height: 28px;
           border: none;
         }
         .slider-root .slider-input::-webkit-slider-thumb {
           -webkit-appearance: none;
           appearance: none;
           width: 24px;
-          height: 22px;
+          height: 28px;
           background: transparent;
           border: none;
           cursor: grab;
@@ -324,7 +341,7 @@ export default function Slider({
         .slider-root .slider-input:active::-webkit-slider-thumb { cursor: grabbing; }
         .slider-root .slider-input::-moz-range-thumb {
           width: 24px;
-          height: 22px;
+          height: 28px;
           background: transparent;
           border: none;
           cursor: grab;

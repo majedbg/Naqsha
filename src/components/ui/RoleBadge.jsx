@@ -40,19 +40,25 @@ const SQUARE = 3.6;
  *     voronoi. Their anchors sit on a graticule (intersections, cells, edges).
  *   • stroke  — everything else: SPIRAL (semantic, but its anchors ride arms,
  *     not a graticule), every EDGE host, and any unknown/non-host type.
- * Spiral is the one semantic host that is NOT a lattice, so we subtract it from
+ * Spiral and BRANCH are the semantic hosts that are NOT lattices — a spiral's
+ * anchors ride its arms and a branch's ride its stems — so we subtract them from
  * the semantic set instead of hard-coding the lattice members. Params-aware: a
  * single-axis grid is an edge (stroke) host, not a lattice.
  * @param {string} patternType
  * @param {object} [params]
  * @returns {'lattice'|'stroke'}
  */
+// Semantic hosts whose anchors ride an open CURVE rather than a graticule.
+const STROKE_SEMANTIC_HOSTS = new Set(["spiral", "branch"]);
+
 // A small pure host→family helper, co-located with the sole component that
 // consumes it; the HMR-boundary rule below is not worth a separate module for
 // one branchless function.
 // eslint-disable-next-line react-refresh/only-export-components
 export function badgeKindForHost(patternType, params) {
-  return isSemanticHost(patternType, params) && patternType !== "spiral" ? "lattice" : "stroke";
+  return isSemanticHost(patternType, params) && !STROKE_SEMANTIC_HOSTS.has(patternType)
+    ? "lattice"
+    : "stroke";
 }
 
 /** A filled role mark (dot). */

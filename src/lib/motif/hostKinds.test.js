@@ -22,7 +22,7 @@ import { getPatternClass } from '../patterns/index.js';
 import { rolesForHost } from './hostRoles.js';
 
 describe('hostKinds', () => {
-  it('keeps the four legacy semantic hosts, plus circlepacking (#146), modulegrid (#151), girih (#152) and truchet (#153)', () => {
+  it('keeps the four legacy semantic hosts, plus circlepacking (#146), modulegrid (#151), girih (#152), truchet (#153) and branch (T3)', () => {
     expect([...SEMANTIC_MOTIF_HOSTS].sort()).toEqual(
       [
         'grid',
@@ -33,8 +33,15 @@ describe('hostKinds', () => {
         'modulegrid',
         'girih',
         'truchet',
+        'branch',
       ].sort()
     );
+  });
+
+  it('branch defaults to the tip role — a flower at every branch end (T3)', () => {
+    // A space-colonization plant always has termini under default params, so
+    // unlike the spiral hub this default can never be dead.
+    expect(defaultRolesForHost('branch')).toEqual(['tip']);
   });
 
   it('names the STASH hosts — the ones whose geometry is captured at generate()', () => {
@@ -101,6 +108,16 @@ describe('hostKinds', () => {
     for (const type of EDGE_MOTIF_HOSTS) {
       expect(getPatternClass(type), `unknown patternType "${type}"`).toBeTruthy();
     }
+  });
+
+  it('every semantic host has a live default role it emits under DEFAULT params', () => {
+    // The spiral dead-default lesson (see the DEFAULT_SEMANTIC_ROLE comment).
+    for (const type of SEMANTIC_MOTIF_HOSTS) {
+      const roles = defaultRolesForHost(type);
+      expect(roles.length).toBe(1);
+      expect(['crossing', 'edge', 'tip', 'cell']).toContain(roles[0]);
+    }
+    expect(defaultRolesForHost('branch')).toEqual(['tip']);
   });
 
   it('semantic and edge sets are disjoint', () => {

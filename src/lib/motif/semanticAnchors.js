@@ -42,11 +42,21 @@
 //     coincidence, so it returns null and this adapter propagates it (never ship
 //     anchors we can't tie to the drawing).
 
-import { anchorId, sampleEdgeAnchors } from './anchors.js';
+// NOTE the alias: this module already declares a LOCAL `polylineLength(line)`
+// that takes [x,y] TUPLE polylines (used by the recursive extractor). Importing
+// anchors.js's {x,y}-object version under its own name silently shadowed it and
+// broke recursive edge placement — alias it.
+import {
+  anchorId,
+  sampleEdgeAnchors,
+  polylineLength as objectPolylineLength,
+  MIN_EDGE_SPACING,
+} from './anchors.js';
 import { pointHostAnchors } from './pointHostAnchors.js';
 import { cellGridAnchors } from './cellGridAnchors.js';
 import { girihGraphAnchors } from './girihAnchors.js';
 import { gridAnchorsCentered } from '../patterns/gridAnchors.js';
+import { buildSkeleton } from '../patterns/spaceColonizationSkeleton.js';
 import { makeP5Random } from '../patterns/rng.js';
 import { toSymmetryCount } from '../patterns/symmetryUtils.js';
 import { buildWarpedPolygon } from '../patterns/recursiveSides.js';
@@ -752,6 +762,167 @@ function spiralAnchors(params, canvasW, canvasH) {
   return anchors;
 }
 
+// ── BRANCH extractor (patternType:'branch', class Branch) ────────────────────
+// STRATEGY = SHARED CORE, the gridGeometry/gridAnchors precedent rather than a
+// replay. `spaceColonizationSkeleton.buildSkeleton` is the single computation of
+// this host's geometry: Branch.generate() runs it to DRAW, this runs it to
+// ANCHOR. Nothing here re-derives geometry — divergence is impossible by
+// construction so long as both callers feed it the same RNG stream.
+//
+// RNG: the core takes a ZERO-ARG rng returning [0,1). The pattern passes
+// `() => ctx.random()` (live p5, after ctx.randomSeed(seed)); this passes
+// `makeP5Random(opts.hostSeed)`, the byte-exact port of p5's seeded LCG, exactly
+// as the GRID adapter does. hostSeed is already threaded generically by all three
+// getSemanticAnchors callers (MotifPattern.js, Inspector.jsx,
+// AnchorGhostOverlay.jsx), so a stochastic extractor gets its seed for free.
+//
+// The model copied here is SPIRAL, not GRID (PLAN V7): a semantic host emits its
+// OWN `edge` anchors — `isEdgeHost` is set-membership plus one hand-written grid
+// special case, so there is no route by which a semantic host also gets captured.
+//
+// ROLE MAPPING (only roles that map onto a plant's REAL structure):
+//   • tip = the terminus of each main-branch path — where the vine flowers.
+//     zones.js routes role:'tip' straight to the Apex zone, and each stem carries
+//     its own meta.pathIndex, so EVERY stem contributes its own flower. This is
+//     the many-termini property T0 proved open diffgrowth cannot deliver (its
+//     hard ceiling is 2). normal = the growth direction of the final segment,
+//     tangent = normal + PI/2, matching spiral's tip convention.
+//   • crossing = bifurcation nodes (≥2 children). junction=true. tangent = the
+//     direction of the edge arriving from the parent.
+//   • edge = interior arc-length samples along each main-branch path, endpoints
+//     EXCLUDED so an edge sample can never duplicate a tip.
+//   • NO cells: a stem is an open curve enclosing no region.
+//
+// EDGE SAMPLING — a documented deviation from spiral. Spiral makes ONE
+// sampleEdgeAnchors call over all arms because its arms are all the same length.
+// A plant's stems are not: they range from ~30px twigs to ~950px trunks, and
+// `sampleEdgeAnchors`'s spacing FLOOR (MIN_EDGE_SPACING, anchors.js:20) is only
+// applied on its `spacing` path, never its `count` path. A flat count would put
+// samples sub-4px apart on a short twig — the crowding that floor exists to stop.
+// So the call is made PER PATH with count clamped to floor(L/MIN_EDGE_SPACING)-1
+// (effective spacing with endpoints excluded is L/(count+1)), and `id` +
+// `meta.pathIndex` are rewritten from the real path index, because a single-path
+// call always reports pathIndex 0. Consequence, deliberate: a stem too short to
+// carry even one legally-spaced sample gets NO edge anchors — Stem glyphs
+// concentrate on the long stems, which is where a vine wants them.
+//
+// DELIBERATE LIMITATIONS (documented, honesty-gated), mirroring Spiral/Recursive
+// (NOT Grid — Grid replicates symmetry via its shared core):
+//   • symmetry>1 copies and startAngle rotation are NOT replicated — anchors
+//     describe the single base copy at the default orientation. T0 supplied the
+//     supporting data: on a ROOTED host, symmetry clusters every copy's root end
+//     near the canvas centre and the empty-circle placement solver eats the
+//     flowers there (only 9 of 12 expected Apex rosettes survived at symmetry:6).
+//   • The ROOT end of the trunk is deliberately unanchored: it has children, so
+//     it is not a tip, and a plant does not flower where it enters the ground.
+//     (Same shape of decision as spiral's unanchored shared origin.)
+//   • NO warp gate. Grid and Spiral honesty-gate to null under a modulation
+//     channel because they CONSUME params.modulation and draw a displaced curve
+//     the extractor cannot reconstruct. `Branch.generate()` reads no modulation
+//     channel at all, so its drawing can never diverge from buildSkeleton and a
+//     warp→null branch here would OVER-refuse — blanking the vine whenever a warp
+//     guide merely exists elsewhere in the document. Warp × branchy scaffolds is
+//     R1 in docs/vine-scaffolds-PLAN.md §6; add the gate WITH the feature, not
+//     before it. The honesty gate that does apply is the degenerate one: a plant
+//     that never grew has no paths, and we return [] rather than inventing any.
+
+/**
+ * Branch semantic extractor. See the block header for the role/limitation
+ * contract. Emission order is fixed (crossings, edges, tips) for determinism.
+ * @param {object} params
+ * @param {number} canvasW
+ * @param {number} canvasH
+ * @param {object} [opts]  { hostSeed } — the host layer's seed.
+ * @returns {Array<object>}
+ */
+function branchAnchors(params, canvasW, canvasH, opts) {
+  const { offsetX = 0, offsetY = 0, edgeSamplesPerBranch = 6 } = params || {};
+
+  const rand = makeP5Random(opts && opts.hostSeed);
+  const skeleton = buildSkeleton(params || {}, canvasW, canvasH, () => rand());
+  const { nodes, parent, junctions, paths } = skeleton;
+  if (paths.length === 0) return []; // nothing drawn ⇒ nothing to anchor.
+
+  // World frame, matching Spiral: the core builds CENTRED coords and drawBase is
+  // wrapped by applySymmetryDraw, which translates by (cx+offsetX, cy+offsetY).
+  const ox = canvasW / 2 + offsetX;
+  const oy = canvasH / 2 + offsetY;
+
+  // Owning path per node: the path in which the node's PARENT EDGE lives (i.e.
+  // where it appears at position > 0). Well-defined because the decomposition
+  // partitions the edge set. The root belongs to the trunk, path 0.
+  const owner = new Int32Array(nodes.length);
+  for (let k = 0; k < paths.length; k++) {
+    const ids = paths[k].nodeIds;
+    for (let i = 1; i < ids.length; i++) owner[ids[i]] = k;
+  }
+
+  const anchors = [];
+
+  // ── CROSSINGS: bifurcation nodes.
+  for (const j of junctions) {
+    const p = nodes[j];
+    const par = parent[j];
+    const from = par >= 0 ? nodes[par] : null;
+    const tangent = from ? Math.atan2(p.y - from.y, p.x - from.x) : 0;
+    anchors.push({
+      id: anchorId('crossing', j),
+      role: 'crossing',
+      x: p.x + ox,
+      y: p.y + oy,
+      tangent,
+      normal: tangent + HALF_PI,
+      s: 0,
+      meta: { junction: true, node: j, pathIndex: owner[j] },
+    });
+  }
+
+  // ── EDGES: interior arc-length samples per stem (see the header's deviation).
+  for (let k = 0; k < paths.length; k++) {
+    const pts = paths[k].points.map((p) => ({ x: p.x + ox, y: p.y + oy }));
+    const length = objectPolylineLength(pts, false);
+    const maxCount = Math.floor(length / MIN_EDGE_SPACING) - 1;
+    const count = Math.min(Math.round(edgeSamplesPerBranch), maxCount);
+    if (count < 1) continue; // stem too short to carry a legally-spaced sample.
+    const sampled = sampleEdgeAnchors([{ points: pts, closed: false }], {
+      count,
+      includeEndpoints: false,
+      idPrefix: 'edge',
+    });
+    for (const e of sampled) {
+      anchors.push({
+        ...e,
+        id: anchorId('edge', k, e.meta.sampleIndex),
+        meta: { ...e.meta, pathIndex: k, branch: k },
+      });
+    }
+  }
+
+  // ── TIPS: one per stem — the flower positions.
+  for (let k = 0; k < paths.length; k++) {
+    const pts = paths[k].points;
+    const end = pts[pts.length - 1];
+    const prev = pts[pts.length - 2] || end;
+    const grow = end.x === prev.x && end.y === prev.y
+      ? 0
+      : Math.atan2(end.y - prev.y, end.x - prev.x);
+    anchors.push({
+      id: anchorId('tip', k),
+      role: 'tip',
+      x: end.x + ox,
+      y: end.y + oy,
+      tangent: grow + HALF_PI,
+      normal: grow,
+      s: 0,
+      meta: { pathIndex: k, branch: k, node: paths[k].tipNode },
+    });
+  }
+
+  // ── CELLS: none — a stem is an open curve enclosing no region.
+
+  return anchors;
+}
+
 // ── VORONOI extractor (patternType:'voronoi', class VoronoiCells) ─────────────
 // STRATEGY = GEOMETRY-IN (host supplies the already-resolved cell polygons).
 //
@@ -1206,13 +1377,15 @@ function truchetAnchors(params, canvasW, canvasH, opts) {
  *
  * The optional 5th `opts` arg carries per-host inputs the pure params can't
  * supply:
- *   • opts.hostSeed — the GRID host's layer seed. The grid extractor injects
+ *   • opts.hostSeed — the GRID or BRANCH host's layer seed. The grid extractor injects
  *     makeP5Random(hostSeed) into the shared geometry core so anchors land on
  *     the grid's REAL jittered / symmetry-replicated lattice (matching the live
  *     p5 draw, exactly as latticeForLayer does). Absent (4-arg call) ⇒
  *     makeP5Random(undefined); harmless when jitter=0/symmetry=1 (the core never
  *     consumes the RNG for positions there), which is the byte-identical
- *     pre-WI-2 baseline.
+ *     pre-WI-2 baseline. BRANCH feeds the same makeP5Random(hostSeed) into
+ *     buildSkeleton — a space-colonization plant is stochastic THROUGHOUT, so
+ *     without the host's seed the extractor would anchor a different plant.
  *   • opts.drawnEdges + opts.sites (preferred) / opts.drawnCells (legacy) —
  *     host-resolved geometry for GEOMETRY-IN extractors (currently 'voronoi',
  *     which PREFERS the boundary-hardened drawnEdges path).
@@ -1271,6 +1444,12 @@ export function getSemanticAnchors(patternType, params, canvasW, canvasH, opts) 
       return recursiveAnchors(params, canvasW, canvasH);
     case 'spiral':
       return spiralAnchors(params, canvasW, canvasH);
+    case 'branch':
+      // Shared-core extractor: re-grows the pattern's own space-colonization
+      // skeleton offline from makeP5Random(opts.hostSeed) — the SAME stream the
+      // live p5 draw consumes — so the anchors sit on the drawn plant by
+      // construction. See the BRANCH header.
+      return branchAnchors(params, canvasW, canvasH, opts);
     case 'voronoi':
       return voronoiAnchors(params, canvasW, canvasH, opts);
     case 'circlepacking':

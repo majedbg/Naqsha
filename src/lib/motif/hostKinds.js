@@ -23,6 +23,11 @@
 // below was verified against both conditions before inclusion.
 
 /** Hosts with a structural (crossing/tip/cell) anchor extractor. */
+// `branch` (space colonization, T3) is semantic rather than edge BY DESIGN: a
+// rooted skeleton has REAL termini and REAL junctions, so "flowers at the tip" is
+// `tip` semantics (zones.js routes role:'tip' straight to the Apex zone) rather
+// than an approximation derived from min-/max-`s` edge samples. It emits its own
+// `edge` anchors — semantic hosts never route through capture (see isEdgeHost).
 export const SEMANTIC_MOTIF_HOSTS = Object.freeze(
   new Set([
     'grid',
@@ -33,6 +38,7 @@ export const SEMANTIC_MOTIF_HOSTS = Object.freeze(
     'modulegrid',
     'girih',
     'truchet',
+    'branch',
   ])
 );
 
@@ -184,6 +190,11 @@ export const MOTIF_HOSTS = Object.freeze(
 // does (PRD #143 story 23), and girih emits crossings under every params set
 // (its skeleton always has degree-4 vertices where straps meet), so the first
 // placement is never empty.
+//
+// BRANCH gets `tip`: a space-colonization plant ALWAYS has termini under default
+// params (dozens of them — that is the whole point of the host), so unlike the
+// spiral hub this default can never be dead. `tip` is also the role that makes
+// the first placement read as intended — a flower at every branch end.
 const DEFAULT_SEMANTIC_ROLE = Object.freeze({
   grid: 'crossing',
   recursive: 'crossing',
@@ -193,6 +204,7 @@ const DEFAULT_SEMANTIC_ROLE = Object.freeze({
   modulegrid: 'cell',
   girih: 'crossing',
   truchet: 'cell',
+  branch: 'tip',
 });
 
 /**

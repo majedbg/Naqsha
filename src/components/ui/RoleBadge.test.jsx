@@ -126,6 +126,8 @@ describe("badgeKindForHost — every real host-kind vocabulary entry", () => {
     ["voronoi", "lattice"],
     // spiral is semantic but rides arms, not a graticule → stroke
     ["spiral", "stroke"],
+    // branch is semantic but rides stems, not a graticule → stroke
+    ["branch", "stroke"],
     // every edge host → stroke fragment
     ["flowfield", "stroke"],
     ["wave", "stroke"],

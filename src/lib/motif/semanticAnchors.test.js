@@ -1,12 +1,14 @@
 import { describe, it, expect } from 'vitest';
 import { getSemanticAnchors } from './semanticAnchors.js';
-import { anchorId } from './anchors.js';
+import { anchorId, MIN_EDGE_SPACING } from './anchors.js';
 import { placeMotifs, selectAnchors } from './placementEngine.js';
+import { partitionZones } from './zones.js';
 import { defaultRolesForHost } from './hostKinds.js';
 import { DEFAULT_PARAMS } from '../../constants.js';
 import Grid from '../patterns/Grid.js';
 import RecursiveGeometry from '../patterns/RecursiveGeometry.js';
 import Spiral from '../patterns/Spiral.js';
+import BranchPattern from '../patterns/Branch.js';
 import VoronoiCells from '../patterns/VoronoiCells.js';
 import { RecordingContext } from '../patterns/drawingContext.js';
 import { ScalarField } from '../fields/ScalarField.js';
@@ -1919,5 +1921,260 @@ describe('boundary hardening — drawnEdges stays on drawn geometry where drawnC
     expect(phantomCrossings.length + phantomEdges.length).toBeGreaterThan(0);
     expect(phantomCrossings.length).toBeGreaterThan(0);
     expect(phantomEdges.length).toBeGreaterThan(0);
+  });
+});
+
+// ── BRANCH (space colonization, T3) ──────────────────────────────────────────
+// The load-bearing property of this host is the TWO-COMPUTATIONS-MUST-AGREE
+// seam: `Branch.generate()` draws a skeleton it grows from the live p5 RNG, and
+// the extractor grows the SAME skeleton offline from makeP5Random(hostSeed).
+// These tests pull truth from the pattern's OWN recorded polylines, exactly as
+// the grid/recursive/spiral divergence guards do — the extractor is never
+// compared against a second copy of its own math.
+//
+// The drawing context below is a RecordingContext whose random() is swapped for
+// makeP5Random, i.e. p5's seeded LCG. That is what a LIVE p5 canvas yields
+// (rng.js: makeP5Random is a byte-exact port, version-pinned to p5 2.2.3);
+// RecordingContext's own mulberry32 is a headless stand-in that no live render
+// ever uses, so testing parity against it would prove nothing about the app.
+
+const BRANCH_W = 1152;
+const BRANCH_H = 1152;
+const BRANCH_SEED = 20260726;
+const branchParams = (overrides = {}) => ({ ...DEFAULT_PARAMS.branch, ...overrides });
+
+class P5LikeRecordingContext extends RecordingContext {
+  randomSeed(s) {
+    this._p5rand = makeP5Random(s);
+  }
+  random(a, b) {
+    const u = this._p5rand ? this._p5rand() : 0;
+    if (a === undefined) return u;
+    if (b === undefined) return u * a;
+    return a + u * (b - a);
+  }
+}
+
+/** The polylines Branch actually draws, world-translated to canvas coords. */
+function drawBranchPaths(params, seed = BRANCH_SEED) {
+  const ctx = new P5LikeRecordingContext({ seed });
+  new BranchPattern().generateWithContext(
+    ctx, seed, params, BRANCH_W, BRANCH_H, '#000', 100
+  );
+  const ox = BRANCH_W / 2 + (params.offsetX || 0);
+  const oy = BRANCH_H / 2 + (params.offsetY || 0);
+  const paths = [];
+  let cur = null;
+  for (const { op, args } of ctx.calls) {
+    if (op === 'beginShape') cur = [];
+    else if (op === 'vertex' && cur) cur.push({ x: args[0] + ox, y: args[1] + oy });
+    else if (op === 'endShape' && cur) {
+      paths.push(cur);
+      cur = null;
+    }
+  }
+  return paths;
+}
+
+const polyLen = (pts) => {
+  let L = 0;
+  for (let i = 1; i < pts.length; i++) L += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+  return L;
+};
+
+describe('getSemanticAnchors — branch role taxonomy', () => {
+  const anchors = getSemanticAnchors(
+    'branch', branchParams(), BRANCH_W, BRANCH_H, { hostSeed: BRANCH_SEED }
+  );
+
+  it('emits crossing + edge + tip with the anchors.js shape', () => {
+    expect(Array.isArray(anchors)).toBe(true);
+    expect(new Set(anchors.map((a) => a.role))).toEqual(new Set(['crossing', 'edge', 'tip']));
+    expect(anchors.some((a) => a.role === 'cell')).toBe(false); // a stem encloses nothing
+    for (const a of anchors) {
+      expect(a).toEqual(
+        expect.objectContaining({
+          id: expect.any(String),
+          role: expect.any(String),
+          x: expect.any(Number),
+          y: expect.any(Number),
+          tangent: expect.any(Number),
+          normal: expect.any(Number),
+          s: expect.any(Number),
+          meta: expect.any(Object),
+        })
+      );
+    }
+  });
+
+  it('emission order is FIXED — crossings, then edges, then tips', () => {
+    const seq = [];
+    for (const a of anchors) if (seq[seq.length - 1] !== a.role) seq.push(a.role);
+    expect(seq).toEqual(['crossing', 'edge', 'tip']);
+  });
+
+  it('delivers MANY termini from ONE connected plant (the T0 amended test)', () => {
+    const tips = anchors.filter((a) => a.role === 'tip');
+    // T0: open diffgrowth has a hard ceiling of 2 Apex anchors. This is the gap.
+    expect(tips.length).toBeGreaterThan(20);
+    // Exactly one tip per stem, and each carries its own pathIndex so zones.js /
+    // chain.js group them per stem.
+    expect(new Set(tips.map((t) => t.meta.pathIndex)).size).toBe(tips.length);
+  });
+
+  it('is deterministic — byte-identical for identical params + hostSeed', () => {
+    const a = getSemanticAnchors('branch', branchParams(), BRANCH_W, BRANCH_H, { hostSeed: 7 });
+    const b = getSemanticAnchors('branch', branchParams(), BRANCH_W, BRANCH_H, { hostSeed: 7 });
+    expect(a).toEqual(b);
+  });
+
+  it('CONSUMES hostSeed — a different host seed yields different anchors', () => {
+    const a = getSemanticAnchors('branch', branchParams(), BRANCH_W, BRANCH_H, { hostSeed: 1 });
+    const b = getSemanticAnchors('branch', branchParams(), BRANCH_W, BRANCH_H, { hostSeed: 2 });
+    expect(a).not.toEqual(b);
+    // A 4-arg call (no opts) still works — makeP5Random(undefined) is seed 0.
+    expect(getSemanticAnchors('branch', branchParams(), BRANCH_W, BRANCH_H)).toBeTruthy();
+  });
+
+  it('refuses to emit anchors for a plant that never grows', () => {
+    const none = getSemanticAnchors(
+      'branch', branchParams({ attractorCount: 0 }), BRANCH_W, BRANCH_H, { hostSeed: BRANCH_SEED }
+    );
+    expect(none).toEqual([]);
+  });
+
+  it('add-motif DEFAULT role produces a NON-EMPTY selection on a default branch', () => {
+    // The spiral dead-default lesson (hostKinds.js:56-67): the first role must be
+    // one the host really emits under DEFAULT params.
+    const roles = defaultRolesForHost('branch');
+    expect(roles).toEqual(['tip']);
+    const { survivors } = selectAnchors(anchors, { roles });
+    expect(survivors.length).toBeGreaterThan(20);
+    expect(survivors.every((a) => a.role === 'tip')).toBe(true);
+  });
+});
+
+// ── DIVERGENCE GUARD (the honesty gate) ─────────────────────────────────────
+describe('divergence guard — branch anchors coincide with the pattern real drawing', () => {
+  const EXACT = 1e-9;
+  const params = branchParams();
+  const drawn = drawBranchPaths(params);
+  const anchors = getSemanticAnchors(
+    'branch', params, BRANCH_W, BRANCH_H, { hostSeed: BRANCH_SEED }
+  );
+
+  it('the extractor grows the IDENTICAL skeleton the pattern drew', () => {
+    expect(drawn.length).toBeGreaterThan(10);
+    // One tip anchor per drawn polyline, at that polyline's LAST point, EXACTLY.
+    const tips = anchors.filter((a) => a.role === 'tip');
+    expect(tips.length).toBe(drawn.length);
+    for (const t of tips) {
+      const path = drawn[t.meta.pathIndex];
+      const end = path[path.length - 1];
+      expect(t.x).toBe(end.x);
+      expect(t.y).toBe(end.y);
+    }
+  });
+
+  it('every EDGE anchor sits on the drawn polyline of its OWN pathIndex', () => {
+    const edges = anchors.filter((a) => a.role === 'edge');
+    expect(edges.length).toBeGreaterThan(50);
+    for (const e of edges) {
+      expect(distToPolyline({ x: e.x, y: e.y }, drawn[e.meta.pathIndex])).toBeLessThan(EXACT);
+    }
+  });
+
+  it('every CROSSING anchor is a real vertex of the drawn geometry', () => {
+    const vertexKeys = new Set();
+    for (const path of drawn) for (const p of path) vertexKeys.add(`${p.x},${p.y}`);
+    const crossings = anchors.filter((a) => a.role === 'crossing');
+    expect(crossings.length).toBeGreaterThan(10);
+    for (const c of crossings) expect(vertexKeys.has(`${c.x},${c.y}`)).toBe(true);
+  });
+
+  it('every anchor is inside the canvas', () => {
+    for (const a of anchors) {
+      expect(a.x).toBeGreaterThanOrEqual(0);
+      expect(a.x).toBeLessThanOrEqual(BRANCH_W);
+      expect(a.y).toBeGreaterThanOrEqual(0);
+      expect(a.y).toBeLessThanOrEqual(BRANCH_H);
+    }
+  });
+});
+
+describe('branch — edge sampling honours the endpoint + spacing contract', () => {
+  const params = branchParams();
+  const drawn = drawBranchPaths(params);
+  const anchors = getSemanticAnchors(
+    'branch', params, BRANCH_W, BRANCH_H, { hostSeed: BRANCH_SEED }
+  );
+  const edges = anchors.filter((a) => a.role === 'edge');
+
+  it('EXCLUDES endpoints, so an edge sample never duplicates a tip', () => {
+    const tipKeys = new Set(
+      anchors.filter((a) => a.role === 'tip').map((a) => `${a.x},${a.y}`)
+    );
+    for (const e of edges) expect(tipKeys.has(`${e.x},${e.y}`)).toBe(false);
+    const byPath = new Map();
+    for (const e of edges) {
+      if (!byPath.has(e.meta.pathIndex)) byPath.set(e.meta.pathIndex, []);
+      byPath.get(e.meta.pathIndex).push(e);
+    }
+    for (const [pathIndex, list] of byPath) {
+      const L = polyLen(drawn[pathIndex]);
+      for (const e of list) {
+        expect(e.s).toBeGreaterThan(0);
+        expect(e.s).toBeLessThan(L);
+      }
+    }
+  });
+
+  it('respects MIN_EDGE_SPACING even on the shortest stems', () => {
+    const byPath = new Map();
+    for (const e of edges) {
+      if (!byPath.has(e.meta.pathIndex)) byPath.set(e.meta.pathIndex, []);
+      byPath.get(e.meta.pathIndex).push(e);
+    }
+    for (const list of byPath.values()) {
+      const s = list.map((e) => e.s).sort((a, b) => a - b);
+      for (let i = 1; i < s.length; i++) {
+        expect(s[i] - s[i - 1]).toBeGreaterThanOrEqual(MIN_EDGE_SPACING - 1e-9);
+      }
+    }
+  });
+
+  it('exposes the sample count as a HOST param (mirrors spiral edgeSamplesPerArm)', () => {
+    const few = getSemanticAnchors(
+      'branch', branchParams({ edgeSamplesPerBranch: 3 }), BRANCH_W, BRANCH_H,
+      { hostSeed: BRANCH_SEED }
+    ).filter((a) => a.role === 'edge');
+    expect(few.length).toBeLessThan(edges.length);
+    // Every stem long enough to carry them gets at most the requested count.
+    const perPath = new Map();
+    for (const e of few) perPath.set(e.meta.pathIndex, (perPath.get(e.meta.pathIndex) || 0) + 1);
+    for (const n of perPath.values()) expect(n).toBeLessThanOrEqual(3);
+  });
+
+  it('ids are role-scoped and unique (never fold branch ORDER into an id — ADR-0005)', () => {
+    const ids = anchors.map((a) => a.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    for (const a of anchors) expect(a.id.startsWith(`${a.role}:`)).toBe(true);
+    expect(anchors.every((a) => a.meta.order === undefined)).toBe(true); // T4 wires this
+  });
+});
+
+describe('branch — feeds the Zoned Sequencer (the vine chip contract)', () => {
+  const anchors = getSemanticAnchors(
+    'branch', branchParams(), BRANCH_W, BRANCH_H, { hostSeed: BRANCH_SEED }
+  );
+
+  it('every tip lands in the APEX zone and every edge/crossing in STEM', () => {
+    const { apex, stem } = partitionZones(anchors);
+    const tips = anchors.filter((a) => a.role === 'tip');
+    expect(apex.length).toBe(tips.length);
+    expect(apex.every((a) => a.role === 'tip')).toBe(true);
+    expect(stem.every((a) => a.role !== 'tip')).toBe(true);
+    // The point of the ticket: MANY apex members, not diffgrowth's ceiling of 2.
+    expect(apex.length).toBeGreaterThan(20);
   });
 });

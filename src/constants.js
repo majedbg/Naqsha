@@ -65,6 +65,7 @@ export const PATTERN_TYPES = [
   { id: 'moire', label: 'Moiré' },
   { id: 'circlepacking', label: 'Circle Packing' },
   { id: 'dendrite', label: 'Dendrite' },
+  { id: 'branch', label: 'Branch' },
 ];
 
 // Absolute DOCUMENT layer bound — the hard backstop every layer creator
@@ -351,6 +352,33 @@ export const DEFAULT_PARAMS = {
     repulsion: 0.5,
     smoothing: 0.45,
     growthStyle: 'curvature',
+    strokeWeight: 0.8,
+    symmetry: 1,
+    startAngle: 0,
+    offsetX: 0,
+    offsetY: 0,
+  },
+  // Space-colonization plant. The envelope is the silhouette: attractors are
+  // scattered inside it and the tree grows to consume them, so `envelopeScale`
+  // is the coverage lever (0.92 fills a 12" sheet). See
+  // src/lib/patterns/spaceColonizationSkeleton.js — the shared core the motif
+  // extractor re-runs to anchor on this exact skeleton.
+  branch: {
+    envelopeShape: 'circle',
+    envelopeScale: 0.92,
+    attractorCount: 900,
+    attractionRadius: 110,
+    killDistance: 26,
+    stepLength: 11,
+    angleJitter: 12,
+    maxNodes: 2000,
+    // 6, not spiral's 24: a plant's stems are SHORT (median ~88px at these
+    // defaults, vs a spiral arm's full radius), and the emission order the
+    // extractor is contracted to (crossings, edges, tips) doubles as PLACEMENT
+    // priority — every extra edge sample claims space the Apex flower then can't
+    // have. Measured over the 1152px sheet: 10 samples/stem => 34 of 51 flowers
+    // stamped, 6 => 37, 4 => 42.
+    edgeSamplesPerBranch: 6,
     strokeWeight: 0.8,
     symmetry: 1,
     startAngle: 0,
@@ -866,6 +894,26 @@ export const PATTERN_PARAM_DEFS = {
     START_ANGLE_PARAM,
     OFFSET_PAD_PARAM,
   ],
+  branch: [
+    { key: 'envelopeShape', label: 'Envelope', type: 'select', options: [
+      { value: 'circle', label: 'Circle' },
+      { value: 'lozenge', label: 'Lozenge' },
+      { value: 'rect', label: 'Panel' },
+      { value: 'ring', label: 'Ring' },
+    ], tooltip: 'The shape the plant grows to fill — the silhouette' },
+    { key: 'envelopeScale', label: 'Envelope Size', min: 0.2, max: 1, step: 0.02, tooltip: 'Envelope size as a fraction of the sheet — the coverage lever' },
+    { key: 'attractorCount', label: 'Growth Points', min: 100, max: 2000, step: 50, tooltip: 'Attraction points scattered in the envelope — more = denser plant' },
+    { key: 'attractionRadius', label: 'Reach', min: 30, max: 260, step: 5, tooltip: 'How far a stem senses growth points — larger = straighter, fewer branches' },
+    { key: 'killDistance', label: 'Branch Spacing', min: 8, max: 60, step: 1, tooltip: 'How close a stem must get to consume a growth point — smaller = finer twigs' },
+    { key: 'stepLength', label: 'Step', min: 4, max: 30, step: 1, tooltip: 'Length of one growth step — the polyline resolution' },
+    { key: 'angleJitter', label: 'Wander', min: 0, max: 45, step: 1, tooltip: 'Seeded angle wobble per step — 0 = mechanical, higher = hand-grown' },
+    { key: 'maxNodes', label: 'Growth Budget', min: 200, max: 4000, step: 100, tooltip: 'Hard node cap — raise for very dense plants, costs compute' },
+    { key: 'edgeSamplesPerBranch', label: 'Motif Samples / Stem', min: 2, max: 40, step: 1, tooltip: 'Motif anchor positions along each stem (hosted motifs only)' },
+    { key: 'strokeWeight', label: 'Stroke Weight', min: 0.3, max: 3, step: 0.1, tooltip: 'Line thickness' },
+    SYMMETRY_PARAM,
+    START_ANGLE_PARAM,
+    OFFSET_PAD_PARAM,
+  ],
   girih: [
     // Hankin polygons-in-contact star patterns. NOTE: only the two correct
     // tilings ship — square8 (4.8.8 → 8★) and hex12 (3.12.12 → 12★). The
@@ -1172,6 +1220,7 @@ export const PATTERN_TAXONOMY = {
   // ── Growth & Agents ──────────────────────────────────────────────────────
   diffgrowth: { family: 'G', geom: 4, form: 'branching', det: 'stochastic', mark: 'line', sym: true, blurb: 'Self-avoiding differential growth.' },
   dendrite:   { family: 'G', geom: 4, form: 'branching', det: 'stochastic', mark: 'line', sym: true, blurb: 'Diffusion-limited aggregation — frost / coral branches.' },
+  branch:     { family: 'G', geom: 4, form: 'branching', det: 'stochastic', mark: 'line', sym: true, blurb: 'Space-colonization plant — one root, many flowering tips.' },
 
   // ── Reaction-Diffusion & CA ──────────────────────────────────────────────
   turing:     { family: 'C', geom: 4, form: 'cellular', det: 'stochastic', mark: 'dash', sym: true, blurb: 'Reaction-diffusion spots, stripes, labyrinths.' },
@@ -1191,6 +1240,6 @@ export const PATTERN_SYMBOLS = {
   grid: 'Gr', modulegrid: 'Mg', girih: 'Gi', recursive: 'Re',
   topographic: 'To', radialetch: 'Ra', flowfield: 'Ff', flowhatch: 'Fh',
   grainfield: 'Gn', voronoi: 'Vo', circlepacking: 'Cp', diffgrowth: 'Dg',
-  dendrite: 'De',
+  dendrite: 'De', branch: 'Bn',
   turing: 'Tu', lissajous: 'Ls', chladni: 'Ch', truchet: 'Tr', hilbert: 'Hi',
 };

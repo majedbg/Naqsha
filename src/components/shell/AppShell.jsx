@@ -15,6 +15,7 @@
 
 import { useEffect, useState } from 'react';
 import usePanelWidth from '../../lib/hooks/usePanelWidth';
+import useInspectorWidth from '../../lib/hooks/useInspectorWidth';
 import usePanelHeight from '../../lib/hooks/usePanelHeight';
 import { useInspectorDock } from '../../lib/hooks/useInspectorDock';
 import { InspectorDockProvider } from './inspectorDockContext';
@@ -168,6 +169,45 @@ export function InspectorRegion({ children, contentRef, className = '' }) {
     <Region label="Inspector" className={`flex-1 overflow-auto ${className}`}>
       {contentRef ? <div ref={contentRef} className="h-full" /> : children}
     </Region>
+  );
+}
+
+// The whole right-hand Inspector column. X-axis mirror of LeftColumnRegion: the
+// wrapper carries the width style AND the resize handle on its LEFT edge (the
+// leftmost edge of the panel, facing the canvas), so a drag widens the inspector
+// into the canvas. Width is state-driven + persisted (no fixed `w-72` class);
+// double-click resets to the 288px compact rail, which is also the MINIMUM — the
+// inspector only ever grows from today's size (see useInspectorWidth).
+export function InspectorColumnRegion({ inspectorContentRef }) {
+  const { width, isDragging, onMouseDown, onDoubleClick } = useInspectorWidth();
+  return (
+    <div
+      data-testid="inspector-panel"
+      style={{ width }}
+      className="relative flex flex-col shrink-0 min-h-0"
+    >
+      <InspectorRegion contentRef={inspectorContentRef} />
+
+      {/* Resize handle straddling the column's left edge, spanning the full
+          height so it reads as the edge of the whole panel. */}
+      <div
+        data-testid="inspector-panel-resize"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize inspector panel"
+        onMouseDown={onMouseDown}
+        onDoubleClick={onDoubleClick}
+        className="absolute top-0 left-0 z-10 h-full w-1.5 -translate-x-1/2 cursor-col-resize"
+      >
+        {/* 1px divider, brightened to accent on hover / during drag. */}
+        <span
+          aria-hidden="true"
+          className={`pointer-events-none absolute left-1/2 top-0 h-full w-px -translate-x-1/2 ${
+            isDragging ? 'bg-accent' : 'bg-transparent hover:bg-accent'
+          }`}
+        />
+      </div>
+    </div>
   );
 }
 
@@ -329,12 +369,9 @@ function AppShellInner({ children }) {
 
         {/* Right column: the selection-driven Inspector, now full-height (the
             operations panel moved under the layer tree on the left). Only in the
-            right dock; in the bottom dock the inspector moves to the shelf below. */}
-        {!isBottom && (
-          <div className="flex flex-col w-72 shrink-0 min-h-0">
-            <InspectorRegion contentRef={setInspectorNode} />
-          </div>
-        )}
+            right dock; in the bottom dock the inspector moves to the shelf below.
+            Resized as one unit via its left-edge handle (see InspectorColumnRegion). */}
+        {!isBottom && <InspectorColumnRegion inspectorContentRef={setInspectorNode} />}
       </div>
 
       {/* Bottom-shelf dock: a full-width row below the body and above the status

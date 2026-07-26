@@ -10,17 +10,20 @@
 // refs come from memoized buildGlyphEntries / getGlyph, `size`/`className` are
 // primitives — so a shallow prop check skips rebuilding the SVG.
 import { memo } from "react";
+import { glyphViewBox } from "../../lib/motif/glyphBounds";
 
 function GlyphThumb({ glyph, size = 28, className = "" }) {
   if (!glyph || !Array.isArray(glyph.paths)) return null;
-  // 1.2× head-room over the bounding-circle radius so round joins/caps at the
-  // extremes don't clip against the viewBox edge.
-  const r = (glyph.viewRadius || 10) * 1.2;
+  // Frame the glyph's ACTUAL drawn extent, not a radius about the local origin.
+  // The old origin-centered box assumed the art straddles (0,0) — true of the
+  // four hand-authored built-ins, false of every SVG import, which arrives in
+  // its source document's user space. See glyphBounds.js.
+  const { x, y, w, h, strokeWidth } = glyphViewBox(glyph);
   return (
     <svg
       width={size}
       height={size}
-      viewBox={`${-r} ${-r} ${2 * r} ${2 * r}`}
+      viewBox={`${x} ${y} ${w} ${h}`}
       className={className}
       aria-hidden="true"
     >
@@ -30,7 +33,7 @@ function GlyphThumb({ glyph, size = 28, className = "" }) {
           d={p.d}
           fill="none"
           stroke="currentColor"
-          strokeWidth={r / 9}
+          strokeWidth={strokeWidth}
           strokeLinejoin="round"
           strokeLinecap="round"
         />

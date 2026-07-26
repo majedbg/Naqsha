@@ -66,15 +66,28 @@ const evenXs = (n) =>
 function GlyphMark({ x, glyphRef, rotationOffset = 0 }) {
   const g = MOTIF_GLYPHS[glyphRef];
   if (!g) return <FilledDot x={x} />; // unknown glyph → still a placement mark
+  // `viewRadius` is the max distance from the glyph's ROOT (not from the local
+  // origin), so the scale is only right once the root sits at the origin —
+  // exactly what placementMatrix does on canvas with its trailing
+  // R(−root.angle)·T(−root). Mirror that here or an imported glyph, whose art
+  // lives in its source user space, is flung far off the rule. The core
+  // built-ins omit `root`, so this appends an identity and their transform is
+  // unchanged — which is what preserves the base-at-origin leaf's documented
+  // above/below vine reading (see ORIENTATION above).
+  const root = g.root || { x: 0, y: 0, angle: 0 };
   const scale = GLYPH_R / g.viewRadius;
   const rot = BASE_ROT + rotationOffset;
+  const deRoot =
+    root.x === 0 && root.y === 0 && root.angle === 0
+      ? ""
+      : ` rotate(${-root.angle}) translate(${-root.x} ${-root.y})`;
   return (
     <g
       data-mark="glyph"
       data-glyph={glyphRef}
       data-rotation-offset={rotationOffset}
       data-x={x}
-      transform={`translate(${x} ${CY}) rotate(${rot}) scale(${scale})`}
+      transform={`translate(${x} ${CY}) rotate(${rot}) scale(${scale})${deRoot}`}
     >
       {g.paths.map((p, i) => (
         <path key={i} d={p.d} fill="currentColor" stroke="none" />

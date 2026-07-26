@@ -64,6 +64,7 @@ import {
 import { GlyphPickerFlyout } from "./GlyphPickerChip";
 import { getGlyph, MOTIF_GLYPHS } from "../../lib/motif/glyphs.js";
 import { sieveCounts } from "../../lib/motif/sieveCounts.js";
+import GlyphThumb from "../ui/GlyphThumb";
 import ScrubNumeral from "../ui/ScrubNumeral";
 import CadenceStripControl from "../ui/CadenceStripControl";
 import RoleGlyphToggles from "../ui/RoleGlyphToggles";
@@ -581,13 +582,18 @@ function SortableSlotChip({
               pickerOpen ? "border-accent/60" : "border-hairline"
             }`}
           >
-            <svg width="24" height="24" viewBox="-12 -12 24 24" aria-hidden="true">
-              {glyph?.paths?.[0]?.d ? (
-                <path d={glyph.paths[0].d} fill="none" stroke="currentColor" strokeWidth="1.5" />
-              ) : (
+            {/* The shared thumbnail, not a local SVG: this swatch used to
+                hard-code `viewBox="-12 -12 24 24"` and draw only paths[0], so an
+                imported glyph (art in its source user space, often ~96 units
+                around (55,55)) rendered as an EMPTY box. GlyphThumb frames each
+                glyph's real extent and draws every path. */}
+            {glyph?.paths?.[0]?.d ? (
+              <GlyphThumb glyph={glyph} size={24} />
+            ) : (
+              <svg width="24" height="24" viewBox="-12 -12 24 24" aria-hidden="true">
                 <circle r="6" fill="none" stroke="currentColor" strokeWidth="1" strokeDasharray="2 2" />
-              )}
-            </svg>
+              </svg>
+            )}
           </button>
           {pickerOpen && (
             <GlyphPickerFlyout

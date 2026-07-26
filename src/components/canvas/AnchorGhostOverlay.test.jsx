@@ -106,7 +106,7 @@ describe('AnchorGhostOverlay', () => {
     expect(candidate.length).toBeGreaterThan(0);
   });
 
-  it('(c) clicking a candidate calls onUpdateLayer with that id in overrides.include', () => {
+  it('(c) clicking a candidate calls onUpdateLayer with a hidden:false record for that id (#136)', () => {
     const host = gridHost();
     const m = motif('m1', host.id, crossingBinding);
     const onUpdateLayer = vi.fn();
@@ -117,11 +117,12 @@ describe('AnchorGhostOverlay', () => {
     expect(onUpdateLayer).toHaveBeenCalledTimes(1);
     const [layerId, patch] = onUpdateLayer.mock.calls[0];
     expect(layerId).toBe('m1');
-    expect(patch.params.binding.selection.overrides.include).toContain(id);
-    expect(patch.params.binding.selection.overrides.exclude).not.toContain(id);
+    const ov = patch.params.binding.selection.overrides;
+    expect(ov.records).toContainEqual({ ref: id, hidden: false });
+    expect(ov.records.filter((r) => r.ref === id)).toHaveLength(1);
   });
 
-  it('(d) clicking a placed anchor calls onUpdateLayer with that id in overrides.exclude', () => {
+  it('(d) clicking a placed anchor calls onUpdateLayer with a hidden:true record for that id (#136)', () => {
     const host = gridHost();
     const m = motif('m1', host.id, crossingBinding);
     const onUpdateLayer = vi.fn();
@@ -131,8 +132,9 @@ describe('AnchorGhostOverlay', () => {
     fireEvent.pointerDown(placed);
     expect(onUpdateLayer).toHaveBeenCalledTimes(1);
     const [, patch] = onUpdateLayer.mock.calls[0];
-    expect(patch.params.binding.selection.overrides.exclude).toContain(id);
-    expect(patch.params.binding.selection.overrides.include).not.toContain(id);
+    const ov = patch.params.binding.selection.overrides;
+    expect(ov.records).toContainEqual({ ref: id, hidden: true });
+    expect(ov.records.filter((r) => r.ref === id)).toHaveLength(1);
   });
 
   it('(e) renders nothing when a NON-motif layer is selected', () => {
@@ -199,7 +201,7 @@ describe('AnchorGhostOverlay', () => {
     expect(container.querySelectorAll('[data-state="candidate"]').length).toBeGreaterThan(0);
   });
 
-  it('(i) voronoi click-to-override: pointerdown a candidate appends its id to overrides.include', () => {
+  it('(i) voronoi click-to-override: pointerdown a candidate appends a hidden:false record (#136)', () => {
     const host = voronoiHost();
     const m = motif('m1', host.id, { selection: { roles: ['crossing'], rate: { n: 2 } } });
     const onUpdateLayer = vi.fn();
@@ -216,13 +218,14 @@ describe('AnchorGhostOverlay', () => {
     expect(onUpdateLayer).toHaveBeenCalledTimes(1);
     const [layerId, patch] = onUpdateLayer.mock.calls[0];
     expect(layerId).toBe('m1');
-    expect(patch.params.binding.selection.overrides.include).toContain(id);
-    expect(patch.params.binding.selection.overrides.exclude).not.toContain(id);
+    const ov = patch.params.binding.selection.overrides;
+    expect(ov.records).toContainEqual({ ref: id, hidden: false });
   });
 
   it('un-excludes a previously excluded anchor on a second click (toggle round-trip)', () => {
     const host = gridHost();
-    // Pre-seed an exclude override on a known placed crossing id.
+    // Pre-seed a LEGACY exclude override on a known placed crossing id — the
+    // overlay must read it through normalizeOverrides (migrate-on-read).
     const m = motif('m1', host.id, {
       selection: {
         roles: ['crossing'],
@@ -237,7 +240,134 @@ describe('AnchorGhostOverlay', () => {
     expect(excluded.getAttribute('data-anchor-id')).toBe('crossing:0:0');
     fireEvent.pointerDown(excluded);
     const [, patch] = onUpdateLayer.mock.calls[0];
-    expect(patch.params.binding.selection.overrides.exclude).not.toContain('crossing:0:0');
+    // The bare record (no scale/angle) is dropped entirely on un-exclude.
+    const ov = patch.params.binding.selection.overrides;
+    expect(ov.records.some((r) => r.ref === 'crossing:0:0')).toBe(false);
+  });
+});
+
+// ── #136: override RECORD model — migration-on-write + record preservation ────
+// The canonical overrides shape is now `{records: [{ref, hidden?, scale?,
+// angle?}], tolerance?}`. The overlay READS both shapes via normalizeOverrides
+// and ALWAYS WRITES the new shape — constructing the overrides slot by
+// REPLACEMENT (not deepMergeBinding), so stale legacy include/exclude keys
+// cannot be merged back into the written object. The binding FORM itself never
+// migrates (legacy stays legacy, chain stays chain) — only the overrides shape.
+describe('AnchorGhostOverlay — override records (#136)', () => {
+  it('clicking a dot on a LEGACY-overrides binding writes the NEW shape (no include/exclude keys), one undo', () => {
+    const host = gridHost();
+    const m = motif('m1', host.id, {
+      selection: {
+        roles: ['crossing'],
+        rate: { n: 2 },
+        overrides: { include: [], exclude: ['crossing:0:0'], tolerance: 4 },
+      },
+    });
+    const onUpdateLayer = vi.fn();
+    const { container } = renderOverlay({ layers: [host, m], selectedLayerId: m.id, onUpdateLayer });
+    const candidate = container.querySelector('[data-state="candidate"]');
+    const id = candidate.getAttribute('data-anchor-id');
+    fireEvent.pointerDown(candidate);
+
+    // Exactly one write → one undo entry.
+    expect(onUpdateLayer).toHaveBeenCalledTimes(1);
+    const [layerId, patch] = onUpdateLayer.mock.calls[0];
+    expect(layerId).toBe('m1');
+    const ov = patch.params.binding.selection.overrides;
+
+    // NEW shape: records array present, legacy keys ABSENT (migration-on-write).
+    expect(Array.isArray(ov.records)).toBe(true);
+    expect('include' in ov).toBe(false);
+    expect('exclude' in ov).toBe(false);
+    // The pre-existing legacy exclude migrated to a hidden:true record; the
+    // clicked candidate appended as a hidden:false record; tolerance carried.
+    expect(ov.records).toContainEqual({ ref: 'crossing:0:0', hidden: true });
+    expect(ov.records).toContainEqual({ ref: id, hidden: false });
+    expect(ov.tolerance).toBe(4);
+    // Legacy binding form preserved — no chain migration on an override toggle.
+    expect('chain' in patch.params.binding).toBe(false);
+  });
+
+  it('un-hiding a record that carries scale KEEPS the record (scale intact, hidden field gone)', () => {
+    const host = gridHost();
+    // Chain-form binding whose overrides already use the record shape, with a
+    // hidden record that ALSO carries a per-glyph scale.
+    const chainBinding = {
+      chain: [
+        { type: 'route', roles: ['crossing'], pathScope: 'all' },
+        { type: 'everyN', n: 2, offset: 0, continuous: true },
+        { type: 'density', density: 1, seed: 1, rngMode: 'sequential' },
+      ],
+      placement: {},
+    };
+    // Find a placed id via a scratch render, then hide it WITH a scale.
+    const scratch = renderOverlay({
+      layers: [gridHost(), motif('mS', 'host1', chainBinding)],
+      selectedLayerId: 'mS',
+    });
+    const placedId = scratch.container
+      .querySelector('[data-state="placed"]')
+      .getAttribute('data-anchor-id');
+
+    const m = motif('m1', host.id, {
+      ...chainBinding,
+      overrides: { records: [{ ref: placedId, hidden: true, scale: 1.5 }] },
+    });
+    const onUpdateLayer = vi.fn();
+    const { container } = renderOverlay({ layers: [host, m], selectedLayerId: m.id, onUpdateLayer });
+    const excluded = container.querySelector('[data-state="excluded"]');
+    expect(excluded).not.toBeNull();
+    expect(excluded.getAttribute('data-anchor-id')).toBe(placedId);
+    fireEvent.pointerDown(excluded);
+
+    expect(onUpdateLayer).toHaveBeenCalledTimes(1);
+    const nb = onUpdateLayer.mock.calls[0][1].params.binding;
+    // The record SURVIVES the un-hide because it still carries scale; only the
+    // hidden field is removed ("rules decide" visibility again).
+    const rec = nb.overrides.records.find((r) => r.ref === placedId);
+    expect(rec).toEqual({ ref: placedId, scale: 1.5 });
+    expect('hidden' in rec).toBe(false);
+  });
+
+  it('chain-form writes the new shape to TOP-LEVEL binding.overrides (no selection key)', () => {
+    const host = gridHost();
+    const m = motif('m1', host.id, {
+      chain: [
+        { type: 'route', roles: ['crossing'], pathScope: 'all' },
+        { type: 'everyN', n: 2, offset: 0, continuous: true },
+        { type: 'density', density: 1, seed: 1, rngMode: 'sequential' },
+      ],
+      placement: {},
+    });
+    const onUpdateLayer = vi.fn();
+    const { container } = renderOverlay({ layers: [host, m], selectedLayerId: m.id, onUpdateLayer });
+    const placed = container.querySelector('[data-state="placed"]');
+    const id = placed.getAttribute('data-anchor-id');
+    fireEvent.pointerDown(placed);
+
+    const nb = onUpdateLayer.mock.calls[0][1].params.binding;
+    expect(nb.overrides.records).toContainEqual({ ref: id, hidden: true });
+    expect('include' in nb.overrides).toBe(false);
+    expect('exclude' in nb.overrides).toBe(false);
+    expect('selection' in nb).toBe(false);
+  });
+
+  it('legacy binding writes the new shape to binding.selection.overrides (stays legacy)', () => {
+    const host = gridHost();
+    const m = motif('m1', host.id, crossingBinding);
+    const onUpdateLayer = vi.fn();
+    const { container } = renderOverlay({ layers: [host, m], selectedLayerId: m.id, onUpdateLayer });
+    const placed = container.querySelector('[data-state="placed"]');
+    const id = placed.getAttribute('data-anchor-id');
+    fireEvent.pointerDown(placed);
+
+    const nb = onUpdateLayer.mock.calls[0][1].params.binding;
+    expect(nb.selection.overrides.records).toContainEqual({ ref: id, hidden: true });
+    expect('include' in nb.selection.overrides).toBe(false);
+    expect('exclude' in nb.selection.overrides).toBe(false);
+    expect('chain' in nb).toBe(false);
+    // The rest of the selection rules survive the replacement write untouched.
+    expect(nb.selection.roles).toEqual(['crossing']);
   });
 });
 
@@ -311,8 +441,9 @@ describe('AnchorGhostOverlay — chain-form semantic overrides (D)', () => {
     const nb = patch.params.binding;
 
     // Written to TOP-LEVEL binding.overrides; NO selection resurrection (C1).
-    expect(nb.overrides.exclude).toContain(id);
-    expect(nb.overrides.include).not.toContain(id);
+    // #136: the write is the RECORD shape — a hidden:true record, no legacy keys.
+    expect(nb.overrides.records).toContainEqual({ ref: id, hidden: true });
+    expect(nb.overrides.records.filter((r) => r.ref === id)).toHaveLength(1);
     expect('selection' in nb).toBe(false);
     // chain preserved verbatim (not rewritten by an override toggle).
     expect(nb.chain).toBe(chainCrossingBinding.chain);
@@ -324,7 +455,7 @@ describe('AnchorGhostOverlay — chain-form semantic overrides (D)', () => {
     expect(survivors.map((a) => a.id)).not.toContain(id);
   });
 
-  it('including a candidate writes binding.overrides.include + render seam adds it (target #1)', () => {
+  it('including a candidate writes a hidden:false record + render seam adds it (target #1)', () => {
     const host = gridHost();
     const m = motif('m1', host.id, chainCrossingBinding);
     const onUpdateLayer = vi.fn();
@@ -335,7 +466,7 @@ describe('AnchorGhostOverlay — chain-form semantic overrides (D)', () => {
 
     expect(onUpdateLayer).toHaveBeenCalledTimes(1);
     const nb = onUpdateLayer.mock.calls[0][1].params.binding;
-    expect(nb.overrides.include).toContain(id);
+    expect(nb.overrides.records).toContainEqual({ ref: id, hidden: false });
     expect('selection' in nb).toBe(false);
 
     const anchors = gridAnchors(host);
@@ -364,7 +495,8 @@ describe('AnchorGhostOverlay — chain-form semantic overrides (D)', () => {
     expect(excluded.getAttribute('data-anchor-id')).toBe(placedId);
     fireEvent.pointerDown(excluded);
     const nb = onUpdateLayer.mock.calls[0][1].params.binding;
-    expect(nb.overrides.exclude).not.toContain(placedId);
+    // #136: un-exclude drops the bare record entirely (no scale/angle to keep).
+    expect(nb.overrides.records.some((r) => r.ref === placedId)).toBe(false);
     expect('selection' in nb).toBe(false);
   });
 
@@ -378,7 +510,7 @@ describe('AnchorGhostOverlay — chain-form semantic overrides (D)', () => {
     fireEvent.pointerDown(placed);
     expect(onUpdateLayer).toHaveBeenCalledTimes(1);
     const nb = onUpdateLayer.mock.calls[0][1].params.binding;
-    expect(nb.selection.overrides.exclude).toContain(id);
+    expect(nb.selection.overrides.records).toContainEqual({ ref: id, hidden: true });
     expect('chain' in nb).toBe(false); // legacy stays legacy — no migration
   });
 });

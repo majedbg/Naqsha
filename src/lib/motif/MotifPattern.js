@@ -140,12 +140,13 @@ export default class MotifPattern extends Pattern {
     const boundary = { type: 'rect', width: canvasW, height: canvasH };
 
     // Run the selection CHAIN (both binding shapes) → survivors + the terminal
-    // Sequencer block. `overrides` seam: legacy bindings store overrides in
-    // `binding.selection.overrides` and resolveSelection's compile path threads
-    // them for us; where CHAIN-mode overrides live on the binding is a C1
-    // decision, so B1 passes a TOP-LEVEL `binding.overrides` through if present
-    // (undefined otherwise) and does NOT invent a schema. For legacy bindings
-    // the compile path overwrites this with the compiled overrides anyway.
+    // Sequencer block. `overrides` seam — SETTLED (#136): chain-form bindings
+    // store overrides TOP-LEVEL at `binding.overrides`; legacy bindings at
+    // `binding.selection.overrides` (threaded by resolveSelection's compile
+    // path, which overwrites the top-level pass-through for legacy anyway).
+    // Overrides are never a chain Block (ADR-0004) — they ride the fixed
+    // post-chain step, so we pass `binding.overrides` through if present
+    // (undefined otherwise).
     // In edge mode, un-bake any stale non-edge route roles (e.g. a single-axis
     // grid whose binding still says ['crossing']) so the role filter passes the
     // edge anchors. No-op for semantic mode and for already-edge bindings.

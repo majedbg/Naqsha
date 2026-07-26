@@ -164,8 +164,9 @@ export function compileSelectionToChain(legacySelection) {
  * Acceptance seam for BOTH binding shapes — the single entry callers (A4/B3/C1)
  * use so they never branch on shape themselves:
  *   • `binding.chain` present ⇒ run it directly; `opts.overrides` is passed
- *     straight through (WHERE chain-mode overrides are stored on the binding is a
- *     B3 decision — this helper does NOT invent it).
+ *     straight through. WHERE chain-mode overrides live is SETTLED (#136):
+ *     TOP-LEVEL `binding.overrides` — callers thread that slot in as
+ *     `opts.overrides`. Overrides are never a chain Block (ADR-0004).
  *   • else ⇒ compile `binding.selection` and inject the compiled overrides
  *     (which came from `selection.overrides`, where legacy stores them).
  *

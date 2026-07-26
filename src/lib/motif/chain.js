@@ -218,7 +218,7 @@ function applyField(stage, block, opts) {
  *
  * @param {Anchor[]} anchors  input order is contractual and preserved in survivors.
  * @param {Array<RouteBlock|EveryNBlock|SkipBlock|DensityBlock|FieldBlock|SequenceBlock>} chain
- * @param {{canvasW?:number, canvasH?:number, overrides?:{include?:OverrideRef[], exclude?:OverrideRef[], tolerance?:number}, onStage?:(entry:{blockIndex:number, block:object, type:string, inCount:number, outCount:number, bypassed:boolean})=>void}} [opts]
+ * @param {{canvasW?:number, canvasH?:number, overrides?:{include?:OverrideRef[], exclude?:OverrideRef[], tolerance?:number}|{records?:Array<{ref:OverrideRef, hidden?:boolean, scale?:number, angle?:number}>, tolerance?:number}, onStage?:(entry:{blockIndex:number, block:object, type:string, inCount:number, outCount:number, bypassed:boolean})=>void}} [opts]
  * @returns {{survivors: Anchor[], orphans: OverrideRef[], sequence: SequenceBlock|null}}
  */
 export function runSelectionChain(anchors, chain, opts = {}) {

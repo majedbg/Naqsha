@@ -61,7 +61,8 @@ const DEFAULTS = {
  *   field?: null | {sampleNorm:(u:number,v:number)=>number},
  *   fieldThreshold?: number,
  *   fieldInvert?: boolean,
- *   overrides?: {include?: OverrideRef[], exclude?: OverrideRef[], tolerance?: number},
+ *   overrides?: {include?: OverrideRef[], exclude?: OverrideRef[], tolerance?: number}
+ *     | {records?: Array<{ref: OverrideRef, hidden?: boolean, scale?: number, angle?: number}>, tolerance?: number},
  * }} [rules]
  * @param {{canvasW?:number, canvasH?:number}} [opts]
  * @returns {{survivors: Anchor[], orphans: OverrideRef[]}}

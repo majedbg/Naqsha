@@ -1,19 +1,43 @@
-// Per-anchor include/exclude OVERRIDE resolution — the fixed final say that
-// sits AFTER anchor selection (both the legacy `selectAnchors` pipeline and
-// the new reorderable `runSelectionChain`). Overrides are deliberately NOT a
-// Block (ADR-0004): they are a fixed post-chain step so a user's canvas pin
-// can never be buried under a reordered filter. Both callers import this ONE
-// implementation so the resolution semantics (id → legacy `:0` fallback →
-// spatial rebind → orphan; exclude wins; unresolved include → orphan) live in
-// exactly one place.
+// Per-anchor OVERRIDE resolution — the fixed final say that sits AFTER anchor
+// selection (both the legacy `selectAnchors` pipeline and the reorderable
+// `runSelectionChain`). Overrides are deliberately NOT a Block (ADR-0004):
+// they are a fixed post-chain step so a user's canvas pin can never be buried
+// under a reordered filter. Both callers import this ONE implementation so the
+// resolution semantics (id → legacy `:0` fallback → spatial rebind → orphan;
+// hide wins; unresolved pin → orphan) live in exactly one place.
+//
+// CANONICAL SHAPE (#136) — one RECORD per ref:
+//   overrides = { records: [{ref, hidden?, scale?, angle?}], tolerance? }
+// The WHOLE record rides `resolveRef` and attaches / re-binds / orphans as one
+// unit. `hidden:false` is the legacy include (a force-show pin beyond the
+// order-filter), `hidden:true` the legacy exclude (force-hide); hidden ABSENT
+// means "rules decide" — such a record never touches survivorship (it exists
+// to carry per-glyph scale/angle, resolved via `resolveOverrideRecords`).
+// `scale` is the per-glyph multiplier (4th cascade level); `angle` an ABSOLUTE
+// screen-space bearing in degrees — both MODEL-only here, applied post-
+// placement by the consumer of `resolveOverrideRecords`.
+//
+// `records` is an ARRAY (not a keyed object) deliberately: deepMergeBinding
+// (motifLayer.js) deep-merges plain objects — a keyed map would resurrect
+// deleted records on merge — but REPLACES arrays wholesale, preserving the
+// existing write contract. Insertion order is the deterministic tie-break.
+//
+// LEGACY `{include, exclude}` is migrate-on-read (`normalizeOverrides`, called
+// internally by `applyOverrides` / `resolveOverrideRecords`) and migrate-on-
+// write (the canvas writer, AnchorGhostOverlay, always emits records). Legacy
+// inputs behave byte-identically through `applyOverrides` — pinned by
+// placementEngine.test.js and chain.test.js staying green unchanged.
 //
 // This module was extracted verbatim from placementEngine.selectAnchors so the
-// two call sites share it byte-for-byte; the extraction is behavior-preserving
-// and pinned by placementEngine.test.js staying green unchanged.
+// two call sites share it byte-for-byte; `resolveRef` and `DEFAULT_TOLERANCE`
+// remain byte-identical to that extraction.
 
 /**
  * @typedef {{id:string, role:string, x:number, y:number, tangent:number, normal:number, s:number, meta:object}} Anchor
  * @typedef {string | {id?:string, x?:number, y?:number, role?:string}} OverrideRef
+ * @typedef {{ref:OverrideRef, hidden?:boolean, scale?:number, angle?:number}} OverrideRecord
+ * @typedef {{records:OverrideRecord[], tolerance?:number}} Overrides           canonical (#136)
+ * @typedef {{include?:OverrideRef[], exclude?:OverrideRef[], tolerance?:number}} LegacyOverrides
  */
 
 export const DEFAULT_TOLERANCE = 8;
@@ -73,38 +97,167 @@ export function resolveRef(ref, anchors, byId, tolerance) {
 }
 
 /**
- * Apply include/exclude overrides to a survivor-id set, IN PLACE. Include adds
- * resolved anchors back (a rule-dropped anchor can be re-pinned); exclude runs
- * SECOND so it wins on conflict. Unresolved include refs are collected verbatim
- * as orphans and returned; exclude misses are silently ignored.
+ * Stable dedup key for an override ref. NOT an anchor id (ADR-0005 — override
+ * state never folds into anchor ids): two refs with the same key are the SAME
+ * user intent (one record per intent), resolved to an anchor only at read time.
+ *
+ *   string ref            → itself
+ *   {id, ...}             → the id (coords are a rebind hint, not identity)
+ *   {x, y, role?}         → `@${x},${y}` (+ `,${role}` when role present)
+ *   null / keyless        → null (caller keeps such refs verbatim, no dedup)
+ *
+ * @param {OverrideRef} ref
+ * @returns {string|null}
+ */
+export function refKey(ref) {
+  if (typeof ref === 'string') return ref;
+  if (ref == null || typeof ref !== 'object') return null;
+  if (ref.id != null) return ref.id;
+  if (ref.x == null || ref.y == null) return null;
+  return ref.role != null ? `@${ref.x},${ref.y},${ref.role}` : `@${ref.x},${ref.y}`;
+}
+
+/**
+ * Normalize EITHER overrides shape to the canonical `{records, tolerance?}`.
+ * The single migrate-on-read seam: everything downstream (applyOverrides,
+ * resolveOverrideRecords, the canvas overlay) speaks records only.
+ *
+ *   • null/undefined → undefined (caller treats as "no overrides").
+ *   • `records` Array present → AUTHORITATIVE: stray include/exclude keys are
+ *     ignored (stale legacy leftovers must not resurrect); records dedup by
+ *     refKey, FIRST occurrence wins; keyless refs are kept verbatim.
+ *   • else legacy: include refs → `{ref, hidden:false}` in order, then exclude
+ *     refs → `{ref, hidden:true}`; a ref (by refKey) in BOTH arrays collapses
+ *     to ONE `{ref, hidden:true}` record — exclude wins, preserving the legacy
+ *     conflict semantics.
+ *
+ * Never mutates its input; refs ride into records verbatim (same reference).
+ *
+ * @param {undefined|null|Overrides|LegacyOverrides} overrides
+ * @returns {Overrides|undefined}
+ */
+export function normalizeOverrides(overrides) {
+  if (overrides == null) return undefined;
+  const tolerance = overrides.tolerance;
+
+  // New shape passthrough — dedup by refKey, first occurrence wins.
+  if (Array.isArray(overrides.records)) {
+    const seen = new Set();
+    const records = [];
+    for (const rec of overrides.records) {
+      if (rec == null || typeof rec !== 'object') continue;
+      const key = refKey(rec.ref);
+      if (key != null) {
+        if (seen.has(key)) continue;
+        seen.add(key);
+      }
+      records.push(rec);
+    }
+    return tolerance != null ? { records, tolerance } : { records };
+  }
+
+  // Legacy migration. Include pass first (records in include order), then the
+  // exclude pass FLIPS a matching record to hidden:true in place (collapse —
+  // exclude wins) or appends a fresh hide record. Keyless refs can never
+  // collide, so they always append.
+  const include = Array.isArray(overrides.include) ? overrides.include : [];
+  const exclude = Array.isArray(overrides.exclude) ? overrides.exclude : [];
+  const records = [];
+  const byKey = new Map();
+
+  for (const ref of include) {
+    const key = refKey(ref);
+    if (key != null && byKey.has(key)) continue; // first occurrence wins
+    const rec = { ref, hidden: false };
+    if (key != null) byKey.set(key, rec);
+    records.push(rec);
+  }
+  for (const ref of exclude) {
+    const key = refKey(ref);
+    const existing = key != null ? byKey.get(key) : undefined;
+    if (existing) {
+      existing.hidden = true; // collapse: exclude wins (our synthesized record)
+      continue;
+    }
+    const rec = { ref, hidden: true };
+    if (key != null) byKey.set(key, rec);
+    records.push(rec);
+  }
+  return tolerance != null ? { records, tolerance } : { records };
+}
+
+/**
+ * Apply visibility overrides to a survivor-id set, IN PLACE. Accepts BOTH
+ * shapes (normalized internally). Pass 1 — pins (`hidden === false`): resolved
+ * anchors are added back (a rule-dropped anchor can be re-pinned), unresolved
+ * pin refs are collected VERBATIM as orphans. Pass 2 — hides
+ * (`hidden === true`) runs second so it WINS on conflict; misses are silently
+ * ignored. Records with `hidden` ABSENT (scale/angle-only) never touch
+ * survivorship and are never orphans. Legacy-shape inputs behave
+ * byte-identically to the pre-#136 include/exclude implementation.
  *
  * @param {Set<string>} survivorIds  mutated in place
  * @param {Anchor[]} list  full input list
  * @param {Map<string, Anchor>} byId
- * @param {undefined|{include?:OverrideRef[], exclude?:OverrideRef[], tolerance?:number}} overrides
+ * @param {undefined|Overrides|LegacyOverrides} overrides
  * @param {number} [defaultTolerance=DEFAULT_TOLERANCE]
- * @returns {OverrideRef[]} orphans (unresolved include refs, verbatim)
+ * @returns {OverrideRef[]} orphans (unresolved PIN refs, verbatim)
  */
 export function applyOverrides(survivorIds, list, byId, overrides, defaultTolerance = DEFAULT_TOLERANCE) {
   const orphans = [];
-  if (!overrides) return orphans;
+  const norm = normalizeOverrides(overrides);
+  if (!norm) return orphans;
 
-  const tolerance = overrides.tolerance != null ? overrides.tolerance : defaultTolerance;
-  const include = Array.isArray(overrides.include) ? overrides.include : [];
-  const exclude = Array.isArray(overrides.exclude) ? overrides.exclude : [];
+  const tolerance = norm.tolerance != null ? norm.tolerance : defaultTolerance;
 
-  // Include first: add back resolved anchors; collect verbatim orphans.
-  for (const ref of include) {
-    const anchor = resolveRef(ref, list, byId, tolerance);
+  // Pass 1 — pins: add back resolved anchors; collect verbatim orphans.
+  for (const rec of norm.records) {
+    if (rec.hidden !== false) continue;
+    const anchor = resolveRef(rec.ref, list, byId, tolerance);
     if (anchor) survivorIds.add(anchor.id);
-    else orphans.push(ref);
+    else orphans.push(rec.ref);
   }
 
-  // Exclude second so it WINS on conflict. Misses are silently ignored.
-  for (const ref of exclude) {
-    const anchor = resolveRef(ref, list, byId, tolerance);
+  // Pass 2 — hides run second so they WIN on conflict. Misses silently ignored.
+  for (const rec of norm.records) {
+    if (rec.hidden !== true) continue;
+    const anchor = resolveRef(rec.ref, list, byId, tolerance);
     if (anchor) survivorIds.delete(anchor.id);
   }
 
   return orphans;
+}
+
+/**
+ * Resolve EVERY override record to its anchor — the resolution seam the
+ * post-placement consumer (per-glyph scale/angle apply, next ticket) reads.
+ * Accepts BOTH shapes (normalized internally, so legacy input yields
+ * synthesized records). The FIRST record (insertion order) to resolve to a
+ * given anchor CLAIMS it; later claimants are ignored — the same deterministic
+ * tie-break the records array's order encodes. Orphans follow the exact
+ * applyOverrides rule: refs (verbatim) of unresolved records with
+ * `hidden === false` only.
+ *
+ * @param {Anchor[]} list  full input list
+ * @param {Map<string, Anchor>} byId
+ * @param {undefined|Overrides|LegacyOverrides} overrides
+ * @param {number} [defaultTolerance=DEFAULT_TOLERANCE]
+ * @returns {{byAnchorId: Map<string, OverrideRecord>, orphans: OverrideRef[]}}
+ */
+export function resolveOverrideRecords(list, byId, overrides, defaultTolerance = DEFAULT_TOLERANCE) {
+  const byAnchorId = new Map();
+  const orphans = [];
+  const norm = normalizeOverrides(overrides);
+  if (!norm) return { byAnchorId, orphans };
+
+  const tolerance = norm.tolerance != null ? norm.tolerance : defaultTolerance;
+  for (const rec of norm.records) {
+    const anchor = resolveRef(rec.ref, list, byId, tolerance);
+    if (anchor) {
+      if (!byAnchorId.has(anchor.id)) byAnchorId.set(anchor.id, rec); // first claim wins
+    } else if (rec.hidden === false) {
+      orphans.push(rec.ref); // unresolved PIN — same orphan rule as applyOverrides
+    }
+  }
+  return { byAnchorId, orphans };
 }

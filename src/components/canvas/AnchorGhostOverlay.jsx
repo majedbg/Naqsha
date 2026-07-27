@@ -40,7 +40,13 @@
 
 import { useMemo } from 'react';
 import { isMotifLayer, motifHostId, readChain } from '../../lib/motif/motifLayer';
-import { normalizeOverrides, refKey } from '../../lib/motif/overrides';
+import {
+  editBindingOverrides,
+  isChainFormBinding,
+  normalizeOverrides,
+  readBindingOverrides,
+  toggleGlyphHidden,
+} from '../../lib/motif/overrides';
 import { getSemanticAnchors } from '../../lib/motif/semanticAnchors';
 import { sampleEdgeAnchors } from '../../lib/motif/anchors';
 import { resolveSelection } from '../../lib/motif/compileSelectionToChain';
@@ -69,22 +75,13 @@ const stringRefIds = (records, hiddenVal) =>
     records.filter((r) => r.hidden === hiddenVal && typeof r.ref === 'string').map((r) => r.ref)
   );
 
-// SHAPE-AWARE READ helpers (D — chain-form vs legacy). A chain-form binding
-// (`binding.chain` present) is the C1 shape: `selection` is DROPPED, overrides
-// live TOP-LEVEL at `binding.overrides` (the exact slot the render seam reads,
-// MotifPattern.js:111). A legacy binding keeps `binding.selection.overrides`.
-// Reading the WRONG slot is precisely the D bug (empty overrides on a chain-form
-// motif that actually has some), so both call sites route through these.
-const isChainForm = (binding) => Array.isArray(binding && binding.chain);
-
-// The effective override object for THIS binding shape. Never null — returns
-// `{}` so callers can `?.` safely. May be EITHER shape on disk (legacy
-// include/exclude or #136 records) — callers normalize.
-const readOverrides = (binding) => {
-  if (!binding) return {};
-  if (isChainForm(binding)) return binding.overrides || {};
-  return binding.selection?.overrides || {};
-};
+// SHAPE-AWARE READ helpers (D — chain-form vs legacy) now live in overrides.js
+// as `isChainFormBinding` / `readBindingOverrides`, shared with the per-glyph
+// popover (#139) so the dot and the popover can never disagree about which slot
+// a motif's overrides live in. Aliased here to keep the call sites reading the
+// way they always have.
+const isChainForm = isChainFormBinding;
+const readOverrides = readBindingOverrides;
 
 // The anchor ROLES this motif targets, for the display-focus filter (null/empty
 // ⇒ "all roles", show everything). Chain-form: intersect the non-null role sets
@@ -320,46 +317,17 @@ export default function AnchorGhostOverlay({
   //   included  → remove `hidden` (clear the force-show pin; ditto)
   //   placed    → hidden:true  (merge into that ref's record, else append)
   //   candidate → hidden:false (merge/append likewise)
+  // The state machine and the shape-aware write both live in overrides.js now
+  // (`toggleGlyphHidden` / `editBindingOverrides`), shared verbatim with the
+  // per-glyph popover so a dot click and the popover's eye-toggle can never
+  // disagree — including on the case a naive `hidden: !hidden` gets backwards,
+  // where a glyph the rules already hide is force-SHOWN.
   const toggleOverride = (anchor) => {
     const id = anchor.id;
-    // The record already bound to this anchor's id, if any — matched by refKey
-    // so a `{ref:{id}}` record merges with a plain string-ref click.
-    const idx = records.findIndex((r) => refKey(r.ref) === id);
-    let newRecords;
-
-    if (excludeIds.has(id) || includeIds.has(id)) {
-      // Un-hide / un-pin: strip ONLY the hidden field. A record that still
-      // carries scale or angle stays (visibility back to the rules, per-glyph
-      // knobs intact); an empty shell is removed outright.
-      const { hidden: _hidden, ...rest } = records[idx];
-      const keep = rest.scale != null || rest.angle != null;
-      newRecords = records.flatMap((r, i) => (i === idx ? (keep ? [rest] : []) : [r]));
-    } else {
-      const hidden = placedIds.has(id); // placed → force-hide, candidate → force-show
-      newRecords =
-        idx >= 0
-          ? records.map((r, i) => (i === idx ? { ...r, hidden } : r))
-          : [...records, { ref: id, hidden }];
-    }
-
-    // SHAPE-AWARE WRITE, NO forced binding migration (the D spine) — but the
-    // OVERRIDES shape always migrates to records (#136, migrate-on-write). The
-    // overrides slot is constructed by REPLACEMENT, not deepMergeBinding: a deep
-    // merge would fold stale legacy include/exclude keys back into the new
-    // object. One onUpdateLayer ⇒ one undo entry, both shapes.
-    //   • chain-form → write TOP-LEVEL binding.overrides (the render seam's slot).
-    //     Does NOT touch `chain`, does NOT add a `selection` key (C1 intact).
-    //   • legacy → write binding.selection.overrides. An anchor toggle is NOT a
-    //     block edit, so a legacy binding STAYS legacy — forcing a chain rewrite
-    //     here would be a surprising, wrong migration.
-    const newOv = {
-      records: newRecords,
-      ...(norm.tolerance != null ? { tolerance: norm.tolerance } : {}),
-    };
-    const newBinding = isChainForm(binding)
-      ? { ...binding, overrides: newOv }
-      : { ...binding, selection: { ...(binding.selection || {}), overrides: newOv } };
-
+    const newBinding = editBindingOverrides(binding, (recs) =>
+      toggleGlyphHidden(recs, id, placedIds.has(id)),
+    );
+    if (newBinding === binding) return; // nothing changed — no phantom undo entry
     onUpdateLayer(motif.id, {
       params: {
         ...motif.params,

@@ -45,6 +45,20 @@ const valueToPoint = (deg) => {
   return { x: CX + R * Math.sin(t), y: CY - R * Math.cos(t) };
 };
 
+// A `wrap` dial ignores min/max entirely (resolveDrag returns raw 0–360). A
+// caller passing other bounds is silently getting something else, so DEV says so
+// once per label.
+const warnedWrap = new Set();
+function warnWrapBounds(label, min, max) {
+  if (!import.meta.env.DEV || warnedWrap.has(label)) return;
+  warnedWrap.add(label);
+  console.warn(
+    `<AngleDial label="${label}"> is wrapping, so its value always spans 0–360 ` +
+      `and the given min=${min} / max=${max} are ignored. ARIA reports 0–360, ` +
+      "the range the control actually honours."
+  );
+}
+
 export default function AngleDial({
   label,
   value,
@@ -52,6 +66,11 @@ export default function AngleDial({
   max,
   step = 1,
   onChange,
+  /** Fires ONCE per gesture — pointer-up, or a single key press. Create the
+   *  undo entry off this and you get exactly one entry per gesture; `onChange`
+   *  alone fires on every pointer-move and would flood the stack. Optional, so
+   *  existing callers that only want live values are unaffected. */
+  onCommit,
   tooltip,
   wrap = false,
   detent,
@@ -61,6 +80,17 @@ export default function AngleDial({
   const groupId = `dial-${autoId}`;
   const dialRef = useRef(null);
   const [dragging, setDragging] = useState(false);
+  // One commit per gesture: the value at pointer-down and the last value
+  // EMITTED (not the prop, which a parent may lag behind).
+  const gesture = useRef(null);
+
+  // Under `wrap` the dial is a full circle and `resolveDrag` returns a raw
+  // 0–360 with no clamp — min/max are simply not consulted. Reporting the
+  // caller's bounds in ARIA would then promise a range the control does not
+  // honour, so the announced range is the real one and DEV says so once.
+  const effMin = wrap ? 0 : min;
+  const effMax = wrap ? 360 : max;
+  if (wrap && (min !== 0 || max !== 360)) warnWrapBounds(label, min, max);
 
   const decimals = step < 1 ? String(step).split(".")[1]?.length || 1 : 0;
   const display = Number(value).toFixed(decimals);
@@ -105,21 +135,36 @@ export default function AngleDial({
     dialRef.current?.focus();
     setDragging(true);
     e.currentTarget.setPointerCapture?.(e.pointerId);
-    onChange(resolveDrag(pointerToDeg(e.clientX, e.clientY), e.altKey));
+    const next = resolveDrag(pointerToDeg(e.clientX, e.clientY), e.altKey);
+    gesture.current = { start: value, last: next };
+    onChange(next);
   };
 
   const handlePointerMove = (e) => {
     if (!dragging) return;
-    onChange(resolveDrag(pointerToDeg(e.clientX, e.clientY), e.altKey));
+    const next = resolveDrag(pointerToDeg(e.clientX, e.clientY), e.altKey);
+    if (gesture.current) gesture.current.last = next;
+    onChange(next);
   };
 
   const handlePointerUp = (e) => {
     if (!dragging) return;
     setDragging(false);
     e.currentTarget.releasePointerCapture?.(e.pointerId);
+    const g = gesture.current;
+    gesture.current = null;
+    // One entry per gesture, and none at all for a press that landed back on
+    // the value it started from.
+    if (g && g.last !== g.start) onCommit?.(g.last);
   };
 
   // Keyboard mirrors Slider (no Alt-fine here — Alt is the detent bypass).
+  // A key press is its own complete gesture, so it commits immediately.
+  const commitKey = (next) => {
+    onChange(next);
+    if (next !== value) onCommit?.(next);
+  };
+
   const handleKeyDown = (e) => {
     const isLeft = e.key === "ArrowLeft" || e.key === "ArrowDown";
     const isRight = e.key === "ArrowRight" || e.key === "ArrowUp";
@@ -127,20 +172,20 @@ export default function AngleDial({
     e.preventDefault();
 
     if (e.key === "Home") {
-      onChange(wrap ? 0 : snapToStep(min));
+      commitKey(wrap ? 0 : snapToStep(min));
       return;
     }
     if (e.key === "End") {
-      onChange(snapToStep(max));
+      commitKey(snapToStep(max));
       return;
     }
 
     const delta = step * (e.shiftKey ? 10 : 1) * (isLeft ? -1 : 1);
     if (wrap) {
       const next = (((value + delta) % 360) + 360) % 360;
-      onChange(parseFloat(next.toFixed(decimals)));
+      commitKey(parseFloat(next.toFixed(decimals)));
     } else {
-      onChange(snapToStep(value + delta));
+      commitKey(snapToStep(value + delta));
     }
   };
 
@@ -201,8 +246,8 @@ export default function AngleDial({
           role="slider"
           aria-labelledby={groupId}
           aria-label={label}
-          aria-valuemin={min}
-          aria-valuemax={max}
+          aria-valuemin={effMin}
+          aria-valuemax={effMax}
           aria-valuenow={value}
           aria-valuetext={valuetext}
           onPointerDown={handlePointerDown}

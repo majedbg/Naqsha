@@ -322,3 +322,170 @@ export function resolveOverrideRecords(list, byId, overrides, defaultTolerance =
   }
   return { byAnchorId, orphans };
 }
+
+/* ===========================================================================
+ * WRITE SIDE (#139) — the one path the UI edits overrides through.
+ *
+ * The canvas dot and the per-glyph popover must agree perfectly: they edit the
+ * same records, in the same order, honouring the same chain-vs-legacy binding
+ * shape. Both therefore route through the helpers below rather than each
+ * open-coding the edit. Everything here is PURE — no React, no layer state.
+ * ======================================================================== */
+
+/**
+ * A chain-form binding (`binding.chain` present) is the C1 shape: `selection`
+ * is DROPPED and overrides live TOP-LEVEL at `binding.overrides` — the exact
+ * slot the render seam reads. A legacy binding keeps them at
+ * `binding.selection.overrides`. Reading the wrong slot shows an overridden
+ * motif as having no overrides at all, which is a bug this project has already
+ * shipped once.
+ *
+ * @param {object} binding
+ * @returns {boolean}
+ */
+export function isChainFormBinding(binding) {
+  return Array.isArray(binding && binding.chain);
+}
+
+/**
+ * The effective override object for THIS binding's shape. Never null — returns
+ * `{}` so callers can `?.` safely. May be EITHER shape on disk (legacy
+ * include/exclude, or #136 records); pass it through `normalizeOverrides`.
+ *
+ * @param {object} binding
+ * @returns {Overrides|LegacyOverrides|{}}
+ */
+export function readBindingOverrides(binding) {
+  if (!binding) return {};
+  if (isChainFormBinding(binding)) return binding.overrides || {};
+  return binding.selection?.overrides || {};
+}
+
+/**
+ * The record currently bound to `id`, matched by `refKey` so a `{ref:{id}}`
+ * record and a plain string-ref click are the same record.
+ *
+ * @param {OverrideRecord[]} records
+ * @param {string} id
+ * @returns {OverrideRecord|undefined}
+ */
+export function findGlyphRecord(records, id) {
+  return records.find((r) => refKey(r.ref) === id);
+}
+
+// A record with nothing but its ref carries no user intent and is dropped, so
+// the list never accumulates empty shells.
+const isBareRecord = (rec) => rec.hidden == null && rec.scale == null && rec.angle == null;
+
+/**
+ * Merge a per-glyph patch into `id`'s record, appending one if absent.
+ *
+ * A key set to `undefined` or `null` in `patch` is DELETED from the record
+ * rather than stored — that is how the eye-toggle clears `hidden` while leaving
+ * a scale/angle record standing, and how a control returns a value to "let the
+ * rules decide". A record left carrying nothing is removed outright.
+ *
+ * Never mutates. Returns a NEW array (the same one when nothing changed, so a
+ * caller can skip a no-op write).
+ *
+ * @param {OverrideRecord[]} records
+ * @param {string} id
+ * @param {{hidden?: boolean|null, scale?: number|null, angle?: number|null}} patch
+ * @returns {OverrideRecord[]}
+ */
+export function patchGlyphRecord(records, id, patch) {
+  const idx = records.findIndex((r) => refKey(r.ref) === id);
+  const base = idx >= 0 ? records[idx] : { ref: id };
+
+  const next = { ...base };
+  for (const [k, v] of Object.entries(patch)) {
+    if (v == null) delete next[k];
+    else next[k] = v;
+  }
+
+  if (idx < 0) return isBareRecord(next) ? records : [...records, next];
+  if (isBareRecord(next)) return records.filter((_, i) => i !== idx);
+  return records.map((r, i) => (i === idx ? next : r));
+}
+
+/**
+ * Drop `id`'s record entirely — the popover's Reset. Visibility, scale and
+ * angle all fall back to the cascade and the placement defaults.
+ *
+ * @param {OverrideRecord[]} records
+ * @param {string} id
+ * @returns {OverrideRecord[]} the same array when there was nothing to clear
+ */
+export function clearGlyphRecord(records, id) {
+  const idx = records.findIndex((r) => refKey(r.ref) === id);
+  return idx < 0 ? records : records.filter((_, i) => i !== idx);
+}
+
+/**
+ * The visibility state machine behind BOTH the canvas dot and the popover's
+ * eye-toggle. Record-PRESERVING: un-hiding removes ONLY the `hidden` field, so
+ * a record still carrying scale/angle survives (visibility goes back to the
+ * rules, the per-glyph knobs stay); a record left bare is dropped.
+ *
+ *   already forced either way (hidden true OR false) → clear `hidden`
+ *   otherwise placed                                 → hidden: true
+ *   otherwise a candidate                            → hidden: false
+ *
+ * Note the middle case: a glyph the rules ALREADY hide is force-SHOWN, not
+ * force-hidden. A naive `hidden: !hidden` gets that backwards, which is why the
+ * popover must call this rather than invert a boolean.
+ *
+ * @param {OverrideRecord[]} records
+ * @param {string} id
+ * @param {boolean} placed  whether the rules currently place a glyph here
+ * @returns {OverrideRecord[]}
+ */
+export function toggleGlyphHidden(records, id, placed) {
+  const rec = findGlyphRecord(records, id);
+  if (rec && rec.hidden != null) return patchGlyphRecord(records, id, { hidden: null });
+  return patchGlyphRecord(records, id, { hidden: placed });
+}
+
+/**
+ * Write a record list back into a binding, SHAPE-AWARE and with NO forced
+ * binding migration.
+ *
+ * The overrides slot is built by REPLACEMENT, never a deep merge: merging would
+ * fold stale legacy `include`/`exclude` keys back into the new object. The
+ * OVERRIDES shape always migrates to records (#136, migrate-on-write), but the
+ * BINDING shape does not — a per-glyph edit is not a block edit, so forcing a
+ * legacy binding into chain form here would be a surprising, wrong migration.
+ *
+ * @param {object} binding
+ * @param {OverrideRecord[]} records
+ * @param {number} [tolerance]  carried through when the existing slot had one
+ * @returns {object} a new binding
+ */
+export function writeBindingOverrides(binding, records, tolerance) {
+  const overrides = {
+    records,
+    ...(tolerance != null ? { tolerance } : {}),
+  };
+  return isChainFormBinding(binding)
+    ? { ...binding, overrides }
+    : { ...binding, selection: { ...(binding?.selection || {}), overrides } };
+}
+
+/**
+ * The whole write in one call: read the binding's overrides in whichever shape
+ * they are on disk, normalize to records, run `edit` over them, and write the
+ * result back into the right slot.
+ *
+ * Returns the ORIGINAL binding reference when `edit` made no change, so callers
+ * can skip the state update and avoid a phantom undo entry.
+ *
+ * @param {object} binding
+ * @param {(records: OverrideRecord[]) => OverrideRecord[]} edit
+ * @returns {object} the new binding, or `binding` itself if nothing changed
+ */
+export function editBindingOverrides(binding, edit) {
+  const norm = normalizeOverrides(readBindingOverrides(binding)) || { records: [] };
+  const next = edit(norm.records);
+  if (next === norm.records) return binding;
+  return writeBindingOverrides(binding, next, norm.tolerance);
+}

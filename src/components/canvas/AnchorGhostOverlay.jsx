@@ -174,8 +174,11 @@ export default function AnchorGhostOverlay({
   // when the fresh instances arrive. This is safe because the extractor is
   // deterministic (same seed+params ⇒ same drawnEdges/sites ⇒ same anchor ids +
   // coords), so ghost/glyph agreement is exact once settled. Absent geometry
-  // (first frame before p5 draws, or a hidden host) ⇒ null ⇒ overlay renders
-  // nothing (graceful).
+  // (first frame before p5 draws) ⇒ null ⇒ overlay renders nothing (graceful).
+  // A HIDDEN host is NOT the absent case (#140): useCanvas still generates
+  // hidden layers through the no-draw adapter, which stashes motifHostGeometry
+  // like any drawn frame — so dots and the glyph popover survive "hide the
+  // scaffold, keep the ornament". Locked by AnchorGhostOverlay.hiddenHost.test.
   const anchors = useMemo(() => {
     if (!host) return null;
     // A single-axis grid is a params-aware EDGE host (hostKinds) — route it to the
@@ -200,7 +203,9 @@ export default function AnchorGhostOverlay({
     // capture the render uses (hostPaths, surfaced on the drawn instance by
     // useCanvas), resampled with the motif's OWN edgeOpts so the ghost dots land
     // where the glyphs would. Each edge anchor carries meta.pathIndex (the pick
-    // key). Absent capture (host not yet probed / hidden) → null → no ghost.
+    // key). Absent capture (host not yet probed) → null → no ghost; a HIDDEN
+    // host still has capture — the useCanvas prepass probes visibility-blind
+    // (#140).
     if (edgeMode) {
       const hostPaths = patternInstances[host.id]?.motifHostGeometry?.hostPaths;
       if (!hostPaths || !hostPaths.length) return null;

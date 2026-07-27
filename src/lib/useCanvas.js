@@ -534,7 +534,11 @@ export default function useCanvas(
       }
 
       if (!vis) {
-        // Still generate for SVG export, but don't draw to canvas
+        // Still generate for SVG export, but don't draw to canvas. SECOND
+        // consumer (#140): a hidden voronoi host stashes motifHostGeometry in
+        // this very call, which keeps AnchorGhostOverlay's per-glyph dots (and
+        // the glyph popover) alive while the host is hidden — removing this
+        // no-draw generate breaks per-glyph editing, not just export.
         instance.generateWithContext(
           noDrawCtx,
           layer.seed,

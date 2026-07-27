@@ -492,3 +492,77 @@ describe("DragNumber — motion", () => {
     expect(g.style.transition).not.toContain("transform");
   });
 });
+
+// ---------------------------------------------------------------------------
+// #139 additions: the readout slot, and the format/parse pairing warning.
+
+const PCT = (v) => `${Math.round(v * 100)}%`;
+const UNPCT = (s) => parseFloat(s) / 100;
+
+describe("DragNumber — slotWidth", () => {
+  it("reserves a fixed, LEFT-anchored readout slot so a digit-count change cannot move the thumb", () => {
+    // 7% and 100% differ in digit count; with no slot the row resizes and the
+    // whole control slides sideways as the value crosses 10% and 100%.
+    const { rerender } = render(
+      <DragNumber {...base} testId="dn" slotWidth="4ch" format={PCT} parse={UNPCT} />,
+    );
+    const readout = screen.getByTestId("dn-readout");
+    expect(readout.style.width).toBe("4ch");
+    expect(readout.className).toContain("text-left");
+    expect(readout.className).toContain("shrink-0");
+
+    rerender(
+      <DragNumber
+        {...base}
+        testId="dn"
+        value={7}
+        slotWidth="4ch"
+        format={PCT}
+        parse={UNPCT}
+      />,
+    );
+    // The slot is unchanged by the value — that is the whole point.
+    expect(screen.getByTestId("dn-readout").style.width).toBe("4ch");
+  });
+
+  it("omitting slotWidth leaves the readout intrinsically sized (no regression)", () => {
+    render(<DragNumber {...base} testId="dn" />);
+    const readout = screen.getByTestId("dn-readout");
+    expect(readout.style.width).toBe("");
+    expect(readout.className).not.toContain("text-left");
+  });
+});
+
+describe("DragNumber — format/parse are a paired contract", () => {
+  let warn;
+  beforeEach(() => {
+    warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+  afterEach(() => {
+    warn.mockRestore();
+  });
+
+  it("warns in DEV when a custom format arrives without a parse", () => {
+    render(<DragNumber {...base} label="Unpaired scale" format={PCT} />);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toContain("Unpaired scale");
+    expect(warn.mock.calls[0][0]).toContain("parse");
+  });
+
+  it("warns only ONCE per label, however many times it renders", () => {
+    const { rerender } = render(<DragNumber {...base} label="Noisy" format={PCT} />);
+    rerender(<DragNumber {...base} label="Noisy" value={51} format={PCT} />);
+    rerender(<DragNumber {...base} label="Noisy" value={52} format={PCT} />);
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it("stays silent when format and parse are supplied together", () => {
+    render(<DragNumber {...base} label="Paired scale" format={PCT} parse={UNPCT} />);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("stays silent for the default format", () => {
+    render(<DragNumber {...base} label="Plain default" />);
+    expect(warn).not.toHaveBeenCalled();
+  });
+});

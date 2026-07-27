@@ -26,12 +26,18 @@
 // The parent owns `value` (controlled); this component holds only the transient
 // drag and edit-draft state.
 //
+// The pointer mechanics themselves live in `useDragValue` — extracted verbatim
+// when `DragDial` (#139) needed the identical feel with a different mapping and
+// a different meaning for a click. This file supplies the two mappings, the
+// readout with its type-in editor, the keyboard, and the split-diamond thumb.
+//
 // Visual language is the slider system's (.claude/shape-brief-tokens-slider.md):
 // ink square at rest; on hover it rotates to a diamond whose halves part into
 // up/down pointers — the cell under the hand showing its two directions of
 // travel; saffron on drag with the trailing half dimmed so the leading half
 // reads direction; violet focus ring; tokens only, never a hex literal.
 import { useRef, useState } from "react";
+import useDragValue, { DEFAULT_GAINS } from "./useDragValue";
 
 // Defaults stay module-private (react-refresh wants this file to export the
 // component and nothing else); each is overridable through a prop.
@@ -39,10 +45,7 @@ import { useRef, useState } from "react";
 const DEFAULT_PX_PER_STEP = 8;
 /** px of pointer travel worth one doubling, under `geometric`. */
 const DEFAULT_PX_PER_DOUBLING = 100;
-/** Modifier gains. These scale TRAVEL (px sensitivity) — never the step grid. */
-const DEFAULT_GAINS = { coarse: 2, fine: 0.1 };
 
-const MOVE_THRESHOLD = 3; // px before a pointer-down counts as a drag, not a click
 const SPLIT_GAP = 2.2; // px each diamond half parts by when the hand is on it
 // The reduced-motion crossfade cannot use --motion-medium: the motion tokens
 // collapse to 0ms under `prefers-reduced-motion` (tokens.css), which would
@@ -65,6 +68,21 @@ function prefersReducedMotion() {
   } catch {
     return false;
   }
+}
+
+// `format` and `parse` are a PAIRED contract. A format that rescales the value —
+// the percent readout, say — silently breaks type-in without a matching parse:
+// the default strips the "%" and hands back 130, which snaps to max. That failure
+// looks like a clamp bug, so DEV shouts about it once per label.
+const warnedPairs = new Set();
+function warnUnpairedFormat(label) {
+  if (!import.meta.env.DEV || warnedPairs.has(label)) return;
+  warnedPairs.add(label);
+  console.warn(
+    `<DragNumber label="${label}"> was given a custom \`format\` but no \`parse\`. ` +
+      "They are a paired contract: without `parse`, a typed value is read on the " +
+      "raw scale and will snap to the wrong number. Pass the inverse of `format`.",
+  );
 }
 
 const DEFAULT_FORMAT = (v) => String(v);
@@ -97,18 +115,22 @@ export default function DragNumber({
   hitHeight = 24,
   title = "Drag ↕ · click to type · Shift coarse · Option fine",
   testId = "drag-number",
+  /** CSS width reserved for the readout, e.g. "4ch". Fixed-width and
+   *  LEFT-anchored, so a value whose digit count changes (7% → 100%, 1° → 359°)
+   *  cannot resize the row and slide the thumb sideways. Omit for intrinsic
+   *  width when the caller knows the digit count never changes. */
+  slotWidth,
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [hover, setHover] = useState(false);
-  const [dragging, setDragging] = useState(false);
-  const [lastDir, setLastDir] = useState(null); // 'up' | 'down' while dragging
-  const drag = useRef(null);
   // Escape must CANCEL. Removing the focused input fires a native blur, which
   // would otherwise let onBlur commit the very draft we cancelled; this latch
   // makes that trailing blur a no-op.
   const cancelling = useRef(false);
   const [reduced] = useState(prefersReducedMotion);
+
+  if (format !== DEFAULT_FORMAT && parse === DEFAULT_PARSE) warnUnpairedFormat(label);
 
   const display = format(value);
 
@@ -133,73 +155,26 @@ export default function DragNumber({
   };
 
   /* ---------------------------------------------------------------- drag */
+  // Mechanics come from the shared hook; this component supplies only the two
+  // mappings, the grid, and what a press-without-drag means (open the editor).
 
-  const onPointerDown = (e) => {
-    if (editing) return;
-    e.preventDefault();
-    drag.current = {
-      lastY: e.clientY,
-      startY: e.clientY,
-      raw: value,
-      start: value,
-      last: value, // last value EMITTED — not the prop, which a parent may lag
-      moved: false,
-    };
-    try {
-      e.currentTarget.setPointerCapture(e.pointerId);
-    } catch {
-      /* jsdom / non-pointer env */
-    }
-  };
-
-  const onPointerMove = (e) => {
-    const d = drag.current;
-    if (!d) return;
-    if (!d.moved) {
-      // Below the threshold nothing accumulates — jitter must not turn a click
-      // into a scrub. Once crossed, the travel counts from the grab point.
-      if (Math.abs(d.startY - e.clientY) < MOVE_THRESHOLD) return;
-      d.moved = true;
-      setDragging(true);
-    }
-    const dy = d.lastY - e.clientY; // up = positive
-    d.lastY = e.clientY;
-    if (dy === 0) return;
-    setLastDir(dy > 0 ? "up" : "down");
-
-    const gain = e.shiftKey ? gains.coarse : e.altKey ? gains.fine : 1;
-    if (mapping === "geometric") {
-      d.raw *= Math.pow(2, (dy * gain) / pxPerDoubling);
-      d.raw = clamp(d.raw, Math.max(min, step / 4), max);
-    } else {
-      d.raw += (dy * gain * step) / pxPerStep;
-      d.raw = clamp(d.raw, min, max);
-    }
-
-    const next = snap(d.raw, min, max, step);
-    if (next !== d.last) {
-      d.last = next;
-      onChange?.(next);
-    }
-  };
-
-  const endDrag = (e, allowEditor) => {
-    const d = drag.current;
-    drag.current = null;
-    setDragging(false);
-    setLastDir(null);
-    try {
-      e.currentTarget.releasePointerCapture(e.pointerId);
-    } catch {
-      /* noop */
-    }
-    if (!d) return;
-    if (!d.moved) {
-      if (allowEditor) openEditor();
-      return;
-    }
-    if (d.last !== d.start) onCommit?.(d.last);
-  };
+  const {
+    dragging,
+    dir: lastDir,
+    handlers,
+  } = useDragValue({
+    value,
+    advance: (raw, dy, gain) =>
+      mapping === "geometric"
+        ? clamp(raw * Math.pow(2, (dy * gain) / pxPerDoubling), Math.max(min, step / 4), max)
+        : clamp(raw + (dy * gain * step) / pxPerStep, min, max),
+    quantize: (raw) => snap(raw, min, max, step),
+    onChange,
+    onCommit,
+    onClick: openEditor,
+    gains,
+    disabled: editing,
+  });
 
   /* ------------------------------------------------------------ keyboard */
 
@@ -287,10 +262,7 @@ export default function DragNumber({
       data-dragging={dragging || undefined}
       data-reduced-motion={reduced ? "true" : undefined}
       title={title}
-      onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={(e) => endDrag(e, true)}
-      onPointerCancel={(e) => endDrag(e, false)}
+      {...handlers}
       onKeyDown={onKeyDown}
       onPointerEnter={() => setHover(true)}
       onPointerLeave={() => setHover(false)}
@@ -335,7 +307,10 @@ export default function DragNumber({
       </svg>
       <span
         data-testid={`${testId}-readout`}
-        className={`text-xs num ${dragging ? "text-saffron" : hover ? "text-ink" : "text-ink-soft"}`}
+        style={slotWidth ? { width: slotWidth } : undefined}
+        className={`text-xs num ${slotWidth ? "shrink-0 text-left" : ""} ${
+          dragging ? "text-saffron" : hover ? "text-ink" : "text-ink-soft"
+        }`}
       >
         {display}
       </span>

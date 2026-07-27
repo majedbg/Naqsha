@@ -33,42 +33,16 @@ import { Pattern } from '../patterns/drawingContext';
 import { parsePathD } from '../plotter/pathOps';
 import { sampleEdgeAnchors } from './anchors.js';
 import { getSemanticAnchors } from './semanticAnchors.js';
+import { coerceEdgeRoles } from './edgeRoles.js';
 import { resolveSelection } from './compileSelectionToChain.js';
 import { resolvePlacements } from './placementEngine.js';
 import { getGlyph } from './glyphs.js';
 import { placementMatrix, applyMatrix, matrixToSVG } from './instancing.js';
 
-// EDGE-MODE ROLE COERCION. In edge mode the only anchor role that exists is
-// 'edge' (sampleEdgeAnchors tags every anchor role:'edge', anchors.js), so a
-// ROUTE/selection role filter naming any OTHER role filters EVERYTHING out. This
-// bites a grid that became a single-axis EDGE host at render (resolveMotifHost)
-// while its binding still carries the baked semantic default roles:['crossing']
-// (hostKinds defaultRolesForHost) — the vine would place nothing. Normalize such
-// stale roles to ['edge']. A role already `null` (all-pass) or exactly ['edge']
-// is left untouched — so this is a byte-identical no-op for native edge hosts
-// and only un-bakes a grid's 'crossing'. Clones; never mutates the stored binding.
-const roleIsEdgeSafe = (roles) =>
-  roles == null || (Array.isArray(roles) && roles.length === 1 && roles[0] === 'edge');
-
-function coerceEdgeRoles(binding) {
-  if (!binding || typeof binding !== 'object') return binding;
-  let changed = false;
-  const out = { ...binding };
-  if (Array.isArray(binding.chain)) {
-    out.chain = binding.chain.map((block) => {
-      if (block && block.type === 'route' && !roleIsEdgeSafe(block.roles)) {
-        changed = true;
-        return { ...block, roles: ['edge'] };
-      }
-      return block;
-    });
-  }
-  if (binding.selection && !roleIsEdgeSafe(binding.selection.roles)) {
-    out.selection = { ...binding.selection, roles: ['edge'] };
-    changed = true;
-  }
-  return changed ? out : binding;
-}
+// EDGE-MODE ROLE COERCION now lives in edgeRoles.js — AnchorGhostOverlay runs
+// the identical coercion when it previews an edge host's placements (#141), and
+// a drifting second copy would make the ghost dots disagree with the drawn
+// glyphs on any binding still carrying stale semantic roles.
 
 export default class MotifPattern extends Pattern {
   /**

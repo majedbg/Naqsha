@@ -214,6 +214,11 @@ export default function AnchorGhostOverlay({
     });
     const placementConfig = { ...(binding.placement || {}) };
     if (sequence) placementConfig.sequence = sequence;
+    // `overrideRecords` (the post-placement per-glyph scale/angle map, #137) is
+    // deliberately NOT threaded here: this overlay reads only `anchorId` off the
+    // placements (to compute `placedIds` below), and per-glyph scale/angle change
+    // neither which anchors are placed nor their x/y. Thread it if this overlay
+    // ever starts drawing footprints at their real radius/rotation.
     const { placements: p } = resolvePlacements(survivors, placementConfig, {
       boundary: { type: 'rect', width: canvasW, height: canvasH },
     });

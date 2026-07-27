@@ -14,8 +14,12 @@
 // means "rules decide" — such a record never touches survivorship (it exists
 // to carry per-glyph scale/angle, resolved via `resolveOverrideRecords`).
 // `scale` is the per-glyph multiplier (4th cascade level); `angle` an ABSOLUTE
-// screen-space bearing in degrees — both MODEL-only here, applied post-
-// placement by the consumer of `resolveOverrideRecords`.
+// screen-space bearing in degrees. Both are APPLIED here too, but strictly
+// POST-PLACEMENT (#137): `resolveOverrideRecords` binds records to anchors and
+// `applyGlyphOverrides` rewrites the finished placements, AFTER the chain and
+// AFTER packing. Packing therefore saw the un-overridden footprints — a
+// scaled-up glyph may overlap its neighbours, and that is accepted: never
+// evict, never re-pack, never hide.
 //
 // `records` is an ARRAY (not a keyed object) deliberately: deepMergeBinding
 // (motifLayer.js) deep-merges plain objects — a keyed map would resurrect
@@ -229,14 +233,71 @@ export function applyOverrides(survivorIds, list, byId, overrides, defaultTolera
 }
 
 /**
+ * Apply per-glyph `scale` and `angle` to resolved PLACEMENTS — the fixed
+ * POST-PLACEMENT step (#137), run after the selection chain AND after packing.
+ *
+ * Packing (`largestEmptyCircleRadius` / `fitsAt` and the growing `placed`
+ * obstacle list in resolvePlacements) has ALREADY run against the un-overridden
+ * footprint by the time we get here, so a scaled-up glyph may overlap its
+ * neighbours. That is the settled behavior (map #134, consistent with ADR-0004's
+ * post-chain placement of overrides): never evict, never re-pack, never hide.
+ * Survivorship (`hidden`) is decided upstream by `applyOverrides`; this pass is
+ * blind to it.
+ *
+ *   • `scale` — a PURE MULTIPLIER, the 4th cascade level after
+ *     `size × scaleFactor(jitter) × sizeScale(slot)`. Multiplies BOTH `radius`
+ *     (what `placementMatrix` reads) and `scale` (`radius / size`), so the
+ *     invariant between them survives. Default 1. A non-finite or NON-POSITIVE
+ *     scale is IGNORED rather than applied: 0 would vanish the glyph and a
+ *     negative would silently mirror it, and neither is a thing this step is
+ *     allowed to do (flip stays a separate renderer concern).
+ *   • `angle` — an ABSOLUTE screen-space bearing in degrees that REPLACES the
+ *     resolved `baseDeg + offset + jitter + slotRotation`. Tested with
+ *     `Number.isFinite` ONLY: `angle: 0` ("faces up") is a legitimate bearing
+ *     that any truthiness check would silently drop.
+ *
+ * Pure: never mutates the input placements. Returns the SAME array reference
+ * when nothing was overridden, so a document with no scale/angle records is a
+ * byte-identical no-op. Touched placements are shallow clones, which preserves
+ * the `glyphRef` KEY-PRESENCE discipline (present IFF sequenced).
+ *
+ * @param {object[]} placements  resolvePlacements output, in placement order
+ * @param {Map<string, OverrideRecord>|null|undefined} byAnchorId  from resolveOverrideRecords
+ * @returns {object[]}
+ */
+export function applyGlyphOverrides(placements, byAnchorId) {
+  if (!Array.isArray(placements) || !byAnchorId || byAnchorId.size === 0) return placements;
+
+  let touched = false;
+  const out = placements.map((placement) => {
+    const rec = byAnchorId.get(placement.anchorId);
+    if (!rec) return placement;
+
+    const scale = Number.isFinite(rec.scale) && rec.scale > 0 ? rec.scale : null;
+    const angle = Number.isFinite(rec.angle) ? rec.angle : null;
+    if (scale == null && angle == null) return placement;
+
+    touched = true;
+    const next = { ...placement };
+    if (scale != null) {
+      next.radius = placement.radius * scale;
+      next.scale = placement.scale * scale;
+    }
+    if (angle != null) next.rotation = angle;
+    return next;
+  });
+
+  return touched ? out : placements;
+}
+
+/**
  * Resolve EVERY override record to its anchor — the resolution seam the
- * post-placement consumer (per-glyph scale/angle apply, next ticket) reads.
- * Accepts BOTH shapes (normalized internally, so legacy input yields
- * synthesized records). The FIRST record (insertion order) to resolve to a
- * given anchor CLAIMS it; later claimants are ignored — the same deterministic
- * tie-break the records array's order encodes. Orphans follow the exact
- * applyOverrides rule: refs (verbatim) of unresolved records with
- * `hidden === false` only.
+ * post-placement consumer (`applyGlyphOverrides`, #137) reads. Accepts BOTH
+ * shapes (normalized internally, so legacy input yields synthesized records).
+ * The FIRST record (insertion order) to resolve to a given anchor CLAIMS it;
+ * later claimants are ignored — the same deterministic tie-break the records
+ * array's order encodes. Orphans follow the exact applyOverrides rule: refs
+ * (verbatim) of unresolved records with `hidden === false` only.
  *
  * @param {Anchor[]} list  full input list
  * @param {Map<string, Anchor>} byId

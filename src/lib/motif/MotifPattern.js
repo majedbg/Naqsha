@@ -151,7 +151,12 @@ export default class MotifPattern extends Pattern {
     // grid whose binding still says ['crossing']) so the role filter passes the
     // edge anchors. No-op for semantic mode and for already-edge bindings.
     const binding = anchorMode === 'edge' ? coerceEdgeRoles(p.binding || {}) : p.binding || {};
-    const { survivors, sequence } = resolveSelection(binding, anchors, {
+    // `overrideRecords` is the resolved ref→anchor map for the POST-PLACEMENT
+    // per-glyph scale/angle step (#137). It MUST come out of resolveSelection:
+    // a LEGACY binding's overrides live at `binding.selection.overrides` and only
+    // the compile path knows that, so resolving here off `binding.overrides`
+    // would silently miss them.
+    const { survivors, sequence, overrideRecords } = resolveSelection(binding, anchors, {
       canvasW,
       canvasH,
       overrides: binding.overrides,
@@ -160,11 +165,16 @@ export default class MotifPattern extends Pattern {
     // Place the survivors WITH the sequence. Only SET `sequence` when the chain
     // actually produced a Sequencer block — a falsy `sequence` (every legacy
     // binding) must NOT clobber a legacy string-array `placement.sequence`
-    // (that would silently rewrite seqId). resolvePlacements reads only
-    // `boundary` from opts, so passing just `{boundary}` is byte-identical.
+    // (that would silently rewrite seqId). resolvePlacements reads `boundary`
+    // and `overrideRecords` from opts — the latter is applied AFTER packing, so
+    // an overridden glyph may overlap its neighbours (settled, #134/#137), and
+    // it is a no-op for documents with no per-glyph scale/angle.
     const placementConfig = { ...(binding.placement || {}) };
     if (sequence) placementConfig.sequence = sequence;
-    const { placements, placementStats } = resolvePlacements(survivors, placementConfig, { boundary });
+    const { placements, placementStats } = resolvePlacements(survivors, placementConfig, {
+      boundary,
+      overrideRecords,
+    });
     // Surface the budget stats so useCanvas can read `instance.lastPlacementStats`
     // after generate() and mirror truncation up to the Inspector (etchBitmaps
     // seam). placementStats is always present from resolvePlacements.

@@ -33,6 +33,14 @@ export const MOVE_THRESHOLD = 3;
 /** Modifier gains. These scale TRAVEL (px sensitivity) — never the step grid. */
 export const DEFAULT_GAINS = { coarse: 2, fine: 0.1 };
 
+/**
+ * The canonical `quantize` for a WRAPPING drag: bring any bearing into [0,360)
+ * and round to whole degrees. Lives here rather than in DragDial because a
+ * component file may only export components (react-refresh), and because it is
+ * exactly the counterpart of the clamping quantize DragNumber uses.
+ */
+export const wrap360 = (v) => ((Math.round(v) % 360) + 360) % 360;
+
 export default function useDragValue({
   value,
   /** (raw, dy, gain) → next raw. `dy` is positive when the pointer moves UP. */

@@ -192,6 +192,17 @@ describe('resolvePlacements — per-glyph scale multiplies the FULL cascade', ()
     expect(b0.radius).not.toBeCloseTo(SIZE * 2, 6); // jitter moved it off size×sizeScale
     expect(b0.radius).toBeGreaterThan(SIZE); // sizeScale=2 engaged
 
+    // Pin the THIRD cascade level independently of the fourth: the ratio
+    // assertions below are baseline-relative, so if `sizeScale` silently stopped
+    // being applied they would ALL still pass. Re-run the identical config with
+    // sizeScale 1 and assert the slot factor is genuinely a 2× on the radius.
+    const noSlotScale = {
+      ...config,
+      sequence: { ...config.sequence, slots: [{ glyphRef: 'leaf', sizeScale: 1, rotationOffset: 15 }] },
+    };
+    const { placements: flat } = resolvePlacements(anchors, noSlotScale, {});
+    expect(b0.radius).toBeCloseTo(findPlacement(flat, 'a0').radius * 2, 10);
+
     expect(s0.radius).toBeCloseTo(b0.radius * 1.5, 10);
     expect(s0.scale).toBeCloseTo(b0.scale * 1.5, 10);
     expect(s0.scale).toBeCloseTo(s0.radius / SIZE, 10);

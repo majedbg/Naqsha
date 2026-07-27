@@ -38,15 +38,21 @@
 //     the once-deferred generic edge ghost, now wired for path picking.
 // Pure UI + wiring — the motif core is only CONSUMED, never edited.
 
-import { useMemo } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { isMotifLayer, motifHostId, readChain } from '../../lib/motif/motifLayer';
 import {
+  clearGlyphRecord,
   editBindingOverrides,
+  findGlyphRecord,
   isChainFormBinding,
   normalizeOverrides,
+  patchGlyphRecord,
   readBindingOverrides,
   toggleGlyphHidden,
 } from '../../lib/motif/overrides';
+import { copyGlyphSettings, readGlyphClipboard } from '../../lib/motif/glyphClipboard';
+import GlyphPopover from './GlyphPopover';
+import { glyphScreenRect } from './glyphPopoverPlacement';
 import { getSemanticAnchors } from '../../lib/motif/semanticAnchors';
 import { sampleEdgeAnchors } from '../../lib/motif/anchors';
 import { resolveSelection } from '../../lib/motif/compileSelectionToChain';
@@ -118,8 +124,23 @@ export default function AnchorGhostOverlay({
   // hosts). Both optional.
   motifPick = null,
   onTogglePickedPath = () => {},
+  // Closes any OPEN history coalesce window (#139). Live per-glyph edits ride
+  // the normal 400ms coalescing so the canvas updates throughout a drag, and
+  // this is what turns each GESTURE into exactly one undo entry: flushed once
+  // before a gesture's first write (so it cannot join a preceding Inspector
+  // burst on the same layer, which carries an identical signature) and once
+  // when the gesture commits. Defaults to a no-op so every existing test and
+  // caller keeps working unchanged.
+  onFlushHistory = () => {},
 }) {
   // ── HOOKS FIRST ──────────────────────────────────────────────────────────
+  // The per-glyph popover's open anchor, and the screen rect of the dot it
+  // hangs off. Screen-space, captured from the clicked <circle> — the overlay
+  // itself lives inside a CSS-scaled box, so its own coordinates are useless
+  // for positioning chrome.
+  const [openGlyph, setOpenGlyph] = useState(null); // { anchorId, rect } | null
+  // Open across a gesture's live writes; see onFlushHistory above.
+  const gestureOpen = useRef(false);
   // Every hook runs on every render (guards live INSIDE the memos, the single
   // early return is at the end). Mounting this overlay unconditionally means a
   // selection change must not change the hook count — Rules of Hooks.
@@ -322,18 +343,39 @@ export default function AnchorGhostOverlay({
   // per-glyph popover so a dot click and the popover's eye-toggle can never
   // disagree — including on the case a naive `hidden: !hidden` gets backwards,
   // where a glyph the rules already hide is force-SHOWN.
-  const toggleOverride = (anchor) => {
-    const id = anchor.id;
-    const newBinding = editBindingOverrides(binding, (recs) =>
-      toggleGlyphHidden(recs, id, placedIds.has(id)),
-    );
-    if (newBinding === binding) return; // nothing changed — no phantom undo entry
+  // ONE write path for every per-glyph edit — the dot's double-click, the
+  // popover's eye, its scale and angle, paste and reset. `edit` is a pure
+  // records→records function from overrides.js.
+  //
+  // `commit` says whether this write ENDS a gesture. Live drag frames pass
+  // false: they ride the normal 400ms coalescing so the canvas updates
+  // throughout, all folding into the window opened by the gesture's first
+  // write. A committing write closes that window, so the next gesture is a
+  // separate undo entry. The flush BEFORE the first write matters just as much:
+  // an Inspector slider burst on the same layer carries an identical
+  // `${id}:params` signature and would otherwise swallow the gesture.
+  const applyGlyphEdit = (edit, { commit = true } = {}) => {
+    const newBinding = editBindingOverrides(binding, edit);
+    if (newBinding === binding) return; // no-op — never a phantom undo entry
+    if (!gestureOpen.current) {
+      onFlushHistory();
+      gestureOpen.current = true;
+    }
     onUpdateLayer(motif.id, {
       params: {
         ...motif.params,
         binding: newBinding,
       },
     });
+    if (commit) {
+      onFlushHistory();
+      gestureOpen.current = false;
+    }
+  };
+
+  const toggleOverride = (anchor) => {
+    const id = anchor.id;
+    applyGlyphEdit((recs) => toggleGlyphHidden(recs, id, placedIds.has(id)));
   };
 
   const r = Math.max(3, Math.min(canvasW, canvasH) * 0.006);
@@ -363,7 +405,57 @@ export default function AnchorGhostOverlay({
     }
   };
 
-  return (
+  /* ---------------------------------------------------- per-glyph popover */
+  // Everything the card shows is RESOLVED state — what the glyph is actually
+  // doing — not the raw record. The angle in particular seeds from the glyph's
+  // current resolved rotation so opening the card never jumps it (charting
+  // decision 3: "first touch converts to absolute"); a candidate that is not
+  // placed has no rotation to read, so it seeds at 0.
+  const openAnchor = openGlyph && displayAnchors.find((a) => a.id === openGlyph.anchorId);
+  const openPlacement =
+    openAnchor && placements.find((p) => p.anchorId === openGlyph.anchorId);
+  const openRecord = openAnchor ? findGlyphRecord(records, openGlyph.anchorId) : undefined;
+
+  const closePopover = () => setOpenGlyph(null);
+
+  const glyphEdit = (patch, opts) =>
+    applyGlyphEdit((recs) => patchGlyphRecord(recs, openGlyph.anchorId, patch), opts);
+
+  const resolvedScale = openRecord?.scale ?? 1;
+  const resolvedAngle = openRecord?.angle ?? openPlacement?.rotation ?? 0;
+
+  const popover = openAnchor ? (
+    <GlyphPopover
+      anchorRect={openGlyph.rect}
+      glyphRect={glyphScreenRect(openGlyph.rect, r, openPlacement?.radius)}
+      // Effective visibility, matching what the dot draws: an excluded glyph is
+      // hidden; a pinned one is shown; otherwise the rules decide.
+      hidden={excludeIds.has(openGlyph.anchorId) ||
+        (!placedIds.has(openGlyph.anchorId) && !includeIds.has(openGlyph.anchorId))}
+      scale={resolvedScale}
+      angle={resolvedAngle}
+      label={motif.name || 'Glyph'}
+      // Live frames: the canvas updates throughout, all folded into this
+      // gesture's single undo entry.
+      onPreview={(patch) => glyphEdit(patch, { commit: false })}
+      onCommitScale={(v) => glyphEdit({ scale: v })}
+      onCommitAngle={(v) => glyphEdit({ angle: v })}
+      onToggleHidden={() => toggleOverride(openAnchor)}
+      onCopy={() => copyGlyphSettings({ scale: resolvedScale, angle: resolvedAngle })}
+      // Paste overwrites scale + angle and leaves `hidden` alone — copying a
+      // hidden glyph's settings must not make the target vanish.
+      onPaste={() => {
+        const buf = readGlyphClipboard();
+        if (buf) glyphEdit({ scale: buf.scale, angle: buf.angle });
+      }}
+      // Reset clears the WHOLE record, `hidden` included — the deliberate
+      // asymmetry with paste.
+      onReset={() => applyGlyphEdit((recs) => clearGlyphRecord(recs, openGlyph.anchorId))}
+      onClose={closePopover}
+    />
+  ) : null;
+
+  const ghosts = (
     <svg
       data-testid="anchor-ghost-overlay"
       className="pointer-events-none absolute inset-0"
@@ -407,7 +499,20 @@ export default function AnchorGhostOverlay({
               // overlay below. 'all' hit-tests fill+stroke regardless of paint,
               // so the whole dot is a target. (Found via real-browser clicking.)
               style={{ pointerEvents: 'all', cursor: 'pointer' }}
-              onPointerDown={(e) => {
+              // Pointer-down only stops the canvas select overlay underneath
+              // from stealing the gesture; the meaning lives on click/dblclick.
+              onPointerDown={(e) => e.stopPropagation()}
+              // CLICK = select + open the popover, anchored at this dot. It is
+              // IDEMPOTENT, not a toggle: a double-click delivers two clicks
+              // before dblclick fires, and the spec requires the popover to stay
+              // up while the eye visibly flips.
+              onClick={(e) => {
+                e.stopPropagation();
+                setOpenGlyph({ anchorId: a.id, rect: e.currentTarget.getBoundingClientRect() });
+              }}
+              // DOUBLE-CLICK = quick hide. Same state machine as the popover's
+              // eye, so the two can never disagree about a candidate anchor.
+              onDoubleClick={(e) => {
                 e.stopPropagation();
                 toggleOverride(a);
               }}
@@ -416,5 +521,12 @@ export default function AnchorGhostOverlay({
         );
       })}
     </svg>
+  );
+
+  return (
+    <>
+      {ghosts}
+      {popover}
+    </>
   );
 }

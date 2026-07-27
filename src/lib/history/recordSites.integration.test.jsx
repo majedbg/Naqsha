@@ -190,6 +190,8 @@ function useWired() {
     resizeCanvas,
     useLibraryGlyph,
     canvasW: captureCanvas().w,
+    // #139: the seam AnchorGhostOverlay drives for per-glyph undo granularity.
+    flushEdit,
   };
 }
 
@@ -403,5 +405,87 @@ describe("S4 record sites — real async path", () => {
     act(() => result.current.history.clear()); // profile switch
     expect(result.current.history.canUndo).toBe(false);
     expect(result.current.history.canRedo).toBe(false);
+  });
+});
+
+// ── #139: per-glyph popover undo granularity ────────────────────────────────
+//
+// Charting decision 6 is "exactly one undo entry per gesture". That does NOT
+// come for free: `updateLayer` records with the signature `${id}:params`, so
+// EVERY binding write on a given layer looks identical to the coalescer and
+// merges into whatever 400ms window is already open — including a window opened
+// by an Inspector slider burst moments earlier.
+//
+// AnchorGhostOverlay therefore flushes once before a gesture's FIRST write and
+// once when it COMMITS. These tests drive that pattern against the real
+// useLayers + useHistory wiring; a component test with a mocked onUpdateLayer
+// would pass while the real thing silently merged.
+describe("S4 — per-glyph gesture granularity (#139)", () => {
+  // What the overlay does: flush on the first write of a gesture, coalesced
+  // live frames, flush on commit.
+  function gesture(result, id, frames) {
+    act(() => result.current.flushEdit());
+    frames.forEach((patch) => {
+      act(() => result.current.layersApi.updateLayer(id, patch));
+    });
+    act(() => result.current.flushEdit());
+  }
+
+  const depth = (result) => {
+    let n = 0;
+    while (result.current.history.canUndo) {
+      act(() => result.current.history.undo());
+      n += 1;
+    }
+    return n;
+  };
+
+  it("two gestures inside the 400ms idle window are TWO entries, not one", () => {
+    const { result } = renderHook(() => useWired());
+    const id = firstLayer(result).id;
+    gesture(result, id, [{ opacity: 60 }]);
+    // No timer advance: still well inside the idle window the second gesture
+    // would otherwise join.
+    gesture(result, id, [{ opacity: 70 }]);
+    expect(depth(result)).toBe(2);
+  });
+
+  it("a drag's live frames stay ONE entry — coalescing is not defeated", () => {
+    const { result } = renderHook(() => useWired());
+    const id = firstLayer(result).id;
+    gesture(result, id, [{ opacity: 60 }, { opacity: 65 }, { opacity: 70 }, { opacity: 75 }]);
+    expect(depth(result)).toBe(1);
+  });
+
+  it("a preceding Inspector burst on the SAME layer cannot swallow the gesture", () => {
+    // The signature is `${id}:params` either way, so without the leading flush
+    // this is the case that silently merges.
+    const { result } = renderHook(() => useWired());
+    const id = firstLayer(result).id;
+    act(() => result.current.layersApi.updateLayer(id, { opacity: 40 })); // inspector
+    gesture(result, id, [{ opacity: 80 }]); // popover gesture, no timer advance
+    expect(depth(result)).toBe(2);
+  });
+
+  it("undo after a gesture lands on the value from BEFORE that gesture", () => {
+    const { result } = renderHook(() => useWired());
+    const id = firstLayer(result).id;
+    const original = firstLayer(result).opacity;
+    gesture(result, id, [{ opacity: 60 }]);
+    gesture(result, id, [{ opacity: 90 }]);
+    expect(firstLayer(result).opacity).toBe(90);
+    act(() => result.current.history.undo());
+    expect(firstLayer(result).opacity).toBe(60);
+    act(() => result.current.history.undo());
+    expect(firstLayer(result).opacity).toBe(original);
+  });
+
+  it("a gesture that writes nothing (a no-op edit) leaves no entry at all", () => {
+    // The overlay returns early when editBindingOverrides hands back the same
+    // binding, so the flush pair never runs and history stays untouched.
+    const { result } = renderHook(() => useWired());
+    expect(result.current.history.canUndo).toBe(false);
+    act(() => result.current.flushEdit());
+    expect(result.current.history.canUndo).toBe(false);
   });
 });

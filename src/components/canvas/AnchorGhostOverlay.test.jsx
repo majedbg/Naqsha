@@ -1,5 +1,12 @@
 // @vitest-environment jsdom
-// AnchorGhostOverlay — the motif anchor-ghost overlay + click-to-override.
+// AnchorGhostOverlay — the motif anchor-ghost overlay + per-glyph overrides.
+//
+// GESTURE RE-SPEC (#139). The dots used to toggle a hide on pointer-down. The
+// per-glyph popover ticket replaces that: a CLICK selects the glyph and opens
+// its popover, a DOUBLE-CLICK is the quick hide. The activation assertions
+// below were rewritten to double-click accordingly — the rendering assertions
+// (dot states, role filtering, data-state) are untouched and remain the
+// regression gate on everything the re-spec did NOT intend to change.
 //
 // jsdom has no layout, but the ghost dots don't need it: semantic anchors come
 // from the PURE getSemanticAnchors (params-only math for formula hosts, or the
@@ -16,6 +23,7 @@ import AnchorGhostOverlay from './AnchorGhostOverlay';
 import { MOTIF_TYPE, createMotifParams } from '../../lib/motif/motifLayer';
 import { getSemanticAnchors } from '../../lib/motif/semanticAnchors';
 import { resolveSelection } from '../../lib/motif/compileSelectionToChain';
+import { resolvePlacements } from '../../lib/motif/placementEngine';
 
 const CANVAS_W = 800;
 const CANVAS_H = 600;
@@ -106,14 +114,14 @@ describe('AnchorGhostOverlay', () => {
     expect(candidate.length).toBeGreaterThan(0);
   });
 
-  it('(c) clicking a candidate calls onUpdateLayer with a hidden:false record for that id (#136)', () => {
+  it('(c) double-clicking a candidate calls onUpdateLayer with a hidden:false record for that id (#136)', () => {
     const host = gridHost();
     const m = motif('m1', host.id, crossingBinding);
     const onUpdateLayer = vi.fn();
     const { container } = renderOverlay({ layers: [host, m], selectedLayerId: m.id, onUpdateLayer });
     const candidate = container.querySelector('[data-state="candidate"]');
     const id = candidate.getAttribute('data-anchor-id');
-    fireEvent.pointerDown(candidate);
+    fireEvent.doubleClick(candidate);
     expect(onUpdateLayer).toHaveBeenCalledTimes(1);
     const [layerId, patch] = onUpdateLayer.mock.calls[0];
     expect(layerId).toBe('m1');
@@ -122,14 +130,14 @@ describe('AnchorGhostOverlay', () => {
     expect(ov.records.filter((r) => r.ref === id)).toHaveLength(1);
   });
 
-  it('(d) clicking a placed anchor calls onUpdateLayer with a hidden:true record for that id (#136)', () => {
+  it('(d) double-clicking a placed anchor calls onUpdateLayer with a hidden:true record for that id (#136)', () => {
     const host = gridHost();
     const m = motif('m1', host.id, crossingBinding);
     const onUpdateLayer = vi.fn();
     const { container } = renderOverlay({ layers: [host, m], selectedLayerId: m.id, onUpdateLayer });
     const placed = container.querySelector('[data-state="placed"]');
     const id = placed.getAttribute('data-anchor-id');
-    fireEvent.pointerDown(placed);
+    fireEvent.doubleClick(placed);
     expect(onUpdateLayer).toHaveBeenCalledTimes(1);
     const [, patch] = onUpdateLayer.mock.calls[0];
     const ov = patch.params.binding.selection.overrides;
@@ -201,7 +209,7 @@ describe('AnchorGhostOverlay', () => {
     expect(container.querySelectorAll('[data-state="candidate"]').length).toBeGreaterThan(0);
   });
 
-  it('(i) voronoi click-to-override: pointerdown a candidate appends a hidden:false record (#136)', () => {
+  it('(i) voronoi quick-hide: double-clicking a candidate appends a hidden:false record (#136)', () => {
     const host = voronoiHost();
     const m = motif('m1', host.id, { selection: { roles: ['crossing'], rate: { n: 2 } } });
     const onUpdateLayer = vi.fn();
@@ -214,7 +222,7 @@ describe('AnchorGhostOverlay', () => {
     const candidate = container.querySelector('[data-state="candidate"]');
     expect(candidate).not.toBeNull();
     const id = candidate.getAttribute('data-anchor-id');
-    fireEvent.pointerDown(candidate);
+    fireEvent.doubleClick(candidate);
     expect(onUpdateLayer).toHaveBeenCalledTimes(1);
     const [layerId, patch] = onUpdateLayer.mock.calls[0];
     expect(layerId).toBe('m1');
@@ -222,7 +230,7 @@ describe('AnchorGhostOverlay', () => {
     expect(ov.records).toContainEqual({ ref: id, hidden: false });
   });
 
-  it('un-excludes a previously excluded anchor on a second click (toggle round-trip)', () => {
+  it('un-excludes a previously excluded anchor on a second double-click (toggle round-trip)', () => {
     const host = gridHost();
     // Pre-seed a LEGACY exclude override on a known placed crossing id — the
     // overlay must read it through normalizeOverrides (migrate-on-read).
@@ -238,7 +246,7 @@ describe('AnchorGhostOverlay', () => {
     const excluded = container.querySelector('[data-state="excluded"]');
     expect(excluded).not.toBeNull();
     expect(excluded.getAttribute('data-anchor-id')).toBe('crossing:0:0');
-    fireEvent.pointerDown(excluded);
+    fireEvent.doubleClick(excluded);
     const [, patch] = onUpdateLayer.mock.calls[0];
     // The bare record (no scale/angle) is dropped entirely on un-exclude.
     const ov = patch.params.binding.selection.overrides;
@@ -254,7 +262,7 @@ describe('AnchorGhostOverlay', () => {
 // cannot be merged back into the written object. The binding FORM itself never
 // migrates (legacy stays legacy, chain stays chain) — only the overrides shape.
 describe('AnchorGhostOverlay — override records (#136)', () => {
-  it('clicking a dot on a LEGACY-overrides binding writes the NEW shape (no include/exclude keys), one undo', () => {
+  it('double-clicking a dot on a LEGACY-overrides binding writes the NEW shape (no include/exclude keys), one undo', () => {
     const host = gridHost();
     const m = motif('m1', host.id, {
       selection: {
@@ -267,7 +275,7 @@ describe('AnchorGhostOverlay — override records (#136)', () => {
     const { container } = renderOverlay({ layers: [host, m], selectedLayerId: m.id, onUpdateLayer });
     const candidate = container.querySelector('[data-state="candidate"]');
     const id = candidate.getAttribute('data-anchor-id');
-    fireEvent.pointerDown(candidate);
+    fireEvent.doubleClick(candidate);
 
     // Exactly one write → one undo entry.
     expect(onUpdateLayer).toHaveBeenCalledTimes(1);
@@ -318,7 +326,7 @@ describe('AnchorGhostOverlay — override records (#136)', () => {
     const excluded = container.querySelector('[data-state="excluded"]');
     expect(excluded).not.toBeNull();
     expect(excluded.getAttribute('data-anchor-id')).toBe(placedId);
-    fireEvent.pointerDown(excluded);
+    fireEvent.doubleClick(excluded);
 
     expect(onUpdateLayer).toHaveBeenCalledTimes(1);
     const nb = onUpdateLayer.mock.calls[0][1].params.binding;
@@ -343,7 +351,7 @@ describe('AnchorGhostOverlay — override records (#136)', () => {
     const { container } = renderOverlay({ layers: [host, m], selectedLayerId: m.id, onUpdateLayer });
     const placed = container.querySelector('[data-state="placed"]');
     const id = placed.getAttribute('data-anchor-id');
-    fireEvent.pointerDown(placed);
+    fireEvent.doubleClick(placed);
 
     const nb = onUpdateLayer.mock.calls[0][1].params.binding;
     expect(nb.overrides.records).toContainEqual({ ref: id, hidden: true });
@@ -359,7 +367,7 @@ describe('AnchorGhostOverlay — override records (#136)', () => {
     const { container } = renderOverlay({ layers: [host, m], selectedLayerId: m.id, onUpdateLayer });
     const placed = container.querySelector('[data-state="placed"]');
     const id = placed.getAttribute('data-anchor-id');
-    fireEvent.pointerDown(placed);
+    fireEvent.doubleClick(placed);
 
     const nb = onUpdateLayer.mock.calls[0][1].params.binding;
     expect(nb.selection.overrides.records).toContainEqual({ ref: id, hidden: true });
@@ -432,7 +440,7 @@ describe('AnchorGhostOverlay — chain-form semantic overrides (D)', () => {
     const { container } = renderOverlay({ layers: [host, m], selectedLayerId: m.id, onUpdateLayer });
     const placed = container.querySelector('[data-state="placed"]');
     const id = placed.getAttribute('data-anchor-id');
-    fireEvent.pointerDown(placed);
+    fireEvent.doubleClick(placed);
 
     // One undo entry.
     expect(onUpdateLayer).toHaveBeenCalledTimes(1);
@@ -462,7 +470,7 @@ describe('AnchorGhostOverlay — chain-form semantic overrides (D)', () => {
     const { container } = renderOverlay({ layers: [host, m], selectedLayerId: m.id, onUpdateLayer });
     const candidate = container.querySelector('[data-state="candidate"]');
     const id = candidate.getAttribute('data-anchor-id');
-    fireEvent.pointerDown(candidate);
+    fireEvent.doubleClick(candidate);
 
     expect(onUpdateLayer).toHaveBeenCalledTimes(1);
     const nb = onUpdateLayer.mock.calls[0][1].params.binding;
@@ -493,7 +501,7 @@ describe('AnchorGhostOverlay — chain-form semantic overrides (D)', () => {
     const excluded = container.querySelector('[data-state="excluded"]');
     expect(excluded).not.toBeNull();
     expect(excluded.getAttribute('data-anchor-id')).toBe(placedId);
-    fireEvent.pointerDown(excluded);
+    fireEvent.doubleClick(excluded);
     const nb = onUpdateLayer.mock.calls[0][1].params.binding;
     // #136: un-exclude drops the bare record entirely (no scale/angle to keep).
     expect(nb.overrides.records.some((r) => r.ref === placedId)).toBe(false);
@@ -507,7 +515,7 @@ describe('AnchorGhostOverlay — chain-form semantic overrides (D)', () => {
     const { container } = renderOverlay({ layers: [host, m], selectedLayerId: m.id, onUpdateLayer });
     const placed = container.querySelector('[data-state="placed"]');
     const id = placed.getAttribute('data-anchor-id');
-    fireEvent.pointerDown(placed);
+    fireEvent.doubleClick(placed);
     expect(onUpdateLayer).toHaveBeenCalledTimes(1);
     const nb = onUpdateLayer.mock.calls[0][1].params.binding;
     expect(nb.selection.overrides.records).toContainEqual({ ref: id, hidden: true });
@@ -664,5 +672,154 @@ describe('AnchorGhostOverlay — edge-host path picker (C4)', () => {
     const svg = container.querySelector('[data-testid="anchor-ghost-overlay"]');
     expect(svg).not.toBeNull();
     expect(svg.getAttribute('data-mode')).not.toBe('pick');
+  });
+});
+
+// ── #139: the click / double-click gesture and the popover it opens ─────────
+describe('AnchorGhostOverlay — per-glyph popover gesture (#139)', () => {
+  const setup = (onUpdateLayer = () => {}) => {
+    const host = gridHost();
+    const m = motif('m1', host.id, crossingBinding);
+    const api = renderOverlay({ layers: [host, m], selectedLayerId: m.id, onUpdateLayer });
+    const dot = api.container.querySelector('circle[data-state="placed"]');
+    return { ...api, dot, motifId: m.id };
+  };
+
+  const popover = () => document.querySelector('[data-testid="glyph-popover"]');
+
+  it('a single click opens the popover and mutates nothing', () => {
+    const onUpdateLayer = vi.fn();
+    const { dot } = setup(onUpdateLayer);
+    expect(popover()).toBeNull();
+    fireEvent.click(dot);
+    expect(popover()).not.toBeNull();
+    expect(onUpdateLayer).not.toHaveBeenCalled();
+  });
+
+  it('a second click on the SAME dot is idempotent — the popover stays open', () => {
+    // Load-bearing: a double-click delivers two clicks BEFORE dblclick fires, and
+    // the spec requires the popover to stay up while the eye flips. A toggle here
+    // would close it on the way to the quick-hide.
+    const { dot } = setup();
+    fireEvent.click(dot);
+    fireEvent.click(dot);
+    expect(popover()).not.toBeNull();
+  });
+
+  it('a double-click hides the glyph AND leaves the popover open', () => {
+    const onUpdateLayer = vi.fn();
+    const { dot, motifId } = setup(onUpdateLayer);
+    fireEvent.click(dot);
+    fireEvent.doubleClick(dot);
+    expect(onUpdateLayer).toHaveBeenCalledTimes(1);
+    const [id, patch] = onUpdateLayer.mock.calls[0];
+    expect(id).toBe(motifId);
+    expect(patch.params.binding.selection.overrides.records[0]).toMatchObject({ hidden: true });
+    expect(popover()).not.toBeNull();
+  });
+
+  it('seeds scale at 1× and angle at the glyph RESOLVED rotation, not zero', () => {
+    // Charting decision 3: the radial initializes at the current resolved
+    // rotation so opening the card never jumps the glyph.
+    const host = gridHost();
+    const m = motif('m1', host.id, crossingBinding);
+    const { container } = renderOverlay({ layers: [host, m], selectedLayerId: m.id });
+    const dot = container.querySelector('circle[data-state="placed"]');
+    const anchorId = dot.getAttribute('data-anchor-id');
+    // Mirror the overlay's own pipeline so the expectation is the real resolved
+    // rotation rather than a number copied from a fixture.
+    const anchors = getSemanticAnchors(host.patternType, host.params, CANVAS_W, CANVAS_H, {
+      hostSeed: host.seed,
+    });
+    const { survivors, sequence } = resolveSelection(m.params.binding, anchors, {
+      canvasW: CANVAS_W,
+      canvasH: CANVAS_H,
+    });
+    const { placements } = resolvePlacements(
+      survivors,
+      { ...(m.params.binding.placement || {}), ...(sequence ? { sequence } : {}) },
+      { boundary: { type: 'rect', width: CANVAS_W, height: CANVAS_H } }
+    );
+    const placement = placements.find((p) => p.anchorId === anchorId);
+    expect(placement).toBeTruthy();
+    expect(placement.rotation).toBeTypeOf('number');
+
+    fireEvent.click(dot);
+    expect(
+      document.querySelector('[data-testid="glyph-popover-dial"]').getAttribute('aria-valuenow')
+    ).toBe(String(placement.rotation));
+    expect(
+      document.querySelector('[data-testid="glyph-popover-scale"]').getAttribute('aria-valuenow')
+    ).toBe('1');
+  });
+
+  // The integration test in recordSites.integration.test.jsx proves the
+  // flush-write-flush pattern yields exactly one undo entry per gesture against
+  // the real history engine. These close the loop: the overlay actually uses it.
+  it('brackets a discrete edit with a history flush on both sides', () => {
+    const host = gridHost();
+    const m = motif('m1', host.id, crossingBinding);
+    const onFlushHistory = vi.fn();
+    const onUpdateLayer = vi.fn();
+    const { container } = render(
+      <AnchorGhostOverlay
+        layers={[host, m]}
+        selectedLayerId={m.id}
+        canvasW={CANVAS_W}
+        canvasH={CANVAS_H}
+        onUpdateLayer={onUpdateLayer}
+        onFlushHistory={onFlushHistory}
+      />
+    );
+    fireEvent.doubleClick(container.querySelector('circle[data-state="placed"]'));
+    expect(onUpdateLayer).toHaveBeenCalledTimes(1);
+    // Once BEFORE (so a preceding Inspector burst on the same layer cannot
+    // swallow it) and once AFTER (so the next gesture is its own entry).
+    expect(onFlushHistory).toHaveBeenCalledTimes(2);
+  });
+
+  it('does NOT flush for a no-op edit — no phantom entry', () => {
+    const host = gridHost();
+    const m = motif('m1', host.id, crossingBinding);
+    const onFlushHistory = vi.fn();
+    const { container } = render(
+      <AnchorGhostOverlay
+        layers={[host, m]}
+        selectedLayerId={m.id}
+        canvasW={CANVAS_W}
+        canvasH={CANVAS_H}
+        onFlushHistory={onFlushHistory}
+      />
+    );
+    fireEvent.click(container.querySelector('circle[data-state="placed"]'));
+    expect(onFlushHistory).not.toHaveBeenCalled(); // opening a popover edits nothing
+  });
+
+  it('an existing record OVERRIDES the resolved seed', () => {
+    const host = gridHost();
+    const plain = motif('m1', host.id, crossingBinding);
+    const probe = renderOverlay({ layers: [host, plain], selectedLayerId: plain.id });
+    const anchorId = probe.container
+      .querySelector('circle[data-state="placed"]')
+      .getAttribute('data-anchor-id');
+    probe.unmount();
+
+    const withRecord = motif('m1', host.id, {
+      selection: {
+        ...crossingBinding.selection,
+        overrides: { records: [{ ref: anchorId, scale: 2, angle: 137 }] },
+      },
+    });
+    const { container } = renderOverlay({
+      layers: [host, withRecord],
+      selectedLayerId: withRecord.id,
+    });
+    fireEvent.click(container.querySelector(`circle[data-anchor-id="${anchorId}"]`));
+    expect(
+      document.querySelector('[data-testid="glyph-popover-dial"]').getAttribute('aria-valuenow')
+    ).toBe('137');
+    expect(
+      document.querySelector('[data-testid="glyph-popover-scale"]').getAttribute('aria-valuenow')
+    ).toBe('2');
   });
 });

@@ -221,6 +221,10 @@ export default function RightPanel({
   // no-op/null by default so non-wired callers render the canvas unchanged.
   motifPick = null,
   onTogglePickedPath = () => {},
+  // Closes any open history coalesce window (#139). The per-glyph popover uses
+  // it to make each GESTURE exactly one undo entry — see AnchorGhostOverlay.
+  // No-op default: unwired callers just get the app's normal 400ms coalescing.
+  onFlushHistory = () => {},
   onSelect = () => {},
   onMove = () => {},
   onCommit = () => {},
@@ -1016,6 +1020,7 @@ export default function RightPanel({
           patternInstances={patternInstances}
           motifPick={motifPick}
           onTogglePickedPath={onTogglePickedPath}
+          onFlushHistory={onFlushHistory}
         />
         {/* Trace sweep marks (issue #91). Sibling of the p5 surface INSIDE the
             scaled box, so its canvas-coord rings inherit scale(finalScale)+pan and

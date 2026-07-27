@@ -510,7 +510,12 @@ export default function AnchorGhostOverlay({
     applyGlyphEdit((recs) => patchGlyphRecord(recs, openGlyph.anchorId, patch), opts);
 
   const resolvedScale = openRecord?.scale ?? 1;
-  const resolvedAngle = openRecord?.angle ?? openPlacement?.rotation ?? 0;
+  // The SEED is rounded to the dial's own 1° grid. A record's angle is already
+  // on that grid (the control commits integers); a placement's rotation is raw
+  // geometry — on an edge host it is the path tangent, so it arrives as
+  // 233.70170941…° and overflowed the card's readout. Rounding here rather than
+  // in the readout keeps what you SEE and what a commit WRITES identical.
+  const resolvedAngle = openRecord?.angle ?? Math.round(openPlacement?.rotation ?? 0);
 
   const popover = openAnchor ? (
     <GlyphPopover

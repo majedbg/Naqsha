@@ -933,9 +933,12 @@ describe('AnchorGhostOverlay — per-glyph popover gesture (#139)', () => {
     expect(placement.rotation).toBeTypeOf('number');
 
     fireEvent.click(dot);
+    // Rounded to the dial's own 1° grid: a placement rotation is raw geometry
+    // (on an edge host, the path tangent — 233.70170941…°), and what the card
+    // SHOWS must equal what a commit would WRITE.
     expect(
       document.querySelector('[data-testid="glyph-popover-dial"]').getAttribute('aria-valuenow')
-    ).toBe(String(placement.rotation));
+    ).toBe(String(Math.round(placement.rotation)));
     expect(
       document.querySelector('[data-testid="glyph-popover-scale"]').getAttribute('aria-valuenow')
     ).toBe('1');
@@ -988,6 +991,29 @@ describe('AnchorGhostOverlay — per-glyph popover gesture (#139)', () => {
   // you are editing. Selection wins over every other state (placed / hidden /
   // candidate); the dot keeps its filled-or-hollow shape, so the state is still
   // legible and the card's eye still says whether it is hidden.
+  it('seeds the dial on the 1° grid even from a raw tangent rotation', () => {
+    // Edge hosts seed from the path tangent, which is never a round number; the
+    // unrounded float overflowed the card's readout.
+    const host = { id: 'fh', name: 'fh', patternType: 'flowfield', params: {} };
+    const m = motif('m1', host.id, { selection: { roles: ['edge'] } });
+    // A diagonal path — its tangent is irrational, never a round degree.
+    const hostPaths = [{ points: [{ x: 20, y: 40 }, { x: 600, y: 300 }], closed: false }];
+    const { container } = render(
+      <AnchorGhostOverlay
+        layers={[host, m]}
+        selectedLayerId={m.id}
+        canvasW={CANVAS_W}
+        canvasH={CANVAS_H}
+        patternInstances={{ [host.id]: { motifHostGeometry: { hostPaths } } }}
+      />
+    );
+    fireEvent.click(container.querySelector('circle[data-state="placed"]'));
+    const shown = document
+      .querySelector('[data-testid="glyph-popover-dial"]')
+      .getAttribute('aria-valuenow');
+    expect(Number.isInteger(Number(shown))).toBe(true);
+  });
+
   it('the selected dot turns saffron, and only that one', () => {
     const host = gridHost();
     const m = motif('m1', host.id, crossingBinding);

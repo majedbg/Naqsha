@@ -76,6 +76,13 @@ const MOTIF_HOSTS = SEMANTIC_MOTIF_HOSTS;
 
 const ACCENT = '#7c3aed'; // violet — placed / included fill
 const EXCLUDE_STROKE = '#ef4444'; // red — force-excluded outline
+// The dot whose popover is OPEN. Reads the app's own interactive fill (the same
+// token the Inspector uses for a live control) rather than a fourth hardcoded
+// hex, so it tracks light/dark like every other saffron surface. SELECTION WINS
+// over placed / hidden / candidate — the card's eye says whether the glyph is
+// hidden; the dot says which glyph you are editing — but the filled-vs-hollow
+// SHAPE is left alone, so the state is still legible underneath.
+const SELECTED = 'var(--saffron)';
 
 // String-keyed record refs only (records may legally hold {x,y,role} refs too,
 // but this overlay only ever writes/reads id strings — spatial refs stay the
@@ -458,8 +465,21 @@ export default function AnchorGhostOverlay({
 
   // Per-state fill/stroke. `included` additionally renders an outer ring; `placed`
   // is a solid accent dot; `candidate` a hollow faint dot; `excluded` a hollow
-  // reddish dot. Legible over any artwork, deliberately not fancy.
-  const styleFor = (state) => {
+  // reddish dot. Legible over any artwork, deliberately not fancy. A SELECTED
+  // dot recolors to saffron at full opacity, keeping whatever fill the state
+  // gave it (`none` stays `none`, so a hidden glyph stays hollow).
+  const styleFor = (state, selected) => {
+    const base = baseStyleFor(state);
+    if (!selected) return base;
+    return {
+      fill: base.fill === 'none' ? 'none' : SELECTED,
+      fillOpacity: base.fillOpacity ? 0.9 : 0,
+      stroke: SELECTED,
+      strokeOpacity: 1,
+    };
+  };
+
+  const baseStyleFor = (state) => {
     switch (state) {
       case 'placed':
         return { fill: ACCENT, fillOpacity: 0.85, stroke: ACCENT, strokeOpacity: 0.9 };
@@ -494,6 +514,11 @@ export default function AnchorGhostOverlay({
 
   const popover = openAnchor ? (
     <GlyphPopover
+      // KEYED BY GLYPH: opening a different dot mounts a FRESH card, which is
+      // what resets a dragged-aside card back to auto-placement (the pin lives
+      // for as long as one card is open, and no longer). Also clears the menu
+      // and flyout, which should never survive a change of subject.
+      key={openGlyph.anchorId}
       anchorRect={openGlyph.rect}
       glyphRect={glyphScreenRect(openGlyph.rect, r, openPlacement?.radius)}
       // Effective visibility, matching what the dot draws: an excluded glyph is
@@ -535,7 +560,8 @@ export default function AnchorGhostOverlay({
     >
       {displayAnchors.map((a) => {
         const state = stateOf(a.id);
-        const s = styleFor(state);
+        const selected = openGlyph?.anchorId === a.id;
+        const s = styleFor(state, selected);
         return (
           <g key={a.id}>
             {/* Outer ring marks a force-included anchor (overridden ON). */}
@@ -554,6 +580,7 @@ export default function AnchorGhostOverlay({
             <circle
               data-anchor-id={a.id}
               data-state={state}
+              data-selected={selected || undefined}
               cx={a.x}
               cy={a.y}
               r={r}

@@ -308,6 +308,127 @@ describe("GlyphPopover — Escape", () => {
   });
 });
 
+/* ------------------------------------------------- header · drag · dismiss */
+// Interaction pass (2026-07-27, Majed): row 1 reads as a WINDOW HEADER — a
+// lighter bar with a grip you can drag the card by — the card dodges the glyph
+// it is editing, and a clean click anywhere else dismisses it.
+describe("GlyphPopover — the draggable header", () => {
+  // jsdom reports every element as 0×0, and placement arithmetic needs a real
+  // card size. 90×80 is the approved minimum width and a plausible height.
+  let sizes;
+  beforeEach(() => {
+    sizes = [
+      Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetWidth"),
+      Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetHeight"),
+    ];
+    Object.defineProperty(HTMLElement.prototype, "offsetWidth", { configurable: true, value: 90 });
+    Object.defineProperty(HTMLElement.prototype, "offsetHeight", { configurable: true, value: 80 });
+  });
+  afterEach(() => {
+    Object.defineProperty(HTMLElement.prototype, "offsetWidth", sizes[0]);
+    Object.defineProperty(HTMLElement.prototype, "offsetHeight", sizes[1]);
+  });
+
+  const header = () => screen.getByTestId("glyph-popover-header");
+  const card = () => screen.getByTestId("glyph-popover");
+  const at = () => ({ top: card().style.top, left: card().style.left });
+
+  it("row 1 is a labelled drag handle carrying a grip", () => {
+    renderPopover();
+    expect(header()).toBeInTheDocument();
+    expect(header()).toHaveAttribute("aria-label", "Drag to move");
+    expect(within(header()).getByTestId("glyph-popover-grip")).toBeInTheDocument();
+  });
+
+  it("dragging the header moves the card by the pointer delta", () => {
+    renderPopover();
+    const before = at();
+    fireEvent.pointerDown(header(), { clientX: 400, clientY: 300, pointerId: 1, button: 0 });
+    fireEvent.pointerMove(window, { clientX: 460, clientY: 330, pointerId: 1 });
+    fireEvent.pointerUp(window, { clientX: 460, clientY: 330, pointerId: 1 });
+    expect(parseFloat(at().left)).toBe(parseFloat(before.left) + 60);
+    expect(parseFloat(at().top)).toBe(parseFloat(before.top) + 30);
+  });
+
+  it("a dragged card stays PINNED — auto-placement stops fighting the user", () => {
+    const { rerender } = renderPopover();
+    fireEvent.pointerDown(header(), { clientX: 400, clientY: 300, pointerId: 1, button: 0 });
+    fireEvent.pointerMove(window, { clientX: 500, clientY: 300, pointerId: 1 });
+    fireEvent.pointerUp(window, { clientX: 500, clientY: 300, pointerId: 1 });
+    const pinned = at();
+    // The anchor moves (a live edit re-places the glyph) — the card must not.
+    rerender(
+      <GlyphPopover anchorRect={rect(100, 700, 10, 10)} scale={1} angle={0} onPreview={() => {}} />,
+    );
+    expect(at()).toEqual(pinned);
+  });
+
+  it("pressing the eye or the … does not start a drag", () => {
+    const onToggleHidden = vi.fn();
+    renderPopover({ onToggleHidden });
+    const before = at();
+    const eye = screen.getByTestId("glyph-popover-eye");
+    fireEvent.pointerDown(eye, { clientX: 400, clientY: 300, pointerId: 1, button: 0 });
+    fireEvent.pointerMove(window, { clientX: 500, clientY: 400, pointerId: 1 });
+    fireEvent.pointerUp(window, { clientX: 500, clientY: 400, pointerId: 1 });
+    expect(at()).toEqual(before);
+  });
+
+  it("the card itself dodges the glyph it is editing", () => {
+    // Anchor near the bottom ⇒ the card flips ABOVE the dot, straight over the
+    // glyph — the case the flyout already handles and the card did not.
+    renderPopover({
+      anchorRect: rect(400, 760, 10, 10),
+      glyphRect: rect(400, 700, 40, 60),
+    });
+    expect(card()).toHaveAttribute("data-dodged", "true");
+  });
+});
+
+describe("GlyphPopover — dismiss on a clean click outside", () => {
+  const downUp = (target, from, to = from) => {
+    fireEvent.pointerDown(target, { clientX: from[0], clientY: from[1], pointerId: 1 });
+    fireEvent.pointerUp(target, { clientX: to[0], clientY: to[1], pointerId: 1 });
+  };
+
+  it("a full click on the canvas closes the card", () => {
+    const onClose = vi.fn();
+    renderPopover({ onClose });
+    downUp(document.body, [50, 50]);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("a DRAG that happens to end outside does not close it", () => {
+    // Load-bearing: scale and angle are drag controls, and a canvas pan is a
+    // drag too. Only a press-and-release in the same spot dismisses.
+    const onClose = vi.fn();
+    renderPopover({ onClose });
+    downUp(document.body, [50, 50], [300, 220]);
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("a gesture that STARTS inside the card never closes it, wherever it ends", () => {
+    const onClose = vi.fn();
+    renderPopover({ onClose });
+    fireEvent.pointerDown(screen.getByTestId("glyph-popover-scale"), {
+      clientX: 400, clientY: 300, pointerId: 1,
+    });
+    fireEvent.pointerUp(document.body, { clientX: 400, clientY: 300, pointerId: 1 });
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("clicking another anchor dot does not close it — the card just moves there", () => {
+    const onClose = vi.fn();
+    renderPopover({ onClose });
+    const dot = document.createElement("div");
+    dot.setAttribute("data-anchor-id", "edge:1:4");
+    document.body.appendChild(dot);
+    downUp(dot, [120, 120]);
+    expect(onClose).not.toHaveBeenCalled();
+    dot.remove();
+  });
+});
+
 describe("glyphClipboard — one session-scoped slot", () => {
   it("stores scale and angle only, never hidden", () => {
     copyGlyphSettings({ scale: 2, angle: 90, hidden: true });

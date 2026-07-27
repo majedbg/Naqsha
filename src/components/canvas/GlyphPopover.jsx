@@ -29,6 +29,7 @@ import {
   subscribeGlyphClipboard,
 } from "../../lib/motif/glyphClipboard";
 import {
+  EDGE,
   placeSurface,
   SCALE_FORMAT,
   SCALE_MAX,
@@ -50,6 +51,21 @@ function EyeIcon({ open }) {
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
       <path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24" />
       <line x1="1" y1="1" x2="23" y2="23" />
+    </svg>
+  );
+}
+
+// Two columns of dots in the header's gap — the drag affordance, visible before
+// you hover rather than only in the cursor.
+function GripIcon() {
+  return (
+    <svg width="10" height="14" viewBox="0 0 10 14" fill="currentColor" aria-hidden="true">
+      {[4, 7, 10].map((cy) => (
+        <g key={cy}>
+          <circle cx="3.5" cy={cy} r="0.9" />
+          <circle cx="6.5" cy={cy} r="0.9" />
+        </g>
+      ))}
     </svg>
   );
 }
@@ -102,6 +118,100 @@ function usePlacement(ref, anchorRect, avoidRect, active) {
   return pos;
 }
 
+// Drag the card by its header. Returns the PINNED viewport position (null until
+// the first drag) plus the pointerdown handler the header wears.
+//
+// A pin, not an offset: once the user has put the card somewhere, auto-placement
+// stops moving it for as long as this card is open — a live edit re-places the
+// glyph every frame, and a card that chased the anchor would be unusable. The
+// pin dies with the card (the caller keys the component by anchor id), so the
+// next glyph opens auto-placed again.
+function useCardDrag(ref, basePos) {
+  const [pinned, setPinned] = useState(null);
+  const drag = useRef(null);
+
+  const onPointerDown = (e) => {
+    // Only the bar itself, never the controls sitting on it.
+    if (e.button !== 0 || e.target.closest("button")) return;
+    // Start from where the card CURRENTLY is — the pin if it has one, else the
+    // auto-placed position. Read from state, not from a measured rect: the two
+    // agree, and this needs no layout read mid-gesture.
+    const base = pinned || basePos;
+    if (!base) return;
+    drag.current = { x: e.clientX, y: e.clientY, top: base.top, left: base.left };
+    e.preventDefault(); // no text selection while dragging
+    e.stopPropagation();
+  };
+
+  useEffect(() => {
+    const move = (e) => {
+      const d = drag.current;
+      if (!d) return;
+      const el = ref.current;
+      const w = el?.offsetWidth ?? 0;
+      const h = el?.offsetHeight ?? 0;
+      const vp = viewportSize();
+      // Clamped so the card can never be dragged off-screen and stranded.
+      setPinned({
+        top: Math.min(Math.max(d.top + (e.clientY - d.y), EDGE), Math.max(EDGE, vp.h - EDGE - h)),
+        left: Math.min(Math.max(d.left + (e.clientX - d.x), EDGE), Math.max(EDGE, vp.w - EDGE - w)),
+      });
+    };
+    const up = () => {
+      drag.current = null;
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
+    };
+  }, [ref]);
+
+  return { pinned, onPointerDown };
+}
+
+// Dismiss on a CLEAN CLICK outside: pointer pressed and released outside every
+// glyph surface, within DISMISS_SLOP of the same spot.
+//
+// Not pointerdown alone and not pointerup alone — both are wrong here. Scale and
+// angle are DRAG controls whose gestures routinely leave the card, and a canvas
+// pan is a drag too; either would dismiss the card mid-edit. Requiring a press
+// AND a release in the same place is what makes "click away to dismiss" safe
+// next to drag-everything chrome.
+//
+// The anchor DOTS count as inside: clicking another dot just moves the card to
+// it, with no close-then-reopen flicker in between.
+const DISMISS_SLOP = 4;
+const isGlyphSurface = (node) =>
+  !!(node && node.closest && node.closest("[data-glyph-surface], [data-anchor-id]"));
+
+function useDismissOnClickOutside(onClose) {
+  useEffect(() => {
+    let down = null;
+    const onDown = (e) => {
+      down = isGlyphSurface(e.target) ? null : { x: e.clientX, y: e.clientY };
+    };
+    const onUp = (e) => {
+      const start = down;
+      down = null;
+      if (!start || isGlyphSurface(e.target)) return;
+      if (Math.hypot(e.clientX - start.x, e.clientY - start.y) > DISMISS_SLOP) return;
+      onClose();
+    };
+    // CAPTURE phase: the dots and the card stop propagation on pointerdown for
+    // the canvas select-overlay's benefit, which would otherwise hide these.
+    window.addEventListener("pointerdown", onDown, true);
+    window.addEventListener("pointerup", onUp, true);
+    return () => {
+      window.removeEventListener("pointerdown", onDown, true);
+      window.removeEventListener("pointerup", onUp, true);
+    };
+  }, [onClose]);
+}
+
 /* --------------------------------------------------------------- popover */
 
 export default function GlyphPopover({
@@ -138,7 +248,13 @@ export default function GlyphPopover({
     () => null,
   );
 
-  const pos = usePlacement(cardRef, anchorRect, null, true);
+  // The card dodges the GLYPH the way the flyout always has: flipping above a
+  // low anchor puts the card straight over the thing being edited.
+  const pos = usePlacement(cardRef, anchorRect, glyphRect, true);
+  const { pinned, onPointerDown: onHeaderPointerDown } = useCardDrag(cardRef, pos);
+  const at = pinned || pos;
+
+  useDismissOnClickOutside(onClose);
 
   // Escape closes the whole popover — but only once the flyout and menu, which
   // own Escape while they are open, have had their turn.
@@ -181,20 +297,29 @@ export default function GlyphPopover({
       role="dialog"
       aria-label={`${label} overrides`}
       data-testid={testId}
+      data-glyph-surface=""
       data-flipped={pos?.flipped || undefined}
+      data-dodged={pos?.dodged || undefined}
+      data-pinned={pinned ? "true" : undefined}
       // VERDICT 2026-07-27: 90px min-width, height automatic.
       style={{
         position: "fixed",
-        top: pos ? pos.top : -9999,
-        left: pos ? pos.left : -9999,
-        visibility: pos ? "visible" : "hidden",
+        top: at ? at.top : -9999,
+        left: at ? at.left : -9999,
+        visibility: at ? "visible" : "hidden",
         minWidth: 90,
       }}
-      className="pointer-events-auto z-[80] inline-flex flex-col rounded-sm border border-hairline bg-paper p-2xs shadow-pop"
+      className="pointer-events-auto z-[80] inline-flex flex-col overflow-hidden rounded-sm border border-hairline bg-paper shadow-pop"
       onPointerDown={(e) => e.stopPropagation()}
     >
-      {/* row 1 — eye · "…" */}
-      <div className="relative flex items-center justify-between gap-2xs">
+      {/* row 1 — the window header: eye · grip · "…". A lighter bar than the
+          rows below it, draggable anywhere that isn't one of its two buttons. */}
+      <div
+        data-testid={`${testId}-header`}
+        aria-label="Drag to move"
+        onPointerDown={onHeaderPointerDown}
+        className="relative flex cursor-grab items-center justify-between gap-2xs border-b border-hairline bg-paper-warm px-2xs py-[2px] active:cursor-grabbing"
+      >
         <button
           type="button"
           aria-label={hidden ? "Show glyph" : "Hide glyph"}
@@ -211,7 +336,13 @@ export default function GlyphPopover({
         >
           <EyeIcon open={!hidden} />
         </button>
-        <span className="h-4 w-px bg-hairline" />
+        <span
+          data-testid={`${testId}-grip`}
+          aria-hidden="true"
+          className="pointer-events-none flex-1 flex justify-center text-ink-soft/50"
+        >
+          <GripIcon />
+        </span>
         <button
           ref={moreRef}
           type="button"
@@ -243,7 +374,7 @@ export default function GlyphPopover({
       </div>
 
       {/* row 2 — scale */}
-      <div className="mt-2xs flex justify-start border-t border-hairline pt-2xs">
+      <div className="flex justify-start px-2xs py-2xs">
         <DragNumber
           value={scale}
           min={SCALE_MIN}
@@ -261,7 +392,7 @@ export default function GlyphPopover({
       </div>
 
       {/* row 3 — angle */}
-      <div className="mt-2xs flex justify-start border-t border-hairline pt-2xs">
+      <div className="flex justify-start border-t border-hairline px-2xs py-2xs">
         <DragDial
           value={angle}
           onChange={(v) => onPreview({ angle: v })}
@@ -340,6 +471,7 @@ function AngleFlyout({ cardRef, glyphRect, angle, onPreview, onCommit, onClose, 
       role="dialog"
       aria-label="Glyph angle"
       data-testid={testId}
+      data-glyph-surface=""
       data-flipped={pos?.flipped || undefined}
       data-dodged={pos?.dodged || undefined}
       style={{

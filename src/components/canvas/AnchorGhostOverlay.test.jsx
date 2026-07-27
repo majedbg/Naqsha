@@ -983,6 +983,52 @@ describe('AnchorGhostOverlay — per-glyph popover gesture (#139)', () => {
     expect(onFlushHistory).not.toHaveBeenCalled(); // opening a popover edits nothing
   });
 
+  // Interaction pass (2026-07-27, Majed): the dot whose card is open reads
+  // SAFFRON — the app's interactive fill — so you can always tell which glyph
+  // you are editing. Selection wins over every other state (placed / hidden /
+  // candidate); the dot keeps its filled-or-hollow shape, so the state is still
+  // legible and the card's eye still says whether it is hidden.
+  it('the selected dot turns saffron, and only that one', () => {
+    const host = gridHost();
+    const m = motif('m1', host.id, crossingBinding);
+    const { container } = renderOverlay({ layers: [host, m], selectedLayerId: m.id });
+    const dot = container.querySelector('circle[data-state="placed"]');
+    fireEvent.click(dot);
+    expect(dot.getAttribute('data-selected')).toBe('true');
+    expect(dot.getAttribute('fill')).toBe('var(--saffron)');
+    expect(dot.getAttribute('stroke')).toBe('var(--saffron)');
+    const others = [...container.querySelectorAll('circle[data-anchor-id]')].filter((c) => c !== dot);
+    expect(others.every((c) => c.getAttribute('data-selected') === null)).toBe(true);
+    expect(others.every((c) => c.getAttribute('stroke') !== 'var(--saffron)')).toBe(true);
+  });
+
+  it('a HIDDEN glyph reads saffron while its card is open (selection beats the red)', () => {
+    const host = gridHost();
+    const probe = renderOverlay({ layers: [host, motif('m0', host.id, crossingBinding)], selectedLayerId: 'm0' });
+    const hiddenId = probe.container.querySelector('circle[data-state="placed"]').getAttribute('data-anchor-id');
+    probe.unmount();
+    const m = motif('m1', host.id, {
+      selection: { ...crossingBinding.selection, overrides: { records: [{ ref: hiddenId, hidden: true }] } },
+    });
+    const { container } = renderOverlay({ layers: [host, m], selectedLayerId: m.id });
+    const dot = container.querySelector(`circle[data-anchor-id="${hiddenId}"]`);
+    expect(dot.getAttribute('data-state')).toBe('excluded');
+    fireEvent.click(dot);
+    expect(dot.getAttribute('stroke')).toBe('var(--saffron)');
+    expect(dot.getAttribute('fill')).toBe('none'); // hollow shape survives — still reads as hidden
+  });
+
+  it('closing the card clears the saffron', () => {
+    const host = gridHost();
+    const m = motif('m1', host.id, crossingBinding);
+    const { container } = renderOverlay({ layers: [host, m], selectedLayerId: m.id });
+    const dot = container.querySelector('circle[data-state="placed"]');
+    fireEvent.click(dot);
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(dot.getAttribute('data-selected')).toBeNull();
+    expect(dot.getAttribute('fill')).not.toBe('var(--saffron)');
+  });
+
   it('an existing record OVERRIDES the resolved seed', () => {
     const host = gridHost();
     const plain = motif('m1', host.id, crossingBinding);

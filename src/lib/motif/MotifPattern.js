@@ -33,42 +33,16 @@ import { Pattern } from '../patterns/drawingContext';
 import { parsePathD } from '../plotter/pathOps';
 import { sampleEdgeAnchors } from './anchors.js';
 import { getSemanticAnchors } from './semanticAnchors.js';
+import { coerceEdgeRoles } from './edgeRoles.js';
 import { resolveSelection } from './compileSelectionToChain.js';
 import { resolvePlacements } from './placementEngine.js';
 import { getGlyph } from './glyphs.js';
 import { placementMatrix, applyMatrix, matrixToSVG } from './instancing.js';
 
-// EDGE-MODE ROLE COERCION. In edge mode the only anchor role that exists is
-// 'edge' (sampleEdgeAnchors tags every anchor role:'edge', anchors.js), so a
-// ROUTE/selection role filter naming any OTHER role filters EVERYTHING out. This
-// bites a grid that became a single-axis EDGE host at render (resolveMotifHost)
-// while its binding still carries the baked semantic default roles:['crossing']
-// (hostKinds defaultRolesForHost) — the vine would place nothing. Normalize such
-// stale roles to ['edge']. A role already `null` (all-pass) or exactly ['edge']
-// is left untouched — so this is a byte-identical no-op for native edge hosts
-// and only un-bakes a grid's 'crossing'. Clones; never mutates the stored binding.
-const roleIsEdgeSafe = (roles) =>
-  roles == null || (Array.isArray(roles) && roles.length === 1 && roles[0] === 'edge');
-
-function coerceEdgeRoles(binding) {
-  if (!binding || typeof binding !== 'object') return binding;
-  let changed = false;
-  const out = { ...binding };
-  if (Array.isArray(binding.chain)) {
-    out.chain = binding.chain.map((block) => {
-      if (block && block.type === 'route' && !roleIsEdgeSafe(block.roles)) {
-        changed = true;
-        return { ...block, roles: ['edge'] };
-      }
-      return block;
-    });
-  }
-  if (binding.selection && !roleIsEdgeSafe(binding.selection.roles)) {
-    out.selection = { ...binding.selection, roles: ['edge'] };
-    changed = true;
-  }
-  return changed ? out : binding;
-}
+// EDGE-MODE ROLE COERCION now lives in edgeRoles.js — AnchorGhostOverlay runs
+// the identical coercion when it previews an edge host's placements (#141), and
+// a drifting second copy would make the ghost dots disagree with the drawn
+// glyphs on any binding still carrying stale semantic roles.
 
 export default class MotifPattern extends Pattern {
   /**
@@ -140,17 +114,23 @@ export default class MotifPattern extends Pattern {
     const boundary = { type: 'rect', width: canvasW, height: canvasH };
 
     // Run the selection CHAIN (both binding shapes) → survivors + the terminal
-    // Sequencer block. `overrides` seam: legacy bindings store overrides in
-    // `binding.selection.overrides` and resolveSelection's compile path threads
-    // them for us; where CHAIN-mode overrides live on the binding is a C1
-    // decision, so B1 passes a TOP-LEVEL `binding.overrides` through if present
-    // (undefined otherwise) and does NOT invent a schema. For legacy bindings
-    // the compile path overwrites this with the compiled overrides anyway.
+    // Sequencer block. `overrides` seam — SETTLED (#136): chain-form bindings
+    // store overrides TOP-LEVEL at `binding.overrides`; legacy bindings at
+    // `binding.selection.overrides` (threaded by resolveSelection's compile
+    // path, which overwrites the top-level pass-through for legacy anyway).
+    // Overrides are never a chain Block (ADR-0004) — they ride the fixed
+    // post-chain step, so we pass `binding.overrides` through if present
+    // (undefined otherwise).
     // In edge mode, un-bake any stale non-edge route roles (e.g. a single-axis
     // grid whose binding still says ['crossing']) so the role filter passes the
     // edge anchors. No-op for semantic mode and for already-edge bindings.
     const binding = anchorMode === 'edge' ? coerceEdgeRoles(p.binding || {}) : p.binding || {};
-    const { survivors, sequence } = resolveSelection(binding, anchors, {
+    // `overrideRecords` is the resolved ref→anchor map for the POST-PLACEMENT
+    // per-glyph scale/angle step (#137). It MUST come out of resolveSelection:
+    // a LEGACY binding's overrides live at `binding.selection.overrides` and only
+    // the compile path knows that, so resolving here off `binding.overrides`
+    // would silently miss them.
+    const { survivors, sequence, overrideRecords } = resolveSelection(binding, anchors, {
       canvasW,
       canvasH,
       overrides: binding.overrides,
@@ -159,11 +139,16 @@ export default class MotifPattern extends Pattern {
     // Place the survivors WITH the sequence. Only SET `sequence` when the chain
     // actually produced a Sequencer block — a falsy `sequence` (every legacy
     // binding) must NOT clobber a legacy string-array `placement.sequence`
-    // (that would silently rewrite seqId). resolvePlacements reads only
-    // `boundary` from opts, so passing just `{boundary}` is byte-identical.
+    // (that would silently rewrite seqId). resolvePlacements reads `boundary`
+    // and `overrideRecords` from opts — the latter is applied AFTER packing, so
+    // an overridden glyph may overlap its neighbours (settled, #134/#137), and
+    // it is a no-op for documents with no per-glyph scale/angle.
     const placementConfig = { ...(binding.placement || {}) };
     if (sequence) placementConfig.sequence = sequence;
-    const { placements, placementStats } = resolvePlacements(survivors, placementConfig, { boundary });
+    const { placements, placementStats } = resolvePlacements(survivors, placementConfig, {
+      boundary,
+      overrideRecords,
+    });
     // Surface the budget stats so useCanvas can read `instance.lastPlacementStats`
     // after generate() and mirror truncation up to the Inspector (etchBitmaps
     // seam). placementStats is always present from resolvePlacements.

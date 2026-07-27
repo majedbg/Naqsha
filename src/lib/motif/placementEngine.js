@@ -24,7 +24,7 @@
 
 import { mulberry32 } from '../patterns/rng.js';
 import { largestEmptyCircleRadius, fitsAt } from './emptyCircle.js';
-import { applyOverrides } from './overrides.js';
+import { applyOverrides, applyGlyphOverrides, resolveOverrideRecords } from './overrides.js';
 import { dealSlots, isSequenceBlock } from './sequencer.js';
 
 /**
@@ -61,10 +61,11 @@ const DEFAULTS = {
  *   field?: null | {sampleNorm:(u:number,v:number)=>number},
  *   fieldThreshold?: number,
  *   fieldInvert?: boolean,
- *   overrides?: {include?: OverrideRef[], exclude?: OverrideRef[], tolerance?: number},
+ *   overrides?: {include?: OverrideRef[], exclude?: OverrideRef[], tolerance?: number}
+ *     | {records?: Array<{ref: OverrideRef, hidden?: boolean, scale?: number, angle?: number}>, tolerance?: number},
  * }} [rules]
  * @param {{canvasW?:number, canvasH?:number}} [opts]
- * @returns {{survivors: Anchor[], orphans: OverrideRef[]}}
+ * @returns {{survivors: Anchor[], orphans: OverrideRef[], overrideRecords: Map<string, object>}}
  */
 export function selectAnchors(anchors, rules = {}, opts = {}) {
   const list = Array.isArray(anchors) ? anchors : [];
@@ -139,10 +140,19 @@ export function selectAnchors(anchors, rules = {}, opts = {}) {
   //    overrides.js, shared with runSelectionChain.
   const orphans = applyOverrides(survivorIds, list, byId, overrides);
 
+  // 6b. Resolve the SAME override records to anchors for the POST-PLACEMENT
+  //     per-glyph scale/angle step (#137). Resolution has to happen here, against
+  //     the FULL input list, because that is where a spatial re-bind is even
+  //     possible; the map rides out so `resolvePlacements` can rewrite finished
+  //     placements without re-resolving. Empty (and free) when there are no
+  //     overrides at all. This never touches survivorship — that is `applyOverrides`
+  //     above, whose pin-pass/hide-pass semantics stay exactly as they were.
+  const { byAnchorId: overrideRecords } = resolveOverrideRecords(list, byId, overrides);
+
   // 7. Return survivors in ORIGINAL input order.
   const survivors = list.filter((a) => survivorIds.has(a.id));
 
-  return { survivors, orphans };
+  return { survivors, orphans, overrideRecords };
 }
 
 // ---------------------------------------------------------------------------
@@ -265,7 +275,8 @@ function resolveOrientation(base, role) {
  *   sizing?: {mode?:'proportional'|'fixed', size?:number, min?:number, margin?:number},
  *   junction?: 'center'|'skip',
  * }} [config]
- * @param {{boundary?: null|{type:'rect',width:number,height:number}|{type:'polygon',points:{x:number,y:number}[]}}} [opts]
+ * @param {{boundary?: null|{type:'rect',width:number,height:number}|{type:'polygon',points:{x:number,y:number}[]},
+ *          overrideRecords?: Map<string, {ref:*, hidden?:boolean, scale?:number, angle?:number}>}} [opts]
  * @returns {{placements: Placement[], rejected: Rejection[], placementStats: {total:number, placed:number}}}
  */
 export function resolvePlacements(survivors, config = {}, opts = {}) {
@@ -438,7 +449,19 @@ export function resolvePlacements(survivors, config = {}, opts = {}) {
     placements.push(placement);
   });
 
-  return { placements, rejected, placementStats };
+  // POST-PLACEMENT per-glyph overrides (#137). Deliberately the LAST thing that
+  // happens, outside the loop: `placed` was grown from the un-overridden radii,
+  // so packing, the `min` floor and every accept/reject decision above were all
+  // made on the natural footprint. A scaled-up glyph therefore may overlap its
+  // neighbours — accepted, and the only alternative (re-packing) would make a
+  // drag on one glyph shove unrelated ones around. No-op (same array back) when
+  // no record carries a usable scale/angle, so the RNG stream and the emitted
+  // placement shape stay byte-identical for every document without them.
+  return {
+    placements: applyGlyphOverrides(placements, opts && opts.overrideRecords),
+    rejected,
+    placementStats,
+  };
 }
 
 /**
@@ -453,7 +476,12 @@ export function resolvePlacements(survivors, config = {}, opts = {}) {
  */
 export function placeMotifs(anchors, binding = {}, opts = {}) {
   const b = binding || {};
-  const { survivors, orphans } = selectAnchors(anchors, b.selection || {}, opts);
-  const { placements, rejected, placementStats } = resolvePlacements(survivors, b.placement || {}, opts);
+  const { survivors, orphans, overrideRecords } = selectAnchors(anchors, b.selection || {}, opts);
+  // Thread the resolved records into the placement stage so the per-glyph
+  // scale/angle apply is automatic for every caller of this composer (#137).
+  const { placements, rejected, placementStats } = resolvePlacements(survivors, b.placement || {}, {
+    ...opts,
+    overrideRecords,
+  });
   return { placements, orphans, rejected, placementStats };
 }

@@ -26,8 +26,11 @@
 //   2. Overrides (opts.overrides) — a FIXED post-chain step OUTSIDE the chain
 //      (ADR-0004): include (add back) then exclude (remove); exclude wins;
 //      unresolved include → orphan. Shared verbatim with selectAnchors via
-//      overrides.js.
-//   3. Return survivors in ORIGINAL input order + orphans + the sequence block.
+//      overrides.js. The same records are ALSO resolved to anchors and returned
+//      as `overrideRecords` — the map the POST-PLACEMENT per-glyph scale/angle
+//      step consumes (#137); it never affects survivorship.
+//   3. Return survivors in ORIGINAL input order + orphans + the sequence block
+//      + the resolved override records.
 //
 // ── Per-path restart (D4) — the important new behavior ──────────────────────
 // Cycling filters (`everyN`, `skip`) restart their positional counter at each
@@ -49,7 +52,7 @@
 
 import { mulberry32 } from '../patterns/rng.js';
 import { hashRng } from './hashRng.js';
-import { applyOverrides } from './overrides.js';
+import { applyOverrides, resolveOverrideRecords } from './overrides.js';
 
 /**
  * @typedef {{id:string, role:string, x:number, y:number, tangent:number, normal:number, s:number, meta:object}} Anchor
@@ -218,8 +221,9 @@ function applyField(stage, block, opts) {
  *
  * @param {Anchor[]} anchors  input order is contractual and preserved in survivors.
  * @param {Array<RouteBlock|EveryNBlock|SkipBlock|DensityBlock|FieldBlock|SequenceBlock>} chain
- * @param {{canvasW?:number, canvasH?:number, overrides?:{include?:OverrideRef[], exclude?:OverrideRef[], tolerance?:number}, onStage?:(entry:{blockIndex:number, block:object, type:string, inCount:number, outCount:number, bypassed:boolean})=>void}} [opts]
- * @returns {{survivors: Anchor[], orphans: OverrideRef[], sequence: SequenceBlock|null}}
+ * @param {{canvasW?:number, canvasH?:number, overrides?:{include?:OverrideRef[], exclude?:OverrideRef[], tolerance?:number}|{records?:Array<{ref:OverrideRef, hidden?:boolean, scale?:number, angle?:number}>, tolerance?:number}, onStage?:(entry:{blockIndex:number, block:object, type:string, inCount:number, outCount:number, bypassed:boolean})=>void}} [opts]
+ * @returns {{survivors: Anchor[], orphans: OverrideRef[], sequence: SequenceBlock|null,
+ *            overrideRecords: Map<string, {ref:OverrideRef, hidden?:boolean, scale?:number, angle?:number}>}}
  */
 export function runSelectionChain(anchors, chain, opts = {}) {
   const list = Array.isArray(anchors) ? anchors : [];
@@ -297,8 +301,15 @@ export function runSelectionChain(anchors, chain, opts = {}) {
   list.forEach((a) => byId.set(a.id, a));
   const orphans = applyOverrides(survivorIds, list, byId, opts.overrides);
 
+  // 2b. Resolve the SAME records to anchors for the POST-PLACEMENT per-glyph
+  //     scale/angle step (#137). This is the only place a spatial re-bind can
+  //     happen (it needs the FULL input list), so the map rides out on the
+  //     result and `resolvePlacements` consumes it as `opts.overrideRecords`.
+  //     Survivorship is untouched — that is `applyOverrides` above.
+  const { byAnchorId: overrideRecords } = resolveOverrideRecords(list, byId, opts.overrides);
+
   // 3. Survivors in ORIGINAL input order.
   const survivors = list.filter((a) => survivorIds.has(a.id));
 
-  return { survivors, orphans, sequence };
+  return { survivors, orphans, sequence, overrideRecords };
 }

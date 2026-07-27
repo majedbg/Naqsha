@@ -1,68 +1,38 @@
 // RowMenu — the per-row "⋯" overflow popper for the Object Tree panel
 // (Object Tree Panel plan, spec §4 / WI-4).
 //
-// Standalone & reusable. Follows the locked OperationPicker precedent: a
-// controlled `open` prop, rendered INLINE (NOT portaled to body) "so it's found
-// by `within(region)` shell tests", `role="menu"` on the container with
-// `role="menuitem"` children, and Escape closing via `onClose`.
+// As of #139 this is a THIN CALLER over `ui/Menu`, which owns everything that
+// was generic here: `role="menu"` with `role="menuitem"` DIVS (a native button
+// synthesizes a click from Enter in browsers but not in jsdom, so a div keeps
+// the explicit Enter handler the sole activation path), focus on the first item
+// at open, ↑/↓ navigation, Enter activation, Escape, mousedown click-away (kept
+// distinct from the item click path so selecting never trips it), and the
+// aria-disabled + title treatment for unavailable items — never the `disabled`
+// attribute, which would suppress the hover text explaining why.
+//
+// RowMenu keeps only what is actually about an Object Tree row: WHICH items
+// exist, in what order, and where the panel sits. Behaviour is unchanged, with
+// one fix that came with the extraction: Escape (and item activation) now
+// return focus to the ⋯ trigger instead of stranding it on <body>.
 //
 // Trigger ownership: like OperationPicker, RowMenu renders ONLY the menu panel.
 // The ⋯ button that toggles it lives in the LayerTree row (wired in WI-5); the
-// caller owns the trigger and the one-at-a-time open guarantee. RowMenu just
-// honors the controlled `open` and surfaces item callbacks.
+// caller owns the trigger and the one-at-a-time open guarantee.
 //
-// Items, top→bottom: Rename · Duplicate · Download · —divider— · Delete.
-// Delete carries the project's destructive token (`tone-strong`, the same
-// semantic token ConfirmDialog uses for destructive actions).
+// Items, top→bottom: Rename · Duplicate · [Move to panel…] · [Download] ·
+// [Substrate details…] · [Clear all layers] · —divider— · Delete. Delete
+// carries the project's destructive token (`tone-strong`), the same semantic
+// token ConfirmDialog uses for destructive actions.
 //
-// Dismiss: Escape closes, click-away (mousedown outside) closes, and selecting
-// any item fires its callback AND closes. Keyboard: ↑/↓ move focus between
-// items, Enter activates the focused item. Flips upward (bottom-full) when
-// `anchorNearBottom` is set so a row near the panel's bottom edge isn't clipped.
+// Inline + flip: open below by default (top-full), flip above (bottom-full)
+// when the anchoring row sits near the panel's bottom edge.
+//
+// Right-anchor (`right-0`): the ⋯ trigger sits at the panel's right edge, so a
+// left-anchored menu would grow 140px rightward — off the panel, where the
+// tree's `overflow-auto` scroll container clips it (the reported bug). Opening
+// leftward keeps the whole menu inside the panel.
 
-import { useEffect, useRef } from "react";
-
-const ITEM_CLASS =
-  "flex w-full items-center rounded-xs px-1.5 py-1 text-left text-[11px] " +
-  "transition-colors duration-fast ease-out-quart text-ink-soft hover:bg-paper-warm hover:text-ink";
-
-// Delete reuses `tone-strong` — the project's semantic destructive token (the
-// text variant, since a menuitem is text rather than a filled button).
-const DANGER_ITEM_CLASS =
-  "flex w-full items-center rounded-xs px-1.5 py-1 text-left text-[11px] " +
-  "transition-colors duration-fast ease-out-quart text-tone-strong hover:bg-tone-strong/10 hover:text-tone-strong";
-
-// Disabled: no `hover:` variants (so it never lights up under the pointer) and a
-// reduced opacity to read as inert. Activation is also guarded in the handler.
-const DISABLED_ITEM_CLASS =
-  "flex w-full items-center rounded-xs px-1.5 py-1 text-left text-[11px] " +
-  "text-ink-soft opacity-40 cursor-default";
-
-// Rendered as a div (not a <button>) on purpose: native buttons synthesize a
-// click from Enter in real browsers, which — combined with the explicit Enter
-// handler below (needed because jsdom does NOT synthesize that click) — would
-// double-activate in-app. A div has no native Enter→click, so the explicit
-// handler is the SOLE activation path, identical in jsdom and every browser.
-// `role="menuitem"` + tabIndex keep it focusable and ARIA-conformant.
-function MenuItem({ label, danger, disabled, title, onActivate }) {
-  const className = disabled
-    ? DISABLED_ITEM_CLASS
-    : danger
-      ? DANGER_ITEM_CLASS
-      : ITEM_CLASS;
-  return (
-    <div
-      role="menuitem"
-      tabIndex={-1}
-      aria-disabled={disabled || undefined}
-      title={title || undefined}
-      onClick={disabled ? undefined : onActivate}
-      className={className}
-    >
-      {label}
-    </div>
-  );
-}
+import Menu from "../ui/Menu";
 
 export default function RowMenu({
   open = false,
@@ -83,121 +53,49 @@ export default function RowMenu({
   deleteDisabled = false,
   deleteTitle,
 }) {
-  const menuRef = useRef(null);
-
-  // Click-away: OperationPicker punts this to the trigger's overlay, but WI-4
-  // requires RowMenu to own it. Listen on mousedown (distinct from the item
-  // `click` path, so selecting an item never trips the away-handler).
-  useEffect(() => {
-    if (!open) return undefined;
-    function onMouseDown(e) {
-      if (menuRef.current && !menuRef.current.contains(e.target)) {
-        onClose();
-      }
-    }
-    document.addEventListener("mousedown", onMouseDown);
-    return () => document.removeEventListener("mousedown", onMouseDown);
-  }, [open, onClose]);
-
-  // Focus the first item on open: gives the arrow keys a defined start, lets
-  // Enter resolve to a real menuitem, and lets Escape bubble to the container.
-  useEffect(() => {
-    if (!open) return;
-    const first = menuRef.current?.querySelector('[role="menuitem"]');
-    first?.focus();
-  }, [open]);
-
-  if (!open) return null;
-
-  function moveFocus(delta) {
-    const items = Array.from(
-      menuRef.current?.querySelectorAll('[role="menuitem"]') ?? []
-    );
-    if (items.length === 0) return;
-    const current = items.indexOf(document.activeElement);
-    const next = (current + delta + items.length) % items.length;
-    items[next]?.focus();
-  }
-
-  function onKeyDown(e) {
-    if (e.key === "Escape") {
-      onClose();
-    } else if (e.key === "ArrowDown") {
-      e.preventDefault();
-      moveFocus(1);
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault();
-      moveFocus(-1);
-    } else if (e.key === "Enter") {
-      // jsdom doesn't synthesize a click from Enter on a button, so route Enter
-      // through the same click path the mouse uses (fires callback AND closes).
-      e.preventDefault();
-      if (typeof document.activeElement?.click === "function") {
-        document.activeElement.click();
-      }
-    }
-  }
-
-  const select = (cb) => () => {
-    cb();
-    onClose();
-  };
-
-  // Inline + flip: open below by default (top-full), flip above (bottom-full)
-  // when the anchoring row sits near the panel's bottom edge.
   const flipClass = anchorNearBottom ? "bottom-full mb-1" : "top-full mt-1";
 
-  // Right-anchor (`right-0`): the ⋯ trigger sits at the panel's right edge, so a
-  // left-anchored menu would grow 140px rightward — off the panel, where the
-  // tree's `overflow-auto` scroll container clips it (the reported bug). Opening
-  // leftward keeps the whole menu inside the panel.
+  const items = [
+    { label: "Rename", onActivate: onRename },
+    {
+      label: "Duplicate",
+      disabled: duplicateDisabled,
+      title: duplicateTitle,
+      onActivate: onDuplicate,
+    },
+    // Layer rows in grouped (panel) mode only: opens the move-to-panel picker
+    // popper (anchored to the same ⋯ trigger) listing the document's panels. The
+    // caller gates this on having somewhere to move TO (≥2 panels), so the item
+    // never dead-ends.
+    onMoveToPanel && { label: "Move to panel…", onActivate: onMoveToPanel },
+    onDownload && { label: "Download", onActivate: onDownload },
+    // Panel rows only: opens the substrate-details editor (kind / color / label)
+    // now that material + thickness live directly on the row.
+    onEditSubstrate && { label: "Substrate details…", onActivate: onEditSubstrate },
+    onClearLayers && {
+      label: clearLayersLabel,
+      disabled: clearLayersDisabled,
+      title: clearLayersTitle,
+      onActivate: onClearLayers,
+    },
+    { separator: true },
+    {
+      label: "Delete",
+      danger: true,
+      disabled: deleteDisabled,
+      title: deleteTitle,
+      onActivate: onDelete,
+    },
+  ];
+
   return (
-    <div
-      ref={menuRef}
-      role="menu"
-      aria-label="Row actions"
-      data-testid="row-menu"
-      onKeyDown={onKeyDown}
+    <Menu
+      open={open}
+      items={items}
+      onClose={onClose}
+      ariaLabel="Row actions"
+      testId="row-menu"
       className={`absolute right-0 z-50 ${flipClass} min-w-[140px] rounded-sm border border-hairline bg-paper p-1 shadow-pop`}
-    >
-      <MenuItem label="Rename" onActivate={select(onRename)} />
-      <MenuItem
-        label="Duplicate"
-        disabled={duplicateDisabled}
-        title={duplicateTitle}
-        onActivate={duplicateDisabled ? undefined : select(onDuplicate)}
-      />
-      {onMoveToPanel && (
-        /* Layer rows in grouped (panel) mode only: opens the move-to-panel
-           picker popper (anchored to the same ⋯ trigger) listing the document's
-           panels. The caller gates this on having somewhere to move TO (≥2
-           panels), so the item never dead-ends. */
-        <MenuItem label="Move to panel…" onActivate={select(onMoveToPanel)} />
-      )}
-      {onDownload && (
-        <MenuItem label="Download" onActivate={select(onDownload)} />
-      )}
-      {onEditSubstrate && (
-        /* Panel rows only: opens the substrate-details editor (kind / color /
-           label) now that material + thickness live directly on the row. */
-        <MenuItem label="Substrate details…" onActivate={select(onEditSubstrate)} />
-      )}
-      {onClearLayers && (
-        <MenuItem
-          label={clearLayersLabel}
-          disabled={clearLayersDisabled}
-          title={clearLayersTitle}
-          onActivate={select(onClearLayers)}
-        />
-      )}
-      <div role="separator" className="my-1 border-t border-hairline" />
-      <MenuItem
-        label="Delete"
-        danger
-        disabled={deleteDisabled}
-        title={deleteTitle}
-        onActivate={deleteDisabled ? undefined : select(onDelete)}
-      />
-    </div>
+    />
   );
 }

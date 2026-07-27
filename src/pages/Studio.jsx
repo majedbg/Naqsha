@@ -2448,6 +2448,14 @@ export default function Studio({ submitOrg = null } = {}) {
           // Canvas path-picker (C4): the armed pick target + the per-path toggle.
           motifPick={motifPick}
           onTogglePickedPath={handleTogglePickedPath}
+          // Per-glyph popover undo granularity (#139). `updateLayer` coalesces
+          // by `${id}:params` for 400ms, so without this every popover gesture
+          // would fold into its neighbours — and into any Inspector burst on the
+          // same layer, which carries an identical signature. The overlay
+          // flushes once before a gesture's first write and once when it
+          // commits, which is exactly one undo entry per gesture with the canvas
+          // still updating live throughout.
+          onFlushHistory={flushEdit}
           onSelect={setSelectedLayerId}
           onMove={handleCanvasMove}
           onCommit={handleCanvasCommit}

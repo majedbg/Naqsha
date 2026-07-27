@@ -24,18 +24,24 @@
 // a dot click is captured. Because we already know which anchor a circle is (no
 // hit-testing), onPointerDown reads data straight off the closure.
 //
-// SCOPE — this overlay has TWO render paths:
-//   • SEMANTIC override overlay (grid / recursive / spiral PLUS voronoi): faint
-//     placed/candidate ghosts, click-to-override. Voronoi is GEOMETRY-IN
-//     (getSemanticAnchors needs the host's drawn segments), wired via the
-//     `patternInstances` prop: the real drawn host instance stashes
-//     `motifHostGeometry = {drawnEdges, sites}` during generate(), and RightPanel
-//     keeps `patternInstances` in React state (refreshed after every p5 render).
-//   • EDGE-HOST PATH PICKER (C4): for a generic edge host (flowfield/wave/…) the
-//     dots come from the SAME record-mode polyline capture the render uses
-//     (`motifHostGeometry.hostPaths`, also surfaced through `patternInstances`),
-//     and render ONLY while the motif's Route card is armed (`motifPick`). This is
-//     the once-deferred generic edge ghost, now wired for path picking.
+// SCOPE — this overlay has TWO render paths, split by whether the motif's Route
+// card is ARMED for path picking, not by host kind:
+//   • OVERRIDE overlay (`data-mode="override"`) — every host kind, unarmed.
+//     Semantic hosts (grid / recursive / spiral PLUS voronoi) show the full
+//     placed/candidate ghost field; EDGE hosts (#141) show PLACED-ONLY dots (see
+//     the edge display rule below). Click = per-glyph popover, double-click =
+//     quick hide. Voronoi is GEOMETRY-IN (getSemanticAnchors needs the host's
+//     drawn segments), wired via the `patternInstances` prop: the real drawn host
+//     instance stashes `motifHostGeometry = {drawnEdges, sites}` during
+//     generate(), and RightPanel keeps `patternInstances` in React state
+//     (refreshed after every p5 render).
+//   • EDGE-HOST PATH PICKER (C4, `data-mode="pick"`) — an edge host whose Route
+//     card is armed (`motifPick`). Dots come from the SAME record-mode polyline
+//     capture the render uses (`motifHostGeometry.hostPaths`, also surfaced
+//     through `patternInstances`), show EVERY sample tinted by pickedPaths, and a
+//     click means togglePickedPath. A dot therefore has exactly ONE meaning at
+//     any instant; arming closes an open glyph popover (#141) so the two gestures
+//     can never overlap.
 // Pure UI + wiring — the motif core is only CONSUMED, never edited.
 
 import { useMemo, useRef, useState } from 'react';
@@ -56,18 +62,16 @@ import { glyphScreenRect } from './glyphPopoverPlacement';
 import { getSemanticAnchors } from '../../lib/motif/semanticAnchors';
 import { sampleEdgeAnchors } from '../../lib/motif/anchors';
 import { resolveSelection } from '../../lib/motif/compileSelectionToChain';
+import { coerceEdgeRoles } from '../../lib/motif/edgeRoles';
 import { resolvePlacements } from '../../lib/motif/placementEngine';
 import { SEMANTIC_MOTIF_HOSTS, isEdgeHost } from '../../lib/motif/hostKinds';
 
-// This overlay previews SEMANTIC anchors only (grid/recursive/spiral are FORMULA
-// hosts — anchors from params alone; voronoi is GEOMETRY-IN via the drawn host's
-// stashed `motifHostGeometry`, supplied through `patternInstances`). It is
-// DELIBERATELY scoped to the semantic set and NOT widened to B2's edge hosts:
-// getSemanticAnchors returns null for an edge host (flowfield/wave/…), so adding
-// them here would render a silent no-op ghost — a dead affordance. Edge-host
-// anchors come from the useCanvas record-mode capture (hostPaths), which this
-// overlay cannot reach, so a generic edge-ghost preview is deferred to a
-// follow-up rather than shipping an affordance that shows nothing.
+// The hosts whose anchors come from a SEMANTIC extractor (grid/recursive/spiral
+// are FORMULA hosts — anchors from params alone; voronoi is GEOMETRY-IN via the
+// drawn host's stashed `motifHostGeometry`, supplied through `patternInstances`).
+// getSemanticAnchors returns null for an edge host, so this set gates only WHICH
+// extractor runs — edge hosts take the hostPaths branch below and, since #141,
+// reach the same override overlay.
 const MOTIF_HOSTS = SEMANTIC_MOTIF_HOSTS;
 
 const ACCENT = '#7c3aed'; // violet — placed / included fill
@@ -209,8 +213,13 @@ export default function AnchorGhostOverlay({
     if (edgeMode) {
       const hostPaths = patternInstances[host.id]?.motifHostGeometry?.hostPaths;
       if (!hostPaths || !hostPaths.length) return null;
-      const edgeOpts = motif?.params?.edgeOpts || { spacing: 24 };
-      return sampleEdgeAnchors(hostPaths, edgeOpts);
+      // edgeOpts fallback is `{}` — the RENDER's fallback (MotifPattern), which
+      // samples NOTHING without a spacing/count. A friendlier default here (it
+      // used to be {spacing:24}) would draw dots claiming "placed" over a canvas
+      // where no glyph drew. createMotifParams gives every real motif
+      // {spacing:24}, so this only ever bites a hand-rolled/legacy params blob —
+      // exactly the case where agreeing with the render matters.
+      return sampleEdgeAnchors(hostPaths, motif?.params?.edgeOpts || {});
     }
     return null;
   }, [host, canvasW, canvasH, patternInstances, motif]);
@@ -226,10 +235,14 @@ export default function AnchorGhostOverlay({
   // `selection.overrides` anyway, so this is byte-identical to the real render.
   const placements = useMemo(() => {
     if (!anchors || !motif) return [];
-    // Edge-host guard (C4): the edge branch is pick-oriented (colored by
-    // pickedPaths), never placed/candidate, so it needs no placements — skip.
-    if (host && isEdgeHost(host.patternType, host.params)) return [];
-    const binding = motif.params.binding || {};
+    // EDGE hosts run the same pipeline (#141) — placed/candidate is what the
+    // override dots are made of. The one extra step is the render's own role
+    // coercion: resolveMotifHost forces anchorMode:'edge' on an edge host, and
+    // MotifPattern then un-bakes any stale non-edge route roles. Skipping it here
+    // would filter every edge anchor out and draw an EMPTY overlay over a canvas
+    // full of glyphs — so the coercion is imported, never re-implemented.
+    const raw = motif.params.binding || {};
+    const binding = host && isEdgeHost(host.patternType, host.params) ? coerceEdgeRoles(raw) : raw;
     const { survivors, sequence } = resolveSelection(binding, anchors, {
       canvasW,
       canvasH,
@@ -248,20 +261,40 @@ export default function AnchorGhostOverlay({
     return p;
   }, [anchors, motif, canvasW, canvasH, host]);
 
+  // Is THIS motif's Route card armed for path picking on an EDGE host? That is
+  // the ONE thing that decides which of the two render paths runs — and it also
+  // has to close an open glyph popover, so it is computed at hook level rather
+  // than inside the render branch below.
+  const edgeMode = !!host && isEdgeHost(host.patternType, host.params);
+  const pickArmed = edgeMode && !!motif && !!motifPick && motifPick.layerId === motif.id;
+
+  // Arming pick force-closes the per-glyph popover (#141). Without this the card
+  // would merely be hidden behind the early return below and RESURRECT on
+  // disarm, pointing at a glyph the user has since stopped editing. One meaning
+  // per dot, one card at a time.
+  //
+  // Adjusted DURING render (React's "resetting state when a prop changes"
+  // pattern) rather than in an effect: the popover must never paint for the
+  // frame in which pick arms, and a setState-in-effect would render it once
+  // first, then blank it.
+  const [prevPickArmed, setPrevPickArmed] = useState(pickArmed);
+  if (prevPickArmed !== pickArmed) {
+    setPrevPickArmed(pickArmed);
+    if (pickArmed) setOpenGlyph(null);
+  }
+
   // ── SINGLE RENDER GATE ───────────────────────────────────────────────────
   if (!motif || !host || !anchors) return null;
 
   // ── EDGE-HOST PATH PICKER (C4) ─────────────────────────────────────────────
-  // A wholly separate render path from the semantic override overlay below: it
+  // A wholly separate render path from the override overlay below: it
   // reads/writes ONLY the route block's pickedPaths (via onTogglePickedPath) — a
-  // ROUTE-BLOCK edit, distinct from the shape-aware include/exclude override
-  // toggle below (which is scoped to semantic hosts). Renders ONLY when THIS
-  // motif's Route card is armed ("Pick on canvas"), so it's an intentional
-  // affordance, not clutter on every edge-host selection (a dense flowfield can
-  // emit hundreds of anchors).
-  if (isEdgeHost(host.patternType, host.params)) {
-    const armed = !!motifPick && motifPick.layerId === motif.id;
-    if (!armed) return null;
+  // ROUTE-BLOCK edit, distinct from the per-glyph override records below. Renders
+  // ONLY when THIS motif's Route card is armed ("Pick on canvas"): it shows EVERY
+  // sample (a dense flowfield can emit thousands), which is right for choosing
+  // paths and wrong for editing glyphs — hence the hard split from the unarmed
+  // override path, which draws placed glyphs only.
+  if (pickArmed) {
     // Color dots by membership in the ARMED route block's pickedPaths. readChain
     // tolerates both binding shapes (by the time you can arm, scope='picked' has
     // already migrated the binding to chain-form).
@@ -324,6 +357,12 @@ export default function AnchorGhostOverlay({
   const records = norm.records;
   const includeIds = stringRefIds(records, false); // hidden:false = force-show pin
   const excludeIds = stringRefIds(records, true); // hidden:true = force-hide
+  // EVERY string-ref'd anchor, whatever the record says — the edge display rule
+  // below needs scale/angle-only records too, which carry no `hidden` and so
+  // appear in neither set above.
+  const recordIds = new Set(
+    records.filter((r) => typeof r.ref === 'string').map((r) => r.ref)
+  );
 
   // Show ghosts only for the anchor ROLES this motif actually targets (keeps the
   // overlay focused instead of drawing every crossing+edge+tip+cell). An
@@ -331,9 +370,33 @@ export default function AnchorGhostOverlay({
   // roles null/empty ⇒ engine treats as "all roles", so show everything.
   const roles = readRoles(binding);
   const roleSet = Array.isArray(roles) && roles.length ? new Set(roles) : null;
-  const displayAnchors = roleSet
+  const semanticDisplay = roleSet
     ? anchors.filter((a) => roleSet.has(a.role) || includeIds.has(a.id) || excludeIds.has(a.id))
     : anchors;
+
+  // EDGE DISPLAY RULE (#141) — PLACED ∪ every record's anchor.
+  //   • PLACED-ONLY, because everything here is role:'edge' (the role-focus
+  //     filter above has no edge equivalent) and the sampler emits hundreds to
+  //     thousands of candidates on a real flowfield. One dot per GLYPH reads as
+  //     "my ornament"; one dot per SAMPLE reads as the sampler's grid — the
+  //     clutter #139 refused. The knowing cost: force-SHOW (clicking a candidate
+  //     to pin a glyph onto it) is unavailable on edge hosts.
+  //   • ∪ records, because hiding a glyph UN-PLACES it: a naive placed-only set
+  //     would delete the very dot that could un-hide it, and would strand a
+  //     scale/angle record whose anchor the rules later stop placing. Anything
+  //     the user has touched keeps a clickable dot, always. Such a stranded dot
+  //     reads as a CANDIDATE — the third state an edge host can show, and the
+  //     one narrow case where force-show IS reachable here (its popover eye
+  //     writes hidden:false).
+  // Bounded by MAX_PLACEMENTS (placementEngine), not by the sample count.
+  const displayAnchors = edgeMode
+    ? anchors.filter((a) => placedIds.has(a.id) || recordIds.has(a.id))
+    : semanticDisplay;
+
+  // EMPTY STATE — an edge host whose rules place nothing draws nothing. The
+  // Route card is where "0 glyphs placed" belongs; a canvas full of hollow
+  // sample dots would be a second, noisier place to say it.
+  if (edgeMode && displayAnchors.length === 0) return null;
 
   // Toggle state machine (#136 — pure RECORD edits → one onUpdateLayer). Same
   // spirit as the old include/exclude arrays, but record-PRESERVING: un-hiding
@@ -463,6 +526,7 @@ export default function AnchorGhostOverlay({
   const ghosts = (
     <svg
       data-testid="anchor-ghost-overlay"
+      data-mode="override"
       className="pointer-events-none absolute inset-0"
       width={canvasW}
       height={canvasH}

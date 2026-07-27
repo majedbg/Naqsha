@@ -24,6 +24,7 @@ import { MOTIF_TYPE, createMotifParams } from '../../lib/motif/motifLayer';
 import { getSemanticAnchors } from '../../lib/motif/semanticAnchors';
 import { resolveSelection } from '../../lib/motif/compileSelectionToChain';
 import { resolvePlacements } from '../../lib/motif/placementEngine';
+import { sampleEdgeAnchors } from '../../lib/motif/anchors';
 
 const CANVAS_W = 800;
 const CANVAS_H = 600;
@@ -567,7 +568,12 @@ describe('AnchorGhostOverlay — edge-host path picker (C4)', () => {
     [hostId]: { motifHostGeometry: { hostPaths } },
   });
 
-  it('renders NOTHING when not armed (motifPick is null), even on an edge host', () => {
+  // #141 re-spec: an UNARMED edge host now renders the per-glyph override
+  // overlay — but PLACED-ONLY, and this fixture's pathScope:'picked' with an
+  // empty pickedPaths places nothing. So the "nothing on screen" this locks is
+  // now the EMPTY-STATE rule (zero glyphs ⇒ zero dots), not "edge hosts are
+  // unreachable unarmed". See the #141 describe below for the placed case.
+  it('renders NOTHING when not armed and nothing is placed (empty state)', () => {
     const host = flowHost();
     const m = pickMotif('m1', host.id);
     const { container } = renderPick({
@@ -672,6 +678,188 @@ describe('AnchorGhostOverlay — edge-host path picker (C4)', () => {
     const svg = container.querySelector('[data-testid="anchor-ghost-overlay"]');
     expect(svg).not.toBeNull();
     expect(svg.getAttribute('data-mode')).not.toBe('pick');
+  });
+});
+
+// ── #141: per-glyph overrides on an EDGE host (unarmed) ─────────────────────
+// #139 scoped the override overlay to SEMANTIC hosts; on flowfield/wave/… the
+// only edge affordance was the pick-armed picker above, so "hide the scaffold,
+// keep the ornament" had no per-glyph editing at all. #141 opens the unarmed
+// edge path. The settled shape:
+//   • PLACED-ONLY dots — a dense flowfield emits thousands of samples but only
+//     the glyphs that actually drew are editable (force-show is knowingly
+//     unavailable here; the candidate field is the clutter #139 refused).
+//   • DISPLAY = placed ∪ every record's anchor, so hiding a glyph (which
+//     un-places it) can never strand its dot off-canvas.
+//   • Armed still means the picker, verbatim; unarmed means override.
+describe('AnchorGhostOverlay — per-glyph overrides on an EDGE host (#141)', () => {
+  const flowHost = (id = 'fh') => ({ id, name: id, patternType: 'flowfield', params: {} });
+  // Two long straight paths — at the motif default spacing 24 each yields
+  // enough samples that a rate:{n:2} drop is unambiguously observable.
+  const hostPaths = [
+    { points: [{ x: 20, y: 100 }, { x: 620, y: 100 }], closed: false },
+    { points: [{ x: 20, y: 300 }, { x: 620, y: 300 }], closed: false },
+  ];
+  const instances = (hostId = 'fh') => ({ [hostId]: { motifHostGeometry: { hostPaths } } });
+  const sampled = () => sampleEdgeAnchors(hostPaths, { spacing: 24 });
+
+  // rate n:2 keeps every other anchor, so PLACED is a strict subset of sampled
+  // — that gap is what proves "placed-only" rather than "all anchors".
+  const edgeMotif = (id, hostId, selection = {}) =>
+    motif(id, hostId, { selection: { roles: ['edge'], rate: { n: 2 }, ...selection } });
+
+  const renderEdge = ({ layers, selectedLayerId, onUpdateLayer = () => {}, motifPick = null }) =>
+    render(
+      <AnchorGhostOverlay
+        layers={layers}
+        selectedLayerId={selectedLayerId}
+        canvasW={CANVAS_W}
+        canvasH={CANVAS_H}
+        onUpdateLayer={onUpdateLayer}
+        patternInstances={instances(layers[0].id)}
+        motifPick={motifPick}
+      />
+    );
+
+  const popover = () => document.querySelector('[data-testid="glyph-popover"]');
+
+  it('an unarmed edge-host selection renders the OVERRIDE overlay, not the picker', () => {
+    const host = flowHost();
+    const m = edgeMotif('m1', host.id);
+    const { container } = renderEdge({ layers: [host, m], selectedLayerId: m.id });
+    const svg = container.querySelector('[data-testid="anchor-ghost-overlay"]');
+    expect(svg).not.toBeNull();
+    expect(svg.getAttribute('data-mode')).toBe('override');
+    const dots = container.querySelectorAll('circle[data-anchor-id]');
+    expect(dots.length).toBeGreaterThan(0);
+    expect([...dots].every((d) => d.getAttribute('data-anchor-id').startsWith('edge:'))).toBe(true);
+  });
+
+  it('draws a dot ONLY where a glyph is placed — rate-dropped samples get none', () => {
+    const host = flowHost();
+    const m = edgeMotif('m1', host.id);
+    const { container } = renderEdge({ layers: [host, m], selectedLayerId: m.id });
+    const dots = [...container.querySelectorAll('circle[data-anchor-id]')];
+    expect(dots.length).toBeGreaterThan(0);
+    // Strictly fewer dots than samples, and every one of them is a real glyph.
+    expect(dots.length).toBeLessThan(sampled().length);
+    expect(dots.every((d) => d.getAttribute('data-state') === 'placed')).toBe(true);
+  });
+
+  it('un-bakes stale semantic roles — a binding still saying crossing still shows glyphs', () => {
+    // The render coerces non-edge route roles to ['edge'] in edge mode
+    // (coerceEdgeRoles); without the same coercion here the overlay would filter
+    // every anchor out and silently draw nothing while the canvas is full of
+    // glyphs. This is the parity assertion.
+    const host = flowHost();
+    const m = edgeMotif('m1', host.id, { roles: ['crossing'] });
+    const { container } = renderEdge({ layers: [host, m], selectedLayerId: m.id });
+    expect(container.querySelectorAll('circle[data-state="placed"]').length).toBeGreaterThan(0);
+  });
+
+  it('a HIDDEN glyph keeps its dot (excluded) so the hide is reversible from the canvas', () => {
+    // Placed-only has a trap: hiding un-places, so a naive placed-only display
+    // would delete the only affordance that could un-hide it.
+    const host = flowHost();
+    const probe = renderEdge({ layers: [host, edgeMotif('m0', host.id)], selectedLayerId: 'm0' });
+    const hiddenId = probe.container
+      .querySelector('circle[data-state="placed"]')
+      .getAttribute('data-anchor-id');
+    probe.unmount();
+
+    const m = edgeMotif('m1', host.id, {
+      overrides: { records: [{ ref: hiddenId, hidden: true }] },
+    });
+    const { container } = renderEdge({ layers: [host, m], selectedLayerId: m.id });
+    const dot = container.querySelector(`circle[data-anchor-id="${hiddenId}"]`);
+    expect(dot).not.toBeNull();
+    expect(dot.getAttribute('data-state')).toBe('excluded');
+  });
+
+  it('a scale/angle-only record keeps its dot even once the rules stop placing it', () => {
+    // display = placed ∪ refs(records): an edited glyph can never become
+    // unreachable, so Reset stays available from the canvas. It reads as a
+    // CANDIDATE (not placed, not overridden-hidden) — the one state besides
+    // placed/excluded an edge host can show, and the one narrow case where
+    // force-show IS reachable there: its popover eye writes hidden:false.
+    const host = flowHost();
+    const strandedId = 'edge:0:1'; // rate n:2 drops the odd samples
+    const m = edgeMotif('m1', host.id, {
+      overrides: { records: [{ ref: strandedId, scale: 1.4 }] },
+    });
+    const { container } = renderEdge({ layers: [host, m], selectedLayerId: m.id });
+    const dot = container.querySelector(`circle[data-anchor-id="${strandedId}"]`);
+    expect(dot).not.toBeNull();
+    expect(dot.getAttribute('data-state')).toBe('candidate');
+  });
+
+  it('a SINGLE-AXIS grid takes the same unarmed edge path (params-aware host kind)', () => {
+    // The only host whose edge-ness comes from PARAMS rather than patternType,
+    // and the only edge host that is ALSO in the semantic MOTIF_HOSTS set — so
+    // the anchors memo's `!edgeMode && MOTIF_HOSTS.has(...)` ordering is
+    // load-bearing here and nowhere else. Wrong order ⇒ the semantic extractor's
+    // 2 tip dots per line instead of dots ALONG each line, and every flowfield
+    // test above still passes.
+    const host = {
+      id: 'fh', // matches instances() keying
+      name: 'grid',
+      patternType: 'grid',
+      params: { drawVertical: 1, drawHorizontal: 0 }, // columns only
+    };
+    const m = edgeMotif('m1', host.id);
+    const { container } = renderEdge({ layers: [host, m], selectedLayerId: m.id });
+    const svg = container.querySelector('[data-testid="anchor-ghost-overlay"]');
+    expect(svg.getAttribute('data-mode')).toBe('override');
+    const dots = [...container.querySelectorAll('circle[data-anchor-id]')];
+    expect(dots.length).toBeGreaterThan(0);
+    expect(dots.every((d) => d.getAttribute('data-anchor-id').startsWith('edge:'))).toBe(true);
+  });
+
+  it('double-clicking a placed edge dot writes hidden:true for that edge id', () => {
+    const host = flowHost();
+    const m = edgeMotif('m1', host.id);
+    const onUpdateLayer = vi.fn();
+    const { container } = renderEdge({ layers: [host, m], selectedLayerId: m.id, onUpdateLayer });
+    const dot = container.querySelector('circle[data-state="placed"]');
+    const id = dot.getAttribute('data-anchor-id');
+    fireEvent.doubleClick(dot);
+    expect(onUpdateLayer).toHaveBeenCalledTimes(1);
+    const [, patch] = onUpdateLayer.mock.calls[0];
+    expect(patch.params.binding.selection.overrides.records[0]).toEqual({ ref: id, hidden: true });
+  });
+
+  it('clicking a placed edge dot opens the per-glyph popover', () => {
+    const host = flowHost();
+    const m = edgeMotif('m1', host.id);
+    const { container } = renderEdge({ layers: [host, m], selectedLayerId: m.id });
+    expect(popover()).toBeNull();
+    fireEvent.click(container.querySelector('circle[data-state="placed"]'));
+    expect(popover()).not.toBeNull();
+  });
+
+  it('arming pick swaps to the picker and CLOSES an open popover (it never resurrects)', () => {
+    const host = flowHost();
+    const m = edgeMotif('m1', host.id);
+    const props = (motifPick) => ({
+      layers: [host, m],
+      selectedLayerId: m.id,
+      canvasW: CANVAS_W,
+      canvasH: CANVAS_H,
+      onUpdateLayer: () => {},
+      patternInstances: instances(host.id),
+      motifPick,
+    });
+    const { container, rerender } = render(<AnchorGhostOverlay {...props(null)} />);
+    fireEvent.click(container.querySelector('circle[data-state="placed"]'));
+    expect(popover()).not.toBeNull();
+
+    rerender(<AnchorGhostOverlay {...props({ layerId: m.id, blockIndex: 0 })} />);
+    expect(container.querySelector('[data-testid="anchor-ghost-overlay"]').getAttribute('data-mode'))
+      .toBe('pick');
+    expect(popover()).toBeNull();
+
+    rerender(<AnchorGhostOverlay {...props(null)} />);
+    expect(popover()).toBeNull(); // disarming must not bring the old card back
   });
 });
 

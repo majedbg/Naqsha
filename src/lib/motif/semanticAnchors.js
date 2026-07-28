@@ -1053,6 +1053,153 @@ function voronoiAnchors(_params, _canvasW, _canvasH, opts) {
   return anchors;
 }
 
+// ── TRUCHET extractor (patternType:'truchet') ─────────────────────────────────
+// STRATEGY = GEOMETRY-IN, like voronoi / circlepacking / modulegrid, and the one
+// host of the four that emits TWO roles. The geometry probe is a SINGLE BOOLEAN
+// — it either records the draw stream or reads the stash, never both — so a host
+// emitting cells AND edges must supply both from its stash (as Voronoi does) and
+// must NOT be listed in EDGE_MOTIF_HOSTS. Truchet therefore stashes, in the
+// PAINTED frame and consuming no RNG (Truchet.js, end of generate()):
+//   • opts.cells — one {x, y, rotation, copy} per tile per radial symmetry copy;
+//   • opts.arcs  — one {points, closed, copy, tile} per DRAWN path per copy: the
+//                  two quarter-arcs in the 'arcs' set, the diagonal in
+//                  'diagonals', the triangle OUTLINE in 'triangles'. Every tile
+//                  set yields geometry (PRD #143 records the opposite belief as a
+//                  capture-channel concern wrongly applied to a stash host).
+//
+// ROLE MAPPING:
+//   • cell = one anchor at every tile centre, through the SHARED cell-grid
+//     extractor (module D, cellGridAnchors.js). The half-extent is UNIFORM and
+//     derived from the pattern's own layout rule — cell = min(W,H)/cols, half =
+//     cell/2 — and passed once as `opts.half`, which is precisely the shared-
+//     fallback path module D documents for this host. It rides out as the
+//     top-level `hostRadius` channel (#146), so raising the tile count shrinks
+//     the glyphs to match. NOTE for the 'triangles' set: the CELL is the TILE,
+//     not the drawn triangle, so the anchor sits at the tile centre (which lies
+//     on the triangle's hypotenuse) with the tile's inscribed radius. That is the
+//     same container every other tile set declares, which is what "the tile set
+//     is a look, not a capability" means.
+//   • edge = an even arc-length run along EVERY drawn path, sampled by the shared
+//     sampleEdgeAnchors. Each quarter-arc is its OWN path — they join visually
+//     where their endpoints coincide at tile edges but are not one polyline, and
+//     stitching them into strands is explicitly out of scope (it would also
+//     change how Apex and Stem read on this host). Endpoints are EXCLUDED, so two
+//     arcs meeting at a shared tile-edge midpoint never stack coincident anchors
+//     there.
+//
+// THE RUN LENGTH IS FIXED, NOT the motif's edge spacing. `edgeSamplesPerArc`
+// mirrors the spiral extractor's `edgeSamplesPerArm`: an extractor-side default,
+// overridable through params, and NOT read from the motif's `edgeOpts`. It cannot
+// be: MotifPattern calls resolveHostAnchors WITHOUT edgeOpts in the semantic
+// branch while AnchorGhostOverlay passes the motif's own — so consuming it would
+// make the override dots and the glyphs disagree about where the anchors are.
+// The user-visible consequence is that the motif's spacing control does not move
+// Truchet's edge anchors, exactly as it does not move Voronoi's.
+//
+// SYMMETRY IS REPLICATED, and that is load-bearing: Truchet is the only stash
+// host with a real symmetry control, and base-copy-only is a bug the studio has
+// already shipped and fixed once. The stash already arrives replicated, so this
+// extractor's job is to GROUP by copy — never to re-derive the transform.
+//
+// ANCHOR IDENTITY IS NORMATIVE (override records match by exact id before
+// spatial rebinding, and randomised Slots hash the id):
+//   • symmetry 1 : `cell:<tile>` and `edge:<arc>:<sample>` — NO copy suffix, so a
+//     single-copy Truchet keeps override-stable ids;
+//   • symmetry n>1 : `cell:<tile>:<k>` and `edge:<arc>:<sample>:<k>`, where
+//     <tile>/<arc> are COPY-LOCAL, matching the gridAnchors/recursive convention
+//     of appending the copy index only when the copy count exceeds 1.
+// `meta.pathIndex` stays GLOBAL across copies even though the id's arc index is
+// copy-local: Chain blocks and Slot cycles restart per pathIndex and Apex selects
+// one end-member per pathIndex, so arc 3 of copy 0 and arc 3 of copy 1 must be
+// two paths, not one. Ids answer identity; pathIndex answers rhythm.
+
+/** Group stash entries by their `copy` index, in first-appearance order. */
+function groupByCopy(list) {
+  const order = [];
+  const groups = new Map();
+  for (const item of list) {
+    const k = Number.isFinite(item && item.copy) ? item.copy : 0;
+    let g = groups.get(k);
+    if (!g) {
+      g = [];
+      groups.set(k, g);
+      order.push(k);
+    }
+    g.push(item);
+  }
+  return order.map((k) => ({ copy: k, items: groups.get(k) }));
+}
+
+/**
+ * Truchet semantic extractor (GEOMETRY-IN). See the block header for the full
+ * role / frame / identity contract. Emission order is fixed — every cell (copy 0
+ * first), then every edge — mirroring the role grouping the Grid and Recursive
+ * extractors use.
+ * @param {object} params    the host's live params (tiles, symmetry, …)
+ * @param {number} canvasW
+ * @param {number} canvasH
+ * @param {object} opts      { cells?, arcs? } — the host's stash.
+ * @returns {Array<object>|null} null when NEITHER key is present (unprobed).
+ */
+function truchetAnchors(params, canvasW, canvasH, opts) {
+  const cells = opts && Array.isArray(opts.cells) ? opts.cells : null;
+  const arcs = opts && Array.isArray(opts.arcs) ? opts.arcs : null;
+  // NULL vs [] is a contract, matching every other stash host: NEITHER key (host
+  // not yet probed, or a params-only caller) ⇒ null, so MotifPattern takes its
+  // documented fallback and nothing is placed. Present-but-empty ⇒ an honest
+  // empty anchor set. Either key ALONE emits what it describes.
+  if (!cells && !arcs) return null;
+
+  const { tiles = 16, edgeSamplesPerArc = 3 } = params || {};
+  // The pattern's own layout rule, replayed operand for operand (Truchet.js):
+  // cols = max(1, round(tiles)); cell = min(canvasW, canvasH) / cols.
+  const cols = Math.max(1, Math.round(tiles));
+  const half = Math.min(canvasW, canvasH) / cols / 2;
+
+  const cellGroups = cells ? groupByCopy(cells) : [];
+  const arcGroups = arcs ? groupByCopy(arcs) : [];
+  // The copy count the IDS are suffixed by. Taken from the stash itself rather
+  // than from params.symmetry: the stash is what was painted, and a suffix that
+  // disagreed with it would break exact-id override matching.
+  const nCopies = Math.max(cellGroups.length, arcGroups.length);
+  const suffixCopy = nCopies > 1;
+
+  const anchors = [];
+
+  // ── CELLS: one per tile, through the shared cell-grid extractor. Called PER
+  //    COPY so `meta.cell` is already the copy-local index — no index arithmetic
+  //    against the raw stash, which would misalign if a degenerate cell were ever
+  //    dropped by module D.
+  for (const { copy, items } of cellGroups) {
+    for (const a of cellGridAnchors(items, { half })) {
+      anchors.push({
+        ...a,
+        id: suffixCopy ? anchorId('cell', a.meta.cell, copy) : a.id,
+        meta: { ...a.meta, copy, tile: a.meta.cell },
+      });
+    }
+  }
+
+  // ── EDGES: an even run along every drawn path. `includeEndpoints:false` keeps
+  //    the run inset from the arc's ends, so the shared endpoints two arcs have
+  //    at a tile edge never carry two coincident anchors.
+  const count = Number.isFinite(edgeSamplesPerArc) && edgeSamplesPerArc > 0 ? edgeSamplesPerArc : 3;
+  let pathOffset = 0;
+  for (const { copy, items } of arcGroups) {
+    for (const a of sampleEdgeAnchors(items, { count, includeEndpoints: false, idPrefix: 'edge' })) {
+      const arc = a.meta.pathIndex;
+      anchors.push({
+        ...a,
+        id: suffixCopy ? anchorId('edge', arc, a.meta.sampleIndex, copy) : a.id,
+        meta: { ...a.meta, pathIndex: pathOffset + arc, arc, copy, tile: items[arc].tile },
+      });
+    }
+    pathOffset += items.length;
+  }
+
+  return anchors;
+}
+
 /**
  * Return semantic anchors for a pattern, or null when no extractor exists (the
  * caller falls back to generic edge anchors from anchors.js).
@@ -1081,6 +1228,9 @@ function voronoiAnchors(_params, _canvasW, _canvasH, opts) {
  *     skeleton vertex graph, in world coords and in the painted frame (#152).
  *     Decomposed into strands: `crossing` where straps meet, `edge` riding the
  *     straps, `tip` where a strap is cut at the crop margin.
+ *   • opts.arcs — the TRUCHET host's per-tile drawn paths ({points, closed,
+ *     copy, tile}), in world coords and in the painted frame (#153). One `edge`
+ *     run per path, alongside the `cell` anchors its `cells` key produces.
  * Backward-compatible: existing 4-arg callers pass no opts, so recursive/spiral
  * are unaffected, grid falls back to the jitter=0 baseline, and voronoi returns
  * null (graceful fallback).
@@ -1172,6 +1322,14 @@ export function getSemanticAnchors(patternType, params, canvasW, canvasH, opts) 
       return opts && Array.isArray(opts.girihVertices) && Array.isArray(opts.girihEdges)
         ? girihGraphAnchors(opts.girihVertices, opts.girihEdges)
         : null;
+
+    case 'truchet':
+      // GEOMETRY-IN, and the one stash host emitting TWO roles (#153): `cells`
+      // (tile centres, reusing the generic cell-grid key and extractor) and
+      // `arcs` (the tile's drawn paths). Both arrive in the painted frame,
+      // replicated across the radial symmetry copies — Truchet is the only stash
+      // host with a real symmetry control. See the TRUCHET block header above.
+      return truchetAnchors(params, canvasW, canvasH, opts);
     // Extractors for other hosts are deferred to later slices.
     default:
       return null;

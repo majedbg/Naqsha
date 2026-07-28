@@ -22,9 +22,18 @@ import { getPatternClass } from '../patterns/index.js';
 import { rolesForHost } from './hostRoles.js';
 
 describe('hostKinds', () => {
-  it('keeps the four legacy semantic hosts, plus circlepacking (#146), modulegrid (#151) and girih (#152)', () => {
+  it('keeps the four legacy semantic hosts, plus circlepacking (#146), modulegrid (#151), girih (#152) and truchet (#153)', () => {
     expect([...SEMANTIC_MOTIF_HOSTS].sort()).toEqual(
-      ['grid', 'recursive', 'spiral', 'voronoi', 'circlepacking', 'modulegrid', 'girih'].sort()
+      [
+        'grid',
+        'recursive',
+        'spiral',
+        'voronoi',
+        'circlepacking',
+        'modulegrid',
+        'girih',
+        'truchet',
+      ].sort()
     );
   });
 
@@ -33,7 +42,7 @@ describe('hostKinds', () => {
     // resolveMotifHost must forward its harvested geometry. The probe is a single
     // boolean, so a stash host must NOT also be an edge host.
     expect([...STASH_MOTIF_HOSTS].sort()).toEqual(
-      ['circlepacking', 'voronoi', 'modulegrid', 'girih'].sort()
+      ['circlepacking', 'voronoi', 'modulegrid', 'girih', 'truchet'].sort()
     );
     for (const t of STASH_MOTIF_HOSTS) {
       expect(SEMANTIC_MOTIF_HOSTS.has(t)).toBe(true);
@@ -140,11 +149,20 @@ describe('hostKinds', () => {
     // PRD #143: Truchet emits CELLS as well as edges and must come through the
     // geometry stash. The probe is a single boolean (record OR stash, never
     // both), so putting Truchet in the edge set would silently cost it the cell
-    // role. This guard is here so a later ticket cannot add it by reflex.
+    // role. This guard is here so a later ticket cannot add it by reflex — and it
+    // is UNCHANGED by #153, which shipped Truchet as a host on exactly those
+    // terms: a SEMANTIC, STASH-backed host that is still not an edge host. Only
+    // `isMotifHost` flipped, because it is now a host at all.
     it('does NOT add Truchet — its edge role comes from the stash, not capture', () => {
       expect(EDGE_MOTIF_HOSTS.has('truchet')).toBe(false);
       expect(isEdgeHost('truchet')).toBe(false);
-      expect(isMotifHost('truchet')).toBe(false);
+      expect(isEdgeHost('truchet', { tiles: 16, tileSet: 'triangles' })).toBe(false);
+      // #153 — a host, and a stash-backed semantic one.
+      expect(isMotifHost('truchet')).toBe(true);
+      expect(SEMANTIC_MOTIF_HOSTS.has('truchet')).toBe(true);
+      expect(isSemanticHost('truchet')).toBe(true);
+      expect(isStashHost('truchet')).toBe(true);
+      expect(defaultRolesForHost('truchet')).toEqual(['cell']);
     });
 
     // Chladni arrived in #145, immediately after this slice. Membership here is

@@ -1,5 +1,5 @@
 import { Pattern } from '../drawingContext';
-import { applySymmetryDraw } from '../symmetryUtils';
+import { applySymmetryDraw, toSymmetryCount } from '../symmetryUtils';
 import { registerPattern } from '../../patternRegistry';
 
 /**
@@ -27,6 +27,40 @@ import { registerPattern } from '../../patternRegistry';
  * drawBase canvas calls are then derived from that SAME array. drawBase never
  * touches ctx.random (which also matters because applySymmetryDraw runs
  * drawBase once per symmetry copy — pulling RNG there would desync everything).
+ *
+ * ── MOTIF HOST (#153, PRD #143): a stash-backed CELL + EDGE host ─────────────
+ * Truchet is the only stash host that emits TWO roles, and the geometry probe is
+ * a SINGLE BOOLEAN — it either records the draw stream or reads the stash, never
+ * both. So a host emitting cells AND edges must supply both from the stash (as
+ * Voronoi does) and must NOT be listed in EDGE_MOTIF_HOSTS; listing it there
+ * would silently cost it the cell role. It publishes, on
+ * `instance.motifHostGeometry`:
+ *
+ *   { cells: [{x, y, rotation, copy}, …],                one per tile per copy
+ *     arcs:  [{points:[{x,y},…], closed, copy, tile}, …] one per DRAWN path }
+ *
+ * in canvas-pixel coords, in the PAINTED frame — start angle, offsets AND every
+ * radial symmetry copy. Truchet is the one stash host with a real symmetry
+ * control, so replication is part of the contract, not an optimisation:
+ * base-copy-only is a bug the studio has already shipped and fixed once.
+ * (Voronoi is the COUNTEREXAMPLE here, not the precedent: it documents that it
+ * stashes pre-symmetry, pre-start-angle geometry and matches no visible copy at
+ * a nonzero start angle. The precedent is the Grid/Recursive symmetry
+ * expansion.) Layer NODE transforms — the interactive move/rotate/scale — are
+ * out of scope, pre-existing and cross-host, per PRD #143.
+ *
+ * `arcs` holds the tile's DRAWN paths, whatever the tile set: the two
+ * quarter-arcs in 'arcs', the single diagonal in 'diagonals', and the triangle
+ * OUTLINE (closed) in 'triangles'. Every tile set yields geometry — the belief
+ * that triangles would yield nothing is a CAPTURE-channel concern (ctx.triangle
+ * is not a polyline op) applied to a STASH-channel host, and PRD #143 records it
+ * as a mistake already made once. Each quarter-arc stays its OWN path: arcs join
+ * visually where their endpoints coincide at tile edges but are not one
+ * polyline, and stitching them into strands is explicitly out of scope.
+ *
+ * The stash is built AFTER the paint and CONSUMES NO RNG — see the block at the
+ * end of generate(), and Truchet.stash.test.js, which asserts the draw count per
+ * tile-set branch and that it is exactly ZERO once drawing has begun.
  */
 const ARC_SAMPLES = 16; // samples per quarter-arc
 
@@ -132,11 +166,17 @@ export default class Truchet extends Pattern {
     // ── Derive BOTH renderers from the SAME tileList ────────────────────────
     // Expand each tile into its concrete shapes (point arrays / triangles).
     const shapes = [];
-    for (const t of tileList) {
+    // Which TILE each shape came from, parallel to `shapes`. Read only by the
+    // motif-host stash at the end of generate(); costs one integer per shape and
+    // keeps the stash from having to re-derive the association.
+    const shapeTile = [];
+    for (let ti = 0; ti < tileList.length; ti++) {
+      const t = tileList[ti];
       const x0 = ox + t.col * cell;
       const y0 = oy + t.row * cell;
       for (const sh of tileShapes(set, x0, y0, cell, t.orient)) {
         shapes.push(sh);
+        shapeTile.push(ti);
       }
     }
 
@@ -181,6 +221,64 @@ export default class Truchet extends Pattern {
     };
 
     applySymmetryDraw(ctx, symmetry, cx, cy, drawBase, startAngle * Math.PI / 180, offsetX, offsetY);
+
+    // ── MOTIF HOST STASH (#153) ─────────────────────────────────────────────
+    // Deliberately LAST, after the paint: nothing below reads ctx at all, so the
+    // "exactly zero ctx.random calls once drawing has begun" assertion in
+    // Truchet.stash.test.js covers this block as well as applySymmetryDraw's
+    // per-copy replay of drawBase. Nothing here consumes randomness — every
+    // value comes from `tileList` (already resolved by the one RNG pass above),
+    // `shapes` (derived from it) and the params.
+    //
+    // FRAME: shapes and tile centres are built origin-CENTRED and painted through
+    // applySymmetryDraw, which for copy k translates to (cx+offsetX, cy+offsetY)
+    // and THEN rotates by θk = 2πk/n + startAngle. So
+    //     world = R(θk)·centred + (cx + offsetX, cy + offsetY)
+    // and, because the WHOLE copy is rotated, each tile's painted ORIENTATION is
+    // θk as well. Rotating position without rotating orientation passes every
+    // position-only check and turns every glyph the wrong way, so both are
+    // applied. The n<=1 branch of applySymmetryDraw is the k=0 term of the same
+    // formula, so ONE expression covers every symmetry.
+    const startRad = (startAngle * Math.PI) / 180;
+    const copies = toSymmetryCount(symmetry);
+    const shiftX = cx + offsetX;
+    const shiftY = cy + offsetY;
+    const hostCells = [];
+    const hostArcs = [];
+    const halfCell = cell / 2;
+    for (let k = 0; k < copies; k++) {
+      const theta = (Math.PI * 2 * k) / copies + startRad;
+      const cosT = Math.cos(theta);
+      const sinT = Math.sin(theta);
+      for (const t of tileList) {
+        const px = ox + t.col * cell + halfCell;
+        const py = oy + t.row * cell + halfCell;
+        hostCells.push({
+          x: px * cosT - py * sinT + shiftX,
+          y: px * sinT + py * cosT + shiftY,
+          // The tile is axis-aligned in the base copy; the copy's rotation is the
+          // whole of its painted orientation.
+          rotation: theta,
+          copy: k,
+        });
+      }
+      for (let s = 0; s < shapes.length; s++) {
+        const sh = shapes[s];
+        // 'triangles' shapes carry their three vertices under `tri` and are drawn
+        // as a filled triangle, i.e. a CLOSED outline; every other tile set is an
+        // open polyline.
+        const pts = sh.tri || sh;
+        const out = new Array(pts.length);
+        for (let i = 0; i < pts.length; i++) {
+          out[i] = {
+            x: pts[i].x * cosT - pts[i].y * sinT + shiftX,
+            y: pts[i].x * sinT + pts[i].y * cosT + shiftY,
+          };
+        }
+        hostArcs.push({ points: out, closed: !!sh.tri, copy: k, tile: shapeTile[s] });
+      }
+    }
+    this.motifHostGeometry = { cells: hostCells, arcs: hostArcs };
   }
 }
 

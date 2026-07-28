@@ -24,7 +24,16 @@
 
 /** Hosts with a structural (crossing/tip/cell) anchor extractor. */
 export const SEMANTIC_MOTIF_HOSTS = Object.freeze(
-  new Set(['grid', 'recursive', 'spiral', 'voronoi', 'circlepacking', 'modulegrid', 'girih'])
+  new Set([
+    'grid',
+    'recursive',
+    'spiral',
+    'voronoi',
+    'circlepacking',
+    'modulegrid',
+    'girih',
+    'truchet',
+  ])
 );
 
 /**
@@ -43,7 +52,7 @@ export const SEMANTIC_MOTIF_HOSTS = Object.freeze(
  * listed in EDGE_MOTIF_HOSTS.
  */
 export const STASH_MOTIF_HOSTS = Object.freeze(
-  new Set(['voronoi', 'circlepacking', 'modulegrid', 'girih'])
+  new Set(['voronoi', 'circlepacking', 'modulegrid', 'girih', 'truchet'])
 );
 
 /**
@@ -56,10 +65,17 @@ export const STASH_MOTIF_HOSTS = Object.freeze(
  *   • girih          → girihVertices + girihEdges (the de-duplicated skeleton
  *                      VERTEX GRAPH, never the draw list — that differs between
  *                      the skeleton and interlace renders, #152)
+ *   • truchet        → cells (tile centres) + arcs (the tile's drawn paths, #153)
  *
  * `cells` is the GENERIC cell-grid key, matching the generic extractor
  * (cellGridAnchors.js) that reads it: Truchet (#153) reuses the same key for its
  * tile centres and adds `arcs` alongside it rather than inventing a parallel one.
+ *
+ * EVERY key is forwarded to EVERY stash host — resolveMotifHost and
+ * pickStashGeometry both walk this one list — so each extractor must be blind to
+ * the keys it does not own. That blindness is asserted in both directions
+ * (moduleGrid.integration.test.js, truchet.integration.test.js); keep it true
+ * when adding a key.
  */
 export const STASH_GEOMETRY_KEYS = Object.freeze([
   'drawnEdges',
@@ -69,6 +85,7 @@ export const STASH_GEOMETRY_KEYS = Object.freeze([
   'cells',
   'girihVertices',
   'girihEdges',
+  'arcs',
 ]);
 
 /**
@@ -121,7 +138,9 @@ export const EDGE_MOTIF_HOSTS = Object.freeze(
     //   truchet — emits CELLS as well as edges. The probe is a single boolean
     //     (record the draw stream OR read the stash, never both), so listing it
     //     here would silently cost it the cell role. Its edges come from the
-    //     stash, alongside its tile centres (PRD #143).
+    //     stash, alongside its tile centres (PRD #143). SHIPPED as a stash host
+    //     in #153 on exactly those terms: it is in SEMANTIC_MOTIF_HOSTS and
+    //     STASH_MOTIF_HOSTS above and must stay out of this set.
   ])
 );
 
@@ -148,6 +167,11 @@ export const MOTIF_HOSTS = Object.freeze(
 // MODULE GRID likewise emits `cell` alone (#151): one anchor per module. Its
 // lattice is IMPLICIT — the pattern paints modules, not grid lines — so a glyph
 // at an intersection would sit on nothing visible, and there are no crossings.
+// TRUCHET emits `cell` AND `edge` (#153) and defaults to `cell`: a glyph in each
+// tile is the host's headline behaviour, and the arcs are the second role a
+// maker reaches for. It is listed here for the SAME reason a cell-only host must
+// be — the fallback below is `'edge'`, which on Truchet would silently start
+// every fresh motif on the arcs instead of the tiles.
 //
 // A CELL-ONLY HOST MUST BE LISTED HERE, and forgetting it fails SILENTLY: the
 // fallback below is `'edge'`, `defaultMotifAddOpts` writes that straight into
@@ -168,6 +192,7 @@ const DEFAULT_SEMANTIC_ROLE = Object.freeze({
   circlepacking: 'cell',
   modulegrid: 'cell',
   girih: 'crossing',
+  truchet: 'cell',
 });
 
 /**

@@ -878,15 +878,18 @@ describe("Sequencer card (C3)", () => {
         onChangeLayerPattern={() => {}}
       />
     );
-    fireEvent.change(screen.getAllByTestId("motif-slot-weight")[1], {
-      target: { value: "3" },
-    });
+    // Weight became a DragNumber in the 2026-07-28 slot-card rework: Enter opens
+    // its type-in editor, Enter commits.
+    fireEvent.keyDown(screen.getAllByTestId("motif-slot-weight")[1], { key: "Enter" });
+    const wtInput = screen.getByTestId("motif-slot-weight-input");
+    fireEvent.change(wtInput, { target: { value: "3" } });
+    fireEvent.keyDown(wtInput, { key: "Enter" });
     const [, patch] = onUpdateLayer.mock.calls[0];
     expect(seqOf(patch).slots[1].weight).toBe(3);
     expect(seqOf(patch).slots[0].weight).toBeUndefined();
   });
 
-  it("angle-randomization checkbox reveals range + spread and writes slot.rotationRandom", () => {
+  it("the angle-randomization toggle reveals range + spread and writes slot.rotationRandom", () => {
     const onUpdateLayer = vi.fn();
     const motif = seqMotif("m1", "host1", { slots: [{ glyphRef: "leaf" }] });
     expandSeq(
@@ -906,7 +909,7 @@ describe("Sequencer card (C3)", () => {
     expect(seqOf(patch).slots[0].rotationRandom).toEqual({ range: 30, spread: "flat" });
   });
 
-  it("an enabled slot shows range + spread; unchecking removes rotationRandom", () => {
+  it("an enabled slot shows range + spread; toggling off removes rotationRandom", () => {
     const onUpdateLayer = vi.fn();
     const motif = seqMotif("m1", "host1", {
       slots: [{ glyphRef: "leaf", rotationRandom: { range: 45, spread: "bell" } }],
@@ -921,12 +924,246 @@ describe("Sequencer card (C3)", () => {
     );
     // Revealed because the slot already carries rotationRandom.
     expect(screen.getByTestId("motif-slot-range")).toBeInTheDocument();
-    expect(screen.getByTestId("motif-slot-spread")).toHaveValue("bell");
-    // Unchecking removes the spec.
+    // Spread became two toggles drawn as their distributions, not a <select>.
+    expect(screen.getByTestId("motif-slot-spread-bell")).toHaveAttribute(
+      "aria-pressed",
+      "true"
+    );
+    expect(screen.getByTestId("motif-slot-spread-flat")).toHaveAttribute(
+      "aria-pressed",
+      "false"
+    );
+    // Toggling off removes the spec.
     fireEvent.click(screen.getByTestId("motif-slot-anglerand"));
     const [, patch] = onUpdateLayer.mock.calls[0];
     expect("rotationRandom" in seqOf(patch).slots[0]).toBe(true);
     expect(seqOf(patch).slots[0].rotationRandom).toBeUndefined();
+  });
+
+  // ── Slot card rework (2026-07-28, docs/motif-slot-card-decisions.md) ────────
+  //
+  // Three of these controls surface Slot fields the model has carried since the
+  // sequencer shipped and which only starterChips could write.
+
+  it("the scale cell writes slot.sizeScale as a MULTIPLIER (not an absolute size)", () => {
+    const onUpdateLayer = vi.fn();
+    const motif = seqMotif("m1", "host1", { slots: [{ glyphRef: "leaf" }] });
+    expandSeq(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={onUpdateLayer}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    fireEvent.keyDown(screen.getByTestId("motif-slot-scale"), { key: "Enter" });
+    const input = screen.getByTestId("motif-slot-scale-input");
+    // Typed as a percent, stored as the multiplier the engine multiplies the
+    // target radius by — the same SCALE_PARSE the glyph popover uses.
+    fireEvent.change(input, { target: { value: "140%" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    const [, patch] = onUpdateLayer.mock.calls[0];
+    expect(seqOf(patch).slots[0].sizeScale).toBeCloseTo(1.4);
+  });
+
+  it("the rotation cell stores 0..359 but READS OUT signed (it is an offset, not a bearing)", () => {
+    const onUpdateLayer = vi.fn();
+    const motif = seqMotif("m1", "host1", {
+      slots: [{ glyphRef: "leaf", rotationOffset: 340 }],
+    });
+    expandSeq(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={onUpdateLayer}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    // 340 stored reads as −20: "turned back a bit from the path", which is what
+    // a relative offset means. A dial would have shown a 340° bearing.
+    expect(screen.getByTestId("motif-slot-rotation-readout")).toHaveTextContent("-20°");
+    // And a typed negative round-trips back into the stored range.
+    fireEvent.keyDown(screen.getByTestId("motif-slot-rotation"), { key: "Enter" });
+    const input = screen.getByTestId("motif-slot-rotation-input");
+    fireEvent.change(input, { target: { value: "-90" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    const [, patch] = onUpdateLayer.mock.calls[0];
+    expect(seqOf(patch).slots[0].rotationOffset).toBe(270);
+  });
+
+  it("flip cycles inherit → always → never, preserving the tri-state", () => {
+    const onUpdateLayer = vi.fn();
+    const motif = seqMotif("m1", "host1", { slots: [{ glyphRef: "leaf" }] });
+    const { rerender } = expandSeq(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={onUpdateLayer}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    // absent (inherit) → true
+    fireEvent.click(screen.getByTestId("motif-slot-flip"));
+    expect(seqOf(onUpdateLayer.mock.calls[0][1]).slots[0].flip).toBe(true);
+
+    // true → false. NOT back to inherit: a slot must be able to refuse a
+    // flipped layer, which is the whole point of the third state.
+    const flipped = seqMotif("m2", "host1", {
+      slots: [{ glyphRef: "leaf", flip: true }],
+    });
+    rerender(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), flipped]}
+        selectedLayerId="host1"
+        onUpdateLayer={onUpdateLayer}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    fireEvent.click(screen.getByTestId("motif-slot-flip"));
+    expect(seqOf(onUpdateLayer.mock.calls[1][1]).slots[0].flip).toBe(false);
+  });
+
+  // Decision 4: hiding writes rest:true and KEEPS the glyphRef, so the beat
+  // stays empty AND un-hiding restores the exact glyph.
+  it("the eye hides a slot as a rest that REMEMBERS its glyph", () => {
+    const onUpdateLayer = vi.fn();
+    const motif = seqMotif("m1", "host1", { slots: [{ glyphRef: "flower" }] });
+    expandSeq(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={onUpdateLayer}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    fireEvent.click(screen.getByTestId("motif-slot-eye"));
+    expect(seqOf(onUpdateLayer.mock.calls[0][1]).slots[0]).toEqual({
+      glyphRef: "flower",
+      rest: true,
+    });
+  });
+
+  // The trap this guards: a slot that never named a glyph still DRAWS the
+  // layer's base one. Hiding it with a bare `rest:true` would make it
+  // indistinguishable from a deliberate Rest — no eye, no way back.
+  it("hiding a slot with no glyphRef of its own records the layer's base glyph", () => {
+    const onUpdateLayer = vi.fn();
+    const motif = seqMotif("m1", "host1", { slots: [{}] });
+    expandSeq(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={onUpdateLayer}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    fireEvent.click(screen.getByTestId("motif-slot-eye"));
+    const slot = seqOf(onUpdateLayer.mock.calls[0][1]).slots[0];
+    expect(slot.rest).toBe(true);
+    expect(slot.glyphRef).toBeTruthy();
+  });
+
+  it("a hidden slot keeps its thumbnail and controls; a pure Rest keeps neither", () => {
+    const motif = seqMotif("m1", "host1", {
+      slots: [{ glyphRef: "flower", rest: true }, { rest: true }],
+    });
+    expandSeq(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    const [hidden, pureRest] = screen.getAllByTestId("motif-slot");
+    expect(hidden).toHaveAttribute("data-slot-hidden", "true");
+    expect(within(hidden).getByTestId("motif-slot-eye")).toBeInTheDocument();
+    expect(within(hidden).getByTestId("motif-slot-scale")).toBeInTheDocument();
+    // A deliberate Rest is already an empty beat: nothing to hide, nothing to size.
+    expect(within(pureRest).getByTestId("motif-slot-rest")).toBeInTheDocument();
+    expect(within(pureRest).queryByTestId("motif-slot-eye")).toBeNull();
+    expect(within(pureRest).queryByTestId("motif-slot-scale")).toBeNull();
+  });
+
+  it("Duplicate slot inserts the tuned copy directly after its source", () => {
+    const onUpdateLayer = vi.fn();
+    const motif = seqMotif("m1", "host1", {
+      slots: [{ glyphRef: "leaf", sizeScale: 1.4 }, { rest: true }],
+    });
+    expandSeq(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={onUpdateLayer}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    fireEvent.click(screen.getAllByTestId("motif-slot-menu")[0]);
+    fireEvent.click(screen.getByRole("menuitem", { name: "Duplicate slot" }));
+    expect(seqOf(onUpdateLayer.mock.calls[0][1]).slots).toEqual([
+      { glyphRef: "leaf", sizeScale: 1.4 },
+      { glyphRef: "leaf", sizeScale: 1.4 },
+      { rest: true },
+    ]);
+  });
+
+  it("Reset settings clears the tuned fields but keeps the glyph and the slot", () => {
+    const onUpdateLayer = vi.fn();
+    const motif = seqMotif("m1", "host1", {
+      slots: [
+        {
+          glyphRef: "leaf",
+          sizeScale: 1.4,
+          rotationOffset: 180,
+          flip: true,
+          rotationRandom: { range: 30, spread: "bell" },
+        },
+      ],
+    });
+    expandSeq(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={onUpdateLayer}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    fireEvent.click(screen.getByTestId("motif-slot-menu"));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Reset settings" }));
+    const slot = seqOf(onUpdateLayer.mock.calls[0][1]).slots[0];
+    expect(slot.glyphRef).toBe("leaf");
+    expect(slot.sizeScale).toBeUndefined();
+    expect(slot.rotationOffset).toBeUndefined();
+    expect(slot.flip).toBeUndefined();
+    expect(slot.rotationRandom).toBeUndefined();
+  });
+
+  // ONE undo entry per gesture: flushed before the first write of a gesture and
+  // again when it commits. Without the leading flush an Inspector burst on the
+  // same layer — identical `${id}:params` signature — would swallow it.
+  it("a discrete slot edit flushes history either side of its write", () => {
+    const onFlushHistory = vi.fn();
+    const onUpdateLayer = vi.fn();
+    const motif = seqMotif("m1", "host1", { slots: [{ glyphRef: "leaf" }] });
+    expandSeq(
+      <Inspector
+        layers={[hostLayer("host1", "grid"), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={onUpdateLayer}
+        onFlushHistory={onFlushHistory}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    fireEvent.click(screen.getByTestId("motif-slot-flip"));
+    expect(onUpdateLayer).toHaveBeenCalledTimes(1);
+    expect(onFlushHistory).toHaveBeenCalledTimes(2);
+
+    // And the gesture leaves NOTHING armed on the window. The commit-side flush
+    // detaches the pointerup guard that exists for drags which end where they
+    // started (useDragValue suppresses onCommit there); a listener that
+    // outlived its gesture would flush again on the next click anywhere.
+    fireEvent.pointerUp(window);
+    expect(onFlushHistory).toHaveBeenCalledTimes(2);
   });
 
   it("Add Glyph / Add Rest append a slot (chain-form, terminal sequence stays last)", () => {
@@ -968,7 +1205,9 @@ describe("Sequencer card (C3)", () => {
         onChangeLayerPattern={() => {}}
       />
     );
-    fireEvent.click(screen.getAllByTestId("motif-slot-remove")[1]); // drop 'flower'
+    // Delete moved into the "…" menu in the 2026-07-28 slot-card rework.
+    fireEvent.click(screen.getAllByTestId("motif-slot-menu")[1]);
+    fireEvent.click(screen.getByRole("menuitem", { name: "Delete slot" })); // drop 'flower'
     const [, patch] = onUpdateLayer.mock.calls[0];
     expect(seqOf(patch).slots).toEqual([{ glyphRef: "leaf" }, { rest: true }]);
   });

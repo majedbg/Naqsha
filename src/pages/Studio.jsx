@@ -2835,6 +2835,12 @@ export default function Studio({ submitOrg = null } = {}) {
           ) : (
           <Inspector
             layers={layers}
+            // Undo granularity for the motif slot cards (#139's mechanism, one
+            // surface further in): updateLayer coalesces by `${id}:params` for
+            // 400ms, so without this a slot drag would fold into any Inspector
+            // burst on the same layer. The chip flushes either side of a
+            // gesture — one entry each, canvas live throughout.
+            onFlushHistory={flushEdit}
             // Panels (WI-4) — the Highlight Hold control (Raster Etch S4, #83)
             // reads the selected Etch's EFFECTIVE material (panel material OR the
             // Material-lens material) to resolve its material-aware default.

@@ -269,10 +269,15 @@ describe("MotifBlockRack — type scale (typography pass)", () => {
     expect(within(routeCard).getByText("Route").className).toContain("text-xs");
     unfold("route");
     expect(screen.getByTestId("motif-route-scope-all").className).toContain("text-2xs");
-    // Slot micro-labels (Sequencer is always expanded).
-    const angleLabel = screen.getByText("Angle rnd").closest("label");
-    expect(angleLabel.className).toContain("text-2xs");
-    expect(angleLabel.className).not.toMatch(/text-\[\d+px\]/);
+    // Slot card (Sequencer is always expanded). The "Angle rnd" micro-label it
+    // used to pin became an icon toggle in the 2026-07-28 rework, so the floor
+    // is now pinned on the chip WHOLE — readouts on the scale, no raw px size
+    // anywhere in it.
+    const chip = screen.getAllByTestId("motif-slot")[0];
+    expect(
+      within(chip).getByTestId("motif-slot-scale-readout").className
+    ).toMatch(/text-(2)?xs/);
+    expect(chip.innerHTML).not.toMatch(/text-\[\d+px\]/);
   });
 });
 
@@ -357,7 +362,9 @@ describe("MotifBlockRack — zoned Sequencer sections", () => {
     const onEditChain = vi.fn();
     render(<MotifBlockRack {...baseProps} chain={zonedChain} onEditChain={onEditChain} />);
     const stemChips = within(zoneSection("stem")).getAllByTestId("motif-slot");
-    fireEvent.click(within(stemChips[0]).getByTestId("motif-slot-remove")); // drop leaf
+    // Delete moved into the "…" menu in the 2026-07-28 slot-card rework.
+    fireEvent.click(within(stemChips[0]).getByTestId("motif-slot-menu"));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Delete slot" })); // drop leaf
     const next = onEditChain.mock.calls[0][0](zonedChain);
     expect(zoneOf(next, "stem").slots).toEqual([{ rest: true }]);
     expect(zoneOf(next, "apex").slots).toEqual([{ glyphRef: "flower" }]);

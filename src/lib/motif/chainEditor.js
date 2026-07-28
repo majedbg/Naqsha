@@ -149,6 +149,36 @@ export function removeSlot(chain, seqIndex, slotIndex) {
   return setBlock(list, seqIndex, { slots: next });
 }
 
+/**
+ * Copy a Slot, deeply enough that patching the copy can never reach the source.
+ * Only `rotationRandom` is nested today; spelled out rather than deep-cloned so
+ * a future nested field is a compile-time-visible omission, not a silent share.
+ * @param {*} slot
+ * @returns {*} a fresh object
+ */
+function cloneSlot(slot) {
+  const copy = { ...slot };
+  if (slot && slot.rotationRandom) copy.rotationRandom = { ...slot.rotationRandom };
+  return copy;
+}
+
+/**
+ * Insert a copy of the slot at `slotIndex` DIRECTLY AFTER it. Not an append:
+ * the slot card's "…" menu duplicates a slot you have just tuned, and a rhythm
+ * is built by repeating a beat where it sits — appending would re-order the
+ * sequence as a side effect of copying. Out-of-range / non-sequence ⇒ same ref.
+ */
+export function duplicateSlot(chain, seqIndex, slotIndex) {
+  const list = chain || [];
+  const seq = seqBlockAt(list, seqIndex);
+  if (!seq) return list;
+  const slots = Array.isArray(seq.slots) ? seq.slots : [];
+  if (slotIndex < 0 || slotIndex >= slots.length) return list;
+  const next = slots.slice();
+  next.splice(slotIndex + 1, 0, cloneSlot(slots[slotIndex]));
+  return setBlock(list, seqIndex, { slots: next });
+}
+
 /** Move the slot at `from` to `to`; degenerate/out-of-range returns the same ref. */
 export function reorderSlots(chain, seqIndex, from, to) {
   const list = chain || [];
@@ -243,6 +273,20 @@ export function removeZoneSlot(chain, seqIndex, zoneId, slotIndex) {
   if (slotIndex < 0 || slotIndex >= slots.length) return list;
   const next = slots.slice();
   next.splice(slotIndex, 1);
+  return writeZone(list, seqIndex, zones, zoneIndex, { ...zone, slots: next });
+}
+
+/** Zone-addressed sibling of `duplicateSlot` — inserts after the source. */
+export function duplicateZoneSlot(chain, seqIndex, zoneId, slotIndex) {
+  const list = chain || [];
+  const found = zoneAt(list, seqIndex, zoneId);
+  if (!found) return list;
+  const { zones, zoneIndex } = found;
+  const zone = zones[zoneIndex];
+  const slots = Array.isArray(zone.slots) ? zone.slots : [];
+  if (slotIndex < 0 || slotIndex >= slots.length) return list;
+  const next = slots.slice();
+  next.splice(slotIndex + 1, 0, cloneSlot(slots[slotIndex]));
   return writeZone(list, seqIndex, zones, zoneIndex, { ...zone, slots: next });
 }
 

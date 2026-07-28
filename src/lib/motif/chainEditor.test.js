@@ -16,6 +16,8 @@ import {
   toggleBypass,
   reorderChain,
   addSlot,
+  duplicateSlot,
+  duplicateZoneSlot,
   removeSlot,
   reorderSlots,
   setSlot,
@@ -183,6 +185,45 @@ describe('chainEditor — slot ops (C3)', () => {
     expect(removeSlot(input, 1, -1)).toBe(input);
   });
 
+  // Duplicate inserts AFTER the source, not at the end: the slot card's "…"
+  // menu duplicates a slot you have just tuned, and a rhythm is built by
+  // repeating a beat WHERE IT SITS. Appending would be a different gesture.
+  it('duplicateSlot inserts a copy directly after the source', () => {
+    const input = withSeq([glyphSlot('a'), glyphSlot('b'), glyphSlot('c')]);
+    const out = duplicateSlot(input, 1, 1);
+    expect(out[1].slots.map((s) => s.glyphRef)).toEqual(['a', 'b', 'b', 'c']);
+  });
+
+  it('duplicateSlot copies every tuned field', () => {
+    const tuned = {
+      glyphRef: 'a',
+      sizeScale: 1.4,
+      rotationOffset: 180,
+      flip: false,
+      weight: 2,
+      rotationRandom: { range: 30, spread: 'bell' },
+    };
+    const out = duplicateSlot(withSeq([tuned]), 1, 0);
+    expect(out[1].slots[1]).toEqual(tuned);
+  });
+
+  // The copy is a fresh object: patching the duplicate must never reach back
+  // into the original, and `rotationRandom` is the nested case that a plain
+  // spread would still share.
+  it('duplicateSlot shares no object identity with its source', () => {
+    const input = withSeq([{ glyphRef: 'a', rotationRandom: { range: 30, spread: 'flat' } }]);
+    const out = duplicateSlot(input, 1, 0);
+    expect(out[1].slots[1]).not.toBe(out[1].slots[0]);
+    expect(out[1].slots[1].rotationRandom).not.toBe(out[1].slots[0].rotationRandom);
+  });
+
+  it('duplicateSlot on a non-sequence / out-of-range index returns the same ref', () => {
+    const input = withSeq([glyphSlot('a')]);
+    expect(duplicateSlot(input, 0, 0)).toBe(input); // index 0 is route
+    expect(duplicateSlot(input, 1, 9)).toBe(input);
+    expect(duplicateSlot(input, 1, -1)).toBe(input);
+  });
+
   it('reorderSlots moves a slot; degenerate/out-of-range returns the same ref', () => {
     const input = withSeq([glyphSlot('a'), glyphSlot('b'), glyphSlot('c')]);
     const out = reorderSlots(input, 1, 0, 2);
@@ -315,6 +356,21 @@ describe('chainEditor — zoned Sequencer ops (ADR-0008)', () => {
     expect(zoneOf(out[1], 'apex').slots).toEqual([{ glyphRef: 'a' }, { glyphRef: 'c' }]);
     expect(removeZoneSlot(input, 1, 'apex', 9)).toBe(input);
     expect(removeZoneSlot(input, 1, 'apex', -1)).toBe(input);
+  });
+
+  it('duplicateZoneSlot inserts after the source in the addressed zone, isolating the others', () => {
+    const input = zoned([glyphSlot('a'), glyphSlot('b')], [glyphSlot('leaf')]);
+    const stemIn = zoneOf(input[1], 'stem');
+    const out = duplicateZoneSlot(input, 1, 'apex', 0);
+    expect(zoneOf(out[1], 'apex').slots.map((s) => s.glyphRef)).toEqual(['a', 'a', 'b']);
+    expect(zoneOf(out[1], 'stem')).toBe(stemIn);
+  });
+
+  it('duplicateZoneSlot on an unknown zone / out-of-range index ⇒ same ref', () => {
+    const input = zoned([glyphSlot('a')], [glyphSlot('leaf')]);
+    expect(duplicateZoneSlot(input, 1, 'node', 0)).toBe(input);
+    expect(duplicateZoneSlot(input, 1, 'apex', 9)).toBe(input);
+    expect(duplicateZoneSlot(input, 1, 'apex', -1)).toBe(input);
   });
 
   it('reorderZoneSlots moves a slot in the addressed zone; from===to / out-of-range ⇒ same ref', () => {

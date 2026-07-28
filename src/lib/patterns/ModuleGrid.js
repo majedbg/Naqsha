@@ -17,6 +17,17 @@ import { applySymmetryDraw } from './symmetryUtils';
  * the SVG strings are emitted from it too, so canvas == SVG and the whole thing
  * is seed-deterministic. This pattern has NO symmetry control — symmetry is
  * hardcoded to 1.
+ *
+ * RNG discipline: every ctx.random call lives in the cell loop, and the count per
+ * cell is a pure function of the params — 1 draw for rotateMode 'seeded', 2 for
+ * jitter > 0, 1 for scaleMode 'seeded', and none at all otherwise. buildModule
+ * consumes no randomness. Nothing outside that loop may draw.
+ *
+ * MOTIF HOST (#151): this pattern is a stash-backed CELL host. It publishes its
+ * resolved per-cell data on `instance.motifHostGeometry` as
+ *   { cells: [{x, y, half, rotation}, …] }
+ * in canvas-pixel coords, in the painted frame, consuming no RNG. See the capture
+ * block at the end of generate().
  */
 export default class ModuleGrid extends Pattern {
   generate(ctx, seed, params, canvasW, canvasH, color, opacity) {
@@ -64,6 +75,11 @@ export default class ModuleGrid extends Pattern {
     // kept separate so both the canvas replay and the SVG emit can iterate them.
     const lines = [];   // { x1, y1, x2, y2 }
     const circles = []; // { cx, cy, r }
+
+    // Motif host-geometry capture (CELL-GRID seam, #151). One entry per module,
+    // recorded in the cell loop BELOW — see the block after the loop for the
+    // frame transform and the full rationale.
+    const hostCells = []; // { x, y, half, rotation } — origin-centered, pre-frame
 
     // Rotate a local cell-point (lx, ly) by `rot` then translate to (gx, gy).
     const place = (lx, ly, rot, gx, gy) => {
@@ -119,12 +135,70 @@ export default class ModuleGrid extends Pattern {
         }
         const effectiveHalf = half * cellScale;
 
+        // MOTIF HOST GEOMETRY (#151). Recorded HERE — after rotation, jitter and
+        // per-cell scale are resolved, BEFORE buildModule is called — so it is
+        // the RESOLVED per-cell data, not a re-derivation, and it is
+        // MODULE-INDEPENDENT by construction. Every module shape hosts cells,
+        // ring modules included: the ring module draws with ctx.ellipse, an
+        // operation the record-mode capture ignores, but that is a CAPTURE-channel
+        // blindness and this is the STASH channel, where the centre, the rotation
+        // and the half-extent are all simply known. (PRD #143 records the mistake
+        // of params-gating ring modules on that confusion; do not re-make it.)
+        //
+        // NO RNG: every value below was already computed above for the paint.
+        hostCells.push({ x: gx, y: gy, half: effectiveHalf, rotation: rot });
+
         buildModule(
           module, count, effectiveHalf, rot, gx, gy, addLine, circles, ctx,
           { sweepCurve, fanSpread, fanApex, ringEccentricity, ringSpacing, chevronDepth, diamondAspect, diamondNesting }
         );
       }
     }
+
+    // --- Motif host-geometry capture (CELL-GRID seam, #151) ------------------
+    // Publish the resolved per-cell data so a Motif layer adorning this host can
+    // put one glyph in each module, sized to that module's cell and turned with
+    // it. Rotation and size inheritance come for free: `rot` and `effectiveHalf`
+    // are the very numbers the module was built from, with the seeded rotation,
+    // the positional jitter and the per-cell scale already baked in.
+    //
+    // NO RNG. Every ctx.random call in this pattern happens inside the cell loop
+    // (rotateMode 'seeded' → 1 per cell; jitter > 0 → 2; scaleMode 'seeded' → 1;
+    // buildModule draws none). The capture reads values that loop already
+    // computed and the transform below is pure arithmetic — not one extra draw,
+    // so the lock-step stream is untouched. (ModuleGrid.motif.test.js pins the
+    // per-branch draw COUNT — including an exactly-zero case — plus the recorded
+    // draw stream and the emitted SVG by digest, captured against the pattern
+    // before this stash existed.)
+    //
+    // FRAME: cells are built origin-CENTRED and painted through
+    // applySymmetryDraw(..., 1, cx, cy, drawBase, startAngle, offsetX, offsetY),
+    // which translates to (cx+offsetX, cy+offsetY) and THEN rotates by
+    // startAngle. So the painted world position is
+    //     world = R(startAngle)·centred + (canvasW/2 + offsetX, canvasH/2 + offsetY)
+    // and — because the WHOLE paint is rotated — each module's painted world
+    // ORIENTATION is `rot + startAngle`. Rotating position without rotating
+    // orientation passes every position-only check and turns every glyph the
+    // wrong way, so both terms are applied. Symmetry is hardcoded to 1, so there
+    // are no copies to replicate.
+    // (This is deliberately NOT Voronoi's frame handling: Voronoi stashes
+    // pre-startAngle geometry and documents that it matches no visible copy at a
+    // nonzero start angle. Following that here would reproduce a known bug.)
+    // Layer NODE transforms (the interactive move/rotate/scale) are out of scope
+    // — pre-existing and cross-host, per PRD #143.
+    const startRad = (startAngle * Math.PI) / 180;
+    const cosA = Math.cos(startRad);
+    const sinA = Math.sin(startRad);
+    const shiftX = cx + offsetX;
+    const shiftY = cy + offsetY;
+    this.motifHostGeometry = {
+      cells: hostCells.map((c) => ({
+        x: c.x * cosA - c.y * sinA + shiftX,
+        y: c.x * sinA + c.y * cosA + shiftY,
+        half: c.half,
+        rotation: c.rotation + startRad,
+      })),
+    };
 
     // SVG strings (origin-centered; the group wrapper translates to canvas
     // center and applies startAngle/offset — see inherited toSVGGroup).

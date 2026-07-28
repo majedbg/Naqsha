@@ -44,6 +44,7 @@
 
 import { anchorId, sampleEdgeAnchors } from './anchors.js';
 import { pointHostAnchors } from './pointHostAnchors.js';
+import { cellGridAnchors } from './cellGridAnchors.js';
 import { gridAnchorsCentered } from '../patterns/gridAnchors.js';
 import { makeP5Random } from '../patterns/rng.js';
 import { toSymmetryCount } from '../patterns/symmetryUtils.js';
@@ -1071,6 +1072,10 @@ function voronoiAnchors(_params, _canvasW, _canvasH, opts) {
  *     world coords and in the painted frame (#146). One `cell` anchor per
  *     circle, each declaring its radius through the top-level `hostRadius`
  *     channel so proportional sizing fits the glyph to its container.
+ *   • opts.cells — a CELL-GRID host's resolved tiling ({x, y, half, rotation}),
+ *     in world coords and in the painted frame (#151, modulegrid; #153 reuses
+ *     the key for Truchet). One `cell` anchor per cell, declaring the cell's
+ *     half-extent as `hostRadius` and its rotation as tangent/normal.
  * Backward-compatible: existing 4-arg callers pass no opts, so recursive/spiral
  * are unaffected, grid falls back to the jitter=0 baseline, and voronoi returns
  * null (graceful fallback).
@@ -1127,6 +1132,24 @@ export function getSemanticAnchors(patternType, params, canvasW, canvasH, opts) 
       // documented fallback and nothing is placed. An EMPTY circles array (a
       // packing that genuinely placed nothing) ⇒ [], an honest empty anchor set.
       return opts && Array.isArray(opts.circles) ? pointHostAnchors(opts.circles) : null;
+    case 'modulegrid':
+      // GEOMETRY-IN, like voronoi and circlepacking (#151). ModuleGrid resolves a
+      // per-cell rotation, a jittered centre and an effective half-extent BEFORE
+      // building each module; it stashes those three, so they arrive here as
+      // opts.cells in WORLD coords, already in the painted frame (start angle +
+      // offsets applied to position AND orientation). Each becomes one `cell`
+      // anchor at its module's centre, carrying the half-extent as the top-level
+      // `hostRadius` channel and the module's rotation as tangent/normal — so the
+      // glyph is both sized to its cell and turned with it.
+      //
+      // Cells ONLY: ModuleGrid's lattice is implicit (it paints modules, not grid
+      // lines), so there is no visible intersection for a crossing to sit on.
+      //
+      // NULL vs [] is a contract, matching voronoi and circlepacking exactly: no
+      // `cells` key at all (host not yet probed, or a params-only caller) ⇒ null,
+      // so MotifPattern takes its documented fallback and nothing is placed. An
+      // EMPTY cells array ⇒ [], an honest empty anchor set.
+      return opts && Array.isArray(opts.cells) ? cellGridAnchors(opts.cells) : null;
     // Extractors for other hosts are deferred to later slices.
     default:
       return null;

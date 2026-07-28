@@ -18,11 +18,12 @@ import {
   defaultRolesForHost,
 } from './hostKinds.js';
 import { getPatternClass } from '../patterns/index.js';
+import { rolesForHost } from './hostRoles.js';
 
 describe('hostKinds', () => {
-  it('keeps the four legacy semantic hosts, plus circlepacking (#146)', () => {
+  it('keeps the four legacy semantic hosts, plus circlepacking (#146) and modulegrid (#151)', () => {
     expect([...SEMANTIC_MOTIF_HOSTS].sort()).toEqual(
-      ['grid', 'recursive', 'spiral', 'voronoi', 'circlepacking'].sort()
+      ['grid', 'recursive', 'spiral', 'voronoi', 'circlepacking', 'modulegrid'].sort()
     );
   });
 
@@ -30,7 +31,9 @@ describe('hostKinds', () => {
     // A stash host is seed-driven and not reconstructible from params, so
     // resolveMotifHost must forward its harvested geometry. The probe is a single
     // boolean, so a stash host must NOT also be an edge host.
-    expect([...STASH_MOTIF_HOSTS].sort()).toEqual(['circlepacking', 'voronoi'].sort());
+    expect([...STASH_MOTIF_HOSTS].sort()).toEqual(
+      ['circlepacking', 'voronoi', 'modulegrid'].sort()
+    );
     for (const t of STASH_MOTIF_HOSTS) {
       expect(SEMANTIC_MOTIF_HOSTS.has(t)).toBe(true);
       expect(EDGE_MOTIF_HOSTS.has(t)).toBe(false);
@@ -42,6 +45,23 @@ describe('hostKinds', () => {
 
   it('circlepacking defaults to the cell role', () => {
     expect(defaultRolesForHost('circlepacking')).toEqual(['cell']);
+  });
+
+  it('modulegrid defaults to the cell role (#151)', () => {
+    // A CELL-ONLY host with no DEFAULT_SEMANTIC_ROLE entry falls back to 'edge',
+    // which defaultMotifAddOpts writes into binding.selection.roles — the first
+    // motif then renders no glyphs and no dots while every other test passes.
+    expect(defaultRolesForHost('modulegrid')).toEqual(['cell']);
+  });
+
+  it('every STASH host declares a DEFAULT role it actually emits', () => {
+    // The silent-failure guard, stated once for the whole set rather than per
+    // host: no stash host may fall through to the blanket 'edge' default.
+    for (const t of STASH_MOTIF_HOSTS) {
+      const roles = defaultRolesForHost(t);
+      expect([t, roles.length]).toEqual([t, 1]);
+      expect([t, rolesForHost(t).includes(roles[0])]).toEqual([t, true]);
+    }
   });
 
   it('every edge-host key resolves to a real registered PatternClass', () => {

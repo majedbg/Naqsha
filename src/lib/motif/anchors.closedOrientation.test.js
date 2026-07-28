@@ -187,3 +187,57 @@ describe('#164 / 2a — a degenerate figure keeps the radial rule, deliberately'
     open.forEach((a) => expect(wrap(a.normal - (a.tangent + Math.PI / 2))).toBeLessThan(1e-9));
   });
 });
+
+// ── The 2a lock, against REAL geometry rather than a synthetic ───────────────
+// FIGURE_EIGHT above pins the degenerate BRANCH; this pins the actual decision.
+// 2a is a claim about a shipping host — "a default Lissajous keeps the look it
+// has today" — and a 4-point synthetic cannot carry it. Without this, removing
+// the degenerate branch would silently reverse ~50% of the glyphs on every
+// Lissajous document and no test in the repo would notice.
+describe('#164 / 2a — a real Lissajous keeps its pre-#164 orientation', () => {
+  it('still radiates from the figure centre, reversals and all', async () => {
+    const [{ RecordingContext }, { capturePolylines }, { getPatternClass }] = await Promise.all([
+      import('../patterns/drawingContext.js'),
+      import('./capturePolylines.js'),
+      import('../patterns/index.js'),
+    ]);
+    await import('../registerBuiltinExtras.js'); // self-registers lissajous
+    const W = 800;
+    const H = 600;
+    const ctx = new RecordingContext({ seed: 7 });
+    new (getPatternClass('lissajous'))().generateWithContext(
+      ctx, 7, {}, W, H, '#000000', 100
+    );
+    const path = capturePolylines(ctx.calls).find((p) => p.closed);
+    expect(path).toBeTruthy();
+
+    const anchors = sampleEdgeAnchors([path], { spacing: 24 });
+    expect(anchors.length).toBeGreaterThan(1000);
+
+    // (a) The degenerate branch is the one that runs: a default Lissajous has
+    //     signed area ~1e-9 by harmonic orthogonality at freqA 3 / freqB 2.
+    //     Recompute the OLD rule from the vertex average and demand equality.
+    let sx = 0;
+    let sy = 0;
+    for (const p of path.points) {
+      sx += p.x;
+      sy += p.y;
+    }
+    const centre = { x: sx / path.points.length, y: sy / path.points.length };
+    anchors.forEach((a) => {
+      const perpA = a.tangent + Math.PI / 2;
+      const perpB = a.tangent - Math.PI / 2;
+      const vx = a.x - centre.x;
+      const vy = a.y - centre.y;
+      const dotA = Math.cos(perpA) * vx + Math.sin(perpA) * vy;
+      const dotB = Math.cos(perpB) * vx + Math.sin(perpB) * vy;
+      expect(wrap(a.normal - (dotA >= dotB ? perpA : perpB))).toBeLessThan(1e-9);
+    });
+
+    // (b) And the artifact 2a knowingly keeps is still exactly 24 — the regular
+    //     ring of reversed glyphs near the centre. If this ever reads 0, someone
+    //     has quietly applied 1a here and Decision 2 was reversed without a
+    //     decision. If it climbs, the figure changed.
+    expect(reversals(anchors)).toBe(24);
+  });
+});

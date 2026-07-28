@@ -72,6 +72,7 @@ describe("Motif device on an available host", () => {
     renderWith([chladniHost({ m: 4, n: 3, blend: 0 })], "ch");
     expect(screen.getByTestId("motif-device")).toBeInTheDocument();
     expect(screen.getByTestId("motif-empty-start")).toBeInTheDocument();
+    expect(screen.getByTestId("motif-add")).toBeInTheDocument();
     expect(screen.queryByTestId("motif-host-unavailable")).toBeNull();
   });
 
@@ -104,8 +105,12 @@ describe("Motif device on a blank chladni plate", () => {
       // invented — so #154 can change the wording in one place.
       expect(notice).toHaveTextContent(hostAvailability("chladni", params).reason);
 
-      // No "Start with" chooser: creating a motif here would stamp nothing.
+      // NEITHER creation affordance is offered: both the "Start with" chooser
+      // and "+ Add Motif" would create a motif that stamps nothing. Two adjacent
+      // buttons disagreeing about whether this host is usable is worse than
+      // either answer, so they are gated together.
       expect(screen.queryByTestId("motif-empty-start")).toBeNull();
+      expect(screen.queryByTestId("motif-add")).toBeNull();
     });
   }
 
@@ -114,5 +119,7 @@ describe("Motif device on a blank chladni plate", () => {
     renderWith([host, motifOn("ch")], "ch");
     expect(screen.getByTestId("motif-host-unavailable")).toBeInTheDocument();
     expect(screen.getAllByTestId("motif-row")).toHaveLength(1);
+    // …but still no way to add another one that would stamp nothing.
+    expect(screen.queryByTestId("motif-add")).toBeNull();
   });
 });

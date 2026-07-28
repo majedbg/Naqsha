@@ -1657,6 +1657,11 @@ function MotifDevice({
             );
           })}
 
+          {/* Gated together with the "Start with" chooser above (#145): on an
+              unavailable host BOTH would create a motif that stamps nothing, and
+              two adjacent buttons disagreeing about whether the host is usable is
+              worse than either answer. The reason notice does the explaining. */}
+          {availability.available && (
           <button
             type="button"
             data-testid="motif-add"
@@ -1665,6 +1670,7 @@ function MotifDevice({
           >
             + Add Motif
           </button>
+          )}
         </>
       )}
     </div>

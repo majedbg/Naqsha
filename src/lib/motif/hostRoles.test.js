@@ -7,6 +7,8 @@
 
 import { describe, it, expect } from 'vitest';
 import { rolesForHost, ALL_ROLES } from './hostRoles.js';
+import { hostAvailability } from './hostCapability.js';
+import { MOTIF_HOSTS } from './hostKinds.js';
 
 describe('rolesForHost', () => {
   it('exposes the four anchor roles in a stable canonical order', () => {
@@ -63,6 +65,65 @@ describe('rolesForHost', () => {
         expect(rolesForHost(type, { symmetry: 5, startAngle: 90 })).toEqual(['edge']);
       });
     }
+  });
+
+  // ── the roles ↔ availability composition (#145 reconciled into #144) ───────
+  // rolesForHost CONSULTS hostAvailability: an unavailable host emits no
+  // geometry, so it emits no roles. hostCapability keeps the human-readable
+  // `reason`; this function is the single entry point for the option set.
+  describe('an UNAVAILABLE host emits no roles at all', () => {
+    it('chladni at non-blank params is a normal edge host', () => {
+      expect(rolesForHost('chladni')).toEqual(['edge']); // registry defaults m=4 n=3
+      expect(rolesForHost('chladni', { m: 4, n: 3, blend: 0 })).toEqual(['edge']);
+      expect(rolesForHost('chladni', { m: 11, n: 12 })).toEqual(['edge']);
+    });
+
+    it('chladni on a blank plate offers NOTHING — equal first pair', () => {
+      expect(rolesForHost('chladni', { m: 4, n: 4 })).toEqual([]);
+      expect(rolesForHost('chladni', { m: 4, n: 4, blend: 0.5, m2: 5, n2: 5 })).toEqual([]);
+    });
+
+    it('chladni on a blank plate offers NOTHING — full blend, equal second pair', () => {
+      expect(rolesForHost('chladni', { m: 4, n: 3, blend: 1, m2: 5, n2: 5 })).toEqual([]);
+    });
+
+    it('does NOT implement #145 criterion 2 literally: an equal FIRST pair at full blend still paints', () => {
+      // At blend 1 the first pair's coefficient (1-w) is exactly 0, so m === n
+      // is irrelevant — the plate is good (32 captured contours, measured on the
+      // real pattern in hostCapability.test.js). A literal reading of the ticket
+      // would black this out.
+      expect(rolesForHost('chladni', { m: 4, n: 4, blend: 1, m2: 5, n2: 2 })).toEqual(['edge']);
+      // …and one slider step below full blend the first pair is live again.
+      expect(rolesForHost('chladni', { m: 4, n: 3, blend: 0.99, m2: 5, n2: 5 })).toEqual(['edge']);
+    });
+
+    it('agrees with hostAvailability on every case, and leaves the REASON to it', () => {
+      const cases = [
+        { m: 4, n: 3, blend: 0 },
+        { m: 4, n: 4, blend: 0 },
+        { m: 4, n: 4, blend: 1, m2: 5, n2: 2 },
+        { m: 4, n: 3, blend: 1, m2: 5, n2: 5 },
+        { m: 1, n: 2 },
+      ];
+      for (const params of cases) {
+        const { available, reason } = hostAvailability('chladni', params);
+        expect(rolesForHost('chladni', params), JSON.stringify(params))
+          .toEqual(available ? ['edge'] : []);
+        // The copy lives in ONE place and stays reachable when roles are empty.
+        if (!available) expect(typeof reason).toBe('string');
+      }
+    });
+
+    it('the availability consult changes NOTHING for any ungated host', () => {
+      // Every motif host but chladni is ungated, so folding availability into
+      // this function must be invisible to all of them — including at params
+      // that would blank a Chladni.
+      for (const type of MOTIF_HOSTS) {
+        if (type === 'chladni') continue;
+        expect(rolesForHost(type, { m: 4, n: 4, blend: 1, m2: 5, n2: 5 }), type)
+          .toEqual(rolesForHost(type, {}));
+      }
+    });
   });
 
   it('offers nothing on a pattern that is not a motif host', () => {

@@ -75,7 +75,7 @@ export function isStashHost(patternType) {
 // Keys are the pattern registry ids, NOT the class names: WaveInterference→
 // 'wave', PhyllotaxisDash→'phyllodash', DifferentialGrowth→'diffgrowth'. Most
 // live in the STATIC map (src/lib/patterns/index.js); the built-in extras
-// (Hilbert, Lissajous) self-register into the DYNAMIC registry at app boot
+// (Hilbert, Lissajous, Chladni) self-register into the DYNAMIC registry at boot
 // (src/lib/registerBuiltinExtras.js). Resolve either with getPatternClass(id) —
 // the static map alone would report a working host as unknown.
 export const EDGE_MOTIF_HOSTS = Object.freeze(
@@ -93,14 +93,22 @@ export const EDGE_MOTIF_HOSTS = Object.freeze(
     'radialetch', // RadialEtch — ctx.line rays; randomSeed+noiseSeed at generate() top
     'hilbert', // Hilbert (extra) — ONE beginShape/vertex run; reseeds both streams
     'lissajous', // Lissajous (extra) — ONE beginShape/vertex run; reseeds both streams
+    // ── #145 (PRD #143) ──────────────────────────────────────────────────────
+    // Chladni — nodal-line beginShape/vertex polylines. Registered via
+    // patterns/extras (patternRegistry), NOT PATTERN_CLASSES, so resolve its
+    // class/defaults through getPatternClass + getDynamicDefaults. Chladni is
+    // the one host with a params-aware AVAILABILITY gate: at equal mode numbers
+    // its field is identically zero and it draws nothing at all. Membership here
+    // is by-type and unconditional (the mechanism is edge capture whatever the
+    // params); the emptiness question is answered by hostAvailability in
+    // hostCapability.js, which rolesForHost consults — an unavailable host emits
+    // no roles at all. That is where every capability conditional belongs.
+    'chladni',
     // DELIBERATELY ABSENT — do not add by reflex:
     //   truchet — emits CELLS as well as edges. The probe is a single boolean
     //     (record the draw stream OR read the stash, never both), so listing it
     //     here would silently cost it the cell role. Its edges come from the
     //     stash, alongside its tile centres (PRD #143).
-    //   chladni — needs the warp-capture contract (it warps its final contour
-    //     vertices, so a bare capture floats glyphs off the painted nodal lines)
-    //     and a params-aware blank-plate gate at equal mode numbers. Ticket #148.
   ])
 );
 

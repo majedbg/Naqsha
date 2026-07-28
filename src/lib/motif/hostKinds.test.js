@@ -45,6 +45,8 @@ describe('hostKinds', () => {
   });
 
   it('every edge-host key resolves to a real registered PatternClass', () => {
+    // getPatternClass, not PATTERN_CLASSES[type]: static built-ins live in the
+    // map, self-registering extras (chladni, …) in the dynamic registry.
     for (const type of EDGE_MOTIF_HOSTS) {
       expect(getPatternClass(type), `unknown patternType "${type}"`).toBeTruthy();
     }
@@ -103,10 +105,17 @@ describe('hostKinds', () => {
       expect(isMotifHost('truchet')).toBe(false);
     });
 
-    // Chladni is ticket #148 (it needs the warp-capture contract and a
-    // params-aware blank-plate gate), not this slice.
-    it('does NOT add Chladni here (#148 owns it)', () => {
-      expect(EDGE_MOTIF_HOSTS.has('chladni')).toBe(false);
+    // Chladni arrived in #145, immediately after this slice. Membership here is
+    // by-type and unconditional — the mechanism is edge capture whatever the
+    // params. Its blank-plate EMPTINESS is a separate question, answered by
+    // hostAvailability (hostCapability.js) and surfaced through rolesForHost.
+    it('Chladni IS an edge host (#145), and by-type membership is unconditional', () => {
+      expect(EDGE_MOTIF_HOSTS.has('chladni')).toBe(true);
+      expect(isEdgeHost('chladni')).toBe(true);
+      // Even at the blank-plate params: the CLASSIFIER does not gate.
+      expect(isEdgeHost('chladni', { m: 4, n: 4 })).toBe(true);
+      expect(isMotifHost('chladni')).toBe(true);
+      expect(SEMANTIC_MOTIF_HOSTS.has('chladni')).toBe(false);
     });
 
     it('leaves the seven pre-existing edge hosts untouched', () => {
@@ -116,8 +125,8 @@ describe('hostKinds', () => {
       ]) {
         expect(EDGE_MOTIF_HOSTS.has(type), `lost edge host "${type}"`).toBe(true);
       }
-      // …and adds nothing beyond the three.
-      expect(EDGE_MOTIF_HOSTS.size).toBe(10);
+      // …and adds nothing beyond the three of #144 plus chladni (#145).
+      expect(EDGE_MOTIF_HOSTS.size).toBe(11);
     });
   });
 

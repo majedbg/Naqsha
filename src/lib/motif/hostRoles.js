@@ -30,8 +30,28 @@
 // DERIVED AT RENDER, NEVER STORED. Nothing here is written to the document. A
 // stored Route asking for an unavailable role keeps its stored value; the UI just
 // stops OFFERING roles the host cannot serve.
+//
+// ── HOW THIS COMPOSES WITH hostCapability.js ────────────────────────────────
+// Two adjacent but genuinely different questions, and each has exactly one
+// owner:
+//
+//   hostCapability.hostAvailability(type, params) → {available, reason}
+//     "CAN this host be used at all right now, and if not, WHY?" It owns the
+//     maker-facing copy. Chladni at equal mode numbers draws literally nothing,
+//     so no role and no Route choice can place a glyph (#145).
+//
+//   hostRoles.rolesForHost(type, params) → string[]
+//     "WHICH anchor roles does this host emit?" It owns the option set.
+//
+// rolesForHost CONSULTS hostAvailability and returns `[]` for an unavailable
+// host — an empty plate emits no anchors, so it emits no roles. That gives #154
+// a SINGLE entry point for role availability while the human-readable `reason`
+// stays reachable from hostCapability for the Inspector's notice. The dependency
+// runs one way only (roles → capability); hostCapability must never import this
+// module back.
 
 import { isEdgeHost, isSemanticHost } from './hostKinds.js';
+import { hostAvailability } from './hostCapability.js';
 
 /** The four structural anchor roles, in the studio's canonical display order. */
 export const ALL_ROLES = Object.freeze(['crossing', 'edge', 'tip', 'cell']);
@@ -60,13 +80,21 @@ const NARROW_ROLES = Object.freeze({
  * A type that hosts no motif at all returns `[]` — NOT the `['edge']` universal
  * anchor fallback. Offering Edges on a non-host is a plausible-looking wrong
  * answer, so #154's per-host tables must OVERRIDE the answers here rather than
- * assume they are extending a non-empty one.
+ * assume they are extending a non-empty one. A host that IS a motif host but is
+ * currently UNAVAILABLE (hostCapability) returns `[]` for the same reason: it
+ * emits no geometry, so it emits no roles.
  *
  * @param {string} patternType  PATTERN_CLASSES / registry id (NOT the class name).
  * @param {object} [params]     the host's live params (params-aware hosts only).
- * @returns {string[]} a fresh array in canonical order; `[]` for a non-host.
+ * @returns {string[]} a fresh array in canonical order; `[]` for a non-host or an
+ *                     unavailable one.
  */
 export function rolesForHost(patternType, params) {
+  // AVAILABILITY FIRST, before the edge/semantic dispatch. hostAvailability
+  // deliberately answers `available: true` for types that host no motif at all
+  // (it is a capability question, not a classification one), so checking it
+  // after the dispatch would be a no-op for exactly the case it exists for.
+  if (!hostAvailability(patternType, params).available) return [];
   // An EDGE host (native, or a single-axis grid) samples arc-length anchors along
   // its drawn polylines and has no structural anchors at all.
   if (isEdgeHost(patternType, params)) return ['edge'];

@@ -68,6 +68,7 @@ import EtchStackRack from "./EtchStackRack";
 import EtchHighlightHold from "./EtchHighlightHold";
 import EtchPreviewHero from "./EtchPreviewHero";
 import { MOTIF_HOSTS, isMotifHost, isSemanticHost } from "../../lib/motif/hostKinds";
+import { hostAvailability } from "../../lib/motif/hostCapability";
 import { defaultMotifAddOpts } from "../../lib/motif/defaultBinding";
 import { getSemanticAnchors } from "../../lib/motif/semanticAnchors";
 import { STARTER_CHIPS } from "../../lib/motif/starterChips";
@@ -970,6 +971,17 @@ function MotifDevice({
   // types host motifs today.
   if (isMotifLayer(layer) || !MOTIF_HOSTS.has(layer.patternType)) return null;
 
+  // Params-aware host availability (#145). Read from the ONE capability seam
+  // (lib/motif/hostCapability) — never an inline `patternType === …` test here,
+  // so #154's derived role availability extends one function instead of chasing
+  // conditionals through the Inspector. A host that is currently EMPTY (Chladni
+  // at equal mode numbers draws no nodal lines at all) keeps its device visible
+  // and states the reason: hiding the device, or offering a "Start with" chooser
+  // that creates a motif stamping nothing, is exactly the silent empty result
+  // this is meant to replace. Existing motif rows stay — the maker keeps their
+  // chain and can see why it currently shows nothing.
+  const availability = hostAvailability(layer.patternType, layer.params);
+
   const motifs = (layers || []).filter(
     (l) => isMotifLayer(l) && motifHostId(l) === layer.id
   );
@@ -1334,7 +1346,19 @@ function MotifDevice({
               FOR, the same column here CREATES one via startWith (onAddMotif with
               the preset's host-aware {glyphRef, anchorMode, binding}). Presets
               only — Custom is meaningless before a motif exists to have diverged. */}
-          {motifs.length === 0 && (
+          {/* Host unavailable at these params (#145) — say WHY. The copy is the
+              capability seam's `reason` verbatim so wording lives in one place. */}
+          {!availability.available && (
+            <p
+              data-testid="motif-host-unavailable"
+              role="status"
+              className="rounded-xs border border-tone-mild/40 bg-tone-mild/10 px-2 py-1 text-xs text-tone-mild"
+            >
+              {availability.reason}
+            </p>
+          )}
+
+          {motifs.length === 0 && availability.available && (
             <div className="space-y-1.5" data-testid="motif-empty-start">
               <p className="text-xs text-ink-soft">No motifs on this host.</p>
               <p className="text-2xs font-medium uppercase tracking-wide text-ink-soft">

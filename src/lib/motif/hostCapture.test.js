@@ -18,7 +18,10 @@ import { DEFAULT_PARAMS, PATTERN_PARAM_DEFS } from '../../constants.js';
 
 /**
  * The host's REAL creation-time params, resolved through the same two-table
- * lookup useLayers uses: static constants first, then the dynamic registry.
+ * lookup useLayers/useLayerParams use when creating a layer: static built-ins
+ * from DEFAULT_PARAMS first, then self-registering extras (hilbert, lissajous,
+ * chladni) from the dynamic registry. The static map alone reports a real,
+ * working host as having no params at all.
  */
 function defaultParamsFor(type) {
   return DEFAULT_PARAMS[type] || getDynamicDefaults(type) || null;
@@ -149,12 +152,15 @@ describe('arbitrary-edge host capture — FlowField (B2)', () => {
 describe('every EDGE_MOTIF_HOSTS type captures polylines at default params + reseeds', () => {
   for (const type of EDGE_MOTIF_HOSTS) {
     it(`${type}: default-params capture is non-empty AND probe-safe (reseeds)`, () => {
+      // getPatternClass + defaultParamsFor, never PATTERN_CLASSES[type]: static
+      // built-ins live in the map, self-registering extras (hilbert, lissajous,
+      // chladni) in the dynamic registry.
       const HostClass = getPatternClass(type);
       expect(HostClass, `no PatternClass for "${type}"`).toBeTruthy();
       const params = defaultParamsFor(type) || {};
       expect(
         Object.keys(params).length,
-        `no default params for edge host "${type}"`
+        `no registered defaults for edge host "${type}"`
       ).toBeGreaterThan(0);
 
       const run = (ctx) =>

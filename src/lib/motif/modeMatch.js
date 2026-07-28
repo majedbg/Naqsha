@@ -24,7 +24,12 @@
 // block's engine defaults, drop inert/volatile keys, sort roles — then structural
 // deep-equal (key-order-independent). A `bypass:true`, a changed `n`/`density`/
 // role, an added/removed block, or a route change are all REAL structure ⇒
-// preserved ⇒ 'custom'.
+// preserved ⇒ 'custom'. ONE QUALIFICATION on "role", added 2026-07-28: a changed
+// role only survives to the comparison if the HOST can still tell the two roles
+// apart. On a host that coerces them to the same thing at render — a columns-only
+// Grid narrows every role to `['edge']` — the two chains draw the same picture
+// and read as the same mode. See IDENTITY IS THE EFFECTIVE CHAIN below; the
+// canonicalization described here is unchanged, it is the input to it that is.
 //
 // ── MODE IDENTITY SPLITS BY PRESET KIND (ADR 0008) ───────────────────────────
 // This module DELIBERATELY REVERSES its prior "a swapped slot glyph ⇒ custom"

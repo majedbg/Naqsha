@@ -115,6 +115,16 @@ export const ALL_ROLES = Object.freeze(['crossing', 'edge', 'tip', 'cell']);
 // mode column, the "reset to preset" affordance and the mode-cache key all
 // change. Majed accepted this rather than gate the narrowing behind a
 // mode-identity story.
+//
+// ↑ SUPERSEDED 2026-07-28 — THAT COST IS NOW REPAID, and the paragraph above is
+// kept only as the record of why it was ever paid. `modeForMotif` matches the
+// EFFECTIVE chain (the ADR 0008 amendment): it runs the STORED side through
+// `coerceRoles` first, which intersects those same four stored roles against
+// what this function answers — so the dead role is dropped on BOTH sides and a
+// saved Vine on a Voronoi or a Spiral reads as **Vine** again. Still no write
+// and still no migration; the document keeps its four roles. Guarded by
+// modeMatch.test.js ("repays part of #154's recorded cost"). The narrowing
+// itself, and everything above about what these hosts emit, is unchanged.
 const NARROW_ROLES = Object.freeze({
   circlepacking: Object.freeze(['cell']),
   modulegrid: Object.freeze(['cell']),

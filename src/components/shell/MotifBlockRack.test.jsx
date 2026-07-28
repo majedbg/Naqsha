@@ -493,6 +493,22 @@ describe("MotifBlockRack — Route offers only the roles the host emits", () => 
     }
   });
 
+  it("offers Edges on a live Chladni and NOTHING on a blank plate (#145 composition)", () => {
+    // The seam folds availability in: an unavailable host emits no geometry, so
+    // Route offers no roles. The maker is not left picking a role that silently
+    // places nothing — the Inspector's notice (hostCapability's `reason`) says
+    // why the plate is blank.
+    const { unmount } = render(
+      <MotifBlockRack {...baseProps} hostPatternType="chladni" hostParams={{ m: 4, n: 3 }} />
+    );
+    expect(rolesOffered()).toEqual(["edge"]);
+    unmount();
+    render(
+      <MotifBlockRack {...baseProps} hostPatternType="chladni" hostParams={{ m: 4, n: 4 }} />
+    );
+    expect(rolesOffered()).toEqual([]);
+  });
+
   it("a caller that names no host keeps the pre-#146 semantic/edge split", () => {
     const { unmount } = render(<MotifBlockRack {...baseProps} />);
     expect(rolesOffered()).toEqual(["crossing", "edge", "tip", "cell"]);

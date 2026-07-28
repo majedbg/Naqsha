@@ -53,7 +53,50 @@ muted glyph can be tuned before it comes back, and the strip height does not
 jump as you toggle. The whole chip drops in opacity, not just the thumbnail.
 A pure Rest still collapses to header + REST plate (+ weight in Random mode).
 
-## Prototype (round 1) — `?slotcard=A|B|C`
+## VERDICT (2026-07-28) — variant D, with a signed number
+
+**D — gutter + inline spread — wins.** B's gutter and its larger (40px) thumb,
+with A's flat/bell pair on ONE row. They do not compose directly (the lane is
+22px, which is why B stacked them), so: the gutter carries only the toggles
+that DISCLOSE (flip, angle-rnd), and the row angle-rnd opens spans the full
+chip width beneath the lane. **A disclosed child row earns full width; a
+modifier of an existing row stays in the gutter.**
+
+**Rotation is a SIGNED NUMBER, not a dial** — Majed: "the rotation dial only
+makes sense for an absolute angle, this is a relative shift, so the + and − in
+the number UI is more fitting." This is decision 1 arriving at the control
+layer: `DragDial`'s 12 o'clock reference tick is signage for a bearing, and
+`slot.rotationOffset` is not one. It also means the shared `DragDial` is left
+alone — `GlyphPopover` keeps it, where the absolute reading is correct.
+
+Open, deferred to the build: the disclosed row crowds the right edge at 124px.
+Widen to ~136px if it reads tight in the real rail.
+
+## BUILT (2026-07-28)
+
+Variant D folded into `SortableSlotChip` (`MotifBlockRack.jsx`), which both the
+flat Sequencer and every Zone section render. Suite 6822 → 6837.
+
+- `chainEditor.duplicateSlot` / `duplicateZoneSlot` — insert AFTER the source,
+  with a `cloneSlot` that copies `rotationRandom` rather than sharing it.
+- `useGestureFlush` — one undo entry per gesture. Flushes before a gesture's
+  first write and on commit, and arms a `pointerup` guard for the drag that ends
+  where it started (`useDragValue.js:120` suppresses `onCommit` there). The
+  guard is detached on commit AND on unmount: a slot deleted mid-drag would
+  otherwise flush history from a component that no longer exists.
+- `onFlushHistory` threaded Studio → Inspector → MotifDevice → rack → chip.
+
+Testid changes for anything downstream: `motif-slot-remove` is gone (Delete
+lives in `motif-slot-menu`); `motif-slot-weight` and `motif-slot-range` are
+DragNumbers, not range inputs (drive them via `-input` after an Enter);
+`motif-slot-spread` is a wrapper around `motif-slot-spread-flat|-bell` toggles,
+not a `<select>`; `motif-slot-anglerand` is a button, not a checkbox. New:
+`motif-slot-eye`, `-scale`, `-rotation`, `-flip`, `-menu`.
+
+Still open: the disclosed row is snug at 124px. Left as-is — it reads fine in
+the real rail, and widening costs a third of a chip.
+
+## Prototype (round 1) — `?slotcard=A|B|C|D`
 
 `npm run dev` → `http://localhost:5173/?slotcard=A`, `←`/`→` to cycle.
 Screenshots: `node scripts/proto-slotcard-shots.mjs <outDir>`.

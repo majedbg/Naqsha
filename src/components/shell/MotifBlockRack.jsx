@@ -22,7 +22,7 @@
 // C4. sequence is a minimal shell — its slot strip is C3. A `field` block has no
 // source picker yet (deferred), so it is inert until C3/C4/a later slice wires one.
 
-import { useState, useMemo, useRef, useId } from "react";
+import { useState, useMemo, useRef, useId, useEffect } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import {
@@ -55,10 +55,12 @@ import {
   toggleBypass,
   reorderChain,
   addSlot,
+  duplicateSlot,
   removeSlot,
   reorderSlots,
   setSlot,
   addZoneSlot,
+  duplicateZoneSlot,
   removeZoneSlot,
   reorderZoneSlots,
   setZoneSlot,
@@ -69,7 +71,16 @@ import { GlyphPickerFlyout } from "./GlyphPickerChip";
 import { getGlyph, MOTIF_GLYPHS } from "../../lib/motif/glyphs.js";
 import { sieveCounts } from "../../lib/motif/sieveCounts.js";
 import GlyphThumb from "../ui/GlyphThumb";
+import DragNumber from "../ui/DragNumber";
+import Menu from "../ui/Menu";
 import ScrubNumeral from "../ui/ScrubNumeral";
+import {
+  SCALE_FORMAT,
+  SCALE_MAX,
+  SCALE_MIN,
+  SCALE_PARSE,
+  SCALE_STEP,
+} from "../canvas/glyphPopoverPlacement";
 import CadenceStripControl from "../ui/CadenceStripControl";
 import RoleGlyphToggles from "../ui/RoleGlyphToggles";
 
@@ -487,14 +498,185 @@ function FieldCardBody({ block, onPatch }) {
 // "angle randomization" checkbox per glyph slot progressively reveals range +
 // spread (flat | bell) → writes slot.rotationRandom; unchecking removes it.
 
+/* ------------------------------------------------------- slot card icons */
+
+function SlotEyeIcon({ open }) {
+  return open ? (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  ) : (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24" />
+      <line x1="1" y1="1" x2="23" y2="23" />
+    </svg>
+  );
+}
+
+// Two columns of dots — the drag affordance visible before you hover, matching
+// GlyphPopover's header rather than the old "⠿" text glyph.
+function SlotGripIcon() {
+  return (
+    <svg width="10" height="13" viewBox="0 0 10 14" fill="currentColor" aria-hidden="true">
+      {[4, 7, 10].map((cy) => (
+        <g key={cy}>
+          <circle cx="3.5" cy={cy} r="0.9" />
+          <circle cx="6.5" cy={cy} r="0.9" />
+        </g>
+      ))}
+    </svg>
+  );
+}
+
+function SlotMoreIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <circle cx="5" cy="12" r="1.8" />
+      <circle cx="12" cy="12" r="1.8" />
+      <circle cx="19" cy="12" r="1.8" />
+    </svg>
+  );
+}
+
+// FLIP — two wedges about a dashed mirror axis. FILL carries the state, not
+// opacity: outlined wedges read as a DIFFERENT mark at 14px, where a tinted
+// copy of the same mark would just read as "disabled".
+function SlotFlipIcon({ state }) {
+  const fill = state === "on" ? "currentColor" : "none";
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor">
+      <line x1="8" y1="1.5" x2="8" y2="14.5" strokeWidth="1" strokeDasharray="2 1.6" />
+      <path d="M6.2 3.6 1.8 8l4.4 4.4z" fill={fill} strokeWidth="1.1" strokeLinejoin="round" />
+      <path d="M9.8 3.6 14.2 8l-4.4 4.4z" fill={fill} strokeWidth="1.1" strokeLinejoin="round" />
+      {state === "off" && <line x1="2" y1="14" x2="14" y2="2" strokeWidth="1.5" />}
+    </svg>
+  );
+}
+
+// ANGLE RANDOMISATION — three ticks from one root: parallel when off (every
+// glyph the same), splayed when on.
+function SlotAngleRndIcon({ on }) {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round">
+      {on ? (
+        <>
+          <line x1="8" y1="14" x2="4" y2="4.5" />
+          <line x1="8" y1="14" x2="8" y2="3" />
+          <line x1="8" y1="14" x2="12" y2="4.5" />
+        </>
+      ) : (
+        <>
+          <line x1="4.5" y1="14" x2="4.5" y2="4" />
+          <line x1="8" y1="14" x2="8" y2="4" />
+          <line x1="11.5" y1="14" x2="11.5" y2="4" />
+        </>
+      )}
+    </svg>
+  );
+}
+
+// SPREAD — the two distributions drawn as their own shapes: a uniform plateau,
+// a triangular bell. The old <select> said "Flat"/"Bell"; this shows them.
+function SlotSpreadIcon({ kind }) {
+  return (
+    <svg width="16" height="12" viewBox="0 0 18 12" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round">
+      {kind === "bell" ? <path d="M1 11 L9 2 L17 11" /> : <path d="M1 11 L1 4 L17 4 L17 11" />}
+    </svg>
+  );
+}
+
 const SPREAD_OPTIONS = [
-  { value: "flat", label: "Flat" },
-  { value: "bell", label: "Bell" },
+  { value: "flat", label: "Flat — every angle equally likely" },
+  { value: "bell", label: "Bell — clustered near 0°" },
 ];
 
-// One sortable Slot chip. Drag rides ONLY the grip (like the block card), so the
-// chip's inputs (weight slider, angle controls) keep normal pointer behavior and
-// tapping the glyph opens the editor rather than starting a drag.
+// Flip cycles inherit → always → never, which is exactly the tri-state the
+// engine reads (`flipSpecified`, sequencer.js:109).
+const NEXT_FLIP = { inherit: true, on: false, off: undefined };
+const FLIP_LABEL = {
+  inherit: "Flip: inherit the layer",
+  on: "Flip: always",
+  off: "Flip: never (overrides the layer)",
+};
+
+const SLOT_ICON_BTN =
+  "inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-xs border border-transparent outline-none hover:border-hairline hover:bg-paper-warm hover:text-ink focus-visible:ring-2 focus-visible:ring-violet";
+
+/* ------------------------------------------------------ gesture ↔ undo */
+
+// ONE undo entry per gesture, with the canvas following the drag.
+//
+// `updateLayer` coalesces by `${id}:params` for 400ms, so every chain write in
+// a burst already folds into one entry — including writes from a DIFFERENT
+// control, which carry an identical signature. The flush is what draws the
+// boundaries: once BEFORE a gesture's first write (so an Inspector burst on the
+// same layer cannot swallow it) and once when it commits.
+//
+// The pointerup listener is not belt-and-braces. `useDragValue` suppresses
+// `onCommit` when a gesture ends exactly where it started (useDragValue.js:120)
+// — but the intermediate frames DID write — so a latch cleared only by
+// `onCommit` would stay open and let the NEXT gesture join this entry. Closing
+// unconditionally on pointerup costs a redundant flush at worst (a no-op, the
+// same double-flush AnchorGhostOverlay already does around discrete actions).
+function useGestureFlush(onFlushHistory) {
+  const open = useRef(false);
+  // Detaches the pending pointerup, or null when none is armed. The listener
+  // MUST NOT outlive either the gesture or the chip: a slot deleted mid-drag
+  // would otherwise flush history from a component that no longer exists.
+  const detach = useRef(null);
+  useEffect(() => () => detach.current?.(), []);
+
+  const close = () => {
+    detach.current?.();
+    if (!open.current) return;
+    open.current = false;
+    onFlushHistory();
+  };
+
+  const begin = () => {
+    if (open.current) return;
+    open.current = true;
+    onFlushHistory();
+    const onUp = () => {
+      detach.current = null; // already removed by {once:true}
+      close();
+    };
+    window.addEventListener("pointerup", onUp, { once: true });
+    detach.current = () => {
+      window.removeEventListener("pointerup", onUp);
+      detach.current = null;
+    };
+  };
+
+  return { begin, end: close };
+}
+
+// One sortable Slot chip — the "gutter + inline spread" card (variant D,
+// verdict 2026-07-28; docs/motif-slot-card-decisions.md).
+//
+//   header      eye · grip · "…"          the popover's header, verbatim
+//   thumb       tap → the glyph browser
+//   [wt]        Random mode only
+//   scale %  ⇄  sizeScale, and flip in the gutter
+//   +180°    ≋  rotationOffset, and angle-rnd in the gutter
+//   ±30°  ▬ ▲   full width, only when angle-rnd is on
+//
+// The GUTTER holds only the toggles that DISCLOSE; a row angle-rnd opens spans
+// the full chip beneath it. A disclosed child row earns full width; a modifier
+// of an existing row does not.
+//
+// Three of these controls surface fields the Slot model has carried since the
+// sequencer shipped (`sizeScale`, `rotationOffset`, `flip` — sequencer.js) and
+// which only `starterChips.js` could ever write. Their PLACEMENT semantics are
+// not the per-glyph popover's, despite the shared look: `sizeScale` multiplies
+// the target radius BEFORE the empty-circle test, so scaling repacks the
+// neighbours, and `rotationOffset` is RELATIVE to each anchor's base
+// orientation — hence the signed readout, and hence no dial (a dial's 12
+// o'clock reference is signage for an absolute bearing, which this is not).
+//
+// Drag rides ONLY the grip (like the block card), so the chip's controls keep
+// normal pointer behavior and tapping the glyph opens the browser.
 function SortableSlotChip({
   id,
   slot,
@@ -508,6 +690,8 @@ function SortableSlotChip({
   onManageLibrary,
   onPatch,
   onRemove,
+  onDuplicate,
+  onFlushHistory = () => {},
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id });
@@ -516,12 +700,51 @@ function SortableSlotChip({
     transition,
     ...(isDragging ? { zIndex: 10, opacity: 0.85 } : null),
   };
-  const isRest = slot?.rest === true;
   const effectiveRef = slot?.glyphRef ?? baseGlyphRef;
+  // HIDDEN vs REST — one model shape, two chips. Hiding a glyph writes
+  // `rest:true` and KEEPS its glyphRef (decision 4: the beat stays empty, the
+  // rhythm does not re-flow), so the only thing telling a muted glyph from a
+  // deliberate Rest is whether a ref survived. A hidden chip keeps its
+  // thumbnail and every control, ghosted; a pure Rest collapses to the plate.
+  const isHidden = slot?.rest === true && !!slot?.glyphRef;
+  const isRest = slot?.rest === true && !slot?.glyphRef;
   const glyph = isRest ? null : getGlyph(effectiveRef, customGlyphs);
   const rr = slot?.rotationRandom;
   const angleOn = !!rr;
   const weight = slot?.weight != null ? slot.weight : 1;
+  const sizeScale = slot?.sizeScale != null ? slot.sizeScale : 1;
+  const rotationOffset = slot?.rotationOffset != null ? slot.rotationOffset : 0;
+  const flipState = slot?.flip === undefined ? "inherit" : slot.flip ? "on" : "off";
+
+  const [menuOpen, setMenuOpen] = useState(false);
+  const gesture = useGestureFlush(onFlushHistory);
+
+  // A discrete edit is its own entry: flush, write, flush.
+  const patchOnce = (patch) => {
+    gesture.begin();
+    onPatch(patch);
+    gesture.end();
+  };
+  // A drag: open on the first live frame, close on commit.
+  const patchLive = (patch) => {
+    gesture.begin();
+    onPatch(patch);
+  };
+  const patchCommit = (patch) => {
+    onPatch(patch);
+    gesture.end();
+  };
+
+  // The eye writes the EFFECTIVE ref, never a bare `rest:true`. A slot that
+  // never named a glyph still draws the layer's base one (`effectiveRef`), and
+  // hiding it without recording that ref would make it indistinguishable from a
+  // pure Rest — the chip would lose its eye and un-hiding would be impossible.
+  const toggleHidden = () =>
+    patchOnce(
+      slot?.rest === true
+        ? { rest: false }
+        : { rest: true, glyphRef: effectiveRef },
+    );
 
   // Slot glyph-swap picker (Feature B). The preview button IS the trigger; the
   // flyout is the SAME GlyphPickerFlyout the row chip uses. `firstTile` pins the
@@ -543,35 +766,84 @@ function SortableSlotChip({
       data-testid="motif-slot"
       data-slot-index={index}
       data-slot-rest={isRest ? "true" : "false"}
-      className="flex w-[92px] shrink-0 flex-col gap-1 rounded-cell border border-hairline bg-paper p-1.5"
+      data-slot-hidden={isHidden ? "true" : undefined}
+      className={`flex w-[124px] shrink-0 flex-col gap-0.5 self-start rounded-cell border border-hairline bg-paper p-1 ${
+        isHidden ? "opacity-45" : ""
+      }`}
     >
-      <div className="flex items-center gap-1">
+      {/* header — eye · grip · "…" */}
+      <div className="flex items-center justify-between gap-1">
+        {isRest ? (
+          // A deliberate Rest is already an empty beat; there is nothing to hide.
+          <span className="h-5 w-5 shrink-0" />
+        ) : (
+          <button
+            type="button"
+            data-testid="motif-slot-eye"
+            aria-label={isHidden ? "Show glyph" : "Hide glyph"}
+            aria-pressed={isHidden}
+            title={isHidden ? "Show glyph" : "Hide glyph — the beat stays empty"}
+            onClick={toggleHidden}
+            className={`${SLOT_ICON_BTN} ${isHidden ? "text-saffron" : "text-ink-soft"}`}
+          >
+            <SlotEyeIcon open={!isHidden} />
+          </button>
+        )}
         <button
           type="button"
           data-testid="motif-slot-grip"
           aria-label="Drag to reorder slot"
-          className="cursor-grab touch-none text-2xs text-ink-soft/60 hover:text-ink"
+          className="flex flex-1 cursor-grab touch-none justify-center text-ink-soft/50 hover:text-ink"
           {...attributes}
           {...listeners}
         >
-          <span aria-hidden="true">⠿</span>
+          <SlotGripIcon />
         </button>
-        <span className="flex-1" />
-        <button
-          type="button"
-          data-testid="motif-slot-remove"
-          aria-label="Remove slot"
-          onClick={onRemove}
-          className="shrink-0 text-xs text-ink-soft hover:text-ink"
-        >
-          ×
-        </button>
+        <span className="relative">
+          <button
+            type="button"
+            data-testid="motif-slot-menu"
+            aria-label="Slot actions"
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            title="Duplicate · reset · delete"
+            onClick={() => setMenuOpen((o) => !o)}
+            className={`${SLOT_ICON_BTN} ${
+              menuOpen ? "border-hairline bg-paper-warm text-ink" : "text-ink-soft"
+            }`}
+          >
+            <SlotMoreIcon />
+          </button>
+          <Menu
+            open={menuOpen}
+            onClose={() => setMenuOpen(false)}
+            ariaLabel="Slot actions"
+            testId="motif-slot-menu-list"
+            className="absolute right-0 top-full z-50 mt-2xs min-w-[132px] rounded-sm border border-hairline bg-paper p-1 shadow-pop"
+            items={[
+              { label: "Duplicate slot", onActivate: onDuplicate },
+              {
+                label: "Reset settings",
+                onActivate: () =>
+                  patchOnce({
+                    sizeScale: undefined,
+                    rotationOffset: undefined,
+                    flip: undefined,
+                    rotationRandom: undefined,
+                    weight: undefined,
+                  }),
+              },
+              { separator: true },
+              { label: "Delete slot", onActivate: onRemove },
+            ]}
+          />
+        </span>
       </div>
 
       {isRest ? (
         <div
           data-testid="motif-slot-rest"
-          className="flex h-10 items-center justify-center rounded-xs border border-dashed border-hairline text-2xs font-medium uppercase tracking-wider text-ink-soft/70"
+          className="flex h-11 items-center justify-center rounded-xs border border-dashed border-hairline text-2xs font-medium uppercase tracking-wider text-ink-soft/70"
         >
           Rest
         </div>
@@ -587,7 +859,7 @@ function SortableSlotChip({
             aria-controls={pickerId}
             title="Swap this slot's glyph"
             onClick={() => (pickerOpen ? closePicker() : setPickerOpen(true))}
-            className={`flex h-10 items-center justify-center rounded-xs border bg-paper-warm text-ink-soft hover:border-violet hover:text-ink ${
+            className={`flex h-11 items-center justify-center rounded-xs border bg-paper-warm text-ink-soft hover:border-violet hover:text-ink ${
               pickerOpen ? "border-accent/60" : "border-hairline"
             }`}
           >
@@ -597,9 +869,9 @@ function SortableSlotChip({
                 around (55,55)) rendered as an EMPTY box. GlyphThumb frames each
                 glyph's real extent and draws every path. */}
             {glyph?.paths?.[0]?.d ? (
-              <GlyphThumb glyph={glyph} size={24} />
+              <GlyphThumb glyph={glyph} size={38} />
             ) : (
-              <svg width="24" height="24" viewBox="-12 -12 24 24" aria-hidden="true">
+              <svg width="38" height="38" viewBox="-12 -12 24 24" aria-hidden="true">
                 <circle r="6" fill="none" stroke="currentColor" strokeWidth="1" strokeDasharray="2 2" />
               </svg>
             )}
@@ -633,82 +905,143 @@ function SortableSlotChip({
 
       {/* Weight — Random mode only (positional in Cycle). Rests carry a weight too. */}
       {isRandom && (
-        <label className="flex items-center gap-1 text-2xs text-ink-soft">
-          <span className="shrink-0">wt</span>
-          <input
-            type="range"
-            data-testid="motif-slot-weight"
-            aria-label="Weight"
-            min={0}
-            max={5}
-            step={0.5}
-            value={weight}
-            onChange={(e) => onPatch({ weight: Number(e.target.value) })}
-            className="min-w-0 flex-1 accent-violet"
-          />
-          <span className="w-5 shrink-0 text-right tabular-nums num">
-            {Number(weight).toFixed(1)}
-          </span>
-        </label>
+        <DragNumber
+          value={weight}
+          min={0}
+          max={5}
+          step={0.5}
+          label="Weight"
+          title="Drag \u2195 \u00b7 how often Random picks this slot"
+          format={(v) => `wt ${Number(v).toFixed(1)}`}
+          parse={(t) => parseFloat(String(t).replace(/[^\d.]/g, ""))}
+          slotWidth="6ch"
+          testId="motif-slot-weight"
+          onChange={(v) => patchLive({ weight: v })}
+          onCommit={(v) => patchCommit({ weight: v })}
+        />
       )}
 
-      {/* Angle randomization — glyph slots only (a Rest has no rotation). */}
+      {/* The value column and its GUTTER of disclosing toggles. A Rest has no
+          glyph to scale, turn or flip, so it carries none of this. */}
       {!isRest && (
-        <label className="flex items-center gap-1 text-2xs text-ink-soft">
-          <input
-            type="checkbox"
-            data-testid="motif-slot-anglerand"
-            aria-label="Angle randomization"
-            checked={angleOn}
-            onChange={(e) =>
-              onPatch({
-                rotationRandom: e.target.checked
-                  ? { range: 30, spread: "flat" }
-                  : undefined,
-              })
-            }
-          />
-          <span>Angle rnd</span>
-        </label>
-      )}
-      {!isRest && angleOn && (
-        <div className="space-y-1">
-          <label className="flex items-center gap-1 text-2xs text-ink-soft">
-            <span className="shrink-0">±°</span>
-            <input
-              type="range"
-              data-testid="motif-slot-range"
-              aria-label="Angle range"
+        <div className="flex gap-0.5">
+          <div className="flex min-w-0 flex-1 flex-col">
+            {/* Scale — a multiplier over the layer's Size, on the popover's own
+                scale (same constants, so 140% means the same thing in both). */}
+            <DragNumber
+              value={sizeScale}
+              min={SCALE_MIN}
+              max={SCALE_MAX}
+              step={SCALE_STEP}
+              mapping="geometric"
+              format={SCALE_FORMAT}
+              parse={SCALE_PARSE}
+              label="Glyph scale"
+              title="Drag \u2195 to size every instance \u00b7 neighbours repack"
+              slotWidth="5ch"
+              testId="motif-slot-scale"
+              onChange={(v) => patchLive({ sizeScale: v })}
+              onCommit={(v) => patchCommit({ sizeScale: v })}
+            />
+            {/* Rotation — SIGNED, because this is an offset from each anchor's
+                base orientation, not a bearing. Stored 0..359 (the engine adds
+                it to the base), displayed \u2212179..+180 so "turn it back a bit"
+                reads as a negative number rather than as 340. */}
+            <DragNumber
+              value={rotationOffset}
               min={0}
-              max={180}
-              step={5}
-              value={rr.range ?? 0}
-              onChange={(e) =>
-                onPatch({
-                  rotationRandom: { ...rr, range: Number(e.target.value) },
+              max={359}
+              step={1}
+              label="Rotation offset"
+              title="Drag \u2195 \u00b7 degrees turned FROM the path direction"
+              format={(v) => `${v > 180 ? v - 360 : v > 0 ? `+${v}` : v}\u00b0`}
+              parse={(t) => {
+                const n = parseFloat(String(t).replace(/[^\d.+-]/g, ""));
+                return Number.isFinite(n) ? ((n % 360) + 360) % 360 : 0;
+              }}
+              slotWidth="5ch"
+              testId="motif-slot-rotation"
+              onChange={(v) => patchLive({ rotationOffset: v })}
+              onCommit={(v) => patchCommit({ rotationOffset: v })}
+            />
+          </div>
+          <div className="flex w-[22px] shrink-0 flex-col items-center gap-0.5 border-l border-hairline/60 pl-0.5">
+            {/* Flip \u2014 TRI-state, because `flipSpecified` is: absent inherits the
+                layer's Flip, true/false override it. A two-state toggle would
+                lose the ability to un-flip ONE slot under a flipped layer. */}
+            <button
+              type="button"
+              data-testid="motif-slot-flip"
+              aria-label={FLIP_LABEL[flipState]}
+              title={FLIP_LABEL[flipState]}
+              onClick={() => patchOnce({ flip: NEXT_FLIP[flipState] })}
+              className={`${SLOT_ICON_BTN} ${
+                flipState === "inherit" ? "text-ink-soft/45" : "text-ink"
+              }`}
+            >
+              <SlotFlipIcon state={flipState} />
+            </button>
+            {/* Angle randomisation \u2014 both the switch and the disclosure. */}
+            <button
+              type="button"
+              data-testid="motif-slot-anglerand"
+              aria-label="Angle randomization"
+              aria-pressed={angleOn}
+              title={angleOn ? "Angle randomisation on" : "Randomise each glyph's angle"}
+              onClick={() =>
+                patchOnce({
+                  rotationRandom: angleOn ? undefined : { range: 30, spread: "flat" },
                 })
               }
-              className="min-w-0 flex-1 accent-violet"
-            />
-            <span className="w-5 shrink-0 text-right tabular-nums num">
-              {Math.round(rr.range ?? 0)}
-            </span>
-          </label>
-          <select
-            data-testid="motif-slot-spread"
-            aria-label="Spread"
-            value={rr.spread === "bell" ? "bell" : "flat"}
-            onChange={(e) =>
-              onPatch({ rotationRandom: { ...rr, spread: e.target.value } })
-            }
-            className="w-full rounded-xs border border-hairline bg-paper px-1 py-0.5 text-2xs text-ink outline-none focus:border-violet"
-          >
-            {SPREAD_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
+              className={`${SLOT_ICON_BTN} ${angleOn ? "text-saffron" : "text-ink-soft/45"}`}
+            >
+              <SlotAngleRndIcon on={angleOn} />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* The disclosed row spans the FULL chip, under the gutter: at 22px the
+          lane cannot hold the range and both spreads side by side, and stacking
+          them was the thing this layout set out to avoid. A disclosed child row
+          earns full width; a modifier of an existing row does not. */}
+      {!isRest && angleOn && (
+        <div className="flex items-center justify-between gap-0.5">
+          <DragNumber
+            value={rr.range ?? 0}
+            min={0}
+            max={180}
+            step={1}
+            label="Angle range"
+            title="Drag \u2195 \u00b7 \u00b1 degrees either side"
+            format={(v) => `\u00b1${Math.round(v)}\u00b0`}
+            parse={(t) => parseFloat(String(t).replace(/[^\d.]/g, ""))}
+            slotWidth="4ch"
+            testId="motif-slot-range"
+            onChange={(v) => patchLive({ rotationRandom: { ...rr, range: v } })}
+            onCommit={(v) => patchCommit({ rotationRandom: { ...rr, range: v } })}
+          />
+          <span className="flex items-center gap-px" data-testid="motif-slot-spread">
+            {SPREAD_OPTIONS.map((o) => {
+              const active = (rr.spread === "bell" ? "bell" : "flat") === o.value;
+              return (
+                <button
+                  key={o.value}
+                  type="button"
+                  data-testid={`motif-slot-spread-${o.value}`}
+                  aria-label={o.value}
+                  aria-pressed={active}
+                  title={o.label}
+                  onClick={() => patchOnce({ rotationRandom: { ...rr, spread: o.value } })}
+                  className={`${SLOT_ICON_BTN} ${
+                    active ? "border-hairline bg-paper-warm text-ink" : "text-ink-soft/45"
+                  }`}
+                >
+                  <SlotSpreadIcon kind={o.value} />
+                </button>
+              );
+            })}
+          </span>
         </div>
       )}
     </div>
@@ -833,6 +1166,8 @@ function SlotStrip({
   onAddRest,
   onSetSlot,
   onRemoveSlot,
+  onDuplicateSlot,
+  onFlushHistory,
   onEditSlot,
   onSwapSlot,
 }) {
@@ -883,6 +1218,8 @@ function SlotStrip({
                 onSwapGlyph={(slotIndex, payload) => onSwapSlot(slotIndex, payload)}
                 onPatch={(patch) => onSetSlot(i, patch)}
                 onRemove={() => onRemoveSlot(i)}
+                onDuplicate={() => onDuplicateSlot(i)}
+                onFlushHistory={onFlushHistory}
               />
             ))}
           </div>
@@ -937,6 +1274,7 @@ function ZoneSection({
   zone,
   seqIndex,
   onEditChain,
+  onFlushHistory,
   customGlyphs,
   libraryMotifs,
   baseGlyphRef,
@@ -1000,6 +1338,8 @@ function ZoneSection({
         onAddRest={() => onEditChain((c) => addZoneSlot(c, seqIndex, zoneId, { rest: true }))}
         onSetSlot={(i, patch) => onEditChain((c) => setZoneSlot(c, seqIndex, zoneId, i, patch))}
         onRemoveSlot={(i) => onEditChain((c) => removeZoneSlot(c, seqIndex, zoneId, i))}
+        onDuplicateSlot={(i) => onEditChain((c) => duplicateZoneSlot(c, seqIndex, zoneId, i))}
+        onFlushHistory={onFlushHistory}
         onEditSlot={(i, ref) => onEditSlotGlyph(seqIndex, i, ref, zoneId)}
         onSwapSlot={(i, payload) => onSwapSlotGlyph({ seqIndex, zone: zoneId, slotIndex: i }, payload)}
       />
@@ -1012,6 +1352,7 @@ function SequenceCardBody({
   seqIndex,
   liveZones,
   onEditChain,
+  onFlushHistory,
   customGlyphs,
   libraryMotifs,
   baseGlyphRef,
@@ -1038,6 +1379,7 @@ function SequenceCardBody({
             zone={zone}
             seqIndex={seqIndex}
             onEditChain={onEditChain}
+            onFlushHistory={onFlushHistory}
             customGlyphs={customGlyphs}
             libraryMotifs={libraryMotifs}
             baseGlyphRef={baseGlyphRef}
@@ -1076,6 +1418,8 @@ function SequenceCardBody({
         onAddRest={() => onEditChain((c) => addSlot(c, seqIndex, { rest: true }))}
         onSetSlot={(i, patch) => onEditChain((c) => setSlot(c, seqIndex, i, patch))}
         onRemoveSlot={(i) => onEditChain((c) => removeSlot(c, seqIndex, i))}
+        onDuplicateSlot={(i) => onEditChain((c) => duplicateSlot(c, seqIndex, i))}
+        onFlushHistory={onFlushHistory}
         onEditSlot={(i, ref) => onEditSlotGlyph(seqIndex, i, ref)}
         onSwapSlot={(i, payload) => onSwapSlotGlyph({ seqIndex, slotIndex: i }, payload)}
       />
@@ -1093,6 +1437,7 @@ function BlockCardBody({
   onSetArmed,
   onPatch,
   onEditChain,
+  onFlushHistory,
   customGlyphs,
   libraryMotifs,
   baseGlyphRef,
@@ -1127,6 +1472,7 @@ function BlockCardBody({
           seqIndex={index}
           liveZones={liveZones}
           onEditChain={onEditChain}
+          onFlushHistory={onFlushHistory}
           customGlyphs={customGlyphs}
           libraryMotifs={libraryMotifs}
           baseGlyphRef={baseGlyphRef}
@@ -1246,6 +1592,7 @@ function SortableBlockCard({
   onBypass,
   onRemove,
   onEditChain,
+  onFlushHistory,
   customGlyphs,
   libraryMotifs,
   baseGlyphRef,
@@ -1320,6 +1667,7 @@ function SortableBlockCard({
       onSetArmed={onSetArmed}
       onPatch={onPatch}
       onEditChain={onEditChain}
+      onFlushHistory={onFlushHistory}
       customGlyphs={customGlyphs}
       libraryMotifs={libraryMotifs}
       baseGlyphRef={baseGlyphRef}
@@ -1427,6 +1775,13 @@ function SortableBlockCard({
 export default function MotifBlockRack({
   chain,
   onEditChain,
+  // Closes the current undo-coalescing window. `updateLayer` merges every write
+  // carrying the same `${id}:params` signature for 400ms, so a slot-card drag
+  // would otherwise fold into whatever burst preceded it; the slot chip flushes
+  // once before a gesture's first write and once when it commits, which is
+  // exactly one entry per gesture with the canvas following throughout. Same
+  // seam the canvas glyph popover uses (Studio.jsx, onFlushHistory).
+  onFlushHistory = () => {},
   hostIsSemantic = true,
   // The HOST's registry id + live params. Threaded so the Route block can ask the
   // ONE host-capability seam (rolesForHost, #146) which roles this host actually
@@ -1637,6 +1992,7 @@ export default function MotifBlockRack({
                 onBypass={() => onEditChain((c) => toggleBypass(c, i))}
                 onRemove={() => onEditChain((c) => removeBlock(c, i))}
                 onEditChain={onEditChain}
+                onFlushHistory={onFlushHistory}
                 customGlyphs={customGlyphs}
                 libraryMotifs={libraryMotifs}
                 baseGlyphRef={baseGlyphRef}

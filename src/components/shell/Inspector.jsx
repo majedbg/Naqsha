@@ -846,6 +846,10 @@ function MotifDevice({
   layer,
   layers,
   onUpdateLayer,
+  // Closes the undo-coalescing window, so a slot-card drag is one entry rather
+  // than folding into the burst before it. Same seam the canvas glyph popover
+  // uses; see MotifBlockRack's onFlushHistory.
+  onFlushHistory = () => {},
   onAddMotif,
   onRemoveLayer,
   customGlyphs,
@@ -1606,6 +1610,7 @@ function MotifDevice({
                     column to Custom with no extra wiring. */}
                     <MotifBlockRack
                       chain={chain}
+                      onFlushHistory={onFlushHistory}
                       hostIsSemantic={hostIsSemantic}
                       // The Route block asks the ONE host-capability seam
                       // (rolesForHost) which roles this host emits — Cells alone
@@ -1781,6 +1786,7 @@ function InspectorFolderTabs({ tabs, active, onChange, children }) {
 function SelectedLayerInspector({
   layer,
   layers,
+  onFlushHistory,
   panels,
   colorView,
   etchBitmap,
@@ -1867,6 +1873,7 @@ function SelectedLayerInspector({
     layer,
     layers,
     onUpdateLayer,
+    onFlushHistory,
     onAddMotif,
     onRemoveLayer,
     customGlyphs,
@@ -2051,6 +2058,11 @@ function SelectedLayerInspector({
 
 export default function Inspector({
   layers = [],
+  // Closes the current undo-coalescing window (Studio's flushEdit). Threaded to
+  // the motif slot cards, whose drags must land ONE undo entry each rather than
+  // merging into a preceding param burst on the same layer. Defaults to a no-op
+  // so standalone / test mounts behave exactly as before.
+  onFlushHistory = () => {},
   // WI-4 Naqsha Panels: the panel array. The Highlight Hold control (Raster Etch
   // S4, #83) reads the selected Etch's panel material (via layer.panelId) to
   // resolve the material-aware default. Optional — defaults to [] so standalone /
@@ -2229,6 +2241,7 @@ export default function Inspector({
       key={layer.id}
       layer={layer}
       layers={layers}
+      onFlushHistory={onFlushHistory}
       panels={panels}
       colorView={colorView}
       etchBitmap={etchBitmap}

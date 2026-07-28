@@ -32,7 +32,7 @@
 import { Pattern } from '../patterns/drawingContext';
 import { parsePathD } from '../plotter/pathOps';
 import { sampleEdgeAnchors } from './anchors.js';
-import { getSemanticAnchors } from './semanticAnchors.js';
+import { resolveHostAnchors } from './hostAnchors.js';
 import { coerceEdgeRoles } from './edgeRoles.js';
 import { resolveSelection } from './compileSelectionToChain.js';
 import { resolvePlacements } from './placementEngine.js';
@@ -86,26 +86,33 @@ export default class MotifPattern extends Pattern {
     const anchorMode = p.anchorMode ?? 'edge';
     let anchors;
     if (anchorMode === 'semantic') {
-      // Ask the host's structural extractor for role-tagged anchors
+      // Ask the SHARED host-anchor resolver (#149) for role-tagged anchors
       // (crossing/edge/tip/cell). null ⇒ this host has no verifiable extractor
-      // (deferred/unverifiable): degrade gracefully to generic edge anchors on
-      // any provided hostPaths, else no-op.
-      // Thread per-host inputs via the 5th opts arg. hostSeed is the grid host's
-      // layer seed — it threads the LIVE-p5 jitter/symmetry lattice into the
-      // grid extractor (makeP5Random(hostSeed)) so motifs sit on the grid's real
-      // jittered / N-fold crossings. Voronoi PREFERS drawnEdges + sites (the
-      // boundary-hardened seam) and falls back to legacy drawnCells. For hosts
-      // that don't use a given field it's undefined → that extractor ignores it.
-      // For a voronoi host WITHOUT any captured geometry, voronoiAnchors returns
-      // null and we fall through to the edge fallback / no-op below.
-      anchors = getSemanticAnchors(p.hostPatternType, p.hostParams, canvasW, canvasH, {
+      // (deferred/unverifiable) or has not been probed yet: degrade gracefully to
+      // generic edge anchors on any provided hostPaths, else no-op.
+      //
+      // ONE MODULE, BOTH CALL SITES. hostAnchors.resolveHostAnchors is the same
+      // function the canvas overlay calls to draw its editable per-glyph dots, so
+      // the dots and the glyphs can never disagree about what a host's anchors
+      // are. It forwards the stash keys generically (STASH_GEOMETRY_KEYS), which
+      // is why `geometry` here is `p` itself: the render ROUTER (resolveMotifHost)
+      // has already flattened those very keys onto the render params, so a new
+      // stash host adds a key to that one list and needs no change here.
+      //
+      // `mode:'semantic'` — this branch is chosen by the ROUTER-resolved
+      // `anchorMode`, which is authoritative for the render, so the resolver must
+      // not re-derive it from isEdgeHost.
+      anchors = resolveHostAnchors({
+        patternType: p.hostPatternType,
+        params: p.hostParams,
+        canvasW,
+        canvasH,
+        geometry: p,
+        // The grid host's layer seed — threads the LIVE-p5 jitter/symmetry
+        // lattice into the grid extractor so motifs sit on the grid's real
+        // jittered / N-fold crossings. Every other extractor ignores it.
         hostSeed: p.hostSeed,
-        drawnEdges: p.drawnEdges,
-        sites: p.sites,
-        drawnCells: p.drawnCells,
-        // Circle Packing's accepted container circles (#146) — one `cell` anchor
-        // per circle, each declaring its radius as the top-level `hostRadius`.
-        circles: p.circles,
+        mode: 'semantic',
       });
       if (anchors == null) {
         anchors = hostPaths.length ? sampleEdgeAnchors(hostPaths, p.edgeOpts || {}) : [];

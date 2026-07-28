@@ -419,3 +419,168 @@ describe('AnchorGhostOverlay — copy and reset behave as on the existing hosts'
     expect(records).toContainEqual({ ref: 'cell:1', scale: 2, angle: 45 });
   });
 });
+
+// ── GIRIH (#152) ────────────────────────────────────────────────────────────
+// The third stash-backed host, and the first SEMANTIC host whose anchors carry
+// path structure. Two criteria live here: the editable dots + popover inherited
+// from #149, and "individual straps are pickable on canvas in the Route block" —
+// the pick overlay used to be gated on `isEdgeHost`, which would have left girih
+// with a Picked scope and nothing to click.
+
+const girihHost = (visible = true, extra = {}) => ({
+  id: 'gh',
+  name: 'Girih',
+  type: 'pattern',
+  patternType: 'girih',
+  visible,
+  opacity: 100,
+  bgOpacity: 0,
+  color: '#000000',
+  seed: 7,
+  params: { density: 3, render: 'interlaced' },
+  ...extra,
+});
+
+// Routed to CROSSINGS — girih's default role, and the historical naqsheh idiom.
+const girihMotif = (binding = {}) => ({
+  id: 'gm',
+  name: 'Leaf',
+  type: 'motif',
+  patternType: 'motif',
+  visible: true,
+  opacity: 100,
+  bgOpacity: 0,
+  color: '#123456',
+  seed: 7,
+  params: {
+    glyphRef: 'leaf',
+    hostLayerId: 'gh',
+    anchorMode: 'semantic',
+    edgeOpts: { spacing: 24 },
+    binding: {
+      selection: { roles: ['crossing'] },
+      placement: { sizing: { mode: 'proportional', size: 10, min: 2, margin: 0.85 } },
+      ...binding,
+    },
+  },
+});
+
+async function renderGirih(layers, overlayProps = {}) {
+  const hook = harness(layers);
+  await waitFor(() => expect(hook.result.current.patternInstances.gh).toBeTruthy());
+  const view = render(
+    <AnchorGhostOverlay
+      layers={layers}
+      selectedLayerId="gm"
+      canvasW={W}
+      canvasH={H}
+      patternInstances={hook.result.current.patternInstances}
+      {...overlayProps}
+    />
+  );
+  return { hook, view, container: view.container, dots: dotMap(view.container) };
+}
+
+describe('AnchorGhostOverlay — Girih (a stash host) gets editable dots (#152)', () => {
+  it('the girih stashes its graph and the overlay draws PLACED dots on the crossings', async () => {
+    const layers = [girihHost(), girihMotif()];
+    const { hook, dots } = await renderGirih(layers);
+    const geo = hook.result.current.patternInstances.gh.motifHostGeometry;
+    expect(geo?.girihVertices?.length).toBeGreaterThan(1);
+    expect(geo?.girihEdges?.length).toBeGreaterThan(1);
+    // The stash, NOT a recorded draw stream — girih is not an edge host.
+    expect(geo.hostPaths).toBeUndefined();
+    expect(Object.keys(dots).length).toBeGreaterThan(0);
+    expect(Object.keys(dots).every((id) => id.startsWith('crossing:'))).toBe(true);
+    expect(placedStates(dots).length).toBeGreaterThan(0);
+  });
+
+  it('the glyph popover opens on a Girih dot', async () => {
+    const { container } = await renderGirih([girihHost(), girihMotif()]);
+    const dot = container.querySelector('circle[data-state="placed"]');
+    expect(dot).toBeTruthy();
+    expect(popover()).toBeNull();
+    fireEvent.click(dot);
+    expect(popover()).not.toBeNull();
+  });
+
+  it('a double-click writes a per-glyph hide record for the clicked crossing', async () => {
+    const onUpdateLayer = vi.fn();
+    const { container } = await renderGirih([girihHost(), girihMotif()], { onUpdateLayer });
+    const dot = container.querySelector('circle[data-state="placed"]');
+    const anchorId = dot.getAttribute('data-anchor-id');
+    fireEvent.doubleClick(dot);
+    expect(onUpdateLayer).toHaveBeenCalledTimes(1);
+    expect(
+      onUpdateLayer.mock.calls[0][1].params.binding.selection.overrides.records
+    ).toEqual([{ ref: anchorId, hidden: true }]);
+  });
+
+  it('a HIDDEN girih host still resolves — hide the scaffold, keep the ornament', async () => {
+    const shown = await renderGirih([girihHost(true), girihMotif()]);
+    const hidden = await renderGirih([girihHost(false), girihMotif()]);
+    expect(Object.keys(shown.dots).length).toBeGreaterThan(0);
+    expect(hidden.dots).toEqual(shown.dots);
+    expect(placedStates(hidden.dots).length).toBeGreaterThan(0);
+  });
+
+  it('every PLACED dot sits on a real render placement, one for one', async () => {
+    const layers = [girihHost(), girihMotif()];
+    const { hook, dots } = await renderGirih(layers);
+    const placements = hook.result.current.motifPlacements.gm;
+    expect(placements?.length).toBeGreaterThan(0);
+    const placedDots = Object.entries(dots)
+      .filter(([, v]) => v.endsWith(':placed'))
+      .map(([, v]) => v.slice(0, v.lastIndexOf(':')));
+    expect(placedDots.length).toBe(placements.length);
+    const renderKeys = new Set(placements.map((p) => `${p.x},${p.y}`));
+    for (const key of placedDots) expect(renderKeys.has(key)).toBe(true);
+  });
+
+  it('SKELETON-render and INTERLACE-render girih give identical dots', async () => {
+    const skel = await renderGirih([
+      girihHost(true, { params: { density: 3, render: 'skeleton' } }),
+      girihMotif(),
+    ]);
+    const woven = await renderGirih([girihHost(), girihMotif()]);
+    expect(Object.keys(skel.dots).length).toBeGreaterThan(0);
+    expect(skel.dots).toEqual(woven.dots);
+  });
+});
+
+describe('AnchorGhostOverlay — individual girih straps are pickable on canvas (#152)', () => {
+  const pickMotif = () =>
+    girihMotif({
+      // Chain-form with a Route block scoped to `picked` — what arming the Route
+      // card's "Pick on canvas" operates on.
+      chain: [{ type: 'route', roles: ['edge'], pathScope: 'picked', pickedPaths: [] }],
+    });
+
+  it('arming the Route card renders the strap picker over a girih host', async () => {
+    const layers = [girihHost(), pickMotif()];
+    const { container } = await renderGirih(layers, {
+      motifPick: { layerId: 'gm', blockIndex: 0 },
+      onTogglePickedPath: () => {},
+    });
+    const svg = container.querySelector('[data-testid="anchor-ghost-overlay"]');
+    expect(svg).toBeTruthy();
+    expect(svg.getAttribute('data-mode')).toBe('pick');
+    // Every dot carries the strap it belongs to.
+    const dots = [...container.querySelectorAll('[data-path-index]')];
+    expect(dots.length).toBeGreaterThan(0);
+    expect(new Set(dots.map((d) => d.getAttribute('data-path-index'))).size).toBeGreaterThan(1);
+  });
+
+  it('clicking a dot toggles THAT strap in the route block', async () => {
+    const onTogglePickedPath = vi.fn();
+    const layers = [girihHost(), pickMotif()];
+    const { container } = await renderGirih(layers, {
+      motifPick: { layerId: 'gm', blockIndex: 0 },
+      onTogglePickedPath,
+    });
+    const dot = container.querySelector('[data-path-index]');
+    const pathIndex = Number(dot.getAttribute('data-path-index'));
+    fireEvent.pointerDown(dot);
+    expect(onTogglePickedPath).toHaveBeenCalledWith(pathIndex);
+  });
+});

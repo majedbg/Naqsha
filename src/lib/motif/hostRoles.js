@@ -67,6 +67,12 @@ export const ALL_ROLES = Object.freeze(['crossing', 'edge', 'tip', 'cell']);
 //                   there are no crossings to offer. Cells alone, at every
 //                   params — the module shape is a look, not a capability, so
 //                   there is nothing here for params to switch on.
+//   girih         — crossings (where straps meet), edges (riding the straps) and
+//                   tips (where a strap is cut at the crop margin), #152. NO
+//                   cells: recovering the enclosed tiles from the strap skeleton
+//                   needs planar face traversal, which is materially different
+//                   work from graph degree and strand walking and is explicitly
+//                   out of scope for PRD #143.
 //
 // NOT listed, deliberately, and owned by #154:
 //   voronoi — a tessellation has no free termini, so `tip` is dead today.
@@ -74,6 +80,7 @@ export const ALL_ROLES = Object.freeze(['crossing', 'edge', 'tip', 'cell']);
 const NARROW_ROLES = Object.freeze({
   circlepacking: Object.freeze(['cell']),
   modulegrid: Object.freeze(['cell']),
+  girih: Object.freeze(['crossing', 'edge', 'tip']),
 });
 
 /**

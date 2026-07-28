@@ -97,7 +97,9 @@ function cycleIndex(continuous, counters, anchor, gi) {
  *                        they are treated as open so route-open never silently
  *                        drops a semantic-anchor host).
  *            'picked'  ⇒ keep meta.pathIndex ∈ pickedPaths (anchors lacking a
- *                        pathIndex are never picked).
+ *                        pathIndex are never picked), OR — for an anchor that
+ *                        genuinely belongs to SEVERAL paths — any member of
+ *                        meta.strands ∈ pickedPaths. See MULTI-PATH MEMBERSHIP.
  * @param {Anchor[]} stage
  * @param {RouteBlock} block
  * @returns {Anchor[]}
@@ -114,8 +116,21 @@ function applyRoute(stage, block) {
   } else if (scope === 'open') {
     out = out.filter((a) => !(a.meta && a.meta.closed === true));
   } else if (scope === 'picked') {
+    // MULTI-PATH MEMBERSHIP. `meta.pathIndex` is an anchor's ONE canonical path —
+    // the thing per-path rhythms and Zones group by, which must stay single-valued
+    // (PRD #143). But some anchors genuinely sit on more than one path: a girih
+    // CROSSING is where several straps meet, and it carries the lowest incident
+    // strand as its pathIndex plus the full incident set as `meta.strands`, so a
+    // maker who picks one strap on canvas gets its crossings too. Optional and
+    // additive: no other host emits `strands`, so every existing anchor set
+    // filters byte-identically.
     const picked = new Set(Array.isArray(block.pickedPaths) ? block.pickedPaths : []);
-    out = out.filter((a) => a.meta && picked.has(a.meta.pathIndex));
+    out = out.filter(
+      (a) =>
+        a.meta &&
+        (picked.has(a.meta.pathIndex) ||
+          (Array.isArray(a.meta.strands) && a.meta.strands.some((p) => picked.has(p))))
+    );
   }
   // 'all' (and any unknown scope) ⇒ no path filter.
   return out;

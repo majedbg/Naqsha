@@ -43,6 +43,7 @@ import {
 import { useInspectorDockContext } from "./inspectorDockContext";
 import { useMeasuredWidth } from "../../lib/hooks/useMeasuredWidth";
 import { rolesForHost, ALL_ROLES } from "../../lib/motif/hostRoles";
+import { hostHasPathStructure } from "../../lib/motif/hostKinds";
 import {
   makeBlock,
   canAddBlock,
@@ -104,16 +105,19 @@ const ROLE_OPTIONS_SEMANTIC = [
   { key: "cell", label: "Cells" },
 ];
 
-// Path-scope options (D5). GATED by host type (A2 forward-note): semantic-anchor
-// hosts (grid/recursive/spiral/voronoi) lack `meta.closed` AND `meta.pathIndex`,
-// so `closed`/`picked` would EMPTY the selection there — offer only {all, open}
-// (open ≡ all on semantic since those anchors carry no `closed`, so it's a safe,
-// harmless superset). Edge hosts (flowfield/wave/…) carry both, so offer all four.
-const SCOPE_OPTIONS_SEMANTIC = [
+// Path-scope options (D5). GATED by whether the host's anchors carry PATH
+// STRUCTURE — `meta.closed` and `meta.pathIndex` — which is
+// `hostHasPathStructure` in hostKinds.js and never a conditional here. Hosts
+// without it (grid/recursive/spiral/voronoi/circlepacking) would EMPTY the
+// selection under `closed`/`picked`, so they get only {all, open} (open ≡ all
+// there, since those anchors carry no `closed` — a safe, harmless superset).
+// Edge hosts carry both, and so — as of #152 — does GIRIH, whose straps are
+// genuine paths even though its anchors are structural rather than sampled.
+const SCOPE_OPTIONS_FLAT = [
   { key: "all", label: "All" },
   { key: "open", label: "Open" },
 ];
-const SCOPE_OPTIONS_EDGE = [
+const SCOPE_OPTIONS_PATHED = [
   { key: "all", label: "All" },
   { key: "closed", label: "Closed" },
   { key: "open", label: "Open" },
@@ -133,7 +137,9 @@ const SCOPE_OPTIONS_EDGE = [
 function RouteCardBody({
   block,
   roleOptions,
-  hostIsSemantic = true,
+  // Whether this host's anchors carry meta.pathIndex / meta.closed — answered by
+  // hostKinds.hostHasPathStructure at the rack level, never re-derived here.
+  hostHasPaths = false,
   armed = false,
   onSetArmed,
   onPatch,
@@ -149,7 +155,7 @@ function RouteCardBody({
   };
 
   const scope = block.pathScope || "all";
-  const scopeOptions = hostIsSemantic ? SCOPE_OPTIONS_SEMANTIC : SCOPE_OPTIONS_EDGE;
+  const scopeOptions = hostHasPaths ? SCOPE_OPTIONS_PATHED : SCOPE_OPTIONS_FLAT;
   const picked = Array.isArray(block.pickedPaths) ? block.pickedPaths : [];
   const setScope = (next) => {
     if (next === scope) return;
@@ -205,9 +211,9 @@ function RouteCardBody({
         })}
       </div>
 
-      {/* Picked-scope canvas-pick (edge hosts only — semantic anchors carry no
-          meta.pathIndex, so there is nothing to click there). */}
-      {scope === "picked" && !hostIsSemantic && (
+      {/* Picked-scope canvas-pick (path-structured hosts only — an anchor with
+          no meta.pathIndex has nothing to click). */}
+      {scope === "picked" && hostHasPaths && (
         <div
           className="flex flex-wrap items-center gap-2"
           data-testid="motif-route-pick"
@@ -1060,7 +1066,7 @@ function BlockCardBody({
   block,
   index,
   roleOptions,
-  hostIsSemantic,
+  hostHasPaths,
   armed,
   onSetArmed,
   onPatch,
@@ -1078,7 +1084,7 @@ function BlockCardBody({
         <RouteCardBody
           block={block}
           roleOptions={roleOptions}
-          hostIsSemantic={hostIsSemantic}
+          hostHasPaths={hostHasPaths}
           armed={armed}
           onSetArmed={onSetArmed}
           onPatch={onPatch}
@@ -1208,7 +1214,7 @@ function SortableBlockCard({
   block,
   index,
   roleOptions,
-  hostIsSemantic,
+  hostHasPaths,
   hostKind,
   armed,
   onSetArmed,
@@ -1284,7 +1290,7 @@ function SortableBlockCard({
       block={block}
       index={index}
       roleOptions={roleOptions}
-      hostIsSemantic={hostIsSemantic}
+      hostHasPaths={hostHasPaths}
       armed={armed}
       onSetArmed={onSetArmed}
       onPatch={onPatch}
@@ -1467,6 +1473,15 @@ export default function MotifBlockRack({
       ? ALL_ROLES
       : ["edge"];
   const roleOptions = ROLE_OPTIONS_SEMANTIC.filter((r) => emitted.includes(r.key));
+  // WHETHER THIS HOST'S ANCHORS CARRY PATH STRUCTURE — the gate on the Route
+  // card's Closed / Open / Picked scopes and on the canvas strap picker. Asked of
+  // the one predicate in hostKinds.js, so this surface and AnchorGhostOverlay
+  // cannot drift. Bare callers (tests, legacy) that name no host keep the
+  // pre-#152 behaviour exactly: the legacy `hostIsSemantic` boolean's inverse,
+  // which is what "is an edge host" meant to those callers.
+  const hostHasPaths = hostPatternType
+    ? hostHasPathStructure(hostPatternType, hostParams)
+    : !hostIsSemantic;
   const badgeKind = hostKind || fallbackHostKind(hostIsSemantic);
 
   const blocks = Array.isArray(chain) ? chain : [];
@@ -1550,7 +1565,7 @@ export default function MotifBlockRack({
                 block={block}
                 index={i}
                 roleOptions={roleOptions}
-                hostIsSemantic={hostIsSemantic}
+                hostHasPaths={hostHasPaths}
                 hostKind={badgeKind}
                 stage={stageByIndex.get(i) || null}
                 placedCount={

@@ -188,7 +188,7 @@ describe('Girih anchors sit on the real skeleton', () => {
     for (const t of tips) expect(looseKeys.has(`${t.x},${t.y}`)).toBe(true);
   });
 
-  it('every tip lies OUTSIDE the crop margin — a ragged ring, not a designed border', () => {
+  it('every tip lies OUTSIDE the crop margin AND the canvas — a ragged ring, not a border', () => {
     // MEASURED, and pinned here because it is the thing that surprises. The
     // skeleton is built from a tiling that overruns the canvas and is filtered to
     // a margin 10% WIDER than the canvas (IslamicStar: mx = canvasW*0.55), so a
@@ -200,9 +200,18 @@ describe('Girih anchors sit on the real skeleton', () => {
     // pattern PAINTS, which is out of scope for this ticket.
     const tips = byRole(anchorsFor(), 'tip');
     expect(tips.length).toBeGreaterThan(0);
+    // The STRONGER claim first, matching the name: outside the crop margin box
+    // itself (±0.55 of each dimension about the canvas centre), which is what
+    // makes the canvas exclusion structural rather than incidental.
+    const mx = W * 0.55;
+    const my = H * 0.55;
     for (const t of tips) {
-      const outside = t.x < 0 || t.x > W || t.y < 0 || t.y > H;
-      expect(outside).toBe(true);
+      const cx = t.x - W / 2;
+      const cy = t.y - H / 2;
+      expect(Math.abs(cx) > mx || Math.abs(cy) > my).toBe(true);
+      // …which implies, since the margin box contains the canvas, outside the
+      // visible area too.
+      expect(t.x < 0 || t.x > W || t.y < 0 || t.y > H).toBe(true);
     }
     const { placements, rejected } = place(anchorsFor(), { roles: ['tip'] });
     expect(placements).toHaveLength(0);
@@ -377,6 +386,88 @@ describe('Girih strands compose with the Chain and Zones', () => {
     const interior = byRole(anchors, 'edge').filter((e) => e.meta.pathIndex === tipPath);
     expect(interior.length).toBeGreaterThan(0);
     for (const e of interior) expect(stemIds.has(e.id)).toBe(true);
+  });
+
+  it('MEASURED: most girih straps are 2 edges long, so most edge anchors are Apex', () => {
+    // The tip-bearing case above is the ATYPICAL one, and pinning only it would
+    // let a reader assume it generalises. It does not, and the reason is
+    // structural rather than a defect:
+    //
+    // girih crossings are abundant (146 at default params against 624 skeleton
+    // edges), and the PRD's decomposition cuts AT every crossing, so a typical
+    // strap is crossing → bend → crossing: exactly TWO edges. zones.js derives
+    // Apex on an open, tip-less path as its min-`s` and max-`s` edge samples —
+    // and on a 2-edge strap that is BOTH of them. Such a strap has no interior
+    // to be Stem, which is faithful to "a strap can flower at its ends" (PRD
+    // story 30) but means a zoned Sequencer on girih deals an almost-all-Apex
+    // field. Recorded here so the behaviour is a stated property rather than a
+    // surprise, and so a later change to the decomposition shows up as a number.
+    const anchors = anchorsFor();
+    const perStrand = new Map();
+    for (const e of byRole(anchors, 'edge')) {
+      perStrand.set(e.meta.pathIndex, (perStrand.get(e.meta.pathIndex) || 0) + 1);
+    }
+    const twoEdge = [...perStrand.values()].filter((n) => n === 2).length;
+    expect(twoEdge / perStrand.size).toBeGreaterThan(0.9);
+
+    const { apex, stem } = partitionZones(anchors);
+    const edgesIn = (list) => list.filter((a) => a.role === 'edge').length;
+    // Stem is dominated by the crossings, not by strap interiors.
+    expect(stem.filter((a) => a.role === 'crossing').length).toBe(
+      byRole(anchors, 'crossing').length
+    );
+    expect(edgesIn(apex)).toBeGreaterThan(edgesIn(stem));
+    // Interiors DO exist — the longer straps have them, so Stem is never empty.
+    expect(edgesIn(stem)).toBeGreaterThan(0);
+  });
+
+  it('a TIPLESS strap between two crossings still flowers at its ends', () => {
+    // Literal geometry, because the real skeleton has almost no 3+-edge straps.
+    // A 4-edge strand running crossing → bend → bend → bend → crossing: the two
+    // extreme edge anchors are Apex, the two interior ones are Stem, and neither
+    // crossing is Apex.
+    const vertices = [
+      { x: -10, y: 10 }, // arms making v1 a crossing
+      { x: -10, y: -10 },
+      { x: 0, y: 0 }, // v2 crossing (degree 3)
+      { x: 10, y: 0 },
+      { x: 20, y: 0 },
+      { x: 30, y: 0 },
+      { x: 40, y: 0 }, // v6 crossing (degree 3)
+      { x: 50, y: 10 },
+      { x: 50, y: -10 },
+    ];
+    const edges = [
+      [2, 0],
+      [2, 1],
+      [2, 3],
+      [3, 4],
+      [4, 5],
+      [5, 6],
+      [6, 7],
+      [6, 8],
+    ];
+    const anchors = getSemanticAnchors('girih', {}, W, H, {
+      girihVertices: vertices,
+      girihEdges: edges,
+    });
+    const strap = anchors.filter(
+      (a) => a.role === 'edge' && a.x > 0 && a.x < 40 && a.y === 0
+    );
+    expect(strap).toHaveLength(4);
+    expect(new Set(strap.map((a) => a.meta.pathIndex)).size).toBe(1);
+    const { apex, stem } = partitionZones(anchors);
+    const apexIds = new Set(apex.map((a) => a.id));
+    const stemIds = new Set(stem.map((a) => a.id));
+    const bySeq = [...strap].sort((a, b) => a.s - b.s);
+    expect(apexIds.has(bySeq[0].id)).toBe(true); // flowers at one end…
+    expect(apexIds.has(bySeq[3].id)).toBe(true); // …and at the other
+    expect(stemIds.has(bySeq[1].id)).toBe(true); // interior is Stem
+    expect(stemIds.has(bySeq[2].id)).toBe(true);
+    for (const c of anchors.filter((a) => a.role === 'crossing')) {
+      expect(apexIds.has(c.id)).toBe(false);
+      expect(stemIds.has(c.id)).toBe(true);
+    }
   });
 });
 

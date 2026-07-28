@@ -397,6 +397,183 @@ describe('dealSlots — zoned: anchors in NO Zone rest (cells, and Apex dropped 
   });
 });
 
+// ── #150 — the Cell Zone (ADR 0008 amendment) ────────────────────────────────
+// The defect this slice exists to fix: `cell` anchors belonged to no Zone, and a
+// zoned Sequencer rests every anchor it finds in no Zone, so a zoned mode on a
+// cell-only host dealt nothing at all. Cell is now a third partition with its own
+// Slots and its own cycle/random deal.
+describe('dealSlots — zoned: a CELL-ONLY survivor set deals Slots instead of resting', () => {
+  it('deals the Cell Zone over every cell anchor — no Apex, no Stem, no Rests', () => {
+    const survivors = Array.from({ length: 5 }, (_, i) =>
+      mkZ(`cell:${i}`, { role: 'cell', x: i * 20, y: 0 }),
+    );
+    const assigns = dealSlots(survivors, {
+      type: 'sequence',
+      seed: 1,
+      zones: [{ zone: 'cell', mode: 'cycle', slots: [{ glyphRef: 'A' }, { glyphRef: 'B' }] }],
+    });
+    expect(assigns.map((a) => a.rest)).toEqual([false, false, false, false, false]);
+    expect(assigns.map((a) => a.glyphRef)).toEqual(['A', 'B', 'A', 'B', 'A']);
+    expect(assigns.map((a) => a.slotIndex)).toEqual([0, 1, 0, 1, 0]);
+  });
+
+  it('a Rest inside the Cell Zone consumes a cycle step, exactly as in the other Zones', () => {
+    const survivors = Array.from({ length: 4 }, (_, i) => mkZ(`cell:${i}`, { role: 'cell' }));
+    const assigns = dealSlots(survivors, {
+      type: 'sequence',
+      seed: 1,
+      zones: [{ zone: 'cell', slots: [{ glyphRef: 'A' }, { rest: true }] }],
+    });
+    expect(assigns.map((a) => a.rest)).toEqual([false, true, false, true]);
+  });
+
+  it('the Cell Zone honours a weighted RANDOM deal, stable per anchor id', () => {
+    const survivors = Array.from({ length: 12 }, (_, i) => mkZ(`cell:${i}`, { role: 'cell' }));
+    const seq = {
+      type: 'sequence',
+      seed: 7,
+      zones: [
+        { zone: 'cell', mode: 'random', slots: [{ glyphRef: 'A' }, { glyphRef: 'B', weight: 3 }] },
+      ],
+    };
+    const first = dealSlots(survivors, seq).map((a) => a.glyphRef);
+    // Re-dealing a SHUFFLED survivor list gives each id the same slot (ADR 0005).
+    const shuffled = [...survivors].reverse();
+    const byId = new Map(dealSlots(shuffled, seq).map((a, i) => [shuffled[i].id, a.glyphRef]));
+    expect(survivors.map((s) => byId.get(s.id))).toEqual(first);
+    expect(new Set(first)).toEqual(new Set(['A', 'B']));
+  });
+
+  it("the Cell Zone's cycle default is PER-PATH (Stem's default), not continuous", () => {
+    // Two cells per path over two paths. A per-path counter restarts at slot 0 on
+    // path 1; a continuous one would carry the index across.
+    const survivors = [
+      mkZ('cell:0:a', { role: 'cell', pathIndex: 0 }),
+      mkZ('cell:0:b', { role: 'cell', pathIndex: 0 }),
+      mkZ('cell:0:c', { role: 'cell', pathIndex: 0 }),
+      mkZ('cell:1:a', { role: 'cell', pathIndex: 1 }),
+    ];
+    const zone = { zone: 'cell', mode: 'cycle', slots: [{ glyphRef: 'A' }, { glyphRef: 'B' }] };
+    const byDefault = dealSlots(survivors, { type: 'sequence', seed: 1, zones: [zone] });
+    expect(byDefault.map((a) => a.slotIndex)).toEqual([0, 1, 0, 0]);
+    // …and an explicit `continuous:true` still wins over the default.
+    const continuous = dealSlots(survivors, {
+      type: 'sequence',
+      seed: 1,
+      zones: [{ ...zone, continuous: true }],
+    });
+    expect(continuous.map((a) => a.slotIndex)).toEqual([0, 1, 0, 1]);
+  });
+
+  it('a MIXED host deals all three Zones at once — tiles fill while arcs run', () => {
+    // One open captured path (no tips ⇒ min/max-s edge samples are the Apex) plus
+    // two cells. Every survivor is dealt; nothing rests.
+    const survivors = [
+      mkZ('cell:0', { role: 'cell', x: 0, y: 0 }),
+      mkZ('edge:0:0', { role: 'edge', s: 0, pathIndex: 0 }),
+      mkZ('edge:0:1', { role: 'edge', s: 0.5, pathIndex: 0 }),
+      mkZ('edge:0:2', { role: 'edge', s: 1, pathIndex: 0 }),
+      mkZ('cell:1', { role: 'cell', x: 50, y: 0 }),
+    ];
+    const assigns = dealSlots(survivors, {
+      type: 'sequence',
+      seed: 1,
+      zones: [
+        { zone: 'apex', slots: [{ glyphRef: 'F' }] },
+        { zone: 'stem', slots: [{ glyphRef: 'L' }] },
+        { zone: 'cell', slots: [{ glyphRef: 'T' }] },
+      ],
+    });
+    expect(assigns.map((a) => a.glyphRef)).toEqual(['T', 'F', 'L', 'F', 'T']);
+    expect(assigns.some((a) => a.rest)).toBe(false);
+  });
+
+  it('a Cell Zone with no slots rests its members (stamp nothing), like any Zone', () => {
+    const assigns = dealSlots([mkZ('cell:0', { role: 'cell' })], {
+      type: 'sequence',
+      seed: 1,
+      zones: [{ zone: 'cell', slots: [] }],
+    });
+    expect(assigns.map((a) => a.rest)).toEqual([true]);
+  });
+
+  it('the Cell Zone has NO end-selector — `ends` on it is inert (a region has no ends)', () => {
+    // applyEnds stays Apex-only by construction: passing `ends:'up'` to the Cell
+    // Zone must not thin it to one member per path.
+    const survivors = [
+      mkZ('cell:0', { role: 'cell', x: 0, y: 0 }),
+      mkZ('cell:1', { role: 'cell', x: 0, y: 50 }),
+    ];
+    const assigns = dealSlots(survivors, {
+      type: 'sequence',
+      seed: 1,
+      zones: [{ zone: 'cell', ends: 'up', slots: [{ glyphRef: 'T' }] }],
+    });
+    expect(assigns.map((a) => a.rest)).toEqual([false, false]);
+  });
+
+  it('zone order in the chain does not change the deal — each Zone owns disjoint anchors', () => {
+    const survivors = [
+      mkZ('cell:0', { role: 'cell' }),
+      mkZ('edge:0:0', { role: 'edge', s: 0, pathIndex: 0 }),
+      mkZ('edge:0:1', { role: 'edge', s: 1, pathIndex: 0 }),
+    ];
+    const zones = [
+      { zone: 'cell', slots: [{ glyphRef: 'T' }] },
+      { zone: 'apex', slots: [{ glyphRef: 'F' }] },
+    ];
+    const appended = dealSlots(survivors, { type: 'sequence', seed: 1, zones: [...zones].reverse() });
+    const prepended = dealSlots(survivors, { type: 'sequence', seed: 1, zones });
+    expect(prepended).toEqual(appended);
+    expect(prepended.map((a) => a.glyphRef)).toEqual(['T', 'F', 'F']);
+  });
+});
+
+describe('dealSlots — zoned: a chain with NO Cell Zone is unaffected by the new partition', () => {
+  it('still rests every cell — the partition is not the deal', () => {
+    // Criterion 8, stated as the thing that would break it. `partitionZones` now
+    // hands back a third bucket; a chain that names only Apex and Stem must not
+    // read it. (sequencer.test.js's pre-#150 `ends:up` case above is the same
+    // claim and is deliberately left UNTOUCHED as the tripwire.)
+    const survivors = [
+      mkZ('cell:0', { role: 'cell' }),
+      mkZ('edge:0:0', { role: 'edge', s: 0, pathIndex: 0 }),
+      mkZ('cell:1', { role: 'cell' }),
+      mkZ('edge:0:1', { role: 'edge', s: 0.5, pathIndex: 0 }),
+      mkZ('edge:0:2', { role: 'edge', s: 1, pathIndex: 0 }),
+    ];
+    const twoZone = {
+      type: 'sequence',
+      seed: 1,
+      zones: [
+        { zone: 'apex', slots: [{ glyphRef: 'F' }] },
+        { zone: 'stem', slots: [{ glyphRef: 'L' }] },
+      ],
+    };
+    const assigns = dealSlots(survivors, twoZone);
+    expect(assigns.map((a) => a.rest)).toEqual([true, false, true, false, false]);
+    // …and the NON-cell assignments are byte-identical to the cell-free deal.
+    const cellFree = survivors.filter((a) => a.role !== 'cell');
+    expect(assigns.filter((_, i) => survivors[i].role !== 'cell')).toEqual(
+      dealSlots(cellFree, twoZone),
+    );
+  });
+
+  it('a zone id the deal does not recognise rests its members rather than throwing', () => {
+    // The pre-existing, documented failure mode: there is no schema validation of
+    // zone ids anywhere in the studio, and an unknown id fails by RESTING. Adding
+    // a third partition narrows the gap (ZONE_IDS is now single-sourced beside
+    // the partition) without closing it. The sentinel is deliberately NOT 'node',
+    // which ADR 0008 reserves for a future crossing Zone.
+    const assigns = dealSlots([mkZ('edge:0:0', { role: 'edge' })], {
+      type: 'sequence',
+      seed: 1,
+      zones: [{ zone: 'not-a-zone', slots: [{ glyphRef: 'X' }] }],
+    });
+    expect(assigns.map((a) => a.rest)).toEqual([true]);
+  });
+});
+
 describe('isSequenceBlock — recognizes the ZONED form (gate that lets zoned blocks reach dealSlots)', () => {
   it('accepts a block whose deal is a non-empty zones array (no flat slots)', () => {
     // The placement engine gates the dealSlots call on this predicate; a zoned

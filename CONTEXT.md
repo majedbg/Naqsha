@@ -111,10 +111,15 @@ overloaded)
 
 **Zone**:
 A named partition of a Sequencer's surviving anchors by structural position on
-the host (Apex, Stem). Each Zone deals its own Slots with its own cycle/random
-deal. A Sequencer without Zones deals one run of Slots to every survivor.
+the host (Apex, Stem, Cell). Each Zone deals its own Slots with its own
+cycle/random deal. A Sequencer without Zones deals one run of Slots to every
+survivor. The Sequencer shows only the Zones the host can fill — a pattern of
+nothing but cells has no Apex or Stem.
 _Avoid_: section (UI word), region (canvas-space word), role (the anchor-level
-vocabulary Zones are built from, not shown to the maker)
+vocabulary Zones are built from, not shown to the maker) — **except Cell**, a
+deliberate exception recorded in ADR 0008's amendment: the role/Zone separation
+holds for structures that are part of a path (Apex avoids "tip", Stem avoids
+"edge"), and a region has no other name.
 
 **Apex**:
 The Zone at the ends of a path — where a vine flowers. The maker chooses which
@@ -127,6 +132,13 @@ glyph)
 The Zone along the body of a path — interior points and junctions; where leaves
 sprout. Covers the whole of a closed loop.
 _Avoid_: edge (internal anchor role), interior, body
+
+**Cell**:
+The Zone over the enclosed areas of the pattern — each tile, circle or face
+takes a glyph of its own. Off the path, so it has no ends to flower at and no
+end selector. Some patterns are all cells and no path.
+_Avoid_: fill (an operation), ground/field (canvas-space words), tile (one
+host's word for it)
 
 **Mode**:
 The named preset a motif's chain structurally matches (Vine, Alternate x‑o, …),

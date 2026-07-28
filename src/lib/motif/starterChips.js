@@ -31,6 +31,7 @@
 // — it runs unchanged regardless of which host the chip lands on.
 
 import { defaultRolesForHost, isSemanticHost } from './hostKinds.js';
+import { rolesForHost } from './hostRoles.js';
 //
 // Correctness (proven in starterChips.test.js, the whole job of this data
 // module): every chip's chain is ENGINE-VALID (`runSelectionChain` never
@@ -63,22 +64,37 @@ const PLACEMENT = {
  * on an edge host; on a semantic host it is downgraded to 'all'/'open' only
  * (never 'closed'/'picked' — A2).
  *
- * `semanticRoles` (ADR 0008) overrides the default roles ON SEMANTIC HOSTS ONLY —
- * for a ZONED chip whose Zones together consume more than the single default role
- * (the Vine: Apex reads `tip`, Stem reads `edge`∪`crossing`, so the route must
- * admit their union). An edge host still gets the `defaultRolesForHost` fallback
- * (`['edge']`) — the only live role there — regardless. Omit it and behavior is
- * byte-identical to before, so the three flat chips are unchanged.
+ * `zoned` (ADR 0008, amended #150) widens the roles for a ZONED chip, whose Zones
+ * together consume more than the single default role: the Vine's Apex reads
+ * `tip`, its Stem reads `edge`∪`crossing` and its Cell reads `cell`, so the Route
+ * must admit whatever union THIS host actually offers. That answer comes from
+ * `rolesForHost` — the ONE params-aware host→roles capability seam — rather than
+ * a literal list.
+ *
+ * WHY THAT MATTERS (#150). The literal it replaces was `['crossing','edge','tip']`
+ * on every semantic host. Circle Packing and Module Grid emit `cell` and nothing
+ * else, so the Route filtered every anchor away and a Vine on a packing placed
+ * ZERO glyphs — before the Sequencer, before the Zones, before anything the Cell
+ * Zone could fix. Fixing it at CREATE time (rather than repairing stored Routes)
+ * is what constraint (a) of PRD #143 asks for: one seam, no ad-hoc conditionals.
+ *
+ * `rolesForHost` answers `[]` for a type that hosts no motif at all, so the
+ * `defaultRolesForHost` fallback stays — a chip's chain must be engine-valid on
+ * ANY type it is asked to build for.
+ *
+ * Omit `zoned` and behavior is byte-identical to before, so the three flat chips
+ * are unchanged.
  * @param {string} patternType
  * @param {'all'|'open'|'closed'} edgeScope
- * @param {string[]|null} [semanticRoles]  fixed roles to force on a semantic host.
+ * @param {boolean} [zoned]  route the union of roles this host emits, not the default one.
  * @returns {{type:'route', roles:string[], pathScope:'all'|'open'|'closed'}}
  */
-function hostAwareRoute(patternType, edgeScope = 'all', semanticRoles = null) {
+function hostAwareRoute(patternType, edgeScope = 'all', zoned = false) {
   const hostIsSemantic = isSemanticHost(patternType);
+  const emitted = zoned ? rolesForHost(patternType) : [];
   return {
     type: 'route',
-    roles: hostIsSemantic && semanticRoles ? semanticRoles : defaultRolesForHost(patternType),
+    roles: emitted.length > 0 ? emitted : defaultRolesForHost(patternType),
     pathScope: hostIsSemantic ? (edgeScope === 'all' ? 'all' : 'open') : edgeScope,
   };
 }
@@ -118,12 +134,15 @@ export const STARTER_CHIPS = [
         binding: {
           chain: [
             // The Vine is the ZONED preset (ADR 0008): one motif that flowers at
-            // the path ends and leafs along the body. Both Zones draw from ONE
-            // Route, so it must admit the UNION of the roles they consume —
-            // Apex reads `tip` (path termini), Stem reads `edge`∪`crossing`
-            // (interior samples and junctions). On an edge host the union
-            // collapses to the only live role, `edge` (the fallback).
-            hostAwareRoute(patternType, 'all', ['crossing', 'edge', 'tip']),
+            // the path ends, leafs along the body and fills the enclosed regions.
+            // All three Zones draw from ONE Route, so it must admit the UNION of
+            // the roles they consume — Apex reads `tip` (path termini), Stem
+            // reads `edge`∪`crossing` (interior samples and junctions), Cell
+            // reads `cell`. That union is exactly "every role this host emits",
+            // so it comes from `rolesForHost` rather than a literal list: on
+            // Circle Packing it collapses to `['cell']`, on an edge host to
+            // `['edge']`, on a Grid it is all four.
+            hostAwareRoute(patternType, 'all', true),
             {
               type: 'sequence',
               // ZONED sequencer: named partitions of the survivor set, each
@@ -154,6 +173,24 @@ export const STARTER_CHIPS = [
                   zone: 'stem',
                   mode: 'cycle',
                   slots: [{ glyphRef: 'leaf' }, { glyphRef: 'leaf', rotationOffset: 180 }],
+                },
+                // Cell = the enclosed regions the host encloses — a packed
+                // circle, a tile, a face. APPENDED, never inserted: Zones render
+                // and deal in stored order, so Apex → Stem → Cell reads
+                // top-to-bottom as ends → body → ground, the same sentence the
+                // Vine already tells (#150 decision, variant A).
+                //
+                // One rosette per region, matching the Apex flower rather than
+                // the Stem's alternation: a cell has no direction to alternate
+                // along, and on a mixed host like Truchet this reads as the
+                // headline the PRD describes — tiles fill while arcs run. No
+                // `continuous` key: the Cell default is per-path (false, like
+                // Stem) and stating it here would be authoring a value the maker
+                // cannot see or change.
+                {
+                  zone: 'cell',
+                  mode: 'cycle',
+                  slots: [{ glyphRef: 'rosette' }],
                 },
               ],
             },

@@ -7,7 +7,11 @@ const SEMANTIC_HOST = 'grid';
 const EDGE_HOST = 'flowfield';
 
 describe('modeForMotif — round-trip (every chip → its own id)', () => {
-  for (const host of [SEMANTIC_HOST, EDGE_HOST]) {
+  // #150 adds the two CELL hosts to the loop. The Vine's Route now varies by host
+  // (it comes from `rolesForHost`), which is exactly where a host-dependent chain
+  // could stop matching itself — so clicking Vine on a packing must light **Vine**
+  // in the mode column, not Custom. `truchet` covers the mixed case.
+  for (const host of [SEMANTIC_HOST, EDGE_HOST, 'circlepacking', 'truchet']) {
     for (const chip of STARTER_CHIPS) {
       it(`${chip.id} round-trips on ${host}`, () => {
         const { binding } = chip.build(host);
@@ -104,21 +108,54 @@ describe('modeForMotif — one-field mutations ⇒ custom', () => {
 
 describe('modeForMotif — ZONED identity is the Zone skeleton (Vine; ADR 0008)', () => {
   // The Vine's canonical form is the SKELETON only:
-  //   { type: 'sequence', zoned: true, zones: ['apex', 'stem'] }   (zone ids sorted)
+  //   { type:'sequence', zoned:true, zones:['apex','cell','stem'] }  (zone ids sorted)
   // Everything INSIDE a zone — glyphs, slot counts, deal mode, ends, continuous,
   // modifiers, rests — is the maker's content and never flips the mode.
   const vineBinding = (host = SEMANTIC_HOST) =>
     STARTER_CHIPS.find((c) => c.id === 'vine').build(host).binding;
   const seqOf = (binding) => binding.chain.find((b) => b.type === 'sequence');
 
-  it('removing a zone ⇒ custom (skeleton {apex,stem} ≠ {apex})', () => {
+  it('removing a zone ⇒ custom (skeleton {apex,cell,stem} ≠ {apex,cell})', () => {
     // DRIVER: without skeleton canonicalization both sides collapse to the flat
     // path (slots:[] on each) and this wrongly reads 'vine'. The skeleton branch
     // is what makes the zone SET load-bearing.
     const binding = vineBinding();
     const seq = seqOf(binding);
-    seq.zones = seq.zones.filter((z) => z.zone !== 'stem'); // now zones:['apex']
+    seq.zones = seq.zones.filter((z) => z.zone !== 'stem');
     expect(modeForMotif(binding, SEMANTIC_HOST)).toBe('custom');
+  });
+
+  // ── #150 (PRD #143) — criterion 5, the mode-identity consequence of the third
+  // partition. The machinery is NOT new: modeMatch already canonicalizes a zoned
+  // sequence to its SORTED zone-id list and deepEqual compares array length
+  // first, so a three-Zone skeleton could never have matched a two-Zone one.
+  // What IS new is that this now happens in the field — the Vine gained a Cell
+  // Zone, so every Vine saved before this change reads as Custom. This is the
+  // GUARDING TEST for that contract, deliberately not a change dressed as a fix.
+  it('a skeleton INCLUDING Cell does not match one EXCLUDING it', () => {
+    const withCell = vineBinding();
+    expect(seqOf(withCell).zones.map((z) => z.zone)).toEqual(['apex', 'stem', 'cell']);
+    expect(modeForMotif(withCell, SEMANTIC_HOST)).toBe('vine');
+
+    // A Vine as it was STORED before this slice: Apex and Stem only.
+    const stored = vineBinding();
+    seqOf(stored).zones = seqOf(stored).zones.filter((z) => z.zone !== 'cell');
+    expect(modeForMotif(stored, SEMANTIC_HOST)).toBe('custom');
+  });
+
+  it('the Cell Zone is identity, not content — its SLOTS are still maker content', () => {
+    // The Zone's presence flips the mode; what is dealt inside it never does.
+    const binding = vineBinding();
+    const cell = seqOf(binding).zones.find((z) => z.zone === 'cell');
+    cell.slots = [{ glyphRef: 'dot' }, { rest: true }];
+    cell.mode = 'random';
+    expect(modeForMotif(binding, SEMANTIC_HOST)).toBe('vine');
+  });
+
+  it('zone AUTHORING order is not identity — the canonical list is sorted', () => {
+    const binding = vineBinding();
+    seqOf(binding).zones.reverse(); // cell, stem, apex
+    expect(modeForMotif(binding, SEMANTIC_HOST)).toBe('vine');
   });
 
   it('glyph swap INSIDE a zone ⇒ still vine (glyphs are maker content)', () => {

@@ -134,10 +134,13 @@ describe.each(STARTER_CHIPS)('chip $id', (chip) => {
     expect(built.anchorMode).toBe('semantic');
     const route = built.binding.chain.find((b) => b.type === 'route');
     expect(route).toBeTruthy();
-    // The zoned Vine routes the UNION of the roles its two Zones consume
-    // (Apex:tip ∪ Stem:edge,crossing); the flat chips keep the single grid
-    // default. Either way the semantic branch never widens to closed/picked.
-    expect(route.roles).toEqual(chip.id === 'vine' ? ['crossing', 'edge', 'tip'] : ['crossing']);
+    // The zoned Vine routes the UNION of the roles its three Zones consume
+    // (Apex:tip ∪ Stem:edge,crossing ∪ Cell:cell) — i.e. everything the host
+    // emits; the flat chips keep the single grid default. Either way the semantic
+    // branch never widens to closed/picked.
+    expect(route.roles).toEqual(
+      chip.id === 'vine' ? ['crossing', 'edge', 'tip', 'cell'] : ['crossing'],
+    );
     expect(['all', 'open']).toContain(route.pathScope);
   });
 
@@ -178,12 +181,14 @@ describe('spiral host — chip route defaults to a LIVE role, not the dead cross
     const route = built.binding.chain.find((b) => b.type === 'route');
     expect(route).toBeTruthy();
     if (chip.id === 'vine') {
-      // The Vine forces the fixed Zone-union roles on EVERY semantic host. It may
-      // carry 'crossing' even on a default spiral (which emits none) WITHOUT the
-      // dead-default bug the other chips guard against: the union also holds
-      // 'edge'/'tip', which a spiral DOES produce, so its selection is never
-      // empty (see "every chip PLACES on a default-spiral-shaped anchor set").
-      expect(route.roles).toEqual(['crossing', 'edge', 'tip']);
+      // The Vine routes the union of the roles its Zones consume, which is every
+      // role the host emits — from `rolesForHost` since #150, not a literal list.
+      // On a spiral that union still carries 'crossing' (which a default spiral
+      // emits none of) WITHOUT the dead-default bug the other chips guard
+      // against: it also holds 'edge'/'tip', which a spiral DOES produce, so its
+      // selection is never empty (see "every chip PLACES on a default-spiral-
+      // shaped anchor set"). Narrowing Spiral's dead 'cell' option is #154's.
+      expect(route.roles).toEqual(['crossing', 'edge', 'tip', 'cell']);
     } else {
       expect(route.roles).toEqual(['edge']);
       expect(route.roles).not.toContain('crossing'); // the pre-fix dead default
@@ -223,7 +228,10 @@ describe('vine chip — ZONED sequencer (ADR 0008: flower at the Apex, leaf alon
   it('sequence is ZONED: carries a zones array, and NO flat slots/mode/continuous', () => {
     const seq = vineSeq();
     expect(Array.isArray(seq.zones)).toBe(true);
-    expect(seq.zones.map((z) => z.zone)).toEqual(['apex', 'stem']);
+    // #150: Cell is APPENDED, never inserted. Zones render and deal in stored
+    // order, and chip factories are the only authors of that order, so this
+    // assertion IS the ordering decision (Apex → Stem → Cell: ends, body, ground).
+    expect(seq.zones.map((z) => z.zone)).toEqual(['apex', 'stem', 'cell']);
     // A zoned block is never simultaneously flat (schema contract).
     expect(seq.slots).toBeUndefined();
     expect(seq.mode).toBeUndefined();
@@ -255,13 +263,63 @@ describe('vine chip — ZONED sequencer (ADR 0008: flower at the Apex, leaf alon
     });
   });
 
+  it('cell zone fills the regions: cycle over a single rosette, no continuous key', () => {
+    const cell = vineSeq().zones.find((z) => z.zone === 'cell');
+    expect(cell).toEqual({
+      zone: 'cell',
+      mode: 'cycle',
+      slots: [{ glyphRef: 'rosette' }],
+    });
+    // `continuous` is DELIBERATELY absent: the Cell default is per-path (false,
+    // matching Stem) and no Zone exposes the toggle in the rack today, so
+    // authoring the value here would pin a default the maker cannot see.
+    expect(cell.continuous).toBeUndefined();
+    // …and no end-selector: a region has no upper or lower end.
+    expect(cell.ends).toBeUndefined();
+  });
+
   it('base glyphRef stays rosette + union route roles on a semantic host', () => {
     const { glyphRef, binding } = STARTER_CHIPS.find((c) => c.id === 'vine').build('grid');
     expect(glyphRef).toBe('rosette');
     const route = binding.chain.find((b) => b.type === 'route');
-    // Both zones draw survivors from the SAME route; the union of the roles Apex
-    // (tip) and Stem (edge ∪ crossing) consume must all be routed in.
-    expect(route.roles).toEqual(['crossing', 'edge', 'tip']);
+    // All three zones draw survivors from the SAME route; the union of the roles
+    // Apex (tip), Stem (edge ∪ crossing) and Cell (cell) consume must all be
+    // routed in. On a Grid that union is every role the host emits.
+    expect(route.roles).toEqual(['crossing', 'edge', 'tip', 'cell']);
+  });
+
+  // ── #150: the Route is now HOST-AWARE, which is the upstream half of the fix ──
+  // Before this slice the Vine forced `['crossing','edge','tip']` on every
+  // semantic host. Circle Packing and Module Grid emit `cell` and nothing else,
+  // so the Route filtered every anchor away and a Vine on a packing placed zero
+  // glyphs BEFORE the Sequencer ran — no Cell Zone could have rescued it.
+  describe('vine route — sourced from the one host→roles capability seam', () => {
+    const routeOn = (host) =>
+      STARTER_CHIPS.find((c) => c.id === 'vine').build(host).binding.chain.find(
+        (b) => b.type === 'route',
+      );
+
+    it('a CELL-ONLY host routes cells alone, so the Route keeps survivors', () => {
+      expect(routeOn('circlepacking').roles).toEqual(['cell']);
+      expect(routeOn('modulegrid').roles).toEqual(['cell']);
+    });
+
+    it('a MIXED host routes both of its roles', () => {
+      expect(routeOn('truchet').roles).toEqual(['edge', 'cell']);
+    });
+
+    it('an EDGE host still routes edges alone — the only live role there', () => {
+      expect(routeOn('flowfield').roles).toEqual(['edge']);
+      expect(routeOn('hilbert').roles).toEqual(['edge']);
+    });
+
+    it('a type that hosts no motif falls back rather than routing NOTHING', () => {
+      // `rolesForHost` answers [] for a non-host; a chip's chain must stay
+      // engine-valid on any type it is asked to build for, so the
+      // defaultRolesForHost fallback still applies.
+      expect(routeOn('turing').roles).toEqual(['edge']);
+      expect(routeOn('not-a-pattern').roles).toEqual(['edge']);
+    });
   });
 });
 

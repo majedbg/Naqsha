@@ -11,6 +11,12 @@
 // packing pushes neighbors away rather than overlapping. Dealing first keeps the
 // slot math testable in isolation and keeps the placement loop a thin consumer.
 //
+// ZONED FORM (ADR 0008, amended by #150): the block may instead carry a `zones`
+// array — named partitions of the survivor set (Apex / Stem / Cell), each dealing
+// its own slots. The recognised ids and the partition itself live in zones.js;
+// this module walks that one list. A chain naming only some of them rests the
+// rest, which is what makes the Cell partition additive for stored documents.
+//
 // TWO DEAL MODES with DIFFERENT determinism invariants (docs/motif-chain-plan
 // D4/D6/D10; ORCHESTRATOR "Cycle vs Random are DIFFERENT invariants"):
 //   • CYCLE is POSITIONAL: slot = slots[cycleIndex % len]. cycleIndex restarts
@@ -34,12 +40,12 @@
 // See docs/motif-chain-plan.md, docs/adr/0005, docs/motif-chain-ORCHESTRATOR.md.
 
 import { hashRng } from './hashRng.js';
-import { partitionZones, applyEnds } from './zones.js';
+import { partitionZones, applyEnds, ZONE_IDS } from './zones.js';
 
 /**
  * @typedef {{glyphRef?:string, sizeScale?:number, rotationOffset?:number, flip?:boolean,
  *            rotationRandom?:{range:number, spread:'flat'|'bell'}, weight?:number, rest?:boolean}} Slot
- * @typedef {{zone:'apex'|'stem', mode?:'cycle'|'random', continuous?:boolean, ends?:'both'|'up'|'down', slots:Slot[]}} Zone
+ * @typedef {{zone:'apex'|'stem'|'cell', mode?:'cycle'|'random', continuous?:boolean, ends?:'both'|'up'|'down', slots:Slot[]}} Zone
  * FLAT form: `slots` at top level. ZONED form (ADR 0008): a `zones` array (its
  * presence marks the block zoned; the flat `slots`/`mode`/`continuous` fields are
  * absent). Both share the block-level `seed`.
@@ -197,7 +203,7 @@ export function dealSlots(survivors, sequence) {
  * @param {import('./chain.js').Anchor[]} members
  * @param {*} zone  the zone config block ({mode?, continuous?, slots})
  * @param {number} seed  block-level seed, shared by all zones
- * @param {boolean} defaultContinuous  zone-aware default (Apex true, Stem false)
+ * @param {boolean} defaultContinuous  the zone's default, from ZONE_CONTINUOUS_DEFAULT
  * @param {Map<string, Assignment>} out  id → assignment (mutated)
  */
 function dealZone(members, zone, seed, defaultContinuous, out) {
@@ -220,7 +226,8 @@ function dealZone(members, zone, seed, defaultContinuous, out) {
   }
 
   // CYCLE — positional. Index is per-path within the zone unless continuous
-  // (zone-global survivor index). Zone-aware default: Apex continuous, Stem not.
+  // (zone-global survivor index). The zone-aware default comes in from
+  // ZONE_CONTINUOUS_DEFAULT; an explicit boolean on the zone always wins.
   const continuous = zone.continuous != null ? !!zone.continuous : defaultContinuous;
   const counters = new Map();
   members.forEach((a, gi) => {
@@ -238,10 +245,41 @@ function dealZone(members, zone, seed, defaultContinuous, out) {
 }
 
 /**
- * Zone-aware deal (ADR 0008): partition survivors into Apex/Stem, apply the Apex
- * end-selector, then deal EACH zone independently over its own members with its
- * own mode/continuous/slots, all sharing the block-level seed. Anchors in NO zone
- * — `cell`s, and Apex members dropped by the ends filter — rest (stamp nothing).
+ * Per-zone `continuous` default for the CYCLE deal, keyed by zone id. A boolean
+ * parameter could carry two zones; a third needs a table (ADR 0008 amendment).
+ *   • Apex TRUE — a per-path restart over ≤2 termini would pin every strand's end
+ *     to slot 0 and "three flowers cycling" would never visibly cycle.
+ *   • Stem FALSE — each strand restarts, which is the x‑o‑x‑o invariant.
+ *   • Cell FALSE, matching Stem. On today's cell hosts every cell anchor shares
+ *     path 0 (they carry no `meta.pathIndex`), so the two defaults are
+ *     observationally identical there; false is the conservative choice for a
+ *     future cell host that DOES carry one, where a per-row restart reads as a
+ *     rhythm and a global index does not.
+ * NOTE (#150): no Zone exposes `continuous` in the rack today — ZoneSection never
+ * passes DealModeToggle a `continuousTestid` — so this is a code default for all
+ * three, not a control the maker can reach.
+ */
+const ZONE_CONTINUOUS_DEFAULT = Object.freeze({ apex: true, stem: false, cell: false });
+
+/**
+ * Zone-aware deal (ADR 0008, amended #150): partition survivors into Apex / Stem /
+ * Cell, apply the Apex end-selector, then deal EACH zone the chain names
+ * independently over its own members with its own mode/continuous/slots, all
+ * sharing the block-level seed. Anchors in no NAMED zone — including every anchor
+ * of a partition the chain does not configure, and Apex members dropped by the
+ * ends filter — rest (stamp nothing).
+ *
+ * THE WALK IS OVER ZONE_IDS, NOT OVER `sequence.zones`. That is deliberate on two
+ * counts: the recognised zone ids stay single-sourced in zones.js beside the
+ * partition that produces them (so the two cannot drift, and the reserved **Node**
+ * zone is one line there rather than another pair of statements here), and a
+ * chain naming an id this deal does not implement is inert rather than a throw —
+ * the pre-existing, documented failure mode, unchanged.
+ *
+ * THE PARTITION IS NOT THE DEAL: a stored chain listing only Apex and Stem rests
+ * its cells exactly as it did before the Cell partition existed. That is the whole
+ * of the additive guarantee.
+ *
  * Always returns one Assignment per survivor in survivor order (never null: a
  * zoned block is explicitly requested, so it must not trip the engine's legacy
  * single-glyph fallback — an empty `zones` array simply rests everyone).
@@ -252,16 +290,20 @@ function dealZone(members, zone, seed, defaultContinuous, out) {
 function dealSlotsZoned(list, sequence) {
   const seed = sequence.seed != null ? sequence.seed : 1;
   const zones = Array.isArray(sequence.zones) ? sequence.zones : [];
-  const { apex, stem } = partitionZones(list);
-  const apexZone = zones.find((z) => z && z.zone === 'apex') || null;
-  const stemZone = zones.find((z) => z && z.zone === 'stem') || null;
-
-  const ends = apexZone && apexZone.ends != null ? apexZone.ends : 'both';
-  const apexMembers = applyEnds(apex, ends);
+  const partition = partitionZones(list);
 
   const byId = new Map();
-  if (apexZone) dealZone(apexMembers, apexZone, seed, true, byId);
-  if (stemZone) dealZone(stem, stemZone, seed, false, byId);
+  for (const zoneId of ZONE_IDS) {
+    const cfg = zones.find((z) => z && z.zone === zoneId);
+    if (!cfg) continue;
+    // The Apex end-selector is Apex-only BY CONSTRUCTION: a region has no upper
+    // or lower end, so `ends` on Stem or Cell is inert (ADR 0008).
+    const members =
+      zoneId === 'apex'
+        ? applyEnds(partition.apex, cfg.ends != null ? cfg.ends : 'both')
+        : partition[zoneId];
+    dealZone(members, cfg, seed, ZONE_CONTINUOUS_DEFAULT[zoneId], byId);
+  }
 
   return list.map((a) =>
     byId.has(a.id) ? byId.get(a.id) : makeAssignment({ rest: true }, 0, seed, a.id),

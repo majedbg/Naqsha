@@ -6,6 +6,7 @@ import ParamPlot from "./ParamPlot";
 import AngleDial from "./AngleDial";
 import CurveEditor from "./CurveEditor";
 import { useLayerParams } from "../../lib/useLayerParams";
+import { isCompositeOptionsDef, optionIdForParams } from "../../lib/params/paramOps";
 
 // Dispatcher: owns the `def.type -> control component` mapping so ParamGroup /
 // the featured slot don't switch inline. New controls (WI-2..WI-6) register here.
@@ -71,7 +72,36 @@ export default function ParamControl({ def, params, onChange }) {
         />
       );
 
-    case "iconselect":
+    case "iconselect": {
+      // Composite (#166): the options each carry a `patch` over `def.keys`
+      // instead of a scalar `value`, so the row expresses a choice that spans
+      // several real params. Branch on def SHAPE, not on def.type — the house
+      // rule at paramOps.js:12-14, and the same way pad2d/plot2d are described
+      // above.
+      //
+      // IconSelect itself is UNCHANGED: it still sees a scalar in (the option
+      // id) and hands back a scalar out. The composite mapping lives here. When
+      // the live params match no option — the legacy blank-Grid case — `value`
+      // is undefined, so IconSelect draws every cell unchecked and anchors its
+      // roving tabindex to the first. Nothing is coerced and nothing is written.
+      if (isCompositeOptionsDef(def)) {
+        return (
+          <IconSelect
+            label={def.label}
+            value={optionIdForParams(def, params)}
+            options={def.options.map((o) => ({
+              value: o.id,
+              label: o.label,
+              glyph: o.glyph,
+            }))}
+            onChange={(id) => {
+              const option = def.options.find((o) => o.id === id);
+              if (option) onChange({ ...params, ...option.patch });
+            }}
+            tooltip={def.tooltip}
+          />
+        );
+      }
       return (
         <IconSelect
           label={def.label}
@@ -83,6 +113,7 @@ export default function ParamControl({ def, params, onChange }) {
           tooltip={def.tooltip}
         />
       );
+    }
 
     case "select":
       return (

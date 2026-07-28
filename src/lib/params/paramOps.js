@@ -17,6 +17,58 @@
  */
 
 // ─────────────────────────────────────────────────────────────────────────────
+// composite-options rows (#166)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Whether a def is a COMPOSITE-OPTIONS row: an enumerated control whose options
+ * each carry a `patch` over SEVERAL real keys instead of one scalar `value`.
+ * Grid Lines is the first (and today the only) one — three legal answers over
+ * `drawHorizontal` / `drawVertical`, with the illegal fourth simply absent.
+ *
+ * Branch on SHAPE (`options[].patch` presence), not on `def.type` — the
+ * canonical rule at the top of this file. `type` stays `'iconselect'`, so the
+ * dispatcher and the control are the ordinary ones.
+ *
+ * @param {object} def
+ * @returns {boolean}
+ */
+export function isCompositeOptionsDef(def) {
+  return (
+    Array.isArray(def?.options) &&
+    def.options.length > 0 &&
+    def.options.every((o) => o && typeof o.patch === 'object' && o.patch !== null)
+  );
+}
+
+/**
+ * Which composite option the LIVE params currently sit on, by id.
+ *
+ * The comparison thresholds at `>= 0.5` on both sides, matching the readers
+ * these patches feed (Grid.js gates each line family at `>= 0.5`, and
+ * hostKinds' gridIsSingleAxis does the same). That is what keeps the stored
+ * continuum READ-legal: `0.6` still reads as its option even though the toggle
+ * can only ever WRITE `0` or `1`. Composite-options patches are binary-valued
+ * by contract; a future non-binary one would need its own comparison.
+ *
+ * Returns `undefined` when no option matches — which is exactly the legacy
+ * blank-Grid case. It is deliberately NOT coerced: the control renders with
+ * nothing selected, the canvas is unchanged, and the first click repairs it
+ * forever because no option writes the blank state back.
+ *
+ * @param {object} def     a param definition
+ * @param {object} params  current layer params
+ * @returns {string|undefined} the matching option's id
+ */
+export function optionIdForParams(def, params) {
+  if (!isCompositeOptionsDef(def)) return undefined;
+  const on = (k) => (params?.[k] ?? 0) >= 0.5;
+  return def.options.find((o) =>
+    Object.entries(o.patch).every(([k, v]) => on(k) === (v >= 0.5)),
+  )?.id;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // randomValueForDef
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -59,16 +111,30 @@ export function randomValueForDef(def) {
  * rendering engine never reads; a randomize operation must expand to the
  * underlying real keys.
  *
+ *   options[].patch → composite options (#166): pick a whole OPTION and return
+ *               its patch. MUST precede the `def.keys` branch — a def with both
+ *               `keys` and `options` would otherwise fall through and write the
+ *               SAME randomValueForDef(def) into every key, i.e. an option id
+ *               string into two numeric params. It also means the illegal
+ *               states are unreachable from the dice BY CONSTRUCTION, because
+ *               only legal patches are on the menu.
  *   def.axes  → per-axis ranges (plot2d): each key randomizes over its OWN
  *               axis range. Without this, both keys would share def's single
  *               min/max, destroying the R/r ratio semantics.
  *   def.keys  → shared range (pad2d): all keys share the def's range.
  *   otherwise → single key via def.key.
  *
- * @param {object} def  A param definition (may have axes, keys, or key).
+ * @param {object} def  A param definition (may have composite options, axes,
+ *                      keys, or key).
  * @returns {object} A patch object { [realKey]: value, ... }.
  */
 export function randomPatchForDef(def) {
+  if (isCompositeOptionsDef(def)) {
+    const opts = def.randomOptions || def.options;
+    // A fresh copy: callers Object.assign this into layer params, and the def
+    // is a module-level constant that must not become aliased state.
+    return { ...opts[Math.floor(Math.random() * opts.length)].patch };
+  }
   if (def.axes) {
     const patch = {};
     for (const ax of def.axes) patch[ax.key] = randomValueForDef(ax);

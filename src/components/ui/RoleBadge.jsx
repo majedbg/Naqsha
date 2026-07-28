@@ -24,6 +24,7 @@
 // renders in dense picker/rack surfaces whose parents re-render on every hover.
 import { memo } from "react";
 import { isSemanticHost } from "../../lib/motif/hostKinds";
+import { GRATICULE, GRATICULE_STROKE, graticuleLines } from "./latticeGraticule";
 
 // The badge is authored in a fixed 24-unit box; `size` only scales the pixels
 // (like GlyphThumb's `size` over its self-computed viewBox).
@@ -78,23 +79,26 @@ function Square({ role, cx, cy, side = SQUARE }) {
 // A 2×2 graticule: two verticals × two horizontals. The single central cell is
 // bounded by the four crossings; its edges' midpoints and its centre are the
 // other two anchor families.
+//
+// The graticule itself lives in latticeGraticule.jsx — the Grid Lines param
+// toggle (#166) draws the same lines from the same code, so the two glyph
+// families are siblings by construction. Only the role marks below are
+// RoleBadge's own, and they are DERIVED from that geometry rather than repeated
+// as literals: a mark's whole job is to sit on a line, so it must not be able
+// to drift off one when the graticule moves.
+const MID_X = (GRATICULE.vx[0] + GRATICULE.vx[1]) / 2;
+const MID_Y = (GRATICULE.hy[0] + GRATICULE.hy[1]) / 2;
 const L = {
-  vx: [6, 18], // vertical line x's
-  hy: [6, 18], // horizontal line y's
-  span: [2, 22], // line extent
-  crossings: [
-    [6, 6],
-    [18, 6],
-    [6, 18],
-    [18, 18],
-  ],
+  ...GRATICULE, // vx / hy / span
+  // the four intersections
+  crossings: GRATICULE.hy.flatMap((y) => GRATICULE.vx.map((x) => [x, y])),
   edges: [
-    [12, 6], // top-edge midpoint
-    [12, 18], // bottom
-    [6, 12], // left
-    [18, 12], // right
+    [MID_X, GRATICULE.hy[0]], // top-edge midpoint
+    [MID_X, GRATICULE.hy[1]], // bottom
+    [GRATICULE.vx[0], MID_Y], // left
+    [GRATICULE.vx[1], MID_Y], // right
   ],
-  cell: [12, 12],
+  cell: [MID_X, MID_Y], // the single bounded cell's centre
 };
 
 function LatticeFragment({ roleSet }) {
@@ -104,15 +108,9 @@ function LatticeFragment({ roleSet }) {
         data-badge-fragment
         stroke="currentColor"
         strokeOpacity={FRAG_OPACITY}
-        strokeWidth={1.1}
-        strokeLinecap="round"
+        {...GRATICULE_STROKE}
       >
-        {L.vx.map((x) => (
-          <line key={`v${x}`} x1={x} y1={L.span[0]} x2={x} y2={L.span[1]} />
-        ))}
-        {L.hy.map((y) => (
-          <line key={`h${y}`} x1={L.span[0]} y1={y} x2={L.span[1]} y2={y} />
-        ))}
+        {graticuleLines()}
       </g>
 
       {roleSet.has("crossing") &&

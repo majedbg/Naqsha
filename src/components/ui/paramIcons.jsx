@@ -12,6 +12,8 @@
  *   GLYPHS           — name  -> node, for enumerated controls (WI-5 shapes).
  */
 
+import { GRATICULE_STROKE, graticuleLines } from "./latticeGraticule";
+
 const VB = 24; // viewBox is 0 0 24 24, centre at (12,12)
 const C = VB / 2;
 const ARM = 8.5; // arm / radius length in viewBox units
@@ -206,5 +208,32 @@ export const GLYPHS = {
       <polygon points={`${C},${C - ARM} ${C + ARM},${C} ${C},${C + ARM} ${C - ARM},${C}`} {...STROKE} strokeWidth="1.2" />
       <polygon points={`${C},${C - ARM * 0.5} ${C + ARM * 0.5},${C} ${C},${C + ARM * 0.5} ${C - ARM * 0.5},${C}`} {...STROKE} strokeWidth="1.2" />
     </>,
+  ),
+
+  // --- Grid line families (#166) ---
+  // Siblings of RoleBadge's LatticeFragment by construction: the same 2×2
+  // graticule geometry, drawn from the same module (latticeGraticule.jsx). One
+  // family, the other, both.
+  //
+  // Deliberately NO role dots: a dot on a lattice means "anchors are placed
+  // here", which is motif vocabulary a pattern-param icon must not claim. And
+  // deliberately no stroke-opacity mute either — RoleBadge mutes its host
+  // fragment so the marks read over it; with no marks there is nothing to read
+  // against, and IconSelect already carries the selected/unselected contrast on
+  // the button itself.
+  gridLinesVertical: outlineSvg(
+    <g stroke="currentColor" fill="none" {...GRATICULE_STROKE}>
+      {graticuleLines({ v: true, h: false })}
+    </g>,
+  ),
+  gridLinesHorizontal: outlineSvg(
+    <g stroke="currentColor" fill="none" {...GRATICULE_STROKE}>
+      {graticuleLines({ v: false, h: true })}
+    </g>,
+  ),
+  gridLinesBoth: outlineSvg(
+    <g stroke="currentColor" fill="none" {...GRATICULE_STROKE}>
+      {graticuleLines()}
+    </g>,
   ),
 };

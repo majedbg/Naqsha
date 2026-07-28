@@ -8,6 +8,7 @@ import '../registerBuiltinExtras.js';
 import { P5Adapter } from '../patterns/drawingContext.js';
 import { capturePolylines } from './capturePolylines.js';
 import { sampleEdgeAnchors } from './anchors.js';
+import { placeMotifs } from './placementEngine.js';
 import { mulberry32 } from '../patterns/rng.js';
 import FlowField from '../patterns/FlowField.js';
 import { EDGE_MOTIF_HOSTS } from './hostKinds.js';
@@ -286,6 +287,16 @@ describe('#144 new edge hosts — capture is non-empty at defaults AND at every 
             pth.points.some((pt) => !Number.isFinite(pt.x) || !Number.isFinite(pt.y))
           );
           expect(anyNonFinite, `"${type}" produced non-finite points at ${key}=${value}`).toBe(false);
+          // …and the paths must be USABLE, not merely present. capturePolylines
+          // records a 2-point path for EVERY ctx.line, including a zero-length
+          // one, while sampleEdgeAnchors drops any path of zero length — so a
+          // boundary that collapsed the geometry to points would satisfy the
+          // count above and still yield NO anchors, which is this slice's
+          // silent-failure mode one layer down.
+          expect(
+            sampleEdgeAnchors(paths, { count: 2 }).length,
+            `"${type}" captured only degenerate zero-length paths at ${key}=${value}`
+          ).toBeGreaterThan(0);
         }
       }
     });
@@ -295,6 +306,28 @@ describe('#144 new edge hosts — capture is non-empty at defaults AND at every 
       for (const { key, min } of boundaryKeys(type)) params[key] = min;
       const paths = captureHost(type, params);
       expect(paths.length, `"${type}" captured nothing at all-min params`).toBeGreaterThan(0);
+      expect(sampleEdgeAnchors(paths, { count: 2 }).length).toBeGreaterThan(0);
+    });
+
+    it(`${type}: the placement engine ACCEPTS glyphs on the captured geometry`, () => {
+      // The end of the road the maker actually cares about: real pattern →
+      // record-mode capture → edge anchors → placeMotifs. Counts the ACCEPTED
+      // placements array, never placementStats (which is seeded with the
+      // pre-rejection candidate count and would report glyphs that were
+      // rejected for no-fit, below-floor or rest).
+      const paths = captureHost(type, defaultParamsFor(type));
+      const anchors = sampleEdgeAnchors(paths, { spacing: 24 });
+      expect(anchors.length).toBeGreaterThan(0);
+
+      const { placements } = placeMotifs(anchors, {}, {
+        boundary: { type: 'rect', width: CANVAS_W, height: CANVAS_H },
+        canvasW: CANVAS_W,
+        canvasH: CANVAS_H,
+      });
+      expect(
+        placements.length,
+        `"${type}" captured geometry but the engine placed no glyphs on it`
+      ).toBeGreaterThan(0);
     });
   }
 });

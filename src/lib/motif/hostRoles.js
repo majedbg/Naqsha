@@ -53,7 +53,16 @@ const NARROW_ROLES = Object.freeze({
  * The anchor roles `patternType` actually emits under `params` — i.e. the roles a
  * Route block should offer.
  *
- * @param {string} patternType  PATTERN_CLASSES registry id.
+ * `params` is optional and behaves exactly as it does in hostKinds: omitting it
+ * keeps the by-type answer, so a grid stays two-axis (semantic) for the
+ * pre-render binding writers that call by type alone.
+ *
+ * A type that hosts no motif at all returns `[]` — NOT the `['edge']` universal
+ * anchor fallback. Offering Edges on a non-host is a plausible-looking wrong
+ * answer, so #154's per-host tables must OVERRIDE the answers here rather than
+ * assume they are extending a non-empty one.
+ *
+ * @param {string} patternType  PATTERN_CLASSES / registry id (NOT the class name).
  * @param {object} [params]     the host's live params (params-aware hosts only).
  * @returns {string[]} a fresh array in canonical order; `[]` for a non-host.
  */

@@ -83,22 +83,22 @@ function Square({ role, cx, cy, side = SQUARE }) {
 // The graticule itself lives in latticeGraticule.jsx — the Grid Lines param
 // toggle (#166) draws the same lines from the same code, so the two glyph
 // families are siblings by construction. Only the role marks below are
-// RoleBadge's own.
+// RoleBadge's own, and they are DERIVED from that geometry rather than repeated
+// as literals: a mark's whole job is to sit on a line, so it must not be able
+// to drift off one when the graticule moves.
+const MID_X = (GRATICULE.vx[0] + GRATICULE.vx[1]) / 2;
+const MID_Y = (GRATICULE.hy[0] + GRATICULE.hy[1]) / 2;
 const L = {
   ...GRATICULE, // vx / hy / span
-  crossings: [
-    [6, 6],
-    [18, 6],
-    [6, 18],
-    [18, 18],
-  ],
+  // the four intersections
+  crossings: GRATICULE.hy.flatMap((y) => GRATICULE.vx.map((x) => [x, y])),
   edges: [
-    [12, 6], // top-edge midpoint
-    [12, 18], // bottom
-    [6, 12], // left
-    [18, 12], // right
+    [MID_X, GRATICULE.hy[0]], // top-edge midpoint
+    [MID_X, GRATICULE.hy[1]], // bottom
+    [GRATICULE.vx[0], MID_Y], // left
+    [GRATICULE.vx[1], MID_Y], // right
   ],
-  cell: [12, 12],
+  cell: [MID_X, MID_Y], // the single bounded cell's centre
 };
 
 function LatticeFragment({ roleSet }) {

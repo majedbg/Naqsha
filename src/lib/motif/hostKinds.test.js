@@ -1,4 +1,11 @@
 import { describe, it, expect } from 'vitest';
+// Side-effect: registers the built-in extras (Hilbert / Lissajous / Chladni /
+// Truchet) into the DYNAMIC pattern registry, exactly as main.jsx does at app
+// boot. Those patterns are NOT in the static PATTERN_CLASSES map, so a host-set
+// test that resolved through the static map alone would report a real, working
+// host as "unknown". Resolve through getPatternClass — the same static-then-
+// dynamic seam useCanvas's probe uses (useCanvas.js ~L259).
+import '../registerBuiltinExtras.js';
 import {
   SEMANTIC_MOTIF_HOSTS,
   EDGE_MOTIF_HOSTS,
@@ -10,7 +17,7 @@ import {
   isStashHost,
   defaultRolesForHost,
 } from './hostKinds.js';
-import { PATTERN_CLASSES } from '../patterns/index.js';
+import { getPatternClass } from '../patterns/index.js';
 
 describe('hostKinds', () => {
   it('keeps the four legacy semantic hosts, plus circlepacking (#146)', () => {
@@ -39,7 +46,7 @@ describe('hostKinds', () => {
 
   it('every edge-host key resolves to a real registered PatternClass', () => {
     for (const type of EDGE_MOTIF_HOSTS) {
-      expect(PATTERN_CLASSES[type], `unknown patternType "${type}"`).toBeTruthy();
+      expect(getPatternClass(type), `unknown patternType "${type}"`).toBeTruthy();
     }
   });
 
@@ -62,6 +69,56 @@ describe('hostKinds', () => {
     expect(isMotifHost('flowfield')).toBe(true);
     expect(isMotifHost('text')).toBe(false);
     expect(isMotifHost('import')).toBe(false);
+  });
+
+  // #144 — Radial Etch, Hilbert and Lissajous become EDGE hosts. All three draw
+  // with the operations capturePolylines folds (radialetch: ctx.line rays;
+  // hilbert/lissajous: one beginShape+vertex run) and all three reseed
+  // randomSeed+noiseSeed at the top of generate(), which are the two conditions
+  // the module header states for membership.
+  describe('#144 — the three new record-mode capture hosts', () => {
+    for (const type of ['radialetch', 'hilbert', 'lissajous']) {
+      it(`${type} is an EDGE host, a motif host, and NOT semantic`, () => {
+        expect(EDGE_MOTIF_HOSTS.has(type)).toBe(true);
+        expect(isEdgeHost(type)).toBe(true);
+        expect(isEdgeHost(type, {})).toBe(true);
+        expect(isSemanticHost(type)).toBe(false);
+        expect(isSemanticHost(type, {})).toBe(false);
+        expect(isMotifHost(type)).toBe(true);
+        expect(SEMANTIC_MOTIF_HOSTS.has(type)).toBe(false);
+      });
+
+      it(`${type} defaults a fresh motif to the edge role only`, () => {
+        expect(defaultRolesForHost(type)).toEqual(['edge']);
+      });
+    }
+
+    // PRD #143: Truchet emits CELLS as well as edges and must come through the
+    // geometry stash. The probe is a single boolean (record OR stash, never
+    // both), so putting Truchet in the edge set would silently cost it the cell
+    // role. This guard is here so a later ticket cannot add it by reflex.
+    it('does NOT add Truchet — its edge role comes from the stash, not capture', () => {
+      expect(EDGE_MOTIF_HOSTS.has('truchet')).toBe(false);
+      expect(isEdgeHost('truchet')).toBe(false);
+      expect(isMotifHost('truchet')).toBe(false);
+    });
+
+    // Chladni is ticket #148 (it needs the warp-capture contract and a
+    // params-aware blank-plate gate), not this slice.
+    it('does NOT add Chladni here (#148 owns it)', () => {
+      expect(EDGE_MOTIF_HOSTS.has('chladni')).toBe(false);
+    });
+
+    it('leaves the seven pre-existing edge hosts untouched', () => {
+      for (const type of [
+        'flowfield', 'wave', 'spirograph', 'topographic',
+        'phyllodash', 'diffgrowth', 'dendrite',
+      ]) {
+        expect(EDGE_MOTIF_HOSTS.has(type), `lost edge host "${type}"`).toBe(true);
+      }
+      // …and adds nothing beyond the three.
+      expect(EDGE_MOTIF_HOSTS.size).toBe(10);
+    });
   });
 
   describe('params-aware isEdgeHost — single-axis grid', () => {

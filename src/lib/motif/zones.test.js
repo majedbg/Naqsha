@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { partitionZones, applyEnds } from './zones.js';
+import { sampleEdgeAnchors } from './anchors.js';
 
 // --- helpers -------------------------------------------------------------
 // Minimal Anchor factory. partitionZones reads `role`, `s`, and
@@ -70,6 +71,62 @@ describe('partitionZones — captured host (no tips ⇒ derive termini from min/
     const crossing = partitionZones([mkA('cross:0:solo', { role: 'crossing', s: 0.4 })]);
     expect(crossing.apex).toEqual([]);
     expect(crossing.stem.map((a) => a.id)).toEqual(['cross:0:solo']);
+  });
+});
+
+// #144 — Apex and Stem must partition anchors on an OPEN captured curve, which
+// is the only path shape the three new record-mode hosts produce (Radial Etch
+// rays, one Hilbert run, one Lissajous run; all terminate endShape() bare, so
+// capture reports them open). Geometry is built LITERALLY here — the anchors are
+// arc-length samples off a plain open polyline, exactly the shape
+// sampleEdgeAnchors yields from a captured hostPath — so this stays a statement
+// about Zones, not about how any pattern happens to paint today.
+describe('partitionZones — an OPEN captured curve flowers at its ends (#144)', () => {
+  // A plain open polyline (an L, so it is unambiguously not a loop).
+  const openPath = [
+    { points: [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 80 }], closed: false },
+  ];
+
+  it('splits arc-length samples on one open path into 2 Apex + the rest Stem', () => {
+    const anchors = sampleEdgeAnchors(openPath, { count: 7 });
+    expect(anchors.length).toBe(7);
+    expect(anchors.every((a) => a.role === 'edge')).toBe(true);
+
+    const { apex, stem } = partitionZones(anchors);
+    // Every anchor is in exactly one Zone — the zoned Sequencer rests anything
+    // in neither, so a leak here renders as missing glyphs.
+    expect(apex.length + stem.length).toBe(anchors.length);
+    expect(apex.length).toBe(2);
+    expect(stem.length).toBe(5);
+
+    // The Apex members are the traversal ends (smallest and largest s).
+    const byS = [...anchors].sort((a, b) => a.s - b.s);
+    expect(apex.map((a) => a.id).sort()).toEqual([byS[0].id, byS[byS.length - 1].id].sort());
+    // …and they sit at the polyline's physical endpoints.
+    const ends = apex.map((a) => `${Math.round(a.x)},${Math.round(a.y)}`).sort();
+    expect(ends).toEqual(['0,0', '100,80'].sort());
+  });
+
+  it('partitions per path — two open paths give 2 Apex each, never one for the field', () => {
+    const twoPaths = [
+      openPath[0],
+      { points: [{ x: 0, y: 200 }, { x: 60, y: 200 }, { x: 60, y: 260 }], closed: false },
+    ];
+    const anchors = sampleEdgeAnchors(twoPaths, { count: 5 });
+    const { apex, stem } = partitionZones(anchors);
+    expect(apex.length + stem.length).toBe(anchors.length);
+    expect(apex.length).toBe(4); // 2 per path
+    expect(new Set(apex.map((a) => a.meta.pathIndex))).toEqual(new Set([0, 1]));
+  });
+
+  it('a 2-point open segment (one Radial Etch ray) is all Apex and no Stem', () => {
+    const anchors = sampleEdgeAnchors(
+      [{ points: [{ x: 10, y: 10 }, { x: 90, y: 90 }], closed: false }],
+      { count: 2 }
+    );
+    const { apex, stem } = partitionZones(anchors);
+    expect(apex.length).toBe(2);
+    expect(stem.length).toBe(0);
   });
 });
 

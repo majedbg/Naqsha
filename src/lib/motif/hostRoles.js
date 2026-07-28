@@ -15,6 +15,12 @@
 // them is a user-visible behaviour change with its own acceptance criteria, and
 // doing it here would smuggle #154's work into #146's diff.
 //
+// #144 added `radialetch` / `hilbert` / `lissajous` as EDGE hosts and made
+// MotifBlockRack derive its Route options from this function. They need NO entry
+// in the table below: an edge host's roles are answered by `isEdgeHost`, and a
+// new edge host is therefore a one-line change in hostKinds.js alone. Only a
+// SEMANTIC host whose emitted set is narrower than all four needs a row here.
+//
 // PARAMS-AWARE by contract. What a host emits can depend on its params — the
 // single-axis Grid already does (columns-only ⇒ edges alone, no crossings), and
 // Chladni will (equal mode numbers ⇒ a blank plate, no roles at all). Callers
@@ -47,7 +53,16 @@ const NARROW_ROLES = Object.freeze({
  * The anchor roles `patternType` actually emits under `params` — i.e. the roles a
  * Route block should offer.
  *
- * @param {string} patternType  PATTERN_CLASSES registry id.
+ * `params` is optional and behaves exactly as it does in hostKinds: omitting it
+ * keeps the by-type answer, so a grid stays two-axis (semantic) for the
+ * pre-render binding writers that call by type alone.
+ *
+ * A type that hosts no motif at all returns `[]` — NOT the `['edge']` universal
+ * anchor fallback. Offering Edges on a non-host is a plausible-looking wrong
+ * answer, so #154's per-host tables must OVERRIDE the answers here rather than
+ * assume they are extending a non-empty one.
+ *
+ * @param {string} patternType  PATTERN_CLASSES / registry id (NOT the class name).
  * @param {object} [params]     the host's live params (params-aware hosts only).
  * @returns {string[]} a fresh array in canonical order; `[]` for a non-host.
  */

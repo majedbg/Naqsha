@@ -427,19 +427,27 @@ describe('the shared stash-key contract', () => {
     { x1: 100, y1: 300, x2: 100, y2: 100 },
   ];
   const SITES = [{ x: 200, y: 200 }];
+  // #153 added `arcs` (Truchet's per-tile drawn paths) to the same list, so it is
+  // now forwarded to these hosts too and belongs in the bag.
+  const ARCS = [{ points: [{ x: 10, y: 10 }, { x: 90, y: 10 }], closed: false, copy: 0, tile: 0 }];
 
   it('a host IGNORES stash keys it does not own', () => {
-    // voronoi must not see `cells`…
+    // voronoi must not see `cells` or `arcs`…
     const voronoiOwn = getSemanticAnchors('voronoi', {}, W, H, {
       drawnEdges: EDGES,
       sites: SITES,
     });
     expect(voronoiOwn.length).toBeGreaterThan(0);
     expect(
-      getSemanticAnchors('voronoi', {}, W, H, { drawnEdges: EDGES, sites: SITES, cells: grid() })
+      getSemanticAnchors('voronoi', {}, W, H, {
+        drawnEdges: EDGES,
+        sites: SITES,
+        cells: grid(),
+        arcs: ARCS,
+      })
     ).toEqual(voronoiOwn);
 
-    // …and modulegrid must not see `circles` or `drawnEdges`.
+    // …and modulegrid must not see `circles`, `drawnEdges` or `arcs`.
     const cells = grid();
     expect(
       getSemanticAnchors('modulegrid', PARAMS, W, H, {
@@ -447,13 +455,16 @@ describe('the shared stash-key contract', () => {
         circles: [{ x: 1, y: 2, r: 3 }],
         drawnEdges: EDGES,
         sites: SITES,
+        arcs: ARCS,
       })
     ).toEqual(getSemanticAnchors('modulegrid', PARAMS, W, H, { cells }));
 
     // A host given ONLY someone else's key is unprobed, not empty.
     expect(getSemanticAnchors('modulegrid', PARAMS, W, H, { circles: [{ x: 1, y: 2, r: 3 }] }))
       .toBeNull();
+    expect(getSemanticAnchors('modulegrid', PARAMS, W, H, { arcs: ARCS })).toBeNull();
     expect(getSemanticAnchors('voronoi', {}, W, H, { cells })).toBeNull();
+    expect(getSemanticAnchors('voronoi', {}, W, H, { arcs: ARCS })).toBeNull();
   });
 });
 

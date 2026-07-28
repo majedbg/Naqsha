@@ -73,6 +73,16 @@ export const ALL_ROLES = Object.freeze(['crossing', 'edge', 'tip', 'cell']);
 //                   needs planar face traversal, which is materially different
 //                   work from graph degree and strand walking and is explicitly
 //                   out of scope for PRD #143.
+//   truchet       — one anchor per tile PLUS a run along every drawn path
+//                   (#153). Cells AND edges, and NO params gating: every tile
+//                   set, the triangles included, yields both, because Truchet is
+//                   a STASH host and the belief that triangles yield nothing is a
+//                   capture-channel concern (PRD #143 records it as a mistake
+//                   already made once). No crossings — a Truchet has no lattice
+//                   intersection — and no tips: every arc endpoint is shared with
+//                   the neighbouring tile's arc, so nothing terminates freely.
+//                   Listed in ALL_ROLES order, which is what the docstring below
+//                   promises and what the Route UI's own option list assumes.
 //
 // NOT listed, deliberately, and owned by #154:
 //   voronoi — a tessellation has no free termini, so `tip` is dead today.
@@ -81,6 +91,7 @@ const NARROW_ROLES = Object.freeze({
   circlepacking: Object.freeze(['cell']),
   modulegrid: Object.freeze(['cell']),
   girih: Object.freeze(['crossing', 'edge', 'tip']),
+  truchet: Object.freeze(['edge', 'cell']),
 });
 
 /**

@@ -53,6 +53,36 @@ muted glyph can be tuned before it comes back, and the strip height does not
 jump as you toggle. The whole chip drops in opacity, not just the thumbnail.
 A pure Rest still collapses to header + REST plate (+ weight in Random mode).
 
+## Prototype (round 1) — `?slotcard=A|B|C`
+
+`npm run dev` → `http://localhost:5173/?slotcard=A`, `←`/`→` to cycle.
+Screenshots: `node scripts/proto-slotcard-shots.mjs <outDir>`.
+
+Cost that the screenshots hide: **A and C read `180°`, B reads `+180°`.**
+`DragDial` has no `format` prop, hard-codes `{value}°`, declares
+`aria-valuemin={0} aria-valuemax={360}`, and draws a "12 o'clock reference —
+absolute bearings are read from here" tick (`DragDial.jsx:209-235`). Picking A
+or C therefore means teaching the shared dial a signed readout — in a component
+`GlyphPopover` depends on, where the unsigned absolute reading is correct.
+
+### Capture / cleanup, when a variant wins
+
+Fold the winner into `SortableSlotChip` properly (it was written under prototype
+rules — no tests, no error handling), then drop from main:
+
+1. `src/components/shell/motif-prototypes/SlotCardVariants.jsx`
+2. `src/components/shell/motif-prototypes/SlotCardPrototypeOverlay.jsx`
+3. the import + `<SlotCardPrototypeOverlay />` mount in `src/pages/Studio.jsx`
+4. `scripts/proto-slotcard-shots.mjs`
+5. this section
+
+Do NOT copy the prototype's flush seam. `useCell` latches `opened.current` on
+first `onChange` and clears it on `onCommit` — but `DragNumber` emits neither
+when a gesture ends where it started, so the latch stays set and the NEXT
+gesture skips its opening flush, folding two edits into one undo entry. Take
+the discipline from `AnchorGhostOverlay`, which already ships it against real
+undo.
+
 ## Risks carried
 
 - `editChain` signature is `${id}:params` for every chain edit, so without

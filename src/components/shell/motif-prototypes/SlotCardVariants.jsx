@@ -52,11 +52,13 @@ export const SLOT_VARIANT_NAMES = {
   C: "Mixer channel",
 };
 
-// Five slots covering every state the strip has to draw.
+// Five slots covering every state the strip has to draw. ORDERED so the three
+// DIFFERENT renderings — tuned, hidden, pure rest — are the three that fit in
+// the rail without scrolling; the two plain actives sit past the fold, where
+// they cost nothing to miss.
 const INITIAL_SLOTS = [
-  { id: 1, glyphRef: "rosette", sizeScale: 1, rotationOffset: 0, weight: 1 },
   {
-    id: 2,
+    id: 1,
     glyphRef: "leaf",
     sizeScale: 1.4,
     rotationOffset: 180,
@@ -64,15 +66,16 @@ const INITIAL_SLOTS = [
     weight: 1.5,
     rotationRandom: { range: 30, spread: "flat" },
   },
-  { id: 3, rest: true, weight: 1 }, // a PURE rest — no glyphRef, nothing to un-hide
   {
-    id: 4,
+    id: 2,
     glyphRef: "diamond",
     rest: true, // HIDDEN: rest with its glyphRef kept
     sizeScale: 0.75,
     rotationOffset: 45,
     weight: 1,
   },
+  { id: 3, rest: true, weight: 1 }, // a PURE rest — no glyphRef, nothing to un-hide
+  { id: 4, glyphRef: "rosette", sizeScale: 1, rotationOffset: 0, weight: 1 },
   { id: 5, glyphRef: "dot", sizeScale: 1, rotationOffset: 0, weight: 2 },
 ];
 

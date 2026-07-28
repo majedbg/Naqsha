@@ -316,6 +316,9 @@ describe('hostRadius — the regression guard for every existing document', () =
       },
     ]);
     expect(rejected).toEqual([]);
+    // Pinned here only as part of the byte-identity claim (nothing about this
+    // run was rejected). It is NEVER the count of glyphs — `placed` is the
+    // post-cap CANDIDATE count, before no-fit / below-floor / rest rejections.
     expect(placementStats).toEqual({ total: 3, placed: 3 });
   });
 

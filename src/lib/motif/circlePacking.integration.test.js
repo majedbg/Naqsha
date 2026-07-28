@@ -11,6 +11,7 @@
 import { describe, it, expect } from 'vitest';
 import CirclePacking from '../patterns/CirclePacking.js';
 import { RecordingContext } from '../patterns/drawingContext.js';
+import MotifPattern from './MotifPattern.js';
 import { getSemanticAnchors } from './semanticAnchors.js';
 import { placeMotifs } from './placementEngine.js';
 import { resolveMotifHostParams } from './resolveMotifHost.js';
@@ -110,6 +111,69 @@ describe('Circle Packing places one glyph per circle', () => {
       const c = circles[Number(pl.anchorId.split(':')[1])];
       const d = Math.hypot(pl.x - c.x, pl.y - c.y);
       expect(pl.radius + d).toBeLessThanOrEqual(c.r + 1e-9);
+    });
+  });
+
+  it('the REAL default add-path — app default packing params + default binding — is not empty', () => {
+    // The boundary case a defaults-blind test sails past: CirclePacking's own
+    // defaults (minRadius 4, maxRadius 60, attempts 2000) against the default
+    // motif binding's size floor (min 3, margin 0.85). 0.85 × 4 = 3.4 clears the
+    // floor of 3, so the smallest containers ARE adorned — but only just, and if
+    // either default moves this is where it shows.
+    const inst = new CirclePacking();
+    inst.generate(new RecordingContext({ seed: 1 }), 7, {}, W, H, '#000000', 100);
+    const circles = inst.motifHostGeometry.circles;
+    const anchors = getSemanticAnchors('circlepacking', {}, W, H, { circles });
+    const opts = defaultMotifAddOpts('circlepacking', 'leaf');
+    const { placements, rejected } = placeMotifs(anchors, opts.binding, {
+      canvasW: W,
+      canvasH: H,
+      boundary: BOUNDARY,
+    });
+    expect(circles.length).toBeGreaterThan(50);
+    expect(placements.length).toBeGreaterThan(0);
+    expect(rejected.filter((r) => r.reason === 'below-floor')).toEqual([]);
+    expect(placements).toHaveLength(circles.length);
+  });
+
+  it('the RENDERER stamps one glyph per circle — MotifPattern threads `circles` through', () => {
+    // The last link in the chain, and the only one the other tests skip: every
+    // module either side of MotifPattern is exercised directly, so a typo in the
+    // key it forwards to getSemanticAnchors (`circle:`, `sites:`, a dropped line)
+    // would leave the whole suite green while the feature rendered nothing.
+    const circles = packing();
+    const opts = defaultMotifAddOpts('circlepacking', 'leaf');
+    const inst = new MotifPattern();
+    inst.generateWithContext(
+      new RecordingContext({ seed: 1 }),
+      7,
+      {
+        glyphRef: 'leaf',
+        anchorMode: 'semantic',
+        hostPatternType: 'circlepacking',
+        hostParams: { ...PARAMS },
+        circles,
+        binding: {
+          ...opts.binding,
+          placement: {
+            ...opts.binding.placement,
+            sizing: { ...opts.binding.placement.sizing, min: 0 },
+          },
+        },
+      },
+      W,
+      H,
+      '#123456',
+      100
+    );
+    // lastPlacementPositions IS the accepted, post-cap placement list (what the
+    // draw loop stamps) — not the pre-rejection statistics counter.
+    expect(inst.lastPlacementPositions).toHaveLength(circles.length);
+    expect(inst.svgElements).toHaveLength(circles.length);
+    // And each stamped glyph really is contained by the circle it occupies.
+    inst.lastPlacementPositions.forEach((pos, i) => {
+      const c = circles[i];
+      expect(pos.radius + Math.hypot(pos.x - c.x, pos.y - c.y)).toBeLessThanOrEqual(c.r + 1e-9);
     });
   });
 

@@ -187,6 +187,27 @@ describe('CirclePacking motif host-geometry capture (accepted circles)', () => {
     expect(circles).toEqual([]);
   });
 
+  it('adding the stash consumed NO RNG — the draw COUNT is still exactly 2 per attempt', () => {
+    // The class header's lock-step contract: "Draw count per attempt is FIXED
+    // (exactly two ctx.random calls)". Counting is the assertion that catches a
+    // stray draw ANYWHERE in generate() — including one placed AFTER the packing
+    // loop, which leaves this pattern's own output intact but desynchronises the
+    // shared live-p5 stream for whatever renders next.
+    for (const params of [{}, { boundary: 'circle' }, { render: 'nested' }, { render: 'links' }]) {
+      const inst = new CirclePacking();
+      const ctx = new RecordingContext({ seed: 1 });
+      let draws = 0;
+      const realRandom = ctx.random.bind(ctx);
+      ctx.random = (...a) => {
+        draws += 1;
+        return realRandom(...a);
+      };
+      inst.generate(ctx, 7, { ...BASE, ...params }, W, H, '#000000', 100);
+      expect(draws).toBe(2 * BASE.attempts);
+      expect(inst.motifHostGeometry.circles.length).toBeGreaterThan(0);
+    }
+  });
+
   it('adding the stash consumed NO RNG — the draw stream is byte-identical', () => {
     // Digests captured by running this file against the UNMODIFIED pattern
     // (main @ 170f5a7, before motifHostGeometry existed). Both the recorded draw

@@ -4,15 +4,16 @@
 // of resolveModulationForTarget: a params-only read off the `layers` array, with
 // NO dependency on render ordering for the formula hosts (grid/recursive/spiral).
 //
-// VORONOI is the exception: its semantic anchors cannot be derived from params
-// (its sites come from ctx.random — irreproducible outside the live draw; see
-// semanticAnchors.js voronoi header). Instead the host CAPTURES its resolved
-// cells during generate() (VoronoiCells.motifHostGeometry) and useCanvas threads
-// them here via the optional `hostGeometry` map (keyed by host layer id). When a
-// voronoi host's drawnCells are present we forward them; when absent (the host
-// hasn't rendered yet, e.g. a motif BELOW its host in z-order) we omit them and
-// the motif degrades to null voronoi anchors → nothing placed. Edge-on-arbitrary
-// hosts remain OUT of scope for this slice.
+// STASH HOSTS are the exception (hostKinds.STASH_MOTIF_HOSTS — voronoi and, as
+// of #146, circlepacking): their semantic anchors cannot be derived from params,
+// because their geometry comes from ctx.random and is irreproducible outside the
+// live draw (see semanticAnchors.js voronoi header). Instead the host CAPTURES
+// its resolved geometry during generate() (`instance.motifHostGeometry`) and
+// useCanvas threads it here via the optional `hostGeometry` map (keyed by host
+// layer id). Present → we forward every key in STASH_GEOMETRY_KEYS; absent (the
+// host hasn't rendered yet, e.g. a motif BELOW its host in z-order) → we omit
+// them and the motif degrades to null anchors → nothing placed. A new stash host
+// adds its key to that list rather than a branch here.
 
 import { isMotifLayer, motifHostId } from './motifLayer.js';
 import { isEdgeHost, isStashHost, STASH_GEOMETRY_KEYS } from './hostKinds.js';
@@ -26,15 +27,15 @@ import {
  * motif or its host is missing (dangling id tolerated → motif renders nothing).
  * Pure: reads host.patternType + host.params from the layers array; also
  * forwards host.seed as `hostSeed` so the grid semantic extractor can replay the
- * host's LIVE-p5 jitter/symmetry lattice (makeP5Random(hostSeed)). For a voronoi
- * host, additionally forwards captured host geometry (drawnEdges + sites, and/or
- * legacy drawnCells) from hostGeometry when present.
+ * host's LIVE-p5 jitter/symmetry lattice (makeP5Random(hostSeed)). For a STASH
+ * host, additionally forwards its captured geometry (voronoi: drawnEdges + sites
+ * and/or legacy drawnCells; circlepacking: circles) from hostGeometry when present.
  * @param {object} layer
  * @param {object[]} layers
- * @param {Object<string, {drawnEdges?: object[], sites?: object[], drawnCells?: object[]}>} [hostGeometry]
+ * @param {Object<string, {drawnEdges?: object[], sites?: object[], drawnCells?: object[], circles?: object[], hostPaths?: object[]}>} [hostGeometry]
  *   per-frame map of host layer id → geometry captured during that host's
  *   generate() run.
- * @returns {{hostPatternType: string, hostParams: object, hostSeed: (number|undefined), drawnEdges?: object[], sites?: object[], drawnCells?: object[]}|null}
+ * @returns {{hostPatternType: string, hostParams: object, hostSeed: (number|undefined), drawnEdges?: object[], sites?: object[], drawnCells?: object[], circles?: object[]}|null}
  */
 export function resolveMotifHostParams(layer, layers, hostGeometry = {}) {
   if (!isMotifLayer(layer)) return null;

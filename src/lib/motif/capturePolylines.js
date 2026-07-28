@@ -44,6 +44,92 @@ function apply(m, x, y) {
   return { x: a * x + c * y + e, y: b * x + d * y + f };
 }
 
+// ── CLOSURE INFERENCE (#147, PRD #143) ───────────────────────────────────────
+// A p5 shape is only EXPLICITLY closed when the pattern passes CLOSE to
+// endShape(). Several shipping hosts draw shapes that are geometrically closed
+// and terminate them bare: Lissajous at damping 0 traces a mathematically closed
+// figure, and the marching-squares stitcher shared by Chladni and
+// TopographicContours ends a ring by repeating its start vertex. Reported as
+// open, those paths made Route's loop/strand scopes lie about what they were
+// filtering and made the Zone partitioner invent a seam to flower at.
+//
+// So closure is INFERRED here, from endpoint coincidence. Deliberately on the
+// capture side and not by passing CLOSE in the patterns: that would change what
+// they paint and what they export, a real behavioural change to shipping
+// patterns for the benefit of a third subsystem. Inference changes nothing
+// painted. It is also host-agnostic by construction — this module sees a call
+// stream, never a pattern id — so the same rule reaches every capture host.
+//
+// THE TOLERANCE, and why this value.
+//
+// Two endpoints count as coincident when they are within
+// `CLOSURE_TOLERANCE_RELATIVE` of the path's OWN bounding-box diagonal, that
+// diagonal floored at 1 px so a degenerate (point-like) path still gets a
+// well-defined absolute threshold. Relative rather than absolute because closure
+// is a property of the figure, not of the canvas: the same curve captured at
+// 400 px and at 4000 px must classify identically.
+//
+// 1e-6 sits in a band that was measured, not guessed:
+//   • FLOOR — a mathematically closed Lissajous leaves round-off of at most
+//     ~6e-15 of its own diagonal, measured across the extreme of its param space
+//     (freqA 12, freqB 11, cycles 48, steps 6000, amplitude 1, and again on a
+//     4000x3000 canvas). A stitched Chladni/topographic ring lands at exactly 0.
+//     1e-6 is ~10^8 above that noise, so the rule cannot be defeated by
+//     arithmetic on a wider canvas or a denser curve.
+//   • CEILING — 1e-6 of a 500 px figure is 5e-4 px. Both patterns' SVG writers
+//     round coordinates to two decimals, so a gap that small is not even
+//     REPRESENTABLE in the export, let alone visible on the canvas or cuttable
+//     on a plotter. A gap under this threshold cannot be a deliberate open end;
+//     it can only be arithmetic. Empirically the tightest genuinely-open gap
+//     across both hosts' param spaces is 4.17 px on a ~500 px figure (~8e-3
+//     relative) — four orders of margin.
+//
+// A path of fewer than three points is never inferred closed: a single segment
+// is not a loop, and calling one closed would hand the Zone partitioner a path
+// with neither an Apex nor an interior. An explicit endShape(CLOSE) always wins.
+
+/**
+ * Endpoint-coincidence tolerance as a fraction of a path's bounding-box
+ * diagonal. See the block above for the derivation of the value.
+ * @type {number}
+ */
+export const CLOSURE_TOLERANCE_RELATIVE = 1e-6;
+
+/**
+ * The absolute (px) closure tolerance for one polyline: the relative tolerance
+ * scaled by the path's bounding-box diagonal, with the diagonal floored at 1 px.
+ * @param {{x:number,y:number}[]} points
+ * @returns {number}
+ */
+export function closureToleranceFor(points) {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const p of points) {
+    if (p.x < minX) minX = p.x;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.y > maxY) maxY = p.y;
+  }
+  const diagonal = Math.hypot(maxX - minX, maxY - minY);
+  return CLOSURE_TOLERANCE_RELATIVE * Math.max(diagonal, 1);
+}
+
+/**
+ * Whether a bare-terminated polyline should be reported as a closed loop: at
+ * least three points, and first/last within `closureToleranceFor(points)` of
+ * each other (inclusive).
+ * @param {{x:number,y:number}[]} points
+ * @returns {boolean}
+ */
+export function isImplicitlyClosed(points) {
+  if (!points || points.length < 3) return false;
+  const first = points[0];
+  const last = points[points.length - 1];
+  return Math.hypot(last.x - first.x, last.y - first.y) <= closureToleranceFor(points);
+}
+
 /**
  * Fold a recorded draw-call stream into absolute-coordinate polylines.
  *
@@ -52,7 +138,9 @@ function apply(m, x, y) {
  *   TRANSFORM  push · pop · translate(x,y) · rotate(theta) · scale(s | sx,sy)
  *   DRAW       line(x1,y1,x2,y2)                 → one 2-point OPEN polyline
  *              beginShape · vertex(x,y) · endShape(mode?) → one polyline;
- *                CLOSED iff endShape's first arg is non-null (p5's CLOSE flag).
+ *                CLOSED when endShape's first arg is non-null (p5's CLOSE flag)
+ *                OR when the shape's endpoints coincide within the stated
+ *                closure tolerance (#147 — see CLOSURE_TOLERANCE_RELATIVE).
  *              bezierOrder(n) · bezierVertex(x,y) → p5 2.x curve API: a cubic is
  *                bezierOrder(3) plus THREE 1-point bezierVertex calls (c1, c2,
  *                end). Each such segment is FLATTENED (shared adaptive
@@ -155,7 +243,10 @@ export function capturePolylines(calls) {
           if (shape.length >= 2) {
             // p5 passes CLOSE (a non-null constant) to close a shape; open shapes
             // call endShape() with no arg. Treat any non-null first arg as closed.
-            paths.push({ points: shape, closed: a[0] != null });
+            // A BARE endShape falls through to closure inference (#147) — see the
+            // tolerance block above — so a host that draws a geometrically closed
+            // figure without saying CLOSE is still reported as the loop it is.
+            paths.push({ points: shape, closed: a[0] != null || isImplicitlyClosed(shape) });
           }
           shape = null;
           bezierBuf = null;

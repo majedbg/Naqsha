@@ -431,13 +431,23 @@ describe('#144 new edge hosts — anchors land on the curve AS PAINTED', () => {
     });
   }
 
-  // Lissajous at damping 0 is a mathematically CLOSED figure, but it terminates
-  // its shape bare (endShape() with no CLOSE), so capture reports it OPEN.
-  // That is a known, documented gap owned by ticket #147 (closure inference from
-  // endpoint coincidence) — pinned here so #147 has a red test to flip, and so
-  // nobody "fixes" it inside this slice.
-  it('lissajous: a closed figure is still reported OPEN (#147 will flip this)', () => {
+  // Lissajous at damping 0 is a mathematically CLOSED figure, and it terminates
+  // its shape bare (endShape() with no CLOSE). #144 pinned that capture reported
+  // it OPEN; #147 fixed that on the CAPTURE side by inferring closure from
+  // endpoint coincidence under a stated tolerance, so the expectation is flipped
+  // here. The patterns were NOT touched — what Lissajous paints and exports is
+  // unchanged. The tolerance and the Route/Zones consequences live in
+  // capturePolylines.test.js and closureInference.test.js.
+  it('lissajous: a mathematically closed figure is reported CLOSED (#147)', () => {
     const paths = captureHost('lissajous', { ...defaultParamsFor('lissajous'), damping: 0 });
+    expect(paths.length).toBeGreaterThan(0);
+    for (const path of paths) expect(path.closed).toBe(true);
+  });
+
+  // The other half of the same criterion: damping > 0 is a decaying harmonograph
+  // ribbon with two genuinely separated ends, and it must stay OPEN.
+  it('lissajous: a damped figure is still reported OPEN (#147)', () => {
+    const paths = captureHost('lissajous', { ...defaultParamsFor('lissajous'), damping: 0.01 });
     expect(paths.length).toBeGreaterThan(0);
     for (const path of paths) expect(path.closed).toBe(false);
   });

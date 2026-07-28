@@ -74,7 +74,7 @@ const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, de
 page.on('pageerror', (e) => console.error('[page error]', e.message));
 page.on('console', (m) => m.type() === 'error' && console.error('[console]', m.text()));
 
-for (const v of ['A', 'B', 'C']) {
+for (const v of ['A', 'B', 'C', 'D']) {
   await page.goto(`http://localhost:${PORT}/?slotcard=${v}`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
   await page.waitForSelector('[data-testid="proto-slot"]', { timeout: 30_000 });
   await dismissOnboarding(page);
@@ -85,15 +85,15 @@ for (const v of ['A', 'B', 'C']) {
   await panel.screenshot({ path: path.join(OUT, `slotcard-${v}.png`) });
 }
 
-// Also: variant A in Random mode (weight row) — click the "random" pill.
-await page.goto(`http://localhost:${PORT}/?slotcard=A`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+// Also: variant D in Random mode (weight row) — click the "random" pill.
+await page.goto(`http://localhost:${PORT}/?slotcard=D`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
 await page.waitForSelector('[data-testid="proto-slot"]', { timeout: 30_000 });
 await dismissOnboarding(page);
 await page.waitForTimeout(400);
 await page.getByRole('button', { name: 'random', exact: true }).click();
 await page.waitForTimeout(300);
 await page.locator('[data-testid="slot-card-proto-overlay"] .shadow-pop').first()
-  .screenshot({ path: path.join(OUT, 'slotcard-A-random.png') });
+  .screenshot({ path: path.join(OUT, 'slotcard-D-random.png') });
 console.log('done');
 
 await browser.close();

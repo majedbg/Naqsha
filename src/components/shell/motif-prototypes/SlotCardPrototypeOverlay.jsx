@@ -20,6 +20,7 @@ import {
   VariantASlotPort,
   VariantBGutter,
   VariantCMixer,
+  VariantDGutterInline,
 } from "./SlotCardVariants";
 
 /* --------------------------------------------------------- variant param */
@@ -178,6 +179,7 @@ function Panel({ variant }) {
       {variant === "A" && <VariantASlotPort doc={doc} />}
       {variant === "B" && <VariantBGutter doc={doc} />}
       {variant === "C" && <VariantCMixer doc={doc} />}
+      {variant === "D" && <VariantDGutterInline doc={doc} />}
 
       <StateReadout doc={doc} />
     </div>

@@ -45,11 +45,12 @@ import {
 
 /* ------------------------------------------------------------------ state */
 
-export const SLOT_VARIANTS = ["A", "B", "C"];
+export const SLOT_VARIANTS = ["A", "B", "C", "D"];
 export const SLOT_VARIANT_NAMES = {
   A: "Popover port",
   B: "Gutter",
   C: "Mixer channel",
+  D: "Gutter + inline spread",
 };
 
 // Five slots covering every state the strip has to draw. ORDERED so the three
@@ -652,6 +653,67 @@ export function VariantBGutter({ doc }) {
     <div className="flex flex-nowrap items-start gap-1.5 overflow-x-auto pb-1">
       {doc.slots.map((s) => (
         <ChipB key={s.id} slot={s} doc={doc} />
+      ))}
+    </div>
+  );
+}
+
+/* ------------------------------------ variant D — gutter + inline spread */
+
+// ROUND 2, Majed's verdict: B's gutter and its larger thumb, but A's flat/bell
+// pair back on ONE row instead of stacked.
+//
+// Those two do not compose directly — the gutter lane is 22px, and that is
+// exactly why B stacked them. The resolution: the gutter carries only the two
+// toggles that DISCLOSE (flip, angle-rnd), and the row angle-rnd opens spans
+// the FULL chip width, under the lane, where ±30° and both spread icons fit
+// side by side with room to spare. A disclosed child row earns full width; a
+// modifier of an existing row does not.
+function ChipD({ slot, doc }) {
+  const hidden = isHidden(slot);
+  const pure = isPureRest(slot);
+  const rr = slot.rotationRandom;
+  return (
+    <div
+      data-testid="proto-slot"
+      className={`flex w-[124px] shrink-0 flex-col gap-0.5 self-start rounded-cell border border-hairline bg-paper p-1 ${
+        hidden ? "opacity-45" : ""
+      }`}
+    >
+      <ChipHeader slot={slot} doc={doc} />
+      {pure ? <RestPlate /> : <ChipThumb slot={slot} size={40} />}
+      {!pure && (
+        <>
+          <div className="flex gap-0.5">
+            <div className="flex min-w-0 flex-1 flex-col">
+              {doc.mode === "random" && <WeightCell slot={slot} doc={doc} />}
+              <ScaleCell slot={slot} doc={doc} slotWidth="5ch" />
+              <RotationNumber slot={slot} doc={doc} />
+            </div>
+            <div className="flex w-[22px] shrink-0 flex-col items-center gap-0.5 border-l border-hairline/60 pl-0.5">
+              {doc.mode === "random" && <span className="h-5" />}
+              <FlipToggle slot={slot} doc={doc} />
+              <AngleRndToggle slot={slot} doc={doc} />
+            </div>
+          </div>
+          {rr && (
+            <div className="flex items-center justify-between gap-0.5">
+              <RangeCell slot={slot} doc={doc} />
+              <SpreadToggles slot={slot} doc={doc} />
+            </div>
+          )}
+        </>
+      )}
+      {pure && doc.mode === "random" && <WeightCell slot={slot} doc={doc} />}
+    </div>
+  );
+}
+
+export function VariantDGutterInline({ doc }) {
+  return (
+    <div className="flex flex-nowrap items-start gap-1.5 overflow-x-auto pb-1">
+      {doc.slots.map((s) => (
+        <ChipD key={s.id} slot={s} doc={doc} />
       ))}
     </div>
   );

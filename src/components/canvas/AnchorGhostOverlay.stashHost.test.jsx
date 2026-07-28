@@ -78,6 +78,8 @@ import { useRef } from 'react';
 import useCanvas from '../../lib/useCanvas.js';
 import AnchorGhostOverlay from './AnchorGhostOverlay.jsx';
 import { resolveHostAnchors } from '../../lib/motif/hostAnchors.js';
+import { defaultMotifAddOpts } from '../../lib/motif/defaultBinding.js';
+import { createMotifParams } from '../../lib/motif/motifLayer.js';
 import { clearGlyphClipboard, readGlyphClipboard } from '../../lib/motif/glyphClipboard.js';
 
 const W = 800;
@@ -194,6 +196,25 @@ describe('AnchorGhostOverlay — Circle Packing (a stash host) gets editable dot
     expect(popover()).not.toBeNull();
   });
 
+  it('the motif a maker ACTUALLY gets from "+ Add Motif" shows placed dots', async () => {
+    // Adversarial pass: the fixtures above hand-pick a sizing block, so they
+    // could pass while the real default (proportional size 18, min 3, margin
+    // 0.85 — defaultBinding.js) placed nothing. This runs the genuine
+    // add-a-motif options through the genuine params builder.
+    const opts = defaultMotifAddOpts('circlepacking', 'leaf');
+    expect(opts.anchorMode).toBe('semantic');
+    expect(opts.binding.selection.roles).toEqual(['cell']);
+    const layers = [
+      packingHost(),
+      {
+        ...packingMotif(),
+        params: createMotifParams({ ...opts, hostLayerId: 'ph' }),
+      },
+    ];
+    const { dots } = await renderOverlay(layers);
+    expect(placedStates(dots).length).toBeGreaterThan(0);
+  });
+
   it('a double-click writes a per-glyph hide record for the clicked container', async () => {
     const onUpdateLayer = vi.fn();
     const layers = [packingHost(), packingMotif()];
@@ -303,6 +324,15 @@ describe('AnchorGhostOverlay — a host not yet probed resolves to nothing, not 
   it('an instance whose stash carries no key this host understands → no overlay', () => {
     expect(() => bare({ ph: { motifHostGeometry: {} } })).not.toThrow();
     expect(document.querySelector('[data-testid="anchor-ghost-overlay"]')).toBeNull();
+  });
+
+  it('an EMPTY stash is not the unprobed case — the overlay renders, with no dots', () => {
+    // The null-vs-[] contract, held all the way from pointHostAnchors through the
+    // resolver to the overlay: "no circles key" (unprobed) and "a packing that
+    // genuinely placed nothing" are different answers and must stay different.
+    const { container } = bare({ ph: { motifHostGeometry: { circles: [] } } });
+    expect(container.querySelector('[data-testid="anchor-ghost-overlay"]')).not.toBeNull();
+    expect(container.querySelectorAll('[data-anchor-id]')).toHaveLength(0);
   });
 });
 

@@ -63,10 +63,20 @@ const voronoiHost = (visible) => ({
   params: { cellCount: 12, jitter: 0, relaxationSteps: 0, symmetry: 'none' },
 });
 
+// particleCount 40, not FlowField's default 800 (#170). Under the p5 stub above
+// `random()` returns a constant 0.5 for every call, so every particle starts at
+// the SAME point and — `noise()` being constant too — traces the SAME straight
+// line. 800 particles therefore buy 800 IDENTICAL trails, not coverage: the
+// hidden-vs-visible invariant these tests lock is particle-count-independent.
+// What the 800 did buy was cost — the record-mode prepass captured ~65k draw
+// calls per probe, which is what made this file flake under load (see the
+// waitFor note in overlayDots). 40 keeps the assertions discriminating (the
+// unarmed case still samples ~680 anchors and places 17, so "placed ⊊ sampled"
+// is a real constraint) at ~1/20th the work.
 const flowHost = (visible) => ({
   id: 'fh', name: 'Flow', type: 'pattern', patternType: 'flowfield',
   visible, opacity: 100, bgOpacity: 0, color: '#000000', seed: 9,
-  params: {},
+  params: { particleCount: 40 },
 });
 
 // edgeOpts mirrors createMotifParams' default (motifLayer.js): the overlay
@@ -96,7 +106,15 @@ function harness(layers) {
 // One (id → "cx,cy") map per overlay render, for dot-for-dot comparison.
 async function overlayDots(layers, overlayProps = {}) {
   const { result } = harness(layers);
-  await waitFor(() => expect(result.current.patternInstances[layers[0].id]).toBeTruthy());
+  // EXPLICIT waitFor timeout (#170). Testing Library's `asyncUtilTimeout`
+  // defaults to 1000ms and is NOT vitest's `testTimeout` — the 15000 in
+  // vitest.config.js never applied here. That 1000ms was the real budget this
+  // file kept blowing under load, while the raised testTimeout made it look
+  // like there was 15s of headroom. Stated here so the two budgets are visible
+  // together; the flowfield cost itself is fixed at the fixture (flowHost).
+  await waitFor(() => expect(result.current.patternInstances[layers[0].id]).toBeTruthy(), {
+    timeout: 15000,
+  });
   const { container } = render(
     <AnchorGhostOverlay
       layers={layers}

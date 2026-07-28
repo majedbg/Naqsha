@@ -1178,6 +1178,22 @@ function MotifDevice({
   // mode-click restores stashed work instead of factory). Only meaningful when a
   // PRESET is lit (Custom has no factory); the UI enables the affordance only then.
   // One onUpdateLayer = one undo entry.
+  //
+  // RESET IS THE ONE PLACE A RENDER-ONLY COERCION BECOMES A DURABLE WRITE
+  // (recorded 2026-07-28, with the effective-chain amendment to ADR 0008).
+  // `modeForMotif` now matches the chain the CANVAS renders, so a motif built on
+  // a two-axis Grid keeps reading "Alternate x‑o" after the Grid is toggled to
+  // columns-only — which enables this affordance where it used to be disabled
+  // (the chain read Custom). Clicking it then re-applies the factory build under
+  // the host's CURRENT params, storing `roles:['edge']` over a `['crossing']` the
+  // maker never touched. Accepted: Reset's meaning is precisely "make this the
+  // factory build of the lit mode ON THIS HOST", the write is explicit and it is
+  // one undo entry. The cost worth naming is that edgeRoles.js's coercion is
+  // otherwise write-free by contract (#154 criterion 11: toggle the host back and
+  // the original behaviour returns with no write at any point) — after a Reset the
+  // stored roles really are `['edge']`, so toggling back leaves the glyphs on the
+  // lines. Undo covers it; nothing else does. Guarded in
+  // Inspector.motifChips.test.jsx.
   const resetMode = (m) => {
     const host = layer.patternType;
     const hostParams = layer.params;

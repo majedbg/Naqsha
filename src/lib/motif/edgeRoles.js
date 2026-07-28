@@ -56,7 +56,15 @@ export function coerceEdgeRoles(binding) {
 // seam). Nothing is written — the document keeps the maker's stored intent, and
 // availability is recomputed from live host params every frame, so turning the
 // host back into one that emits the stored role brings the original behaviour
-// back with no write at any point (#154 criterion 11).
+// back with no write at any point (#154 criterion 11) — with ONE named
+// exception since 2026-07-28, and it is a maker action rather than a drift:
+// because `modeForMotif` now matches the coerced chain, a coerced motif reads as
+// its preset instead of Custom, which ENABLES the mode column's **Reset**. Reset
+// re-applies the factory build under the host's current params, and that IS a
+// write — so after a Reset on a toggled Grid the stored roles really are
+// `['edge']` and toggling back no longer restores the original placement. Undo
+// covers it; nothing else does. Recorded at `Inspector.resetMode` and in the
+// ADR 0008 amendment. Coercion itself still never writes.
 //
 // THE ORDER OF THE BRANCHES IS LOAD-BEARING. Do not "simplify" it:
 //
@@ -98,6 +106,16 @@ export function coerceEdgeRoles(binding) {
 // per-glyph override surface unreachable for exactly the placements this change
 // creates.
 //
+// A FOURTH CONSUMER, AND A DIFFERENT KIND (2026-07-28, the ADR 0008
+// effective-chain amendment): `modeMatch.modeForMotif` coerces the STORED chain
+// before comparing it to a rebuilt starter chip, so the MODE COLUMN names the
+// chain the canvas draws rather than the text on disk. It is not a render
+// surface — it renders nothing and returns a string — but it is a consumer of
+// this seam for exactly the reason the three above are: an independent notion of
+// "what does this host make of these roles" would let the label disagree with
+// the picture, which is the bug that amendment fixes. Read-only like the rest;
+// see WHAT EACH CALLER PASSES below.
+//
 // `anchorMode` DEFAULTS TO 'edge' when omitted, matching MotifPattern.js:86
 // (`p.anchorMode ?? 'edge'`) — a motif whose render params carry no anchorMode
 // renders in edge mode, and the render is the only caller that reads it off the
@@ -105,7 +123,7 @@ export function coerceEdgeRoles(binding) {
 //   • MotifPattern — `p.anchorMode ?? 'edge'`, i.e. the mode its ROUTER already
 //     resolved (resolveMotifHost forces 'edge' on an edge host), which is
 //     authoritative for the render.
-//   • AnchorGhostOverlay / MotifBlockRack — DERIVED from the host
+//   • AnchorGhostOverlay / MotifBlockRack / modeMatch — DERIVED from the host
 //     (`isEdgeHost` / `hostIsSemantic`), because there it has to describe the
 //     anchor set those surfaces actually hold: both resolve their anchors through
 //     the params-aware host classification, never through the motif's stored

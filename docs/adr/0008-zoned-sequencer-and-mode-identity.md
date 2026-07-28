@@ -157,3 +157,75 @@ Consequences:
   entry stops enumerating exactly two. Cell is a deliberate, recorded exception
   to that entry's `_Avoid_: role` rule: the role/Zone separation holds for
   structures that are part of a path, and a region has no other name.
+
+## Amendment — A mode's identity is the EFFECTIVE chain, not the stored one (2026-07-28)
+
+This decision defined mode identity over the chain the document **stores**. It is
+now defined over the chain the canvas **renders** — the stored chain with its
+Route roles resolved through `coerceRoles`, the same seam `MotifPattern` and
+`AnchorGhostOverlay` already run. Only the stored side is coerced; the rebuilt
+chip chain is params-aware by construction. Nothing is written: the matcher
+coerces a copy and returns a string, exactly as the render does.
+
+The stored definition stopped being tenable when two shipped changes met. #154
+step 2 made create-time role defaults, `chip.build`, `modeForMotif` and
+`applyModeChain` params-aware; #166/#168 gave the Grid an axis toggle. Build an
+Alternate x-o on a two-axis Grid (it stores `roles: ['crossing']`), then toggle
+the Grid to columns-only: the Grid becomes an edge host, `coerceRoles` narrows the
+stored roles to `['edge']` at render — the glyphs do not vanish, they relocate
+from the crossings to along the lines — and the mode column flipped to **Custom**
+with no motif edit. The label described the document while the canvas showed
+something else.
+
+The label was the visible half. The half that costs the maker work is the
+**modeCache**: `applyMode` stashes the outgoing chain under the mode it currently
+reads as, so a chain reading Custom filed the maker's customizations under
+`cache.custom` rather than `cache['alternate-xo']`, and a later click on Alternate
+x-o handed back the factory build. Nothing was lost, but it was reachable only
+through the Custom chip, which reads as lost. Matching the effective chain fixes
+that as a consequence of naming the mode correctly, which is the reason this is a
+change to the definition rather than to the label.
+
+The matcher derives the `anchorMode` that `coerceRoles` needs from the host
+(`isEdgeHost(type, params) ? 'edge' : 'semantic'`), exactly as
+`AnchorGhostOverlay` does, and deliberately does **not** read the motif's stored
+`anchorMode`. Neither render path trusts that field — the overlay derives it and
+`resolveMotifHost` forces `'edge'` on an edge host before `MotifPattern` reads it
+— so trusting it here would make mode identity the one surface believing a value
+the renders override, and would pull the disagreement issue #174 describes into
+the mode column. It also buys nothing for the motivating case, where `isEdgeHost`
+is already true. No signature changed.
+
+Consequences:
+
+- **Mode identity is non-injective on a coercing host, and that is the intent.**
+  On a columns-only Grid a stored `['crossing']` and a stored `['edge']` both read
+  Alternate x-o, because the host cannot tell them apart and renders them
+  identically; toggle the axis back and they split again. The label distinguishes
+  exactly what the host distinguishes — no more, and no less. Two chains reading
+  the same mode still keep their own bytes; nothing is merged or rewritten.
+- **Reset becomes the one place a render-only coercion turns into a durable
+  write.** Because the toggled motif now reads as a preset, Reset is enabled where
+  it was previously disabled, and re-applies the factory build under the host's
+  current params — storing `['edge']` over roles the maker never touched. Accepted:
+  that is precisely what Reset means, the write is explicit, and it is one undo
+  entry. The cost worth naming is that `edgeRoles.js` is otherwise write-free by
+  contract (#154 criterion 11 — toggle the host back and the original behaviour
+  returns with no write at any point); after a Reset it does not.
+- **Clicking the lit mode stays a no-op**, so on a toggled host clicking "Alternate
+  x-o" no longer rewrites the chain to the factory build the way it did while the
+  chain read Custom. Correct under this definition, and visible.
+- **The params-blind fallback participates in identity.** When a stored role
+  survives no intersection, `coerceRoles` falls back to `defaultRolesForHost`. A
+  Voronoi Route storing `['tip']` — a role Voronoi does not emit (#154) — therefore
+  reads as the mode its `['crossing']` render draws. This follows from the
+  definition rather than qualifying it: the render runs the identical fallback, so
+  the mode named is still the picture. It is safe from the params-blindness
+  because the only params-narrowing semantic host is `grid` and a single-axis Grid
+  is diverted by the edge branch before the fallback is reachable — asserted as a
+  standing invariant over `SEMANTIC_MOTIF_HOSTS` in `modeMatch.test.js`.
+- **The #154 trade recorded in `hostRoles.js` is partly repaid.** Saved Vines on a
+  Voronoi or a Spiral that read as Custom because the narrowed Route dropped a
+  dead role now read as Vine again: the dead role coerces away on both sides. No
+  document was migrated to achieve it — the same no-auto-migration rule this ADR
+  set for pre-ADR flat Vines still holds.

@@ -599,3 +599,118 @@ describe("Motif mode selector — explicit Reset (ADR 0008)", () => {
     expect(screen.getByTestId("motif-mode-reset")).toBeEnabled();
   });
 });
+
+// ── The Grid axis toggle, seen from the mode column (2026-07-28) ─────────────
+//
+// `modeForMotif` matches the EFFECTIVE chain — the one the canvas renders after
+// `coerceRoles` — so a motif built on a two-axis Grid keeps its mode when the
+// Grid is toggled to columns-only (#166/#168). The LABEL is the visible half of
+// that; the half that costs the maker work is the **modeCache**. `applyMode`
+// stashes the outgoing chain under the mode it currently READS as, so a chain
+// that read as Custom stashed the maker's customization under `cache.custom` and
+// a later click on Alternate x‑o handed back the FACTORY build instead. Not
+// lost, but reachable only through the Custom chip — which reads as lost.
+describe("Motif mode selector — a toggled Grid keeps the motif's mode and its cache slot", () => {
+  // A Grid drawn on ONE axis: Grid.js gates each axis at >= 0.5, so this is the
+  // host after the axis toggle. Its motif was created BEFORE the toggle.
+  const columnsOnlyHost = () => ({
+    ...hostLayer("host1", "grid"),
+    params: { drawHorizontal: 0, drawVertical: 1 },
+  });
+
+  const routeRoles = (binding) => binding.chain.find((b) => b.type === "route").roles;
+
+  // An Alternate x‑o as it was STORED on the two-axis Grid (`applyModeChain`
+  // params-blind ⇒ roles `['crossing']`), with slot 0's glyph swapped to 'dot' —
+  // the maker's work. Flat identity is glyph-agnostic (ADR 0008), so the swap
+  // does not by itself change the mode; it is only there to be lost or kept.
+  function customizedXoFromTwoAxisGrid(id, hostId) {
+    const applied = applyModeChain("alternate-xo", "grid");
+    const chain = applied.binding.chain.map((b) =>
+      b.type === "sequence"
+        ? { ...b, slots: b.slots.map((s, i) => (i === 0 ? { ...s, glyphRef: "dot" } : s)) }
+        : b
+    );
+    return {
+      id,
+      name: id,
+      type: MOTIF_TYPE,
+      patternType: MOTIF_TYPE,
+      params: createMotifParams({
+        hostLayerId: hostId,
+        glyphRef: applied.glyphRef,
+        anchorMode: applied.anchorMode,
+        binding: { ...applied.binding, chain },
+      }),
+      randomizeKeys: [],
+      paramsCache: {},
+    };
+  }
+
+  it("lights the stored mode, not Custom, after the host goes single-axis", () => {
+    const motif = customizedXoFromTwoAxisGrid("m1", "host1");
+    expect(routeRoles(motif.params.binding)).toEqual(["crossing"]); // the premise
+    render(
+      <Inspector
+        layers={[columnsOnlyHost(), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    expect(screen.getByTestId("motif-mode-alternate-xo")).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByTestId("motif-mode-custom")).toHaveAttribute("aria-checked", "false");
+  });
+
+  it("THE PRIZE: the outgoing chain is stashed under its own mode, and comes back", () => {
+    const rec = vi.fn();
+    const motif = customizedXoFromTwoAxisGrid("m1", "host1");
+    const stored = motif.params.binding.chain; // the maker's chain, captured up front
+    render(<RecordingHost initialLayers={[columnsOnlyHost(), motif]} onUpdate={rec} />);
+
+    // Switch away to the Vine …
+    fireEvent.click(screen.getByTestId("motif-mode-vine"));
+    const away = lastPatch(rec).params;
+    expect(away.modeCache["alternate-xo"]).toBeDefined(); // the right slot …
+    expect(away.modeCache.custom).toBeUndefined(); // … and NOT the Custom slot
+
+    // … and back: the maker's chain returns, roles and swapped glyph intact —
+    // NOT the columns-only factory build (which would route `['edge']` and deal
+    // the factory 'diamond').
+    fireEvent.click(screen.getByTestId("motif-mode-alternate-xo"));
+    const back = lastPatch(rec).params;
+    expect(back.binding.chain).toEqual(stored);
+    expect(routeRoles(back.binding)).toEqual(["crossing"]);
+  });
+
+  it("Reset is the ONE place the render-only coercion becomes a durable write", () => {
+    // RECORDED DECISION, not an oversight. Reset re-applies the lit preset's
+    // FACTORY build under the host's CURRENT params, so on the toggled Grid it
+    // writes `['edge']` over roles the maker never touched. Before this change
+    // the chain read as Custom and Reset was DISABLED, so this affordance is new
+    // here. It is accepted: Reset means "make this the factory build of the lit
+    // mode on this host", the write is explicit, and it is one undo entry. The
+    // cost worth naming is that `edgeRoles.js` promises (#154 criterion 11) that
+    // toggling the host back restores the original behaviour with NO write at
+    // any point — after a Reset the stored roles really are `['edge']`, so
+    // toggling back leaves the glyphs on the lines rather than the crossings.
+    const onUpdateLayer = vi.fn();
+    const motif = customizedXoFromTwoAxisGrid("m1", "host1");
+    render(
+      <Inspector
+        layers={[columnsOnlyHost(), motif]}
+        selectedLayerId="host1"
+        onUpdateLayer={onUpdateLayer}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    const reset = screen.getByTestId("motif-mode-reset");
+    expect(reset).toBeEnabled();
+    fireEvent.click(reset);
+    const patch = onUpdateLayer.mock.calls[0][1].params;
+    expect(routeRoles(patch.binding)).toEqual(["edge"]);
+    expect(modeForMotif(patch.binding, "grid", { drawHorizontal: 0, drawVertical: 1 })).toBe(
+      "alternate-xo"
+    );
+  });
+});

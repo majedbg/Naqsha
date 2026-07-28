@@ -24,7 +24,12 @@
 // block's engine defaults, drop inert/volatile keys, sort roles — then structural
 // deep-equal (key-order-independent). A `bypass:true`, a changed `n`/`density`/
 // role, an added/removed block, or a route change are all REAL structure ⇒
-// preserved ⇒ 'custom'.
+// preserved ⇒ 'custom'. ONE QUALIFICATION on "role", added 2026-07-28: a changed
+// role only survives to the comparison if the HOST can still tell the two roles
+// apart. On a host that coerces them to the same thing at render — a columns-only
+// Grid narrows every role to `['edge']` — the two chains draw the same picture
+// and read as the same mode. See IDENTITY IS THE EFFECTIVE CHAIN below; the
+// canonicalization described here is unchanged, it is the input to it that is.
 //
 // ── MODE IDENTITY SPLITS BY PRESET KIND (ADR 0008) ───────────────────────────
 // This module DELIBERATELY REVERSES its prior "a swapped slot glyph ⇒ custom"
@@ -52,8 +57,39 @@
 //
 // LEGACY / NULL: a legacy selection-form binding (no `.chain`) is 'custom' — it
 // predates modes; the UI offers to convert it. null/undefined/empty ⇒ 'custom'.
+//
+// ── IDENTITY IS THE **EFFECTIVE** CHAIN, NOT THE STORED ONE (2026-07-28) ──────
+// (ADR 0008 amendment. Forced by #154 step 2 + the Grid axis toggle #166/#168.)
+// The stored side is run through `coerceRoles` before it is canonicalized, so
+// what is compared is the chain the CANVAS RENDERS, not the text on disk. The
+// symptom that forced it: build an Alternate x‑o on a two-axis Grid (stores
+// `roles:['crossing']`), then toggle the Grid to columns-only. The Grid becomes
+// an EDGE host, `coerceRoles` narrows the stored `['crossing']` to `['edge']` at
+// render — the glyphs do not vanish, they relocate from the crossings to along
+// the lines — but the raw stored chain no longer equalled anything a chip builds
+// HERE, so the mode column read **Custom** with no motif edit. The label was
+// describing the document instead of the picture.
+//
+// The label was the visible half. The half that costs the maker work is
+// `Inspector.applyMode`, which stashes the OUTGOING chain in `params.modeCache`
+// under the mode it currently READS as: with the chain reading `custom`, a
+// maker's customizations were filed under `cache.custom` instead of
+// `cache['alternate-xo']`, so switching back to Alternate x‑o later returned the
+// FACTORY build and their work was reachable only via the Custom chip. Matching
+// the effective chain fixes that as a side effect, and that is the point.
+//
+// ONLY THE STORED SIDE IS COERCED. The rebuilt chip chain is already
+// params-aware (`chip.build(type, params)`) and is by construction what the host
+// can serve; coercing it too would be a no-op at best and could only mask a real
+// disagreement.
+//
+// READ-ONLY, ALWAYS. `coerceRoles` clones and never mutates, this function
+// returns a string, and NOTHING here writes the coerced value back — the
+// document keeps the maker's stored intent, exactly as the render does.
 
 import { STARTER_CHIPS } from './starterChips.js';
+import { coerceRoles } from './edgeRoles.js';
+import { isEdgeHost } from './hostKinds.js';
 
 /**
  * Which starter mode does this motif's chain represent on `hostPatternType`?
@@ -63,14 +99,16 @@ import { STARTER_CHIPS } from './starterChips.js';
  *   (#154 step 2): create-time role defaults are params-aware, so a chip must be
  *   REBUILT under the same params it was built with or the two disagree about
  *   roles and every chip on a single-axis Grid reads as 'custom'. Omitting it
- *   keeps the by-type answer, matching the rest of the host seam.
+ *   keeps the by-type answer, matching the rest of the host seam — and the
+ *   coercion below degrades with it, since a params-blind caller genuinely does
+ *   not know which chain the canvas renders.
  * @returns {string} a STARTER_CHIP id, or 'custom'.
  */
 export function modeForMotif(binding, hostPatternType, hostParams) {
   const chain = binding && Array.isArray(binding.chain) ? binding.chain : null;
   if (!chain) return 'custom'; // legacy selection-form, empty, or null ⇒ custom.
 
-  const target = normalizeChain(chain);
+  const target = normalizeChain(effectiveChain(binding, hostPatternType, hostParams));
   for (const chip of STARTER_CHIPS) {
     const built = normalizeChain(chip.build(hostPatternType, hostParams).binding.chain);
     if (deepEqual(target, built)) return chip.id;
@@ -91,6 +129,66 @@ export function modeForMotif(binding, hostPatternType, hostParams) {
 export function applyModeChain(chipId, hostPatternType, hostParams) {
   const chip = STARTER_CHIPS.find((c) => c.id === chipId);
   return chip ? chip.build(hostPatternType, hostParams) : null;
+}
+
+// ── The effective chain ──────────────────────────────────────────────────────
+
+/**
+ * The chain the CANVAS RENDERS for this binding on this host — the stored chain
+ * with its Route roles resolved against what the host actually emits, via the
+ * one shared `coerceRoles` seam MotifPattern and AnchorGhostOverlay both use.
+ * Clones (or returns the stored array untouched when nothing needed coercing);
+ * never mutates, never writes.
+ *
+ * WHY `anchorMode` IS DERIVED HERE RATHER THAN READ OFF THE MOTIF. The motif
+ * stores an `anchorMode`, and threading it in was the obvious plan — it is the
+ * wrong one, for two independent reasons:
+ *   • NEITHER RENDER PATH TRUSTS THE STORED FIELD. `AnchorGhostOverlay` DERIVES
+ *     it (`isEdgeHost(host.patternType, host.params) ? 'edge' : 'semantic'`), and
+ *     `MotifPattern` reads `p.anchorMode` only AFTER `resolveMotifHost` has
+ *     already forced 'edge' for an edge host. Reading the stored value here would
+ *     make mode-matching the one place that believes a field both render paths
+ *     deliberately override — and would drag issue #174 (createMotifParams
+ *     defaults to 'edge' on semantic hosts) into the mode column.
+ *   • IT BUYS NOTHING FOR THE MOTIVATING CASE. On a columns-only Grid
+ *     `isEdgeHost('grid', params)` is already true, so `coerceRoles`' edge branch
+ *     fires whatever the stored anchorMode says.
+ * So it is derived from the two arguments this function already has, EXACTLY as
+ * the overlay derives it. One fact, one derivation, three surfaces.
+ *
+ * WHAT THE DERIVED VALUE ACTUALLY GUARDS, precisely: `coerceRoles` reads a
+ * MISSING anchorMode as 'edge' (MotifPattern's default), and its first branch is
+ * `(anchorMode ?? 'edge') === 'edge' || isEdgeHost(type, params)` — so passing
+ * 'edge', or passing nothing, would rewrite EVERY semantic host's Route to
+ * `['edge']` and read Custom on a Voronoi or a Recursive that never changed.
+ * Passing anything else falls through to the intersection. Because that branch
+ * re-asks `isEdgeHost` itself, the derivation is today observationally identical
+ * to a hardcoded 'semantic'; it is written as the derivation anyway so it mirrors
+ * the overlay and does not silently depend on that second disjunct surviving a
+ * future edit of `coerceRoles`.
+ *
+ * THE BRANCH-3 FALLBACK, decided rather than inherited. When a stored role
+ * survives no intersection, `coerceRoles` falls back to `defaultRolesForHost` —
+ * which is params-BLIND, so in principle identity could be decided by a role
+ * neither side can serve. It is safe here, and the reasoning is the same as the
+ * whole change: the RENDER runs that identical fallback, so the mode named is
+ * still the chain the canvas drew. (Concretely: a Voronoi Route storing `['tip']`
+ * — a role Voronoi does not emit, #154 — renders on `['crossing']`, i.e. exactly
+ * the anchors an Alternate x‑o draws, and the mode column now says so instead of
+ * showing Custom over a picture indistinguishable from the preset.) The fallback
+ * is also never itself unserveable: the only params-narrowing SEMANTIC host is
+ * `grid`, and a single-axis Grid is diverted by branch 1 long before the fallback
+ * is reachable. modeMatch.test.js asserts that as a standing invariant over
+ * SEMANTIC_MOTIF_HOSTS, so a future host cannot break it quietly.
+ *
+ * @param {object} binding  the motif's stored binding (chain-form)
+ * @param {string} type     the host's registry id
+ * @param {object} [params] the host's live params
+ * @returns {Array<object>} the chain to canonicalize
+ */
+function effectiveChain(binding, type, params) {
+  const anchorMode = isEdgeHost(type, params) ? 'edge' : 'semantic';
+  return coerceRoles(binding, { type, params, anchorMode }).chain;
 }
 
 // ── Canonicalization ─────────────────────────────────────────────────────────

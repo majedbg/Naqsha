@@ -1,10 +1,16 @@
 import { describe, it, expect } from 'vitest';
 import { modeForMotif, applyModeChain } from './modeMatch.js';
 import { STARTER_CHIPS } from './starterChips.js';
+import { SEMANTIC_MOTIF_HOSTS, defaultRolesForHost } from './hostKinds.js';
+import { rolesForHost } from './hostRoles.js';
 
 const CHIP_IDS = STARTER_CHIPS.map((c) => c.id);
 const SEMANTIC_HOST = 'grid';
 const EDGE_HOST = 'flowfield';
+
+// Grid.js gates each axis at >= 0.5, so 0 draws nothing on that axis.
+const COLUMNS_ONLY = { drawHorizontal: 0, drawVertical: 1 };
+const BOTH_AXES = { drawHorizontal: 1, drawVertical: 1 };
 
 describe('modeForMotif — round-trip (every chip → its own id)', () => {
   // #150 adds the two CELL hosts to the loop. The Vine's Route now varies by host
@@ -246,5 +252,141 @@ describe('applyModeChain', () => {
     expect(applyModeChain('custom', EDGE_HOST)).toBeNull();
     expect(applyModeChain('nope', EDGE_HOST)).toBeNull();
     expect(applyModeChain(null, EDGE_HOST)).toBeNull();
+  });
+});
+
+// ── THE EFFECTIVE CHAIN (2026-07-28, ADR 0008 amendment) ─────────────────────
+//
+// modeForMotif matches the chain the CANVAS RENDERS, not the one the document
+// stores: the stored side goes through `coerceRoles` first, exactly as
+// MotifPattern and AnchorGhostOverlay do. The symptom that forced it: build an
+// Alternate x‑o on a two-axis Grid (stores `['crossing']`), toggle the Grid to
+// columns-only (#166/#168) and the mode column flipped to Custom with no motif
+// edit — while the glyphs went on rendering, relocated to along the lines by the
+// very coercion the matcher was ignoring. The label was lying about the canvas,
+// and `Inspector.applyMode` stashed the maker's work under `cache.custom`
+// instead of `cache['alternate-xo']`.
+describe('modeForMotif — matches the EFFECTIVE chain (what the canvas renders)', () => {
+  const chip = (id) => STARTER_CHIPS.find((c) => c.id === id);
+
+  it('a chain stored for a two-axis Grid still reads as its mode under single-axis params', () => {
+    // THE MOTIVATING CASE. Stored roles `['crossing']`; a columns-only Grid emits
+    // `edge` alone, so the render coerces them — and so must the match.
+    const built = chip('alternate-xo').build('grid', BOTH_AXES);
+    expect(built.binding.chain[0].roles).toEqual(['crossing']); // the premise
+    expect(modeForMotif(built.binding, 'grid', COLUMNS_ONLY)).toBe('alternate-xo');
+  });
+
+  it('the same holds for the ZONED Vine (its stored Route is all four roles)', () => {
+    // The Vine's Route is the union of the roles the host emits, so a two-axis
+    // Grid stores four and a columns-only Grid builds one. Both coerce to
+    // `['edge']` at render; the Zone skeleton is untouched either way.
+    const built = chip('vine').build('grid', BOTH_AXES);
+    expect(built.binding.chain[0].roles).toEqual(['crossing', 'edge', 'tip', 'cell']);
+    expect(modeForMotif(built.binding, 'grid', COLUMNS_ONLY)).toBe('vine');
+  });
+
+  it('every starter chip stored two-axis survives the axis toggle', () => {
+    for (const c of STARTER_CHIPS) {
+      expect(modeForMotif(c.build('grid', BOTH_AXES).binding, 'grid', COLUMNS_ONLY)).toBe(c.id);
+    }
+  });
+
+  // THE GUARD THE `anchorMode` DERIVATION EXISTS FOR. `coerceRoles`' first branch
+  // reads a MISSING anchorMode as 'edge', so a matcher that coerced without one
+  // would rewrite EVERY semantic host's roles to `['edge']` and read Custom on a
+  // Voronoi or a Recursive that never changed. The derivation
+  // (`isEdgeHost ? 'edge' : 'semantic'`) is what keeps these lit.
+  describe('a genuinely SEMANTIC host is untouched', () => {
+    for (const host of ['voronoi', 'recursive', 'spiral', 'girih', 'truchet']) {
+      it(`every chip still round-trips on ${host} (with and without params)`, () => {
+        for (const c of STARTER_CHIPS) {
+          expect(modeForMotif(c.build(host).binding, host)).toBe(c.id);
+          expect(modeForMotif(c.build(host, {}).binding, host, {})).toBe(c.id);
+        }
+      });
+    }
+
+    it('a two-axis Grid is unchanged — the stored roles pass through verbatim', () => {
+      for (const c of STARTER_CHIPS) {
+        expect(modeForMotif(c.build('grid', BOTH_AXES).binding, 'grid', BOTH_AXES)).toBe(c.id);
+      }
+      // and a role the host DOES emit still diverges the mode (matching is not
+      // a blanket "roles no longer count").
+      const b = chip('alternate-xo').build('grid', BOTH_AXES).binding;
+      b.chain[0].roles = ['tip'];
+      expect(modeForMotif(b, 'grid', BOTH_AXES)).toBe('custom');
+    });
+  });
+
+  it('MODE IDENTITY IS NON-INJECTIVE on a coercing host — accepted, ADR 0008', () => {
+    // On a columns-only Grid the host cannot tell `['crossing']` from `['edge']`
+    // (it emits only edges and renders both identically), so both read as the
+    // same mode. Toggle the axis back and they split again. The label
+    // distinguishes exactly what the HOST can distinguish — no more, no less.
+    const crossing = chip('alternate-xo').build('grid', BOTH_AXES).binding;
+    const edge = chip('alternate-xo').build('grid', COLUMNS_ONLY).binding;
+    expect(modeForMotif(crossing, 'grid', COLUMNS_ONLY)).toBe('alternate-xo');
+    expect(modeForMotif(edge, 'grid', COLUMNS_ONLY)).toBe('alternate-xo');
+    // …and on the two-axis Grid the same two chains are different modes.
+    expect(modeForMotif(crossing, 'grid', BOTH_AXES)).toBe('alternate-xo');
+    expect(modeForMotif(edge, 'grid', BOTH_AXES)).toBe('custom');
+  });
+
+  it('is READ-ONLY: matching never mutates the binding it was handed', () => {
+    // `coerceRoles` clones, and modeForMotif returns a string — nothing here may
+    // ever write the coerced value back into the document.
+    const binding = chip('alternate-xo').build('grid', BOTH_AXES).binding;
+    const before = JSON.parse(JSON.stringify(binding));
+    modeForMotif(binding, 'grid', COLUMNS_ONLY);
+    expect(binding).toEqual(before);
+    expect(binding.chain[0].roles).toEqual(['crossing']);
+  });
+
+  // THE BRANCH-3 HAZARD, decided rather than ignored. When a stored role survives
+  // NO intersection, `coerceRoles` falls back to `defaultRolesForHost(type)` —
+  // which is params-BLIND. Feeding that into identity matching is safe for two
+  // reasons, and this pair of tests is the standing proof of the second:
+  //   • the RENDER runs the identical fallback, so the mode named is still the
+  //     chain the canvas drew — which is the whole contract; and
+  //   • the fallback is never a role the host cannot serve, because the only
+  //     params-narrowing semantic host is `grid` and a single-axis Grid is
+  //     diverted by branch 1 long before the fallback is reachable.
+  it('the params-blind fallback is always a role the host actually emits', () => {
+    for (const host of SEMANTIC_MOTIF_HOSTS) {
+      const avail = rolesForHost(host);
+      expect(avail.length).toBeGreaterThan(0);
+      for (const r of defaultRolesForHost(host)) expect(avail).toContain(r);
+    }
+  });
+
+  it("repays part of #154's recorded cost: a pre-narrowing Vine reads as Vine again", () => {
+    // hostRoles.js records the ACCEPTED cost of narrowing Voronoi (no `tip`) and
+    // Spiral (no `cell`): the Vine chip's Route dropped a role, so saved Vines on
+    // those hosts read as **Custom** on load — render-neutral (the dropped role
+    // matched no anchor) but visible in the mode column, and it moved their
+    // modeCache key. Matching the effective chain intersects the dead role away
+    // on the stored side too, so they read as Vine again. No document migrated.
+    for (const [host, dead] of [
+      ['voronoi', 'tip'],
+      ['spiral', 'cell'],
+    ]) {
+      expect(rolesForHost(host)).not.toContain(dead);
+      const saved = chip('vine').build(host).binding;
+      saved.chain[0].roles = [...saved.chain[0].roles, dead]; // as stored pre-#154
+      expect(modeForMotif(saved, host)).toBe('vine');
+    }
+  });
+
+  it('a stored role the host CANNOT emit reads as the mode the canvas draws', () => {
+    // Voronoi emits no `tip` (#154), so a stored `['tip']` renders through the
+    // fallback as `['crossing']` — the same anchors an Alternate x‑o draws. The
+    // mode column says so. This is the effective-chain contract taken to its
+    // conclusion, not an accident: the alternative (a Custom label over a canvas
+    // indistinguishable from the preset) is the lie this change removes.
+    expect(rolesForHost('voronoi')).not.toContain('tip');
+    const b = chip('alternate-xo').build('voronoi').binding;
+    b.chain[0].roles = ['tip'];
+    expect(modeForMotif(b, 'voronoi')).toBe('alternate-xo');
   });
 });

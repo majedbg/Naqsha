@@ -104,34 +104,49 @@ describe('#154 step 2 — criterion 2: THE TRAP — chips must not read as Custo
     }
   });
 
-  // RECORDED CONSEQUENCE, locked deliberately rather than discovered later.
+  // SUPERSEDED 2026-07-28 — the follow-up this block once deferred has SHIPPED.
   //
-  // Making modeForMotif params-aware means a stored chain can read as a
-  // DIFFERENT mode when the host's params change under it. Concretely, with the
-  // Grid axis toggle (#166/#168): build an Alternate x‑o on a two-axis Grid
-  // (roles `['crossing']`), then switch the Grid to columns-only — the mode
-  // column flips from "Alternate x‑o" to "Custom", with no motif edit.
+  // #154 step 2 made modeForMotif params-aware, and this test used to lock the
+  // consequence it left behind: a chain stored on a two-axis Grid (roles
+  // `['crossing']`) read as **Custom** the moment the Grid was toggled to
+  // columns-only (#166/#168), with no motif edit. The glyphs never disappeared —
+  // `coerceRoles` narrows `['crossing']` to `['edge']` at render, relocating them
+  // from the crossings to along the lines — so the mode column was describing the
+  // DOCUMENT while the canvas showed something else. The comment here named the
+  // better alternative (match the COERCED chain) and deferred it.
   //
-  // The glyphs do NOT disappear: `coerceRoles` narrows the stored `['crossing']`
-  // to `['edge']` at render, so they relocate from the crossings to along the
-  // lines. The chain genuinely no longer matches what a chip built HERE would
-  // produce, which is what 'custom' means.
+  // That alternative is now the contract: `modeForMotif` matches the EFFECTIVE
+  // chain (see modeMatch.js, and the ADR 0008 amendment). Its `anchorMode` is
+  // DERIVED from the host exactly as AnchorGhostOverlay derives it, not threaded
+  // in from the motif's stored field — the deferral's stated blocker, which
+  // turned out to need no signature change at all.
   //
-  // This is the same trade #154 already accepted and recorded for Voronoi and
-  // Spiral ("narrowing flips saved Vines on those hosts from `vine` to `custom`
-  // on load ... render-neutral but user-visible in the mode column"). The new
-  // part is that an axis TOGGLE can trigger it live, not only a load.
-  //
-  // The alternative — match against the COERCED stored roles, so the mode column
-  // always describes what the canvas drew — is coherent and arguably better, but
-  // it needs `anchorMode` threaded into modeForMotif (coerceRoles' first branch
-  // treats a missing anchorMode as 'edge' and would take the edge path on every
-  // semantic host). Left as a follow-up rather than smuggled in here.
-  it('a chip built for a two-axis Grid does NOT match under single-axis params', () => {
+  // What is asserted below is therefore the inverse of what it was, and the
+  // load-bearing half is the second assertion: the mode SPLITS again when the
+  // host can tell the two chains apart. Mode identity is non-injective on a
+  // coercing host by design — the label distinguishes exactly what the host
+  // distinguishes. The full contract, including the modeCache consequence that
+  // motivated it, lives in modeMatch.test.js ("matches the EFFECTIVE chain") and
+  // Inspector.motifChips.test.jsx ("a toggled Grid keeps the motif's mode").
+  it('a chip built for a two-axis Grid STILL matches under single-axis params', () => {
     const built = STARTER_CHIPS.find((c) => c.id === 'alternate-xo').build('grid', BOTH_AXES);
-    expect(modeForMotif(built.binding, 'grid', COLUMNS_ONLY)).toBe('custom');
-    // ...and the glyphs still render, via the render-time coercion — the reason
-    // this is a label change and not a disappearance.
+    expect(built.binding.chain[0].roles).toEqual(['crossing']); // stored, unchanged
+    // The columns-only Grid emits `edge` alone, so THAT is what the canvas draws
+    // this chain as — and what the mode column now reports.
     expect(rolesForHost('grid', COLUMNS_ONLY)).toEqual(['edge']);
+    expect(modeForMotif(built.binding, 'grid', COLUMNS_ONLY)).toBe('alternate-xo');
+
+    // The document is untouched: matching coerces a COPY, never the stored chain.
+    expect(built.binding.chain[0].roles).toEqual(['crossing']);
+
+    // NON-INJECTIVE, and only where the host is blind: a chain stored `['edge']`
+    // reads as the same mode on the columns-only Grid, and the two split again on
+    // a two-axis Grid, which can tell a crossing from an edge.
+    const onOneAxis = STARTER_CHIPS.find((c) => c.id === 'alternate-xo').build(
+      'grid',
+      COLUMNS_ONLY
+    );
+    expect(modeForMotif(onOneAxis.binding, 'grid', COLUMNS_ONLY)).toBe('alternate-xo');
+    expect(modeForMotif(onOneAxis.binding, 'grid', BOTH_AXES)).toBe('custom');
   });
 });

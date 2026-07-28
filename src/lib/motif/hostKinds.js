@@ -24,7 +24,7 @@
 
 /** Hosts with a structural (crossing/tip/cell) anchor extractor. */
 export const SEMANTIC_MOTIF_HOSTS = Object.freeze(
-  new Set(['grid', 'recursive', 'spiral', 'voronoi', 'circlepacking'])
+  new Set(['grid', 'recursive', 'spiral', 'voronoi', 'circlepacking', 'modulegrid'])
 );
 
 /**
@@ -42,7 +42,9 @@ export const SEMANTIC_MOTIF_HOSTS = Object.freeze(
  * therefore supply BOTH from its stash, as Voronoi does, and must NOT also be
  * listed in EDGE_MOTIF_HOSTS.
  */
-export const STASH_MOTIF_HOSTS = Object.freeze(new Set(['voronoi', 'circlepacking']));
+export const STASH_MOTIF_HOSTS = Object.freeze(
+  new Set(['voronoi', 'circlepacking', 'modulegrid'])
+);
 
 /**
  * Geometry keys a stash host may publish on `instance.motifHostGeometry`, and
@@ -50,12 +52,18 @@ export const STASH_MOTIF_HOSTS = Object.freeze(new Set(['voronoi', 'circlepackin
  * place so a new stash host adds a key here rather than a new branch there.
  *   • voronoi        → drawnEdges (+ sites), legacy drawnCells
  *   • circlepacking  → circles (accepted container circles, #146)
+ *   • modulegrid     → cells (resolved per-cell {x,y,half,rotation}, #151)
+ *
+ * `cells` is the GENERIC cell-grid key, matching the generic extractor
+ * (cellGridAnchors.js) that reads it: Truchet (#153) reuses the same key for its
+ * tile centres and adds `arcs` alongside it rather than inventing a parallel one.
  */
 export const STASH_GEOMETRY_KEYS = Object.freeze([
   'drawnEdges',
   'sites',
   'drawnCells',
   'circles',
+  'cells',
 ]);
 
 /**
@@ -132,12 +140,22 @@ export const MOTIF_HOSTS = Object.freeze(
 // CIRCLE PACKING emits `cell` and nothing else (#146): one anchor per packed
 // circle, at its centre. It has no lattice to cross, no strand to run along and
 // no free terminus, so `cell` is both its default and its only role.
+// MODULE GRID likewise emits `cell` alone (#151): one anchor per module. Its
+// lattice is IMPLICIT — the pattern paints modules, not grid lines — so a glyph
+// at an intersection would sit on nothing visible, and there are no crossings.
+//
+// A CELL-ONLY HOST MUST BE LISTED HERE, and forgetting it fails SILENTLY: the
+// fallback below is `'edge'`, `defaultMotifAddOpts` writes that straight into
+// `binding.selection.roles`, the Route filter then drops every cell anchor, and
+// the first motif a maker adds shows NO glyphs and NO dots — while the resolver,
+// the extractor and every unit test keyed off a hand-picked role stay green.
 const DEFAULT_SEMANTIC_ROLE = Object.freeze({
   grid: 'crossing',
   recursive: 'crossing',
   voronoi: 'crossing',
   spiral: 'edge',
   circlepacking: 'cell',
+  modulegrid: 'cell',
 });
 
 /**

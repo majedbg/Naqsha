@@ -61,12 +61,19 @@ export const ALL_ROLES = Object.freeze(['crossing', 'edge', 'tip', 'cell']);
 //
 //   circlepacking — one anchor per packed circle, at its centre (#146). No
 //                   lattice to cross, no strand to run along, no free terminus.
+//   modulegrid    — one anchor per module, at its centre (#151). Its lattice is
+//                   IMPLICIT: the pattern paints modules, not grid lines, so a
+//                   glyph at an intersection would sit on nothing visible and
+//                   there are no crossings to offer. Cells alone, at every
+//                   params — the module shape is a look, not a capability, so
+//                   there is nothing here for params to switch on.
 //
 // NOT listed, deliberately, and owned by #154:
 //   voronoi — a tessellation has no free termini, so `tip` is dead today.
 //   spiral  — an open arm encloses no region, so `cell` is dead today.
 const NARROW_ROLES = Object.freeze({
   circlepacking: Object.freeze(['cell']),
+  modulegrid: Object.freeze(['cell']),
 });
 
 /**

@@ -64,7 +64,7 @@ import GlyphPopover from './GlyphPopover';
 import { glyphScreenRect } from './glyphPopoverPlacement';
 import { resolveHostAnchors } from '../../lib/motif/hostAnchors';
 import { resolveSelection } from '../../lib/motif/compileSelectionToChain';
-import { coerceEdgeRoles } from '../../lib/motif/edgeRoles';
+import { coerceRoles } from '../../lib/motif/edgeRoles';
 import { resolvePlacements } from '../../lib/motif/placementEngine';
 import { isEdgeHost, hostHasPathStructure } from '../../lib/motif/hostKinds';
 
@@ -226,16 +226,47 @@ export default function AnchorGhostOverlay({
   // exactly the slot the render seam threads (MotifPattern.js:111) — undefined on
   // legacy, where resolveSelection's compile path overwrites it with the compiled
   // `selection.overrides` anyway, so this is byte-identical to the real render.
+  // THE RENDER'S OWN ROLE COERCION, RESOLVED ONCE (#154, amendment A2).
+  //
+  // Hoisted to hook level on purpose: BOTH consumers below read this one value —
+  // the placement pipeline (which decides placed vs candidate) and the role-focus
+  // DISPLAY filter further down (which decides whether a dot is drawn at all).
+  // They used to disagree: placements ran on the coerced binding while the filter
+  // ran on the RAW one, so a Voronoi motif stored as roles:['tip'] would place
+  // glyphs at the fallback role and draw ZERO dots on them. No dot means no
+  // popover, which means the whole per-glyph override surface (#136/#137) is
+  // unreachable for exactly the placements #154 newly creates. One seam, both
+  // readers — and the function itself is imported from the render, never
+  // re-implemented (edgeRoles.js's whole reason for existing).
+  //
+  // `anchorMode` is derived from the HOST, not read off the motif — because it
+  // must describe the anchor set THIS OVERLAY actually holds. `resolveHostAnchors`
+  // above omits `mode` and so derives it from `isEdgeHost`; passing the motif's
+  // stored anchorMode instead could coerce roles to 'edge' over a SEMANTIC anchor
+  // set and filter away the very dots just resolved. (In the app the two always
+  // agree — defaultBinding writes 'semantic' iff isSemanticHost, and
+  // resolveMotifHost forces 'edge' iff isEdgeHost — so this matches the render on
+  // every reachable path. Only a hand-made / legacy binding whose stored
+  // anchorMode contradicts its host can differ, and that contradiction lives in
+  // the ANCHOR resolution, which is not this ticket's to change.)
+  //
+  // READ-ONLY. Every WRITE below goes through the RAW stored binding — see
+  // `applyGlyphEdit`. Patching from the coerced value would persist a derived
+  // role into the document, which is precisely what #154 promises never happens.
+  const binding = useMemo(
+    () =>
+      coerceRoles(motif?.params?.binding || {}, {
+        type: host?.patternType,
+        params: host?.params,
+        anchorMode: isEdgeHost(host?.patternType, host?.params) ? 'edge' : 'semantic',
+      }),
+    [motif, host]
+  );
+
   const placements = useMemo(() => {
     if (!anchors || !motif) return [];
     // EDGE hosts run the same pipeline (#141) — placed/candidate is what the
-    // override dots are made of. The one extra step is the render's own role
-    // coercion: resolveMotifHost forces anchorMode:'edge' on an edge host, and
-    // MotifPattern then un-bakes any stale non-edge route roles. Skipping it here
-    // would filter every edge anchor out and draw an EMPTY overlay over a canvas
-    // full of glyphs — so the coercion is imported, never re-implemented.
-    const raw = motif.params.binding || {};
-    const binding = host && isEdgeHost(host.patternType, host.params) ? coerceEdgeRoles(raw) : raw;
+    // override dots are made of.
     const { survivors, sequence } = resolveSelection(binding, anchors, {
       canvasW,
       canvasH,
@@ -252,7 +283,7 @@ export default function AnchorGhostOverlay({
       boundary: { type: 'rect', width: canvasW, height: canvasH },
     });
     return p;
-  }, [anchors, motif, canvasW, canvasH, host]);
+  }, [anchors, motif, binding, canvasW, canvasH]);
 
   // Is THIS motif's Route card armed for path picking on an EDGE host? That is
   // the ONE thing that decides which of the two render paths runs — and it also
@@ -346,7 +377,11 @@ export default function AnchorGhostOverlay({
     );
   }
 
-  const binding = motif.params.binding || {};
+  // `binding` is the COERCED one resolved at hook level — the same value the
+  // placement pipeline above ran on (#154 A2). Everything below reads role and
+  // override state off it, so the dots can never describe a different chain from
+  // the one the canvas drew. Overrides, placement and every other field ride
+  // through the coercion untouched (only Route/selection `roles` are narrowed).
   const placedIds = new Set(placements.map((p) => p.anchorId));
   // SHAPE-AWARE overrides read: chain-form → binding.overrides; legacy →
   // binding.selection.overrides (see readOverrides). Reading the legacy slot on a
@@ -423,8 +458,14 @@ export default function AnchorGhostOverlay({
   // an Inspector slider burst on the same layer carries an identical
   // `${id}:params` signature and would otherwise swallow the gesture.
   const applyGlyphEdit = (edit, { commit = true } = {}) => {
-    const newBinding = editBindingOverrides(binding, edit);
-    if (newBinding === binding) return; // no-op — never a phantom undo entry
+    // THE RAW STORED BINDING, never the coerced one (#154). Role availability is
+    // derived for the duration of a render; patching from the coerced value would
+    // write a derived role into the document behind the maker's back — the one
+    // thing this ticket promises never happens — and it would do it on an
+    // unrelated gesture (hiding one glyph).
+    const rawBinding = motif.params.binding || {};
+    const newBinding = editBindingOverrides(rawBinding, edit);
+    if (newBinding === rawBinding) return; // no-op — never a phantom undo entry
     if (!gestureOpen.current) {
       onFlushHistory();
       gestureOpen.current = true;

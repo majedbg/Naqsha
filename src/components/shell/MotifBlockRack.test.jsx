@@ -205,6 +205,41 @@ describe("MotifBlockRack — anchor-count chips (sieveCounts)", () => {
     expect(liveChip.className).not.toContain("text-tone-mild");
   });
 
+  // #154 (amendment A2). The render intersects a stored Route's roles with what
+  // the host actually emits, so the chip has to count the SAME chain the canvas
+  // runs — otherwise the card reads "→ 0" beside a canvas full of glyphs, which
+  // is the D2 divergence in its third surface.
+  it("counts the COERCED chain: a dead role on spiral reads its live fallback, not 0", () => {
+    // Spiral emits crossings/edges/tips and never a cell, so a stored ['cell']
+    // Route survives nothing — and the render falls back to spiral's default
+    // role, `edge`. The fixture's 4 edge anchors are what the canvas would place.
+    render(
+      <MotifBlockRack
+        {...baseProps}
+        chain={[{ type: "route", roles: ["cell"], pathScope: "all" }]}
+        hostPatternType="spiral"
+        anchors={anchors12()}
+      />
+    );
+    const chip = within(cardOf("route")).getByTestId("motif-block-anchor-chip");
+    expect(chip).toHaveTextContent("12");
+    expect(chip).toHaveTextContent("4");
+    expect(chip.className).not.toContain("text-tone-mild"); // not a dead block
+  });
+
+  it("a LIVE role on a semantic host is counted verbatim — coercion is a no-op there", () => {
+    render(
+      <MotifBlockRack
+        {...baseProps}
+        chain={[{ type: "route", roles: ["crossing"], pathScope: "all" }]}
+        hostPatternType="grid"
+        anchors={anchors12()}
+      />
+    );
+    const chip = within(cardOf("route")).getByTestId("motif-block-anchor-chip");
+    expect(chip).toHaveTextContent("8");
+  });
+
   it("the Sequencer header shows 'N placed' from the sieve", () => {
     const chain = [
       { type: "route", roles: ["crossing"], pathScope: "all" },

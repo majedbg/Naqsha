@@ -44,7 +44,13 @@ import { partitionZones, applyEnds, ZONE_IDS } from './zones.js';
 
 /**
  * @typedef {{glyphRef?:string, sizeScale?:number, rotationOffset?:number, flip?:boolean,
- *            rotationRandom?:{range:number, spread:'flat'|'bell'}, weight?:number, rest?:boolean}} Slot
+ *            rotationRandom?:{range:number, spread:'flat'|'bell'}, weight?:number, rest?:boolean,
+ *            hold?:number}} Slot
+ *   `hold` (#186) is the per-slot "how much may packing shrink me" weight, a
+ *   `0…1` float. ABSENT MEANS 0, which is the pre-#186 engine exactly. ⚠️ The
+ *   polarity is `1 = NEVER SHRINK` (decision 3) — the original feature request
+ *   said the opposite and was reversed mid-grill. There is no inversion layer
+ *   anywhere: stored, engine and displayed polarity all agree.
  * @typedef {{zone:'apex'|'stem'|'cell', mode?:'cycle'|'random', continuous?:boolean, ends?:'both'|'up'|'down', slots:Slot[]}} Zone
  * FLAT form: `slots` at top level. ZONED form (ADR 0008): a `zones` array (its
  * presence marks the block zoned; the flat `slots`/`mode`/`continuous` fields are
@@ -52,9 +58,15 @@ import { partitionZones, applyEnds, ZONE_IDS } from './zones.js';
  * @typedef {{type:'sequence', mode?:'cycle'|'random', continuous?:boolean, seed?:number, slots?:Slot[], zones?:Zone[]}} SequenceBlock
  * @typedef {{
  *   rest:boolean, glyphRef:string|undefined, slotIndex:number, seqId:number,
+ *   zoneId:'apex'|'stem'|'cell'|null,
  *   sizeScale:number, rotationOffset:number, rotationRandomDelta:number,
- *   flip:boolean|undefined, flipSpecified:boolean,
+ *   flip:boolean|undefined, flipSpecified:boolean, hold:number,
  * }} Assignment
+ *   `zoneId` (#186) names the Zone the slot was dealt from, `null` in the FLAT
+ *   deal and for every Rest. It exists because `slotIndex` is ZONE-LOCAL in the
+ *   zoned deal (`dealZone` indexes within one zone), so Apex slot 1 and Stem
+ *   slot 1 are different slots sharing an index — the pair is the slot identity
+ *   the footprint overlay maps a revealed slot back through.
  */
 
 const pathKey = (a) => (a && a.meta && a.meta.pathIndex != null ? a.meta.pathIndex : 0);
@@ -86,24 +98,40 @@ function rotationRandomDelta(slot, seed, anchorId) {
 /**
  * Turn a resolved Slot into an Assignment, folding in the per-anchor rotation
  * jitter. A Rest yields a placeholder assignment (rest:true, no glyphRef).
+ *
+ * THE ONE SITE WHERE "absent `hold` ⇒ 0" IS TRUE (#186). The engine's sizing
+ * branch reads `assignment.hold` unconditionally; if that could be `undefined`
+ * the lerp would go NaN, `NaN < min` is false so nothing would reject, and a
+ * NaN radius would leak silently into every placement. Defaulting here — rather
+ * than at the read site — keeps the guarantee at one site instead of two.
+ *
+ * A REST NEUTRALISES EVERYTHING: `hold: 0` and `zoneId: null` join the existing
+ * `sizeScale: 1` / `rotationOffset: 0` / `flip: undefined`. A Rest emits no
+ * placement at all, so it has no size to hold and no glyph for the overlay to
+ * map back to a zone.
+ *
  * @param {Slot} slot
  * @param {number} slotIndex
  * @param {number} seed
  * @param {string} anchorId
+ * @param {'apex'|'stem'|'cell'|null} [zoneId=null]  the Zone this slot came
+ *   from; `null` for the flat deal.
  * @returns {Assignment}
  */
-function makeAssignment(slot, slotIndex, seed, anchorId) {
+function makeAssignment(slot, slotIndex, seed, anchorId, zoneId = null) {
   if (slot && slot.rest === true) {
     return {
       rest: true,
       glyphRef: undefined,
       slotIndex,
       seqId: slotIndex,
+      zoneId: null,
       sizeScale: 1,
       rotationOffset: 0,
       rotationRandomDelta: 0,
       flip: undefined,
       flipSpecified: false,
+      hold: 0,
     };
   }
   const flipSpecified = slot != null && slot.flip !== undefined;
@@ -112,11 +140,13 @@ function makeAssignment(slot, slotIndex, seed, anchorId) {
     glyphRef: slot ? slot.glyphRef : undefined,
     slotIndex,
     seqId: slotIndex,
+    zoneId,
     sizeScale: slot && slot.sizeScale != null ? slot.sizeScale : 1,
     rotationOffset: slot && slot.rotationOffset != null ? slot.rotationOffset : 0,
     rotationRandomDelta: rotationRandomDelta(slot, seed, anchorId),
     flip: flipSpecified ? !!slot.flip : undefined,
     flipSpecified,
+    hold: slot && slot.hold != null ? slot.hold : 0,
   };
 }
 
@@ -205,8 +235,10 @@ export function dealSlots(survivors, sequence) {
  * @param {number} seed  block-level seed, shared by all zones
  * @param {boolean} defaultContinuous  the zone's default, from ZONE_CONTINUOUS_DEFAULT
  * @param {Map<string, Assignment>} out  id → assignment (mutated)
+ * @param {'apex'|'stem'|'cell'} zoneId  stamped onto every assignment this zone
+ *   deals, so a zone-local `slotIndex` can be resolved back to its slot (#186).
  */
-function dealZone(members, zone, seed, defaultContinuous, out) {
+function dealZone(members, zone, seed, defaultContinuous, out, zoneId) {
   const slots = zone && Array.isArray(zone.slots) ? zone.slots : null;
   if (!slots || slots.length === 0) {
     for (const a of members) out.set(a.id, makeAssignment({ rest: true }, 0, seed, a.id));
@@ -220,7 +252,7 @@ function dealZone(members, zone, seed, defaultContinuous, out) {
     const totalWeight = weights.reduce((sum, w) => sum + w, 0);
     for (const a of members) {
       const slotIndex = randomSlotIndex(slots, weights, totalWeight, seed, a.id);
-      out.set(a.id, makeAssignment(slots[slotIndex], slotIndex, seed, a.id));
+      out.set(a.id, makeAssignment(slots[slotIndex], slotIndex, seed, a.id, zoneId));
     }
     return;
   }
@@ -240,7 +272,7 @@ function dealZone(members, zone, seed, defaultContinuous, out) {
       counters.set(p, idx + 1);
     }
     const slotIndex = ((idx % len) + len) % len;
-    out.set(a.id, makeAssignment(slots[slotIndex], slotIndex, seed, a.id));
+    out.set(a.id, makeAssignment(slots[slotIndex], slotIndex, seed, a.id, zoneId));
   });
 }
 
@@ -302,7 +334,7 @@ function dealSlotsZoned(list, sequence) {
       zoneId === 'apex'
         ? applyEnds(partition.apex, cfg.ends != null ? cfg.ends : 'both')
         : partition[zoneId];
-    dealZone(members, cfg, seed, ZONE_CONTINUOUS_DEFAULT[zoneId], byId);
+    dealZone(members, cfg, seed, ZONE_CONTINUOUS_DEFAULT[zoneId], byId, zoneId);
   }
 
   return list.map((a) =>

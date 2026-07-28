@@ -277,6 +277,15 @@ describe('hostRadius — the regression guard for every existing document', () =
     // Exact values, captured from the engine on main @ 170f5a7 BEFORE the
     // hostRadius channel existed. Any drift here means an existing document
     // renders differently.
+    //
+    // #186 added the seven sizing diagnostics. Every pre-existing number below
+    // is UNTOUCHED — that is the migration guarantee, and this deep-equal is
+    // where it is pinned, so it is updated to the true new shape rather than
+    // loosened to a partial matcher. The new keys are all consistent with
+    // "nothing capped these glyphs": no `hold` anywhere ⇒ w = 0 ⇒
+    // drawnRadius === packedRadius === radius, capBy 'natural', not saturated,
+    // no captor. `neighbourCap` is Infinity for the first placement (nothing
+    // was in `placed` yet) and the real margin×clearance thereafter.
     expect(placements).toEqual([
       {
         anchorId: 'a',
@@ -287,6 +296,13 @@ describe('hostRadius — the regression guard for every existing document', () =
         rotation: 96.05544989049775,
         scale: 0.7491046119481326,
         radius: 13.483883015066386,
+        packedRadius: 13.483883015066386,
+        drawnRadius: 13.483883015066386,
+        neighbourCap: Infinity,
+        hardCap: 13.483883015066386,
+        capBy: 'natural',
+        saturated: false,
+        capObstacle: null,
         seqId: 'A',
         flip: false,
       },
@@ -299,6 +315,13 @@ describe('hostRadius — the regression guard for every existing document', () =
         rotation: 90.28439339302821,
         scale: 1.2843171523883938,
         radius: 23.117708742991088,
+        packedRadius: 23.117708742991088,
+        drawnRadius: 23.117708742991088,
+        neighbourCap: 44.90094595757797,
+        hardCap: 23.117708742991088,
+        capBy: 'natural',
+        saturated: false,
+        capObstacle: null,
         seqId: 'A',
         flip: false,
       },
@@ -311,6 +334,13 @@ describe('hostRadius — the regression guard for every existing document', () =
         rotation: 117.9145779465918,
         scale: 0.9214892063289882,
         radius: 16.586805713921787,
+        packedRadius: 16.586805713921787,
+        drawnRadius: 16.586805713921787,
+        neighbourCap: 122.73762664473993,
+        hardCap: 16.586805713921787,
+        capBy: 'natural',
+        saturated: false,
+        capObstacle: null,
         seqId: 'A',
         flip: false,
       },

@@ -61,7 +61,14 @@ const findPlacement = (placements, anchorId) =>
 // ── applyGlyphOverrides — the pure post-placement seam ──────────────────────
 describe('applyGlyphOverrides — no-op discipline', () => {
   const placements = [
-    { anchorId: 'a0', role: 'edge', index: 0, x: 0, y: 0, rotation: 30, scale: 1, radius: 10, seqId: 'A', flip: false },
+    {
+      anchorId: 'a0', role: 'edge', index: 0, x: 0, y: 0, rotation: 30, scale: 1, radius: 10,
+      // #186's sizing diagnostics ride on every Placement, so the fixtures that
+      // stand in for engine output carry them too.
+      packedRadius: 10, drawnRadius: 10, neighbourCap: Infinity, hardCap: 10,
+      capBy: 'natural', saturated: false, capObstacle: null,
+      seqId: 'A', flip: false,
+    },
   ];
 
   it('an empty / absent record map returns the SAME array reference', () => {
@@ -85,14 +92,26 @@ describe('applyGlyphOverrides — no-op discipline', () => {
 
   it('never mutates the input placements', () => {
     const input = placements.map((p) => ({ ...p }));
-    const snapshot = JSON.parse(JSON.stringify(input));
+    // structuredClone, not a JSON round-trip: `neighbourCap` is legitimately
+    // Infinity and JSON would turn it into null, comparing the fixture against
+    // a corrupted copy of itself.
+    const snapshot = structuredClone(input);
     applyGlyphOverrides(input, byAnchor([['a0', { ref: 'a0', scale: 4, angle: 12 }]]));
     expect(input).toEqual(snapshot);
   });
 });
 
 describe('applyGlyphOverrides — scale', () => {
-  const base = { anchorId: 'a0', role: 'edge', index: 0, x: 0, y: 0, rotation: 30, scale: 2, radius: 20, seqId: 'A', flip: false };
+  // A glyph the packer capped to 8 and `hold` drew at 20 — chosen so the
+  // reserved radius and the drawn radius are DIFFERENT numbers, which is what
+  // makes "scale moves the drawn radius and leaves the reserve alone"
+  // observable at all.
+  const base = {
+    anchorId: 'a0', role: 'edge', index: 0, x: 0, y: 0, rotation: 30, scale: 2, radius: 20,
+    packedRadius: 8, drawnRadius: 20, neighbourCap: 8, hardCap: 25,
+    capBy: 'neighbour', saturated: false, capObstacle: { x: 40, y: 0, r: 12 },
+    seqId: 'A', flip: false,
+  };
 
   it('multiplies BOTH radius and scale, preserving scale === radius / size', () => {
     const [out] = applyGlyphOverrides([base], byAnchor([['a0', { ref: 'a0', scale: 1.5 }]]));
@@ -107,6 +126,34 @@ describe('applyGlyphOverrides — scale', () => {
     expect(out.rotation).toBe(30);
   });
 
+  it('scales `drawnRadius` with `radius` — the drawn ring must not go stale', () => {
+    const [out] = applyGlyphOverrides([base], byAnchor([['a0', { ref: 'a0', scale: 1.5 }]]));
+    expect(out.drawnRadius).toBeCloseTo(30, 10);
+    expect(out.drawnRadius).toBe(out.radius);
+    expect(Number.isNaN(out.drawnRadius)).toBe(false);
+  });
+
+  it('leaves the RESERVE and every cap alone — the packer genuinely did not move', () => {
+    // This pass runs outside the packing loop by design (#137), so an override
+    // may legitimately push the drawn radius past `hardCap`. The
+    // `drawnRadius <= hardCap` invariant is scoped to `hold`.
+    const [out] = applyGlyphOverrides([base], byAnchor([['a0', { ref: 'a0', scale: 1.5 }]]));
+    expect(out.packedRadius).toBe(8);
+    expect(out.neighbourCap).toBe(8);
+    expect(out.hardCap).toBe(25);
+    expect(out.capBy).toBe('neighbour');
+    expect(out.saturated).toBe(false);
+    expect(out.capObstacle).toEqual({ x: 40, y: 0, r: 12 });
+    expect(out.drawnRadius).toBeGreaterThan(out.hardCap);
+  });
+
+  it('a non-applied scale leaves `drawnRadius` exactly where it was', () => {
+    for (const bad of [0, -1, NaN, Infinity, '2', null]) {
+      const [out] = applyGlyphOverrides([base], byAnchor([['a0', { ref: 'a0', scale: bad }]]));
+      expect(out.drawnRadius).toBe(20);
+    }
+  });
+
   it('ignores a non-positive or non-finite scale (never vanish, never invert)', () => {
     for (const bad of [0, -1, NaN, Infinity, '2', null]) {
       const out = applyGlyphOverrides([base], byAnchor([['a0', { ref: 'a0', scale: bad }]]));
@@ -117,7 +164,12 @@ describe('applyGlyphOverrides — scale', () => {
 });
 
 describe('applyGlyphOverrides — angle', () => {
-  const base = { anchorId: 'a0', role: 'edge', index: 0, x: 0, y: 0, rotation: 137.5, scale: 1, radius: 10, seqId: 'A', flip: false };
+  const base = {
+    anchorId: 'a0', role: 'edge', index: 0, x: 0, y: 0, rotation: 137.5, scale: 1, radius: 10,
+    packedRadius: 10, drawnRadius: 10, neighbourCap: Infinity, hardCap: 10,
+    capBy: 'natural', saturated: false, capObstacle: null,
+    seqId: 'A', flip: false,
+  };
 
   it('REPLACES the resolved rotation with the absolute bearing', () => {
     const [out] = applyGlyphOverrides([base], byAnchor([['a0', { ref: 'a0', angle: 45 }]]));

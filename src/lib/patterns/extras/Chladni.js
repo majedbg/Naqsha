@@ -32,6 +32,13 @@ import { stackWarpDisplacement } from '../../fields/warp';
  * passed to applySymmetryDraw.
  */
 export default class Chladni extends Pattern {
+  // WARP-CAPTURE CONTRACT (motif/warpCapture.js): a warp modulation displaces
+  // the FINAL nodal-line vertices below, so the motif capture probe must receive
+  // the same guide-resolved modulation the paint pass does. Without this
+  // declaration a warped Chladni paints warped contours and captures unwarped
+  // ones, and its glyphs float off the visible nodal lines (#148).
+  static warpsDrawnGeometry = true;
+
   generate(ctx, seed, params, canvasW, canvasH, color, opacity) {
     this.svgElements = [];
     ctx.randomSeed(seed);

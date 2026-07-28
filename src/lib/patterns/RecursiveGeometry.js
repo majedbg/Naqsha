@@ -3,6 +3,17 @@ import { Pattern } from './drawingContext';
 import { buildWarpedPolygon } from './recursiveSides';
 
 export default class RecursiveGeometry extends Pattern {
+  // WARP-CAPTURE CONTRACT (motif/warpCapture.js): a warp modulation warps the
+  // recursive polygons below (corners, and whole sides at warpNodes ≥ 3).
+  // BEHAVIOURALLY INERT TODAY — recursive is a SEMANTIC motif host, never an
+  // edge host, so the capture prepass never records it and the prepass guard
+  // short-circuits before consulting this flag. It is declared because the flag
+  // states a fact about the PATTERN, not about the current host list: its
+  // anchors already come from the shared warped-geometry core (recursiveSides),
+  // and a future ticket routing recursive through capture inherits the right
+  // answer instead of rediscovering #103.
+  static warpsDrawnGeometry = true;
+
   constructor() {
     super();
     this._polygons = [];

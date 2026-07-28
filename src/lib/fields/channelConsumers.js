@@ -11,6 +11,14 @@
  *   extracted-motif layers (dynamic patternIds) → 'lattice'  (a Grid guide
  *     stamps the tile at each of its intersection nodes — placement, not a field)
  *   anything else → null  (not a modulation target)
+ *
+ * NOT the motif warp-CAPTURE contract. This table answers an AUTHORING question
+ * ("which channel may the Modulator device map onto this target?"). Whether the
+ * motif capture probe must be handed a resolved warp modulation is a separate,
+ * render-path question answered by each pattern's own `static
+ * warpsDrawnGeometry` declaration (src/lib/motif/warpCapture.js). The two happen
+ * to list the same types today; editing this table does NOT change capture, and
+ * a new warp-applying pattern must declare the capability on itself (#148).
  */
 import { getDynamicTypes } from "../patternRegistry";
 

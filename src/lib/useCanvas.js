@@ -10,6 +10,7 @@ import { resolveMotifHostParams } from './motif/resolveMotifHost';
 import { collectMotifHostGeometry } from './motif/collectHostGeometry';
 import { capturePolylines } from './motif/capturePolylines';
 import { isEdgeHost } from './motif/hostKinds';
+import { patternWarpsDrawnGeometry } from './motif/warpCapture';
 import { isMotifLayer } from './motif/motifLayer';
 import { getGlyph } from './motif/glyphs';
 import { isSequenceBlock, sequenceSlots } from './motif/sequencer';
@@ -28,25 +29,6 @@ import { resolveEtchBitmap, etchCacheNeedsResolve } from './etch/etchSource';
 import { resolveHold } from './etch/etchHold';
 import { createAdaptiveRenderScheduler } from './adaptiveRenderScheduler';
 import { isFrameStatsEnabled } from './onboarding/frameStatsFlag';
-
-// Recording (edge-capture) hosts whose WARP modulation is resolved from a GUIDE
-// layer into renderParams for the paint pass, NOT stored on host.params. The
-// capture probe below therefore has to inject the SAME resolved modulation, or it
-// draws unwarped geometry while the canvas draws warped — motif anchors then sit
-// on stale geometry (the D1 fail-unsafe ~24px drift, #103). Extending this beyond
-// grid to flowfield + topographic makes the probe SYMMETRIC with paint:
-//   • grid (single-axis) — draws bezierVertex when warped; capturePolylines now
-//     RECORDS + adaptively flattens those (shared flattenCubic, #111) → the vine
-//     samples the exact-to-paint curve (the single-axis warped-grid vine works).
-//   • flowfield / topographic — emit plain ctx.vertex; capture records the warped
-//     flow lines / contours → anchors land on the painted geometry (D1 fixed).
-// Byte-identity holds with no warp channel present: all three patterns branch ONLY
-// on modulation.channel==='warp' at geometry-build time (grid: warp vs straight
-// line; flowfield/topographic: the stackWarpDisplacement block), so injecting a
-// composed modulation carrying only non-warp channels is a geometric no-op. Warp
-// is RNG-free and applied AFTER all noise/random consumption, so the probe never
-// shifts the host's painted realization.
-const WARP_CAPTURE_HOSTS = new Set(['grid', 'flowfield', 'topographic']);
 
 // Pivoted node transform shared by render + selection chrome. Matches the SVG
 // `translate(x y) translate(cx cy) rotate scale translate(-cx -cy)` form emitted
@@ -271,25 +253,29 @@ export default function useCanvas(
       const probeCtx = recording
         ? new P5Adapter(p, { draw: false, record: true })
         : noDrawCtx;
-      // FAITHFUL CAPTURE for a WARP-applying capture host (grid single-axis,
-      // flowfield, topographic — WARP_CAPTURE_HOSTS): the host's warp modulation is
-      // resolved from a GUIDE layer into renderParams for the main draw (see
-      // ~line 437), NOT stored on host.params. If the probe ran bare host.params it
-      // would capture UNWARPED geometry while the canvas paints WARPED — and the
-      // motif would arc-length-sample glyphs onto stale geometry, floating them off
-      // the visible curve / flow lines / contours (the D1 fail-unsafe ~24px drift, #103).
-      // Inject the SAME resolved modulation so the probe's geometry matches paint,
-      // symmetric with the paint pass:
+      // FAITHFUL CAPTURE for a host that WARPS ITS DRAWN GEOMETRY. The host's
+      // warp modulation is resolved from a GUIDE layer into renderParams for the
+      // main draw (see the composeModulationParam call below), NOT stored on
+      // host.params. If the probe ran bare host.params it would capture UNWARPED
+      // geometry while the canvas paints WARPED — and the motif would arc-length-
+      // sample glyphs onto stale geometry, floating them off the visible curve /
+      // flow lines / contours (the D1 fail-unsafe ~24px drift, #103). Inject the
+      // SAME resolved modulation so the probe's geometry matches paint:
       //   • grid warped → draws bezierVertex, which capturePolylines FLATTENS (shared
       //     adaptive flattenCubic, device-dot tolerance) into exact-to-paint polylines
       //     the single-axis warped-grid vine samples along (#111).
       //   • flowfield / topographic warped → emit plain ctx.vertex → captured on the
       //     warped flow lines / contours → anchors track the painted geometry (#110).
-      // All three branch ONLY on modulation.channel==='warp' at build time and warp
-      // consumes no RNG (applied after all noise/random), so this is byte-identical
-      // capture with no warp channel present and every non-warp channel.
+      //   • chladni warped → displaces its FINAL stitched nodal-line vertices →
+      //     glyphs ride the warped nodal lines (#148).
+      // WHICH hosts need it is DECLARED BY THE PATTERN (`static warpsDrawnGeometry`),
+      // not listed here: this used to be a private WARP_CAPTURE_HOSTS set that
+      // Chladni was simply missing from, which is exactly the bug #148 fixes. The
+      // byte-identity argument (every declaring pattern branches only on
+      // modulation.channel==='warp'; warp is RNG-free and applied after all
+      // noise/random consumption) lives with the contract in motif/warpCapture.js.
       let probeParams = host.params;
-      if (recording && WARP_CAPTURE_HOSTS.has(host.patternType)) {
+      if (recording && patternWarpsDrawnGeometry(HostClass)) {
         const hostMod = composeModulationParam(resolveModulationsForTarget(host, layers));
         if (hostMod) probeParams = { ...host.params, modulation: hostMod };
       }

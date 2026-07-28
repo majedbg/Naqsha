@@ -59,6 +59,36 @@
 // that). Tip anchors are still emitted, honestly, at the cut points; whether a
 // glyph is PLACED on one is the placement boundary's business, not this module's.
 //
+// DECIDED AND CLOSED (#165, 2026-07-28): girih Tips is a STRUCTURAL role that
+// places nothing on canvas, and that is the accepted outcome. Do not "fix" it.
+// The two alternatives were measured and both cost more than they return:
+//
+//   • RELAX THE PLACEMENT BOUNDARY for tip anchors — rejected on evidence, not
+//     taste. It does place them: at defaults all 24 tips sit exactly 53px beyond
+//     the sheet, so growing the boundary by 60px places all 24 with **zero**
+//     centres on canvas. On screen they are invisible; on a plotter or laser
+//     they are off the material. It turns "0 glyphs placed" into "24 glyphs
+//     placed where nobody can see them", which reads as success and is not.
+//
+//   • NARROW THE CROP so loose ends fall inside the canvas — possible, but the
+//     price is the pattern. The crop must reach 0.46 (NOT 0.48: at 0.48 the 16
+//     placed glyphs shrink to 2.7px against an intended 12, because proportional
+//     sizing shrinks a glyph near the boundary). At 0.46 all 36 tips place at
+//     full size, and girih loses 26% of its straps (624 → 460 edges) and its
+//     full bleed — the painted extent retracts from 50px PAST the sheet to 25px
+//     INSIDE it, turning a cut-off field into an inset panel with a border. That
+//     is the "designed border" the ragged crop exists to avoid.
+//
+// One more reason to leave it alone: the tip count is wildly non-monotonic in
+// the crop factor (24, 40, 40, 32, 36, 20, 48, 28 across 0.55 → 0.35). Which
+// vertices end up degree-1 depends on exactly where the cut lands, so any chosen
+// factor would be tuned to one canvas aspect ratio.
+//
+// If this ever needs revisiting, the cheapest route is making the crop factor a
+// girih PARAM (default 0.55, so existing documents are byte-identical) and
+// letting a maker opt into the tighter field. Evidence and full tables:
+// docs/decisions-164-165.md.
+//
 // ── STRAND ORDERING IS DETERMINISTIC, FROM A STABLE SORT OF THE GRAPH ───────
 // Never from iteration order. Vertices are RANKED by (x, y, index); the walk is
 // seeded and branched in rank order, and the resulting strands are then sorted by

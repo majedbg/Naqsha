@@ -78,6 +78,13 @@ export const ALL_ROLES = Object.freeze(['crossing', 'edge', 'tip', 'cell']);
 //                   needs planar face traversal, which is materially different
 //                   work from graph degree and strand walking and is explicitly
 //                   out of scope for PRD #143.
+//                   `tip` STAYS here even though it places ZERO glyphs at every
+//                   params set — decided and closed in #165. This function
+//                   answers "does this host EMIT the role", and girih honestly
+//                   does; whether a glyph lands on one is the placement
+//                   boundary's business. The reasoning, and why both fixes cost
+//                   more than they return, is at the GIRIH TIPS block in
+//                   girihAnchors.js. Do not silently drop it from this list.
 //   truchet       — one anchor per tile PLUS a run along every drawn path
 //                   (#153). Cells AND edges, and NO params gating: every tile
 //                   set, the triangles included, yields both, because Truchet is

@@ -24,6 +24,7 @@
 // renders in dense picker/rack surfaces whose parents re-render on every hover.
 import { memo } from "react";
 import { isSemanticHost } from "../../lib/motif/hostKinds";
+import { GRATICULE, GRATICULE_STROKE, graticuleLines } from "./latticeGraticule";
 
 // The badge is authored in a fixed 24-unit box; `size` only scales the pixels
 // (like GlyphThumb's `size` over its self-computed viewBox).
@@ -78,10 +79,13 @@ function Square({ role, cx, cy, side = SQUARE }) {
 // A 2×2 graticule: two verticals × two horizontals. The single central cell is
 // bounded by the four crossings; its edges' midpoints and its centre are the
 // other two anchor families.
+//
+// The graticule itself lives in latticeGraticule.jsx — the Grid Lines param
+// toggle (#166) draws the same lines from the same code, so the two glyph
+// families are siblings by construction. Only the role marks below are
+// RoleBadge's own.
 const L = {
-  vx: [6, 18], // vertical line x's
-  hy: [6, 18], // horizontal line y's
-  span: [2, 22], // line extent
+  ...GRATICULE, // vx / hy / span
   crossings: [
     [6, 6],
     [18, 6],
@@ -104,15 +108,9 @@ function LatticeFragment({ roleSet }) {
         data-badge-fragment
         stroke="currentColor"
         strokeOpacity={FRAG_OPACITY}
-        strokeWidth={1.1}
-        strokeLinecap="round"
+        {...GRATICULE_STROKE}
       >
-        {L.vx.map((x) => (
-          <line key={`v${x}`} x1={x} y1={L.span[0]} x2={x} y2={L.span[1]} />
-        ))}
-        {L.hy.map((y) => (
-          <line key={`h${y}`} x1={L.span[0]} y1={y} x2={L.span[1]} y2={y} />
-        ))}
+        {graticuleLines()}
       </g>
 
       {roleSet.has("crossing") &&

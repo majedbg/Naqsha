@@ -458,18 +458,37 @@ const GRID_SIZE_PLOT_PARAM = {
   tooltip: 'Columns × rows on one plane — right is more vertical lines, up is more horizontal lines. Off the diagonal is a non-square lattice.',
 };
 
-// Grid horizontal × vertical line toggles share one plane. Each axis is a 0/1
-// switch, so the plane is a 4-corner selector (neither · V-only · H-only · both):
-// right enables vertical lines, up enables horizontal lines. `key: 'gridLines'`
-// is the synthetic primary key; DEFAULT_PARAMS still carries drawHorizontal /
-// drawVertical.
-const GRID_LINES_PLOT_PARAM = {
-  key: 'gridLines', type: 'plot2d', label: 'Horizontal × Vertical', keys: ['drawHorizontal', 'drawVertical'],
-  axes: [
-    { key: 'drawVertical', label: 'Vertical', short: 'Vert', min: 0, max: 1, step: 1, default: 1 },
-    { key: 'drawHorizontal', label: 'Horizontal', short: 'Horiz', min: 0, max: 1, step: 1, default: 1 },
+// Which Grid line families draw, as a THREE-WAY icon toggle (#166).
+//
+// This used to be a plot2d XY pad whose axes were each a 0/1 switch — a 4-corner
+// selector, and one of those corners (neither family drawn) is a Grid that
+// paints nothing, captures nothing and emits no anchors. The dice manufactured
+// it once every four presses of this row. There are three legal answers, so the
+// control offers three and the illegal one is simply absent: unrepresentable,
+// not gated.
+//
+// COMPOSITE OPTIONS: each option carries a `patch` over `keys` instead of a
+// scalar `value`. ParamControl and paramOps branch on that SHAPE, not on
+// `def.type` (the house rule at paramOps.js:12-14), so `type` stays the ordinary
+// 'iconselect' and IconSelect itself is untouched.
+//
+// `key: 'gridLines'` is the synthetic primary key and MUST stay: it is the row's
+// identity for the randomize checkbox, randomizeGroup's gate, the React key and
+// the `param-row-*` test id. DEFAULT_PARAMS still carries drawHorizontal /
+// drawVertical (both 1), so reset lands on Both and the generic `def.keys`
+// walkers in paramOps need no change.
+//
+// The stored params keep their shape and their `>= 0.5` threshold semantics —
+// this makes the blank corner WRITE-unreachable while leaving it READ-legal, so
+// no saved document moves and every downstream reader is byte-identical.
+const GRID_LINES_ICON_PARAM = {
+  key: 'gridLines', type: 'iconselect', label: 'Grid Lines', keys: ['drawHorizontal', 'drawVertical'],
+  options: [
+    { id: 'vertical', label: 'Vertical lines only', glyph: 'gridLinesVertical', patch: { drawHorizontal: 0, drawVertical: 1 } },
+    { id: 'horizontal', label: 'Horizontal lines only', glyph: 'gridLinesHorizontal', patch: { drawHorizontal: 1, drawVertical: 0 } },
+    { id: 'both', label: 'Both axes', glyph: 'gridLinesBoth', patch: { drawHorizontal: 1, drawVertical: 1 } },
   ],
-  tooltip: 'Which line families draw, as a 4-corner toggle: right turns vertical lines on, up turns horizontal lines on. A corner can be neither, one, or both.',
+  tooltip: 'Which line families draw: the vertical rules (columns), the horizontal rules (rows), or the full lattice.',
 };
 
 // Grid non-linearity as a 2D plane: two INDEPENDENT ways to ease line spacing.
@@ -743,7 +762,7 @@ export const PATTERN_PARAM_DEFS = {
     { key: 'spacing', label: 'Spacing', min: 5, max: 100, step: 1, tooltip: 'Base distance between lines' },
     NONLINEAR_PLOT_PARAM,
     { key: 'jitter', label: 'Jitter', min: 0, max: 30, step: 0.5, tooltip: 'Random displacement of each line position' },
-    GRID_LINES_PLOT_PARAM,
+    GRID_LINES_ICON_PARAM,
     { key: 'margin', label: 'Margin', min: 0, max: 100, step: 1, tooltip: 'Extra line overshoot beyond grid bounds' },
     { key: 'strokeWeight', label: 'Stroke Weight', min: 0.3, max: 3, step: 0.1, tooltip: 'Line thickness' },
     SYMMETRY_PARAM,

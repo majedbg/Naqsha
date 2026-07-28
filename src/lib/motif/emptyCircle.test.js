@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   pointToSegmentDistance,
   largestEmptyCircleRadius,
+  largestEmptyCircleParts,
   fitsAt,
 } from './emptyCircle.js';
 
@@ -113,6 +114,237 @@ describe('largestEmptyCircleRadius', () => {
     const a = largestEmptyCircleRadius(center, obstacles, boundary);
     const b = largestEmptyCircleRadius(center, obstacles, boundary);
     expect(a).toEqual(b);
+  });
+});
+
+describe('largestEmptyCircleParts', () => {
+  const rect = { type: 'rect', width: 100, height: 100 };
+
+  describe('the two terms, independently', () => {
+    it('reports the boundary term and Infinity for the obstacle term when there are no obstacles', () => {
+      const p = largestEmptyCircleParts({ x: 10, y: 10 }, [], rect);
+      expect(p.boundary).toBeCloseTo(10, 9);
+      expect(p.obstacles).toBe(Infinity);
+      expect(p.obstacle).toBe(null);
+    });
+
+    it('reports Infinity for the boundary term when the boundary is null', () => {
+      const obstacle = { x: 70, y: 50, r: 5 };
+      const p = largestEmptyCircleParts({ x: 50, y: 50 }, [obstacle], null);
+      expect(p.boundary).toBe(Infinity);
+      expect(p.obstacles).toBeCloseTo(15, 9);
+      expect(p.obstacle).toBe(obstacle);
+    });
+
+    it('reports Infinity for both terms when the boundary is null and the obstacle list is empty', () => {
+      const p = largestEmptyCircleParts({ x: 0, y: 0 }, [], null);
+      expect(p.boundary).toBe(Infinity);
+      expect(p.obstacles).toBe(Infinity);
+      expect(p.obstacle).toBe(null);
+    });
+
+    it('keeps the terms apart when the boundary binds — the obstacle term stays larger', () => {
+      // Wall at 3; the obstacle clearance is 15. The boundary is the binding term.
+      const obstacle = { x: 23, y: 3, r: 5 };
+      const p = largestEmptyCircleParts({ x: 3, y: 3 }, [obstacle], rect);
+      expect(p.boundary).toBeCloseTo(3, 9);
+      expect(p.obstacles).toBeCloseTo(15, 9);
+      expect(Math.min(p.boundary, p.obstacles)).toBeCloseTo(3, 9);
+    });
+
+    it('keeps the terms apart when an obstacle binds — the boundary term stays larger', () => {
+      const obstacle = { x: 70, y: 50, r: 5 };
+      const p = largestEmptyCircleParts({ x: 50, y: 50 }, [obstacle], rect);
+      expect(p.boundary).toBeCloseTo(50, 9);
+      expect(p.obstacles).toBeCloseTo(15, 9);
+      expect(Math.min(p.boundary, p.obstacles)).toBeCloseTo(15, 9);
+    });
+
+    it('reports the boundary term for a polygon boundary independently of the obstacles', () => {
+      const square = {
+        type: 'polygon',
+        points: [
+          { x: 0, y: 0 },
+          { x: 10, y: 0 },
+          { x: 10, y: 10 },
+          { x: 0, y: 10 },
+        ],
+      };
+      const obstacle = { x: 5, y: 8, r: 1 }; // dist 3, bound 2
+      const p = largestEmptyCircleParts({ x: 5, y: 5 }, [obstacle], square);
+      expect(p.boundary).toBeCloseTo(5, 9);
+      expect(p.obstacles).toBeCloseTo(2, 9);
+      expect(p.obstacle).toBe(obstacle);
+    });
+  });
+
+  describe('the winning obstacle identity', () => {
+    it('names the obstacle that produced the obstacle term', () => {
+      const near = { x: 50, y: 65, r: 3 }; // dist 15, bound 12
+      const far = { x: 70, y: 50, r: 5 }; // dist 20, bound 15
+      const p = largestEmptyCircleParts({ x: 50, y: 50 }, [far, near], rect);
+      expect(p.obstacles).toBeCloseTo(12, 9);
+      expect(p.obstacle).toBe(near);
+    });
+
+    it('is null when the obstacle list is empty', () => {
+      expect(largestEmptyCircleParts({ x: 50, y: 50 }, [], rect).obstacle).toBe(null);
+    });
+
+    it('selects the FIRST obstacle encountered when two obstacle bounds tie', () => {
+      const first = { x: 70, y: 50, r: 5 }; // bound 15
+      const second = { x: 50, y: 70, r: 5 }; // bound 15, identical value
+      const p = largestEmptyCircleParts({ x: 50, y: 50 }, [first, second], rect);
+      expect(p.obstacles).toBeCloseTo(15, 9);
+      expect(p.obstacle).toBe(first);
+    });
+
+    it('is returned unconditionally — it is NOT nulled out when the boundary term is smaller', () => {
+      // Wall at 3 beats the obstacle clearance of 15, but the obstacle that
+      // produced the obstacle term is still named. Deriving `capBy` from the
+      // two terms is the consumer's job, not this function's.
+      const obstacle = { x: 23, y: 3, r: 5 };
+      const p = largestEmptyCircleParts({ x: 3, y: 3 }, [obstacle], rect);
+      expect(p.boundary).toBeCloseTo(3, 9);
+      expect(p.obstacle).toBe(obstacle);
+    });
+
+    it('is still returned when the boundary exactly ties the obstacle term', () => {
+      // Wall at 15 and obstacle clearance at 15.
+      const obstacle = { x: 35, y: 15, r: 5 }; // dist 20, bound 15
+      const p = largestEmptyCircleParts({ x: 15, y: 15 }, [obstacle], rect);
+      expect(p.boundary).toBe(15);
+      expect(p.obstacles).toBe(15);
+      expect(p.obstacle).toBe(obstacle);
+    });
+
+    it('is null when the list is non-empty but every obstacle bound is NaN', () => {
+      // No obstacle ever displaces the seed, so there is no winner to name.
+      const p = largestEmptyCircleParts({ x: 50, y: 50 }, [{ x: NaN, y: 50, r: 5 }], rect);
+      expect(p.obstacles).toBe(Infinity);
+      expect(p.obstacle).toBe(null);
+    });
+
+    it('names the finite winner when a NaN obstacle is mixed with a finite one', () => {
+      const nan = { x: NaN, y: 50, r: 5 };
+      const finite = { x: 70, y: 50, r: 5 }; // bound 15
+      const p = largestEmptyCircleParts({ x: 50, y: 50 }, [nan, finite], rect);
+      expect(p.obstacles).toBeCloseTo(15, 9);
+      expect(p.obstacle).toBe(finite);
+    });
+  });
+
+  describe('NaN obstacle clearances never displace the boundary distance', () => {
+    it('leaves the obstacle term at Infinity so the boundary survives the min', () => {
+      const center = { x: 10, y: 10 };
+      const p = largestEmptyCircleParts(center, [{ x: NaN, y: 10, r: 5 }], rect);
+      // Today's fused loop returns the boundary distance b, because `NaN < b`
+      // is false. Math.min(b, Infinity) must reproduce exactly that.
+      expect(p.obstacles).toBe(Infinity);
+      expect(Object.is(Math.min(p.boundary, p.obstacles), p.boundary)).toBe(true);
+      expect(largestEmptyCircleRadius(center, [{ x: NaN, y: 10, r: 5 }], rect)).toBeCloseTo(10, 9);
+    });
+
+    it('does not poison a finite winning obstacle', () => {
+      const center = { x: 50, y: 50 };
+      const obstacles = [{ x: NaN, y: 50, r: 5 }, { x: 70, y: 50, r: 5 }];
+      expect(largestEmptyCircleRadius(center, obstacles, rect)).toBeCloseTo(15, 9);
+    });
+
+    it('propagates a NaN boundary term, which no obstacle can displace', () => {
+      const center = { x: NaN, y: 10 };
+      const p = largestEmptyCircleParts(center, [{ x: 70, y: 50, r: 5 }], rect);
+      expect(Number.isNaN(p.boundary)).toBe(true);
+      expect(Number.isNaN(largestEmptyCircleRadius(center, [{ x: 70, y: 50, r: 5 }], rect))).toBe(true);
+    });
+  });
+
+  describe('signed-zero behaviour is unreachable through the public interface', () => {
+    it('returns +0, not -0, when the boundary sits exactly on a wall alongside a touching obstacle', () => {
+      // `Math.hypot` never returns -0, and a finite `a - b` is -0 only when
+      // a is -0 and b is +0 — so an obstacle bound of -0 cannot be constructed.
+      // If it could, Math.min(+0, -0) would return -0 where the fused loop
+      // returned +0. This pins that the case stays unreachable.
+      const center = { x: 0, y: 50 };
+      const obstacles = [{ x: 10, y: 50, r: 10 }, { x: 20, y: 50, r: -0 }];
+      const p = largestEmptyCircleParts(center, obstacles, rect);
+      expect(Object.is(p.boundary, 0)).toBe(true); // +0
+      expect(Object.is(p.obstacles, -0)).toBe(false);
+      expect(Object.is(largestEmptyCircleRadius(center, obstacles, rect), 0)).toBe(true); // +0
+    });
+  });
+
+  describe('reduces to largestEmptyCircleRadius exactly', () => {
+    const square = {
+      type: 'polygon',
+      points: [
+        { x: 0, y: 0 },
+        { x: 10, y: 0 },
+        { x: 10, y: 10 },
+        { x: 0, y: 10 },
+      ],
+    };
+
+    // Every input triple the existing suite covers, plus the edge cases the
+    // split has to preserve: NaN obstacles, a NaN boundary, exact ties, zeroes.
+    const cases = [
+      ['no obstacles + rect boundary', { x: 10, y: 10 }, [], rect],
+      ['single obstacle', { x: 50, y: 50 }, [{ x: 70, y: 50, r: 5 }], rect],
+      [
+        'two obstacles',
+        { x: 50, y: 50 },
+        [{ x: 70, y: 50, r: 5 }, { x: 50, y: 65, r: 3 }],
+        rect,
+      ],
+      ['center inside an obstacle, null boundary', { x: 50, y: 50 }, [{ x: 52, y: 50, r: 10 }], null],
+      ['center outside the rect boundary', { x: -5, y: 10 }, [], rect],
+      ['null boundary + no obstacles', { x: 0, y: 0 }, [], null],
+      ['polygon boundary, center at the centroid', { x: 5, y: 5 }, [], square],
+      ['polygon boundary, center outside', { x: 15, y: 5 }, [], square],
+      ['fitsAt fixture', { x: 50, y: 50 }, [{ x: 70, y: 50, r: 5 }], rect],
+      ['boundary binds over the obstacle', { x: 3, y: 3 }, [{ x: 23, y: 3, r: 5 }], rect],
+      ['boundary/obstacle exact tie', { x: 15, y: 15 }, [{ x: 35, y: 15, r: 5 }], rect],
+      ['NaN obstacle alone', { x: 10, y: 10 }, [{ x: NaN, y: 10, r: 5 }], rect],
+      [
+        'NaN obstacle mixed with a finite winner',
+        { x: 50, y: 50 },
+        [{ x: NaN, y: 50, r: 5 }, { x: 70, y: 50, r: 5 }],
+        rect,
+      ],
+      ['NaN obstacle radius', { x: 50, y: 50 }, [{ x: 70, y: 50, r: NaN }], rect],
+      ['NaN boundary term', { x: NaN, y: 10 }, [{ x: 70, y: 50, r: 5 }], rect],
+      ['NaN boundary term, no obstacles', { x: NaN, y: 10 }, [], rect],
+      ['zero boundary distance on the wall', { x: 0, y: 50 }, [{ x: 10, y: 50, r: 10 }], rect],
+      ['negative-zero obstacle radius', { x: 20, y: 50 }, [{ x: 20, y: 50, r: -0 }], rect],
+      ['infinite obstacle radius', { x: 50, y: 50 }, [{ x: 70, y: 50, r: Infinity }], rect],
+      ['obstacle at the center', { x: 50, y: 50 }, [{ x: 50, y: 50, r: 0 }], rect],
+      ['tied obstacle bounds', { x: 50, y: 50 }, [{ x: 70, y: 50, r: 5 }, { x: 50, y: 70, r: 5 }], rect],
+      ['degenerate rect boundary', { x: 5, y: 5 }, [], { type: 'rect', width: 0, height: 0 }],
+      ['unknown boundary type', { x: 5, y: 5 }, [{ x: 8, y: 5, r: 1 }], { type: 'circle', r: 4 }],
+    ];
+
+    it.each(cases)('%s', (_label, center, obstacles, boundary) => {
+      const p = largestEmptyCircleParts(center, obstacles, boundary);
+      const reduced = Math.min(p.boundary, p.obstacles);
+      const actual = largestEmptyCircleRadius(center, obstacles, boundary);
+      // Object.is, not toEqual: it distinguishes -0 from +0 and matches NaN.
+      expect(Object.is(reduced, actual)).toBe(true);
+    });
+
+    it('agrees with fitsAt at exact equality with the reduced radius', () => {
+      const center = { x: 50, y: 50 };
+      const obstacles = [{ x: 70, y: 50, r: 5 }];
+      const p = largestEmptyCircleParts(center, obstacles, rect);
+      const reduced = Math.min(p.boundary, p.obstacles);
+      expect(fitsAt(center, reduced, obstacles, rect)).toBe(true);
+    });
+
+    it('uses the default arguments identically in both functions', () => {
+      const center = { x: 0, y: 0 };
+      const p = largestEmptyCircleParts(center);
+      expect(Object.is(Math.min(p.boundary, p.obstacles), largestEmptyCircleRadius(center))).toBe(true);
+      expect(p.obstacle).toBe(null);
+    });
   });
 });
 

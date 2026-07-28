@@ -560,10 +560,15 @@ describe('dealSlots — zoned: a chain with NO Cell Zone is unaffected by the ne
   });
 
   it('a zone id the deal does not recognise rests its members rather than throwing', () => {
+    // The pre-existing, documented failure mode: there is no schema validation of
+    // zone ids anywhere in the studio, and an unknown id fails by RESTING. Adding
+    // a third partition narrows the gap (ZONE_IDS is now single-sourced beside
+    // the partition) without closing it. The sentinel is deliberately NOT 'node',
+    // which ADR 0008 reserves for a future crossing Zone.
     const assigns = dealSlots([mkZ('edge:0:0', { role: 'edge' })], {
       type: 'sequence',
       seed: 1,
-      zones: [{ zone: 'node', slots: [{ glyphRef: 'X' }] }],
+      zones: [{ zone: 'not-a-zone', slots: [{ glyphRef: 'X' }] }],
     });
     expect(assigns.map((a) => a.rest)).toEqual([true]);
   });

@@ -7,7 +7,7 @@
 // stays expanded (it is the payload) and shows an "N placed" chip. The per-block
 // anchor chips read from sieveCounts when the rack is given resolved host anchors.
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, within, fireEvent } from "@testing-library/react";
+import { render, screen, within, fireEvent, cleanup } from "@testing-library/react";
 import MotifBlockRack from "./MotifBlockRack";
 
 // A chain that mounts every card body plus the deepest branches (a Random-mode
@@ -453,6 +453,58 @@ describe("MotifBlockRack — the Cell Zone", () => {
   it("a caller naming NO host still renders every Zone the chain carries", () => {
     render(<MotifBlockRack {...baseProps} chain={threeZoneChain} />);
     expect(sectionIds()).toEqual(["apex", "stem", "cell"]);
+  });
+
+  // BOUNDARY PARAMS, not defaults. The Zone list is params-aware because
+  // `rolesForHost` is, and both of these hosts change their answer on a param.
+  it("a SINGLE-AXIS grid shows Apex and Stem and no Cell (it routes through edge capture)", () => {
+    render(
+      <MotifBlockRack
+        {...baseProps}
+        chain={threeZoneChain}
+        hostPatternType="grid"
+        hostParams={{ drawVertical: 1, drawHorizontal: 0 }}
+      />
+    );
+    expect(sectionIds()).toEqual(["apex", "stem"]);
+    // …and a TWO-axis grid, the same host, shows all three.
+    cleanup();
+    render(
+      <MotifBlockRack
+        {...baseProps}
+        chain={threeZoneChain}
+        hostPatternType="grid"
+        hostParams={{ drawVertical: 1, drawHorizontal: 1 }}
+      />
+    );
+    expect(sectionIds()).toEqual(["apex", "stem", "cell"]);
+  });
+
+  it("an UNAVAILABLE host shows no Zone at all — a blank plate can fill nothing", () => {
+    // Chladni at equal mode numbers draws literally nothing, so it emits no
+    // roles, so no Zone can receive an anchor. This matches what the Route card
+    // already does with its role checkboxes on the same host (#145/#146) — the
+    // rack does not invent a second answer.
+    render(
+      <MotifBlockRack
+        {...baseProps}
+        chain={threeZoneChain}
+        hostPatternType="chladni"
+        hostParams={{ m: 3, n: 3 }}
+      />
+    );
+    expect(screen.queryAllByTestId("motif-zone")).toHaveLength(0);
+    // The same host with unequal modes is an ordinary edge host again.
+    cleanup();
+    render(
+      <MotifBlockRack
+        {...baseProps}
+        chain={threeZoneChain}
+        hostPatternType="chladni"
+        hostParams={{ m: 4, n: 3 }}
+      />
+    );
+    expect(sectionIds()).toEqual(["apex", "stem"]);
   });
 });
 

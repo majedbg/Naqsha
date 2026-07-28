@@ -183,6 +183,51 @@ export default class CirclePacking extends Pattern {
       }
     }
 
+    // --- Motif host-geometry capture (CELL-CONTAINER seam, #146) -------------
+    // Stash the ACCEPTED circle set so a Motif layer adorning this host can put
+    // one glyph inside each circle, sized to the circle it occupies. Captured
+    // here, inside the actual draw-run, because the packing comes from ctx.random
+    // — an outside recompute under a different RNG would diverge (the same reason
+    // Voronoi stashes rather than replays; see semanticAnchors.js voronoi block).
+    //
+    // ACCEPTED (`placed`), NOT EMITTED (`outCircles`). In the `nested` render the
+    // emitted set holds `ringCount` CONCENTRIC circles per site, all sharing one
+    // centre; stashing that would hand the extractor a pile of coincident anchors
+    // that the placement engine's empty-circle test silently reduces to one glyph
+    // with no diagnostic. `placed` is one entry per site with the radius the
+    // maker reads as the outer ring — so the stash is also render-mode
+    // INDEPENDENT: outlines, links and nested all host motifs identically.
+    //
+    // NO RNG. Everything below the packing loop is derived arithmetic — this
+    // capture adds not one ctx.random call, so the class header's "exactly two
+    // draws per attempt" contract, and every circle it determines, are untouched.
+    // (CirclePacking.motif.test.js pins the draw stream + SVG by digest.)
+    //
+    // FRAME: circles are built origin-CENTRED and painted through
+    // applySymmetryDraw(..., 1, cx, cy, drawBase, startAngle, offsetX, offsetY),
+    // which translates to (cx+offsetX, cy+offsetY) and THEN rotates by
+    // startAngle. So the painted world position is
+    //     world = R(startAngle)·centred + (canvasW/2 + offsetX, canvasH/2 + offsetY)
+    // and that is what we stash. Symmetry is hardcoded to 1, so there are no
+    // copies to replicate — but the start-angle rotation is real and IS applied.
+    // (This is deliberately NOT Voronoi's frame handling: Voronoi stashes
+    // pre-startAngle geometry and documents that it matches no visible copy at a
+    // nonzero start angle. Following that here would reproduce a known bug.)
+    // Layer NODE transforms (the interactive move/rotate/scale) are out of scope
+    // — pre-existing and cross-host, per PRD #143.
+    const startRad = (startAngle * Math.PI) / 180;
+    const cosA = Math.cos(startRad);
+    const sinA = Math.sin(startRad);
+    const shiftX = cx + offsetX;
+    const shiftY = cy + offsetY;
+    this.motifHostGeometry = {
+      circles: placed.map((c) => ({
+        x: c.x * cosA - c.y * sinA + shiftX,
+        y: c.x * sinA + c.y * cosA + shiftY,
+        r: c.r,
+      })),
+    };
+
     // --- Emit SVG (origin-centered; the group wrapper translates/rotates) -----
     const f = (n) => (Math.round(n * 100) / 100).toString();
     for (const l of lines) {

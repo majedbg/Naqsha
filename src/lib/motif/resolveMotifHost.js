@@ -15,7 +15,7 @@
 // hosts remain OUT of scope for this slice.
 
 import { isMotifLayer, motifHostId } from './motifLayer.js';
-import { isEdgeHost } from './hostKinds.js';
+import { isEdgeHost, isStashHost, STASH_GEOMETRY_KEYS } from './hostKinds.js';
 import {
   resolveModulationsForTarget,
   composeModulationParam,
@@ -62,15 +62,22 @@ export function resolveMotifHostParams(layer, layers, hostGeometry = {}) {
   // feeds makeP5Random(hostSeed) into the geometry core to reproduce the LIVE-p5
   // jittered / symmetry-replicated lattice (see semanticAnchors GRID header).
   const out = { hostPatternType: host.patternType, hostParams, hostSeed: host.seed };
-  if (host.patternType === 'voronoi') {
-    // Forward the WHOLE captured host geometry: drawnEdges + sites (the
-    // boundary-hardened seam the extractor prefers) and/or legacy drawnCells.
-    // Absent → omit (graceful null anchors → nothing placed).
+  if (isStashHost(host.patternType)) {
+    // A STASH host's geometry is seed-driven and not reconstructible from params,
+    // so the pattern captures it during generate() and the order-independent
+    // prepass harvests it. Forward the WHOLE captured geometry, keyed by the
+    // single STASH_GEOMETRY_KEYS list so a new stash host adds a key there rather
+    // than another branch here:
+    //   • voronoi       → drawnEdges + sites (the boundary-hardened seam the
+    //                     extractor prefers) and/or legacy drawnCells
+    //   • circlepacking → circles (accepted container circles, #146)
+    // Absent → omit (graceful null anchors → nothing placed, e.g. a host that has
+    // not been probed yet).
     const geom = hostGeometry[hostId];
     if (geom) {
-      if (geom.drawnEdges) out.drawnEdges = geom.drawnEdges;
-      if (geom.sites) out.sites = geom.sites;
-      if (geom.drawnCells) out.drawnCells = geom.drawnCells; // legacy
+      for (const key of STASH_GEOMETRY_KEYS) {
+        if (geom[key]) out[key] = geom[key];
+      }
     }
   } else if (isEdgeHost(host.patternType, host.params)) {
     // B2 — arbitrary-edge host (flowfield/wave/…) OR a single-axis grid (params-

@@ -29,7 +29,9 @@ import { dealSlots, isSequenceBlock } from './sequencer.js';
 
 /**
  * @typedef {import('./anchors.js')} Anchors
- * @typedef {{id:string, role:string, x:number, y:number, tangent:number, normal:number, s:number, meta:object}} Anchor
+ * @typedef {{id:string, role:string, x:number, y:number, tangent:number, normal:number, s:number, meta:object, hostRadius?:number}} Anchor
+ *   `hostRadius` (#146) is the OPTIONAL, TOP-LEVEL host-size channel: the radius
+ *   of the container this anchor occupies. See `hasHostRadius` below.
  * @typedef {string | {id?:string, x?:number, y?:number, role?:string}} OverrideRef
  */
 
@@ -240,6 +242,26 @@ const MIN_SCALE_FACTOR = 1e-3;
 const toDegrees = (rad) => (rad * 180) / Math.PI;
 
 /**
+ * HOST-SIZE CHANNEL (#146) — does this anchor declare the container it occupies?
+ *
+ * NORMATIVE: `hostRadius` is an optional **top-level** field on the RUNTIME
+ * anchor. Not `meta.hostRadius` (metadata is for role-specific descriptive
+ * data; this is a placement-critical engine input), not a new sizing mode (that
+ * would need a UI surface, a document field and a migration, and would leave
+ * every existing cell host unable to opt in), and never written to the document.
+ * As an optional anchor field the channel is inert for every host that does not
+ * set it, and any host can adopt it later without touching the engine again.
+ *
+ * Anything not a FINITE POSITIVE number reads as ABSENT — a host that cannot
+ * determine a container size simply omits the field, and a degenerate value must
+ * degrade to "no container" rather than to "a container of size zero".
+ * @param {Anchor} anchor @returns {boolean}
+ */
+function hasHostRadius(anchor) {
+  return Number.isFinite(anchor.hostRadius) && anchor.hostRadius > 0;
+}
+
+/**
  * Resolve effective orientation for a role: perRole[role] merged (per field)
  * over the base orientation. Never mutates either input.
  * @param {object} base
@@ -417,10 +439,37 @@ export function resolvePlacements(survivors, config = {}, opts = {}) {
         return;
       }
       const margin = Math.min(1, Math.max(0, sizing.margin));
-      // sizeScale grows only the NATURAL target, never the margin*R cap, so
-      // radius <= R still holds and the no-overlap invariant is preserved.
+      // sizeScale grows only the NATURAL target, never the margin*R cap nor the
+      // host-container cap, so radius <= R still holds, the no-overlap invariant
+      // is preserved, and a Slot's size scale can never break containment.
       const naturalTarget = size * scaleFactor * sizeScale;
       radius = Math.min(naturalTarget, margin * R);
+      // HOST-SIZE CHANNEL (#146). An anchor may declare the radius of the
+      // CONTAINER it occupies as an optional TOP-LEVEL `hostRadius`. Containment
+      // is a DISTANCE rule, not a radius cap: the four jitter draws above have
+      // already displaced the placement centre along the anchor's normal and
+      // tangent, so a glyph clamped to margin*hostRadius alone still crosses its
+      // container whenever the centre moved. The rule is stated against the
+      // DISPLACED centre, using the GEOMETRIC displacement (the two differ once
+      // tangent and normal are not perpendicular):
+      //     radius <= margin * max(0, hostRadius - d),  d = |centre - anchor|
+      // It enters as a THIRD argument to the SAME minimum, so it can only ever
+      // shrink a glyph — the empty-circle term and the no-overlap invariant are
+      // untouched, and the layer's size stays a ceiling.
+      //
+      // A zero/negative cap (the centre was displaced clean out of its
+      // container) is a rejection, never a negative radius. The guard is gated
+      // STRICTLY inside this branch: a document with margin 0 and NO hostRadius
+      // still produces the accepted zero-radius placement it produces today.
+      if (hasHostRadius(anchor)) {
+        const d = Math.hypot(x - anchor.x, y - anchor.y);
+        const hostCap = margin * Math.max(0, anchor.hostRadius - d);
+        if (hostCap <= 0) {
+          rejected.push({ anchorId: anchor.id, reason: 'no-fit' });
+          return;
+        }
+        if (hostCap < radius) radius = hostCap;
+      }
       if (radius < min) {
         rejected.push({ anchorId: anchor.id, reason: 'below-floor' });
         return;

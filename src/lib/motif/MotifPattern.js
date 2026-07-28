@@ -103,6 +103,9 @@ export default class MotifPattern extends Pattern {
         drawnEdges: p.drawnEdges,
         sites: p.sites,
         drawnCells: p.drawnCells,
+        // Circle Packing's accepted container circles (#146) — one `cell` anchor
+        // per circle, each declaring its radius as the top-level `hostRadius`.
+        circles: p.circles,
       });
       if (anchors == null) {
         anchors = hostPaths.length ? sampleEdgeAnchors(hostPaths, p.edgeOpts || {}) : [];

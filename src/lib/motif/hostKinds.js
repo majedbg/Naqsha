@@ -24,8 +24,47 @@
 
 /** Hosts with a structural (crossing/tip/cell) anchor extractor. */
 export const SEMANTIC_MOTIF_HOSTS = Object.freeze(
-  new Set(['grid', 'recursive', 'spiral', 'voronoi'])
+  new Set(['grid', 'recursive', 'spiral', 'voronoi', 'circlepacking'])
 );
+
+/**
+ * SEMANTIC hosts whose geometry is NOT reconstructible from params — they are
+ * seed-driven, so the pattern STASHES its resolved geometry on the instance
+ * (`instance.motifHostGeometry`) during generate() and an order-independent
+ * prepass harvests it (collectHostGeometry.js → resolveMotifHost.js).
+ *
+ * The distinction matters at exactly one seam: `resolveMotifHost` must forward
+ * the harvested geometry for these hosts and only these. Formula hosts
+ * (grid/recursive/spiral) re-derive from params and need nothing forwarded.
+ *
+ * The probe is a SINGLE BOOLEAN — it either records the draw stream (edge hosts)
+ * or reads the stash (these), never both. A host that emits cells AND edges must
+ * therefore supply BOTH from its stash, as Voronoi does, and must NOT also be
+ * listed in EDGE_MOTIF_HOSTS.
+ */
+export const STASH_MOTIF_HOSTS = Object.freeze(new Set(['voronoi', 'circlepacking']));
+
+/**
+ * Geometry keys a stash host may publish on `instance.motifHostGeometry`, and
+ * which `resolveMotifHost` forwards verbatim to the extractor. Listed in one
+ * place so a new stash host adds a key here rather than a new branch there.
+ *   • voronoi        → drawnEdges (+ sites), legacy drawnCells
+ *   • circlepacking  → circles (accepted container circles, #146)
+ */
+export const STASH_GEOMETRY_KEYS = Object.freeze([
+  'drawnEdges',
+  'sites',
+  'drawnCells',
+  'circles',
+]);
+
+/**
+ * Whether a host supplies its motif anchors from a generate()-time STASH rather
+ * than from its params. @param {string} patternType @returns {boolean}
+ */
+export function isStashHost(patternType) {
+  return STASH_MOTIF_HOSTS.has(patternType);
+}
 
 /**
  * Polyline-emitting hosts that support generic EDGE-mode motifs via drawn-
@@ -65,11 +104,15 @@ export const MOTIF_HOSTS = Object.freeze(
 // `edge` (arc-length samples along each arm), which it always produces. Any host
 // not listed (edge hosts, unknown) falls back to `edge`, matching the generic
 // Edge-anchor path. Keyed by PATTERN_CLASSES registry id.
+// CIRCLE PACKING emits `cell` and nothing else (#146): one anchor per packed
+// circle, at its centre. It has no lattice to cross, no strand to run along and
+// no free terminus, so `cell` is both its default and its only role.
 const DEFAULT_SEMANTIC_ROLE = Object.freeze({
   grid: 'crossing',
   recursive: 'crossing',
   voronoi: 'crossing',
   spiral: 'edge',
+  circlepacking: 'cell',
 });
 
 /**

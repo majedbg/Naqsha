@@ -42,10 +42,25 @@ import { VECTOR_MOTIF_GLYPHS } from './vectorMotifsGlyphs.js';
 // what makes a 180° turn — local (x,y)→(−x,−y), used by the Vine to alternate
 // leaves above/below — read DIFFERENTLY from a plain `flip` (x-negation,
 // (x,y)→(−x,y)); the two differ only by the y-negation the asymmetry exposes.
-// Authored as a small closed polyline (a handful of M/L commands) for a
-// house-style exact vertex list, overall ≈20 units long (matching the old
-// ±10-tall leaf's footprint).
-const LEAF_D = 'M0,0 L6,-6 L14,-5 L20,-0.5 L18,3 L11,4.5 L4,3 Z';
+//
+// Curved re-author (2026-07-28): the old shape was a 7-vertex straight-line
+// polygon that read as a faceted lens rather than a leaf. Re-authored as TWO
+// cubic Béziers — one per flank — sharing the base (0,0) and the tip (20,-1)
+// as their shared endpoints, closed with Z. Only M/C/Z are used (no Q/T/A —
+// see the parser note in src/lib/plotter/pathOps.js: it understands M/L/C/S/Z
+// only, and ignores Q/T/A entirely, so those would render on canvas as
+// straight skips while still exporting correctly to SVG — invisible in
+// review). The upper flank's control points (4,-9)/(14,-9) bulge to about
+// y≈-6.9 at its widest; the lower flank's (15,4)/(6,5) bulge to only y≈3.3 —
+// a ~2:1 asymmetry that preserves the midrib contract above. The tip sits at
+// (20,-1), not (20,0), which gives the midrib axis a slight droop instead of
+// a dead-straight almond spine. Both flanks are single, non-inflecting cubic
+// arcs, so the whole outline is convex apart from the two intentional points
+// (tip and base) — verified by walking the flattened polygon and checking
+// every turn has the same sign (see the scratch check run during authoring;
+// no inflection/self-intersection). Overall ≈20 units long, matching the old
+// leaf's footprint.
+const LEAF_D = 'M0,0 C4,-9 14,-9 20,-1 C15,4 6,5 0,0 Z';
 
 // 'dot' — a small filled circle, approximated as a regular octagon (8
 // vertices at radius 3). Symmetric under any reflection/rotation.
@@ -68,10 +83,17 @@ export const MOTIF_GLYPHS = {
     name: 'Leaf',
     tradition: 'botanical',
     paths: [{ d: LEAF_D, closed: true }],
-    // Max vertex distance from the origin (the base) is the blade tip
-    // |(20,-0.5)| = sqrt(400.25) ≈ 20.006; 20.1 is the bounding-circle radius
-    // (covers every authored vertex). Larger than the old centered leaf's 10.2
-    // because the blade now extends fully to one side instead of straddling the
+    // Measured against the FLATTENED curve, not the authored anchors (a cubic
+    // can bulge past its endpoints — see pathOps.js parsePathD/flattenPathD).
+    // Ran LEAF_D through parsePathD (16-step fixed sampling) AND flattenPathD
+    // (adaptive, tol=0.25) AND a dense 200k-step analytic sample of both
+    // cubics directly — all three agree the farthest flattened point is the
+    // tip itself, (20,-1), at |(20,-1)| = sqrt(401) ≈ 20.0250; the curve
+    // bodies never bulge past that. 20.1 is that ≈20.025 rounded up for a
+    // small safety margin (coincidentally the same numeral as the old
+    // straight-line leaf's viewRadius, but re-derived from scratch for this
+    // shape — not carried over). Larger than the old centered leaf's 10.2
+    // because the blade extends fully to one side instead of straddling the
     // origin — the drawn footprint is still `placement.radius`, so this only
     // re-anchors the leaf at its base, it does not change placement sizing.
     viewRadius: 20.1,

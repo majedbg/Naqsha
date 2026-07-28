@@ -117,6 +117,30 @@ describe('largestEmptyCircleRadius', () => {
   });
 });
 
+/**
+ * The pre-split implementation of `largestEmptyCircleRadius`, kept verbatim as
+ * the byte-identity oracle. The whole safety argument of the boundary/obstacle
+ * split is that the shipped function does not move by one ULP against THIS —
+ * so it must live here independently, not be expressed in terms of the split.
+ *
+ * `signedBoundaryDistance` is private, so the seed is sourced through
+ * `largestEmptyCircleParts(center, [], boundary).boundary`. With an empty
+ * obstacle list that call is exactly `signedBoundaryDistance` and nothing else,
+ * which keeps the oracle honest about the accumulation loop below — the part
+ * that actually changed.
+ */
+function fusedReference(center, obstacles = [], boundary = null) {
+  let radius = largestEmptyCircleParts(center, [], boundary).boundary;
+
+  for (const obstacle of obstacles) {
+    const dist = Math.hypot(center.x - obstacle.x, center.y - obstacle.y);
+    const bound = dist - obstacle.r;
+    if (bound < radius) radius = bound;
+  }
+
+  return radius;
+}
+
 describe('largestEmptyCircleParts', () => {
   const rect = { type: 'rect', width: 100, height: 100 };
 
@@ -329,6 +353,8 @@ describe('largestEmptyCircleParts', () => {
       const actual = largestEmptyCircleRadius(center, obstacles, boundary);
       // Object.is, not toEqual: it distinguishes -0 from +0 and matches NaN.
       expect(Object.is(reduced, actual)).toBe(true);
+      // ...and against the pre-split loop, which is the property that matters.
+      expect(Object.is(actual, fusedReference(center, obstacles, boundary))).toBe(true);
     });
 
     it('agrees with fitsAt at exact equality with the reduced radius', () => {
@@ -337,6 +363,78 @@ describe('largestEmptyCircleParts', () => {
       const p = largestEmptyCircleParts(center, obstacles, rect);
       const reduced = Math.min(p.boundary, p.obstacles);
       expect(fitsAt(center, reduced, obstacles, rect)).toBe(true);
+    });
+
+    it('matches the pre-split loop across a deterministic randomized sweep', () => {
+      // Converts "byte-identical for any input" from an argument into a check.
+      // A fixed-seed LCG keeps this reproducible; the generators deliberately
+      // emit -0, NaN and +/-Infinity so the signed-zero and NaN paths — where
+      // the seed change from the boundary distance to Infinity could in
+      // principle diverge — are actually exercised.
+      let seed = 0x2f6e2b1;
+      const next = () => {
+        seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+        return seed / 0x7fffffff;
+      };
+      const oddValue = (base) => {
+        const roll = next();
+        if (roll < 0.04) return NaN;
+        if (roll < 0.07) return Infinity;
+        if (roll < 0.1) return -Infinity;
+        if (roll < 0.13) return -0;
+        if (roll < 0.16) return 0;
+        return base;
+      };
+
+      const square = {
+        type: 'polygon',
+        points: [
+          { x: 0, y: 0 },
+          { x: 60, y: 0 },
+          { x: 60, y: 60 },
+          { x: 0, y: 60 },
+        ],
+      };
+
+      let checked = 0;
+      for (let i = 0; i < 4000; i += 1) {
+        const boundaryRoll = next();
+        const boundary =
+          boundaryRoll < 0.34 ? null : boundaryRoll < 0.67 ? rect : square;
+
+        // Centers land both inside and well outside the region.
+        const center = {
+          x: oddValue(next() * 160 - 30),
+          y: oddValue(next() * 160 - 30),
+        };
+
+        const count = Math.floor(next() * 6); // 0..5
+        const obstacles = [];
+        for (let k = 0; k < count; k += 1) {
+          obstacles.push({
+            x: oddValue(next() * 160 - 30),
+            y: oddValue(next() * 160 - 30),
+            r: oddValue(next() * 40 - 8), // includes zero and negative radii
+          });
+        }
+
+        const actual = largestEmptyCircleRadius(center, obstacles, boundary);
+        const expected = fusedReference(center, obstacles, boundary);
+        if (!Object.is(actual, expected)) {
+          throw new Error(
+            `byte-identity broke at iteration ${i}: got ${actual}, ` +
+              `fused loop gives ${expected}. Input: ` +
+              JSON.stringify({ center, obstacles, boundary }),
+          );
+        }
+
+        // The parts must also reduce to that same value.
+        const p = largestEmptyCircleParts(center, obstacles, boundary);
+        expect(Object.is(Math.min(p.boundary, p.obstacles), expected)).toBe(true);
+        checked += 1;
+      }
+
+      expect(checked).toBe(4000);
     });
 
     it('uses the default arguments identically in both functions', () => {

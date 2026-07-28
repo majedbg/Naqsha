@@ -97,9 +97,22 @@ export function coerceEdgeRoles(binding) {
 // per-glyph override surface unreachable for exactly the placements this change
 // creates.
 //
-// `anchorMode` DEFAULTS TO 'edge' in every caller, matching MotifPattern.js:86
-// (`p.anchorMode ?? 'edge'`). A motif whose params carry no anchorMode renders in
-// edge mode, so anything reading it differently would disagree with the render.
+// `anchorMode` DEFAULTS TO 'edge' when omitted, matching MotifPattern.js:86
+// (`p.anchorMode ?? 'edge'`) — a motif whose render params carry no anchorMode
+// renders in edge mode, and the render is the only caller that reads it off the
+// params. WHAT EACH CALLER PASSES:
+//   • MotifPattern — `p.anchorMode ?? 'edge'`, i.e. the mode its ROUTER already
+//     resolved (resolveMotifHost forces 'edge' on an edge host), which is
+//     authoritative for the render.
+//   • AnchorGhostOverlay / MotifBlockRack — DERIVED from the host
+//     (`isEdgeHost` / `hostIsSemantic`), because there it has to describe the
+//     anchor set those surfaces actually hold: both resolve their anchors through
+//     the params-aware host classification, never through the motif's stored
+//     anchorMode, and coercing roles to 'edge' over a SEMANTIC anchor set would
+//     filter away the very dots and counts they are about to show. On every
+//     app-reachable path the two agree — defaultBinding writes 'semantic' iff
+//     isSemanticHost and resolveMotifHost forces 'edge' iff isEdgeHost — so this
+//     is the same answer, derived from the same fact, at each seam.
 //
 // DEFERRED, DELIBERATELY (#154): the create-time writers (`defaultBinding.js`,
 // `starterChips.js`) stay params-blind. Making them params-aware needs

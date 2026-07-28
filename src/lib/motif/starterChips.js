@@ -30,8 +30,8 @@
 // Every other block (sequence/density/everyN) is host-agnostic authored data
 // — it runs unchanged regardless of which host the chip lands on.
 
-import { defaultRolesForHost, isSemanticHost } from './hostKinds.js';
-import { rolesForHost } from './hostRoles.js';
+import { isSemanticHost } from './hostKinds.js';
+import { rolesForHost, defaultRolesFor } from './hostRoles.js';
 //
 // Correctness (proven in starterChips.test.js, the whole job of this data
 // module): every chip's chain is ENGINE-VALID (`runSelectionChain` never
@@ -89,12 +89,12 @@ const PLACEMENT = {
  * @param {boolean} [zoned]  route the union of roles this host emits, not the default one.
  * @returns {{type:'route', roles:string[], pathScope:'all'|'open'|'closed'}}
  */
-function hostAwareRoute(patternType, edgeScope = 'all', zoned = false) {
-  const hostIsSemantic = isSemanticHost(patternType);
-  const emitted = zoned ? rolesForHost(patternType) : [];
+function hostAwareRoute(patternType, edgeScope = 'all', zoned = false, params) {
+  const hostIsSemantic = isSemanticHost(patternType, params);
+  const emitted = zoned ? rolesForHost(patternType, params) : [];
   return {
     type: 'route',
-    roles: emitted.length > 0 ? emitted : defaultRolesForHost(patternType),
+    roles: emitted.length > 0 ? emitted : defaultRolesFor(patternType, params),
     pathScope: hostIsSemantic ? (edgeScope === 'all' ? 'all' : 'open') : edgeScope,
   };
 }
@@ -104,14 +104,14 @@ export const STARTER_CHIPS = [
   {
     id: 'alternate-xo',
     label: 'Alternate x‑o',
-    build(patternType) {
-      const hostIsSemantic = isSemanticHost(patternType);
+    build(patternType, params) {
+      const hostIsSemantic = isSemanticHost(patternType, params);
       return {
         glyphRef: 'diamond',
         anchorMode: hostIsSemantic ? 'semantic' : 'edge',
         binding: {
           chain: [
-            hostAwareRoute(patternType, 'all'),
+            hostAwareRoute(patternType, 'all', false, params),
             {
               type: 'sequence',
               mode: 'cycle',
@@ -126,8 +126,8 @@ export const STARTER_CHIPS = [
   {
     id: 'vine',
     label: 'Vine',
-    build(patternType) {
-      const hostIsSemantic = isSemanticHost(patternType);
+    build(patternType, params) {
+      const hostIsSemantic = isSemanticHost(patternType, params);
       return {
         glyphRef: 'rosette',
         anchorMode: hostIsSemantic ? 'semantic' : 'edge',
@@ -142,7 +142,7 @@ export const STARTER_CHIPS = [
             // so it comes from `rolesForHost` rather than a literal list: on
             // Circle Packing it collapses to `['cell']`, on an edge host to
             // `['edge']`, on a Grid it is all four.
-            hostAwareRoute(patternType, 'all', true),
+            hostAwareRoute(patternType, 'all', true, params),
             {
               type: 'sequence',
               // ZONED sequencer: named partitions of the survivor set, each
@@ -203,14 +203,14 @@ export const STARTER_CHIPS = [
   {
     id: 'sparse-scatter',
     label: 'Sparse scatter',
-    build(patternType) {
-      const hostIsSemantic = isSemanticHost(patternType);
+    build(patternType, params) {
+      const hostIsSemantic = isSemanticHost(patternType, params);
       return {
         glyphRef: 'dot',
         anchorMode: hostIsSemantic ? 'semantic' : 'edge',
         binding: {
           chain: [
-            hostAwareRoute(patternType, 'all'),
+            hostAwareRoute(patternType, 'all', false, params),
             { type: 'density', density: 0.25, seed: 1, rngMode: 'hash' },
           ],
           placement: PLACEMENT,
@@ -221,8 +221,8 @@ export const STARTER_CHIPS = [
   {
     id: 'border-march',
     label: 'Border march',
-    build(patternType) {
-      const hostIsSemantic = isSemanticHost(patternType);
+    build(patternType, params) {
+      const hostIsSemantic = isSemanticHost(patternType, params);
       return {
         glyphRef: 'diamond',
         anchorMode: hostIsSemantic ? 'semantic' : 'edge',
@@ -233,7 +233,7 @@ export const STARTER_CHIPS = [
             // so a 'closed' scope would silently place nothing there. 'open'
             // is the safe, always-populated choice on both host kinds; the
             // everyN rhythm below is what earns the "march" name.
-            hostAwareRoute(patternType, 'open'),
+            hostAwareRoute(patternType, 'open', false, params),
             { type: 'everyN', n: 3, offset: 0, continuous: false },
           ],
           placement: PLACEMENT,

@@ -1384,7 +1384,7 @@ export default function Studio({ submitOrg = null } = {}) {
       const host = layers.find((l) => l.id === hostLayerId);
       if (!host) return;
       let res = { ok: false };
-      const opts = defaultMotifAddOpts(host.patternType, payload.glyphId);
+      const opts = defaultMotifAddOpts(host.patternType, payload.glyphId, host.params);
       if (payload.kind === "library") {
         recordBatch(() => {
           glyphCommits.copyGlyphToDoc(payload.glyph);

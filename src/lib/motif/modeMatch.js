@@ -59,15 +59,20 @@ import { STARTER_CHIPS } from './starterChips.js';
  * Which starter mode does this motif's chain represent on `hostPatternType`?
  * @param {{chain?: Array<object>}} binding  the motif's stored binding.
  * @param {string} hostPatternType  the host the motif adorns (chips are host-aware).
+ * @param {object} [hostParams]  the host's live params. PARAMS-AWARE BY NECESSITY
+ *   (#154 step 2): create-time role defaults are params-aware, so a chip must be
+ *   REBUILT under the same params it was built with or the two disagree about
+ *   roles and every chip on a single-axis Grid reads as 'custom'. Omitting it
+ *   keeps the by-type answer, matching the rest of the host seam.
  * @returns {string} a STARTER_CHIP id, or 'custom'.
  */
-export function modeForMotif(binding, hostPatternType) {
+export function modeForMotif(binding, hostPatternType, hostParams) {
   const chain = binding && Array.isArray(binding.chain) ? binding.chain : null;
   if (!chain) return 'custom'; // legacy selection-form, empty, or null ⇒ custom.
 
   const target = normalizeChain(chain);
   for (const chip of STARTER_CHIPS) {
-    const built = normalizeChain(chip.build(hostPatternType).binding.chain);
+    const built = normalizeChain(chip.build(hostPatternType, hostParams).binding.chain);
     if (deepEqual(target, built)) return chip.id;
   }
   return 'custom';
@@ -80,11 +85,12 @@ export function modeForMotif(binding, hostPatternType) {
  * those). null-safe.
  * @param {string} chipId
  * @param {string} hostPatternType
+ * @param {object} [hostParams]  see modeForMotif — must match what will re-derive it.
  * @returns {{glyphRef:string, anchorMode:string, binding:object}|null}
  */
-export function applyModeChain(chipId, hostPatternType) {
+export function applyModeChain(chipId, hostPatternType, hostParams) {
   const chip = STARTER_CHIPS.find((c) => c.id === chipId);
-  return chip ? chip.build(hostPatternType) : null;
+  return chip ? chip.build(hostPatternType, hostParams) : null;
 }
 
 // ── Canonicalization ─────────────────────────────────────────────────────────

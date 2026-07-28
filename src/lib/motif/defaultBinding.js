@@ -4,20 +4,26 @@
 // and the device's button can never drift: same host-aware anchor mode
 // (semantic hosts expose structural anchors; edge hosts get polyline-capture
 // edge mode), same role defaults, same proportional sizing tail.
-import { defaultRolesForHost, isSemanticHost } from './hostKinds';
+import { isSemanticHost } from './hostKinds';
+import { defaultRolesFor } from './hostRoles';
 
 /**
  * Options for addMotifLayer(hostLayerId, opts) when adding a motif to a host.
  * @param {string} hostPatternType the host layer's patternType
  * @param {string} glyphRef        glyph id to bind (built-in, custom, or library uuid)
+ * @param {object} [hostParams]    the host layer's live params (#154 step 2). What a
+ *   host emits can depend on its params — a columns-only Grid has no crossings —
+ *   so the role written HERE is params-aware and a create-time writer can no
+ *   longer store a role the host does not offer. Omitting it keeps the by-type
+ *   answer, so every existing caller is byte-identical.
  */
-export function defaultMotifAddOpts(hostPatternType, glyphRef) {
+export function defaultMotifAddOpts(hostPatternType, glyphRef, hostParams) {
   return {
     glyphRef,
-    anchorMode: isSemanticHost(hostPatternType) ? 'semantic' : 'edge',
+    anchorMode: isSemanticHost(hostPatternType, hostParams) ? 'semantic' : 'edge',
     binding: {
       selection: {
-        roles: defaultRolesForHost(hostPatternType),
+        roles: defaultRolesFor(hostPatternType, hostParams),
         rate: { n: 1 },
       },
       placement: {

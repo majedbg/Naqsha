@@ -7,7 +7,11 @@ const SEMANTIC_HOST = 'grid';
 const EDGE_HOST = 'flowfield';
 
 describe('modeForMotif — round-trip (every chip → its own id)', () => {
-  for (const host of [SEMANTIC_HOST, EDGE_HOST]) {
+  // #150 adds the two CELL hosts to the loop. The Vine's Route now varies by host
+  // (it comes from `rolesForHost`), which is exactly where a host-dependent chain
+  // could stop matching itself — so clicking Vine on a packing must light **Vine**
+  // in the mode column, not Custom. `truchet` covers the mixed case.
+  for (const host of [SEMANTIC_HOST, EDGE_HOST, 'circlepacking', 'truchet']) {
     for (const chip of STARTER_CHIPS) {
       it(`${chip.id} round-trips on ${host}`, () => {
         const { binding } = chip.build(host);

@@ -96,44 +96,33 @@ not a `<select>`; `motif-slot-anglerand` is a button, not a checkbox. New:
 Still open: the disclosed row is snug at 124px. Left as-is — it reads fine in
 the real rail, and widening costs a third of a chip.
 
-## Prototype (round 1) — `?slotcard=A|B|C|D`
+## Prototype — captured, not deleted
 
-`npm run dev` → `http://localhost:5173/?slotcard=A`, `←`/`→` to cycle.
-Screenshots: `node scripts/proto-slotcard-shots.mjs <outDir>`.
+Four variants (A Popover port · B Gutter · C Mixer channel · D Gutter + inline
+spread) were built as a DEV-gated overlay behind `?slotcard=`, judged at the
+real rail width with the real primitives, and are preserved whole on the
+throwaway branch **`proto/motif-slot-card`** (tip `c23135c`) — variant
+components, the switcher, and `scripts/proto-slotcard-shots.mjs`, which
+screenshots all four. They are OFF main deliberately: prototype code was written
+without tests or error handling, and variants left beside the shipped component
+rot fast.
 
-Cost that the screenshots hide: **A and C read `180°`, B reads `+180°`.**
-`DragDial` has no `format` prop, hard-codes `{value}°`, declares
-`aria-valuemin={0} aria-valuemax={360}`, and draws a "12 o'clock reference —
-absolute bearings are read from here" tick (`DragDial.jsx:209-235`). Picking A
-or C therefore means teaching the shared dial a signed readout — in a component
-`GlyphPopover` depends on, where the unsigned absolute reading is correct.
+D was rewritten properly into `SortableSlotChip` rather than promoted.
 
-### Capture / cleanup, when a variant wins
 
-Fold the winner into `SortableSlotChip` properly (it was written under prototype
-rules — no tests, no error handling), then drop from main:
+## Risks, and where they landed
 
-1. `src/components/shell/motif-prototypes/SlotCardVariants.jsx`
-2. `src/components/shell/motif-prototypes/SlotCardPrototypeOverlay.jsx`
-3. the import + `<SlotCardPrototypeOverlay />` mount in `src/pages/Studio.jsx`
-4. `scripts/proto-slotcard-shots.mjs`
-5. this section
-
-Do NOT copy the prototype's flush seam. `useCell` latches `opened.current` on
-first `onChange` and clears it on `onCommit` — but `DragNumber` emits neither
-when a gesture ends where it started, so the latch stays set and the NEXT
-gesture skips its opening flush, folding two edits into one undo entry. Take
-the discipline from `AnchorGhostOverlay`, which already ships it against real
-undo.
-
-## Risks carried
-
-- `editChain` signature is `${id}:params` for every chain edit, so without
-  explicit flushes a scale drag and a following rotation drag fold into one undo
-  entry. The flush discipline in decision 11 is what prevents that.
-- Live preview re-runs the chain and repacks per grid crossing. Dense modules
-  may not hold 60fps; measure in the prototype before committing to it.
-- `SortableSlotChip` is shared by four surfaces. Its existing tests
-  (`MotifBlockRack.test.jsx`) pin `motif-slot-remove`, `motif-slot-anglerand`,
-  `motif-slot-range`, `motif-slot-spread`, `motif-slot-weight` — all of which
-  change shape here.
+- **Undo granularity.** `editChain`'s signature is `${id}:params` for every
+  chain edit, so consecutive edits of different things coalesce by default.
+  `useGestureFlush` draws the boundaries; `Inspector.motif.test.jsx` pins two
+  flushes per discrete edit and an empty window afterwards.
+- **Live preview repacks per grid crossing.** Held up on a 4-slot module in the
+  real rail. Not measured on a dense one — if a big module drags heavily, the
+  cheapest fix is to preview `rotationOffset` (no repack) live and let
+  `sizeScale` settle on commit.
+- **Reset writes `undefined` fields** rather than deleting keys, so a reset slot
+  carries `{sizeScale: undefined, …}` in memory. `makeAssignment`'s `!= null`
+  guards read it correctly and `JSON.stringify` drops the keys on save, so the
+  document self-heals. Same shape the old angle-rnd checkbox already wrote.
+- **`SortableSlotChip` serves four surfaces** (flat Sequencer + three Zones).
+  All four were changed together, deliberately — see decision 6.

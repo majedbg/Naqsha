@@ -765,7 +765,11 @@ function SortableSlotChip({
       style={style}
       data-testid="motif-slot"
       data-slot-index={index}
-      data-slot-rest={isRest ? "true" : "false"}
+      // `rest` reports the MODEL (a hidden slot rests too — makeAssignment
+      // stamps nothing for it); `hidden` carries the distinction the CHIP
+      // draws. Two attributes rather than one overloaded one, so neither has to
+      // disagree with the engine.
+      data-slot-rest={slot?.rest === true ? "true" : "false"}
       data-slot-hidden={isHidden ? "true" : undefined}
       className={`flex w-[124px] shrink-0 flex-col gap-0.5 self-start rounded-cell border border-hairline bg-paper p-1 ${
         isHidden ? "opacity-45" : ""

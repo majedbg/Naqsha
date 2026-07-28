@@ -44,6 +44,7 @@ import RightPanel from "../components/RightPanel";
 // PROTOTYPE (throwaway) — motif-DEVICE layout variants. DEV-only, inert
 // without ?variant=A|B|C. Delete together with motif-prototypes/.
 import MotifPrototypeOverlay from "../components/shell/motif-prototypes/MotifPrototypeOverlay";
+import PitchPrototypeOverlay from "../components/shell/motif-prototypes/PitchPrototypeOverlay";
 import LayerGroupModal from "../components/LayerGroupModal";
 import CloudSaveModal from "../components/CloudSaveModal";
 import PatternPickerModal from "../components/PatternPickerModal";
@@ -2362,6 +2363,9 @@ export default function Studio({ submitOrg = null } = {}) {
         {/* PROTOTYPE (throwaway) — motif-device layout variants + A/B/C
             switcher over the canvas. Inert without ?variant=A|B|C (DEV). */}
         <MotifPrototypeOverlay />
+        {/* PROTOTYPE (throwaway) — anchor-pitch control-graphic variants +
+            A/B/C switcher. Inert without ?pitch=A|B|C (DEV). */}
+        <PitchPrototypeOverlay />
         <RightPanel
           layers={layers}
           // Operation library + active profile → canvas strokes match export

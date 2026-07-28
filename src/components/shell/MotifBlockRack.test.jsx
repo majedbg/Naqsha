@@ -691,6 +691,20 @@ describe("MotifBlockRack — Route offers only the roles the host emits", () => 
     expect(rolesOffered()).toEqual(["edge"]);
   });
 
+  // ── #154 criterion 5, asserted at the OFFER surface ────────────────────────
+  // The criterion is worded about what the Route card offers, so it is checked
+  // here as well as at the seam: a tessellation has no free termini and an open
+  // arm encloses no region, and both options were pickable — and dead — until now.
+  it("Voronoi no longer offers Tips (#154)", () => {
+    render(<MotifBlockRack {...baseProps} hostPatternType="voronoi" hostParams={{}} />);
+    expect(rolesOffered()).toEqual(["crossing", "edge", "cell"]);
+  });
+
+  it("Spiral no longer offers Cells (#154)", () => {
+    render(<MotifBlockRack {...baseProps} hostPatternType="spiral" hostParams={{}} />);
+    expect(rolesOffered()).toEqual(["crossing", "edge", "tip"]);
+  });
+
   it("each #144 capture host offers Edges alone", () => {
     for (const type of ["radialetch", "hilbert", "lissajous"]) {
       const { unmount } = render(

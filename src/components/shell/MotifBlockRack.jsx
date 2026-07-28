@@ -44,6 +44,7 @@ import { useInspectorDockContext } from "./inspectorDockContext";
 import { useMeasuredWidth } from "../../lib/hooks/useMeasuredWidth";
 import { rolesForHost, ALL_ROLES } from "../../lib/motif/hostRoles";
 import { hostHasPathStructure } from "../../lib/motif/hostKinds";
+import { zonesForRoles } from "../../lib/motif/zones";
 import {
   makeBlock,
   canAddBlock,
@@ -911,12 +912,21 @@ function SlotStrip({
   );
 }
 
-// Maker-facing Zone vocabulary (CONTEXT.md — Apex/Stem). The ⓘ tooltip copy is
-// the short maker-facing explanation of each Zone.
-const ZONE_LABELS = { apex: "Apex", stem: "Stem" };
+// Maker-facing Zone vocabulary (CONTEXT.md — Apex/Stem/Cell). The ⓘ tooltip copy
+// is the short maker-facing explanation of each Zone: WHERE it is — em dash —
+// WHAT happens there, plus an optional short caveat.
+//
+// CELL (#150) is the first Zone that cannot use the word "path" of itself, which
+// is why the botanical register breaks there. Its label is singular against the
+// Route block's plural "Cells" checkbox, continuing the contrast the rack already
+// runs — Apex ↔ Tips, Stem ↔ Edges.
+const ZONE_LABELS = { apex: "Apex", stem: "Stem", cell: "Cell" };
 const ZONE_TOOLTIPS = {
   apex: "The ends of each path — where the vine flowers. A closed loop has no Apex.",
   stem: "The body of the path — interior points and junctions, where leaves sprout.",
+  cell:
+    "The enclosed areas of the pattern — each tile, circle or face takes a glyph of its own. " +
+    "Some patterns are all cells and no path.",
 };
 
 // One Zone SECTION of a zoned Sequencer (ADR 0008): a titled partition with its
@@ -999,6 +1009,7 @@ function ZoneSection({
 function SequenceCardBody({
   block,
   seqIndex,
+  liveZones,
   onEditChain,
   customGlyphs,
   libraryMotifs,
@@ -1007,11 +1018,20 @@ function SequenceCardBody({
   onEditSlotGlyph,
   onSwapSlotGlyph,
 }) {
-  // ZONED (ADR 0008): one SECTION per Zone instead of the flat slot row.
+  // ZONED (ADR 0008): one SECTION per Zone instead of the flat slot row, in the
+  // chain's STORED order — Apex → Stem → Cell, as the chip factories author it.
+  //
+  // Only the Zones this host can actually FILL are shown (#150): a cell-only host
+  // has no path to flower or leaf along, so rendering an Apex and a Stem there
+  // would offer the maker two sections that can never receive an anchor. This is
+  // a VIEW, never a write — the chain keeps every Zone it carries, so switching
+  // host re-reveals them and the mode's Zone skeleton is unchanged. `liveZones`
+  // is null for callers that name no host, which then see everything.
   if (Array.isArray(block.zones)) {
+    const shown = liveZones ? block.zones.filter((z) => liveZones.includes(z?.zone)) : block.zones;
     return (
       <div className="space-y-2" data-testid="motif-seq-zones">
-        {block.zones.map((zone) => (
+        {shown.map((zone) => (
           <ZoneSection
             key={zone.zone}
             zone={zone}
@@ -1067,6 +1087,7 @@ function BlockCardBody({
   index,
   roleOptions,
   hostHasPaths,
+  liveZones,
   armed,
   onSetArmed,
   onPatch,
@@ -1103,6 +1124,7 @@ function BlockCardBody({
         <SequenceCardBody
           block={block}
           seqIndex={index}
+          liveZones={liveZones}
           onEditChain={onEditChain}
           customGlyphs={customGlyphs}
           libraryMotifs={libraryMotifs}
@@ -1215,6 +1237,7 @@ function SortableBlockCard({
   index,
   roleOptions,
   hostHasPaths,
+  liveZones,
   hostKind,
   armed,
   onSetArmed,
@@ -1291,6 +1314,7 @@ function SortableBlockCard({
       index={index}
       roleOptions={roleOptions}
       hostHasPaths={hostHasPaths}
+      liveZones={liveZones}
       armed={armed}
       onSetArmed={onSetArmed}
       onPatch={onPatch}
@@ -1482,6 +1506,12 @@ export default function MotifBlockRack({
   const hostHasPaths = hostPatternType
     ? hostHasPathStructure(hostPatternType, hostParams)
     : !hostIsSemantic;
+  // WHICH ZONES THIS HOST CAN ACTUALLY FILL (#150). The role→Zone reading rule is
+  // `zonesForRoles`, which lives beside the partitioner that implements it — the
+  // rack asks, it never decides. Fed by `emitted` above, so there is still exactly
+  // ONE host→roles seam. `null` for callers that name no host: they keep the
+  // pre-#150 behaviour of rendering every Zone the chain carries.
+  const liveZones = hostPatternType ? zonesForRoles(emitted) : null;
   const badgeKind = hostKind || fallbackHostKind(hostIsSemantic);
 
   const blocks = Array.isArray(chain) ? chain : [];
@@ -1566,6 +1596,7 @@ export default function MotifBlockRack({
                 index={i}
                 roleOptions={roleOptions}
                 hostHasPaths={hostHasPaths}
+                liveZones={liveZones}
                 hostKind={badgeKind}
                 stage={stageByIndex.get(i) || null}
                 placedCount={

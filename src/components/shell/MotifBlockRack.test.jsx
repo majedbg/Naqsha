@@ -335,6 +335,127 @@ describe("MotifBlockRack — zoned Sequencer sections", () => {
   });
 });
 
+// ── #150 (PRD #143): the Cell Zone is VISIBLE AND CONFIGURABLE ────────────────
+// A Zone only ever arrives from a chip factory — there is no addZone anywhere in
+// the codebase, for ANY Zone — so "visible and configurable, not an implicit
+// partition" means exactly what it means for Apex and Stem: the rack renders it
+// with its own title, its own explanation, its own deal toggle and its own Slot
+// strip, and every edit is zone-addressed by id.
+describe("MotifBlockRack — the Cell Zone", () => {
+  const threeZoneChain = [
+    { type: "route", roles: ["crossing", "edge", "tip", "cell"], pathScope: "all" },
+    {
+      type: "sequence",
+      zones: [
+        { zone: "apex", mode: "cycle", ends: "both", slots: [{ glyphRef: "rosette" }] },
+        { zone: "stem", mode: "cycle", slots: [{ glyphRef: "leaf" }] },
+        { zone: "cell", mode: "cycle", slots: [{ glyphRef: "rosette" }] },
+      ],
+    },
+  ];
+  const cellOnlyChain = [
+    { type: "route", roles: ["cell"], pathScope: "all" },
+    { type: "sequence", zones: threeZoneChain[1].zones },
+  ];
+  const seqOf = (chain) => chain.find((b) => b.type === "sequence");
+  const zoneOf = (chain, id) => seqOf(chain).zones.find((z) => z.zone === id);
+  const sectionIds = () =>
+    screen.getAllByTestId("motif-zone").map((s) => s.getAttribute("data-zone"));
+  const zoneSection = (id) =>
+    screen.getAllByTestId("motif-zone").find((s) => s.getAttribute("data-zone") === id);
+
+  it("renders APPENDED — Apex, Stem, then Cell — with the Cell title and tooltip", () => {
+    render(<MotifBlockRack {...baseProps} chain={threeZoneChain} hostPatternType="truchet" />);
+    expect(sectionIds()).toEqual(["apex", "stem", "cell"]);
+    expect(within(zoneSection("cell")).getByText("Cell")).toBeInTheDocument();
+    expect(within(zoneSection("cell")).getByTestId("motif-zone-info")).toHaveAttribute(
+      "title",
+      "The enclosed areas of the pattern — each tile, circle or face takes a glyph of its own. " +
+        "Some patterns are all cells and no path."
+    );
+    // Never the raw zone id, and never an empty tooltip.
+    expect(within(zoneSection("cell")).queryByText("cell")).toBeNull();
+  });
+
+  it("gives Cell its own deal toggle and Slot strip, and NO end-selector", () => {
+    render(<MotifBlockRack {...baseProps} chain={threeZoneChain} hostPatternType="truchet" />);
+    const cell = zoneSection("cell");
+    expect(within(cell).getByTestId("motif-zone-mode")).toBeInTheDocument();
+    expect(within(cell).getByTestId("motif-slot-strip")).toBeInTheDocument();
+    // A region has no upper or lower end — the selector stays Apex-only.
+    expect(within(cell).queryByTestId("motif-zone-ends")).toBeNull();
+    expect(within(zoneSection("apex")).getByTestId("motif-zone-ends")).toBeInTheDocument();
+  });
+
+  it("edits inside Cell are zone-addressed and leave Apex and Stem untouched", () => {
+    const onEditChain = vi.fn();
+    render(
+      <MotifBlockRack
+        {...baseProps}
+        chain={threeZoneChain}
+        hostPatternType="truchet"
+        onEditChain={onEditChain}
+      />
+    );
+    fireEvent.click(within(zoneSection("cell")).getByTestId("motif-zone-mode-random"));
+    const afterMode = onEditChain.mock.calls[0][0](threeZoneChain);
+    expect(zoneOf(afterMode, "cell").mode).toBe("random");
+    expect(zoneOf(afterMode, "apex")).toBe(zoneOf(threeZoneChain, "apex"));
+    expect(zoneOf(afterMode, "stem")).toBe(zoneOf(threeZoneChain, "stem"));
+
+    fireEvent.click(within(zoneSection("cell")).getByTestId("motif-slot-add-rest"));
+    const afterSlot = onEditChain.mock.calls[1][0](threeZoneChain);
+    expect(zoneOf(afterSlot, "cell").slots).toEqual([{ glyphRef: "rosette" }, { rest: true }]);
+    expect(zoneOf(afterSlot, "stem").slots).toEqual([{ glyphRef: "leaf" }]);
+  });
+
+  // Decision (#150): only Zones that can actually RECEIVE an anchor are shown.
+  // The role→Zone reading rule comes from zones.js `zonesForRoles`, fed by the one
+  // host→roles capability seam — never a conditional grown here.
+  it("a CELL-ONLY host shows Cell alone — no Apex or Stem that can never fill", () => {
+    render(
+      <MotifBlockRack {...baseProps} chain={cellOnlyChain} hostPatternType="circlepacking" />
+    );
+    expect(sectionIds()).toEqual(["cell"]);
+  });
+
+  it("an EDGE host shows Apex and Stem and no Cell", () => {
+    render(<MotifBlockRack {...baseProps} chain={threeZoneChain} hostPatternType="flowfield" />);
+    expect(sectionIds()).toEqual(["apex", "stem"]);
+  });
+
+  it("a MIXED host (Truchet) shows all three — tiles fill while arcs run", () => {
+    render(
+      <MotifBlockRack
+        {...baseProps}
+        chain={threeZoneChain}
+        hostPatternType="truchet"
+        hostParams={{ tiles: 6, tileSet: "arcs" }}
+      />
+    );
+    expect(sectionIds()).toEqual(["apex", "stem", "cell"]);
+  });
+
+  it("hiding a Zone is a VIEW, never a write — the chain still carries all three", () => {
+    const onEditChain = vi.fn();
+    render(
+      <MotifBlockRack
+        {...baseProps}
+        chain={cellOnlyChain}
+        hostPatternType="circlepacking"
+        onEditChain={onEditChain}
+      />
+    );
+    expect(onEditChain).not.toHaveBeenCalled();
+    expect(seqOf(cellOnlyChain).zones.map((z) => z.zone)).toEqual(["apex", "stem", "cell"]);
+  });
+
+  it("a caller naming NO host still renders every Zone the chain carries", () => {
+    render(<MotifBlockRack {...baseProps} chain={threeZoneChain} />);
+    expect(sectionIds()).toEqual(["apex", "stem", "cell"]);
+  });
+});
+
 // ── Wave 3 (#79): slot glyph-swap picker (Feature B) ──────────────────────────
 describe("MotifBlockRack — slot glyph-swap picker", () => {
   // fullChain's terminal sequence sits at index 5; slot 0 is a 'leaf' glyph.

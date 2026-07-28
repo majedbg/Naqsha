@@ -1556,6 +1556,11 @@ function MotifDevice({
                     <MotifBlockRack
                       chain={chain}
                       hostIsSemantic={hostIsSemantic}
+                      // The Route block asks the ONE host-capability seam
+                      // (rolesForHost) which roles this host emits — Cells alone
+                      // on Circle Packing, Edges alone on an edge host (#146).
+                      hostPatternType={layer.patternType}
+                      hostParams={layer.params}
                       hostKind={hostKind}
                       anchors={hostAnchors}
                       overrides={m.params?.binding?.overrides}

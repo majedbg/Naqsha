@@ -421,3 +421,54 @@ describe("MotifBlockRack — slot glyph-swap picker", () => {
     expect(onEditSlotGlyph).toHaveBeenCalledWith(1, 0, "leaf", "stem");
   });
 });
+
+// ── Route role availability (#146) ───────────────────────────────────────────
+// The Route block offers only the roles the HOST actually emits, and it learns
+// that from the ONE params-aware capability seam (lib/motif/hostRoles.js) — never
+// from a conditional in this component. Asserted from the outside: which role
+// checkboxes are rendered.
+describe("MotifBlockRack — Route offers only the roles the host emits", () => {
+  const rolesOffered = () => {
+    unfold("route");
+    return ["crossing", "edge", "tip", "cell"].filter(
+      (k) => within(cardOf("route")).queryByTestId(`motif-block-role-${k}`) != null
+    );
+  };
+
+  it("offers Cells and NO OTHER ROLE on Circle Packing", () => {
+    render(<MotifBlockRack {...baseProps} hostPatternType="circlepacking" hostParams={{}} />);
+    expect(rolesOffered()).toEqual(["cell"]);
+  });
+
+  it("offers all four roles on a two-axis grid", () => {
+    render(
+      <MotifBlockRack
+        {...baseProps}
+        hostPatternType="grid"
+        hostParams={{ drawVertical: 1, drawHorizontal: 1 }}
+      />
+    );
+    expect(rolesOffered()).toEqual(["crossing", "edge", "tip", "cell"]);
+  });
+
+  it("is params-aware — a single-axis grid offers Edges alone", () => {
+    render(
+      <MotifBlockRack
+        {...baseProps}
+        hostPatternType="grid"
+        hostParams={{ drawVertical: 1, drawHorizontal: 0 }}
+      />
+    );
+    expect(rolesOffered()).toEqual(["edge"]);
+  });
+
+  it("offers Edges alone on a native edge host", () => {
+    render(<MotifBlockRack {...baseProps} hostPatternType="flowfield" hostParams={{}} />);
+    expect(rolesOffered()).toEqual(["edge"]);
+  });
+
+  it("a caller that names no host keeps the pre-#146 semantic/edge split", () => {
+    render(<MotifBlockRack {...baseProps} />);
+    expect(rolesOffered()).toEqual(["crossing", "edge", "tip", "cell"]);
+  });
+});

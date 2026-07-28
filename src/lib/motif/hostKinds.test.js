@@ -3,17 +3,38 @@ import {
   SEMANTIC_MOTIF_HOSTS,
   EDGE_MOTIF_HOSTS,
   MOTIF_HOSTS,
+  STASH_MOTIF_HOSTS,
   isSemanticHost,
   isEdgeHost,
   isMotifHost,
+  isStashHost,
+  defaultRolesForHost,
 } from './hostKinds.js';
 import { PATTERN_CLASSES } from '../patterns/index.js';
 
 describe('hostKinds', () => {
-  it('keeps the four legacy semantic hosts exactly', () => {
+  it('keeps the four legacy semantic hosts, plus circlepacking (#146)', () => {
     expect([...SEMANTIC_MOTIF_HOSTS].sort()).toEqual(
-      ['grid', 'recursive', 'spiral', 'voronoi'].sort()
+      ['grid', 'recursive', 'spiral', 'voronoi', 'circlepacking'].sort()
     );
+  });
+
+  it('names the STASH hosts — the ones whose geometry is captured at generate()', () => {
+    // A stash host is seed-driven and not reconstructible from params, so
+    // resolveMotifHost must forward its harvested geometry. The probe is a single
+    // boolean, so a stash host must NOT also be an edge host.
+    expect([...STASH_MOTIF_HOSTS].sort()).toEqual(['circlepacking', 'voronoi'].sort());
+    for (const t of STASH_MOTIF_HOSTS) {
+      expect(SEMANTIC_MOTIF_HOSTS.has(t)).toBe(true);
+      expect(EDGE_MOTIF_HOSTS.has(t)).toBe(false);
+      expect(isStashHost(t)).toBe(true);
+    }
+    expect(isStashHost('grid')).toBe(false);
+    expect(isStashHost('flowfield')).toBe(false);
+  });
+
+  it('circlepacking defaults to the cell role', () => {
+    expect(defaultRolesForHost('circlepacking')).toEqual(['cell']);
   });
 
   it('every edge-host key resolves to a real registered PatternClass', () => {

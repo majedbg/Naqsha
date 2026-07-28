@@ -43,6 +43,7 @@
 //     anchors we can't tie to the drawing).
 
 import { anchorId, sampleEdgeAnchors } from './anchors.js';
+import { pointHostAnchors } from './pointHostAnchors.js';
 import { gridAnchorsCentered } from '../patterns/gridAnchors.js';
 import { makeP5Random } from '../patterns/rng.js';
 import { toSymmetryCount } from '../patterns/symmetryUtils.js';
@@ -1066,6 +1067,10 @@ function voronoiAnchors(_params, _canvasW, _canvasH, opts) {
  *   • opts.drawnEdges + opts.sites (preferred) / opts.drawnCells (legacy) —
  *     host-resolved geometry for GEOMETRY-IN extractors (currently 'voronoi',
  *     which PREFERS the boundary-hardened drawnEdges path).
+ *   • opts.circles — the CIRCLE PACKING host's accepted container circles, in
+ *     world coords and in the painted frame (#146). One `cell` anchor per
+ *     circle, each declaring its radius through the top-level `hostRadius`
+ *     channel so proportional sizing fits the glyph to its container.
  * Backward-compatible: existing 4-arg callers pass no opts, so recursive/spiral
  * are unaffected, grid falls back to the jitter=0 baseline, and voronoi returns
  * null (graceful fallback).
@@ -1108,6 +1113,20 @@ export function getSemanticAnchors(patternType, params, canvasW, canvasH, opts) 
       return spiralAnchors(params, canvasW, canvasH);
     case 'voronoi':
       return voronoiAnchors(params, canvasW, canvasH, opts);
+    case 'circlepacking':
+      // GEOMETRY-IN, like voronoi (#146). CirclePacking's packing comes from
+      // ctx.random and is not reconstructible from params, so the host stashes
+      // its ACCEPTED circles during generate() and they arrive here as
+      // opts.circles in WORLD coords, already in the painted frame (start angle +
+      // offsets applied). Each becomes one `cell` anchor at its centre carrying
+      // the circle's radius as the top-level `hostRadius` channel.
+      //
+      // NULL vs [] is a contract, matching voronoi exactly: no `circles` key at
+      // all (host not yet probed, or a params-only caller such as the anchor-
+      // ghost overlay's pre-#149 branch) ⇒ null, so MotifPattern takes its
+      // documented fallback and nothing is placed. An EMPTY circles array (a
+      // packing that genuinely placed nothing) ⇒ [], an honest empty anchor set.
+      return opts && Array.isArray(opts.circles) ? pointHostAnchors(opts.circles) : null;
     // Extractors for other hosts are deferred to later slices.
     default:
       return null;

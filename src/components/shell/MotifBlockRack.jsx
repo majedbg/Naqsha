@@ -42,6 +42,7 @@ import {
 } from "@dnd-kit/sortable";
 import { useInspectorDockContext } from "./inspectorDockContext";
 import { useMeasuredWidth } from "../../lib/hooks/useMeasuredWidth";
+import { rolesForHost, ALL_ROLES } from "../../lib/motif/hostRoles";
 import {
   makeBlock,
   canAddBlock,
@@ -1396,6 +1397,12 @@ export default function MotifBlockRack({
   chain,
   onEditChain,
   hostIsSemantic = true,
+  // The HOST's registry id + live params. Threaded so the Route block can ask the
+  // ONE host-capability seam (rolesForHost, #146) which roles this host actually
+  // emits, instead of guessing from the semantic/edge split. Omitted by bare
+  // callers (tests, legacy) → the pre-#146 semantic/edge fallback below.
+  hostPatternType,
+  hostParams,
   // RoleBadge visual family for the host (badgeKindForHost — 'lattice'|'stroke').
   // Threaded from MotifDevice so the Route summary's role marks match the mode
   // column's; a bare caller falls back to the semantic/edge split.
@@ -1448,11 +1455,18 @@ export default function MotifBlockRack({
         ? "horizontal"
         : "vertical";
 
-  // On an edge host, Route only offers the Edges role (semantic crossing/tip/cell
-  // anchors don't exist there) — mirror MotifDevice's roleOptions scoping.
-  const roleOptions = hostIsSemantic
-    ? ROLE_OPTIONS_SEMANTIC
-    : ROLE_OPTIONS_SEMANTIC.filter((r) => r.key === "edge");
+  // WHICH ROLES THIS HOST EMITS. Answered by the single params-aware capability
+  // seam (src/lib/motif/hostRoles.js) — never by a conditional here, so the
+  // Inspector, the Route UI and the overlay cannot drift (PRD #143, module E).
+  // On an edge host that is Edges alone; on Circle Packing it is Cells alone.
+  // Bare callers (tests, legacy) that pass no hostPatternType keep the previous
+  // semantic/edge split verbatim.
+  const emitted = hostPatternType
+    ? rolesForHost(hostPatternType, hostParams)
+    : hostIsSemantic
+      ? ALL_ROLES
+      : ["edge"];
+  const roleOptions = ROLE_OPTIONS_SEMANTIC.filter((r) => emitted.includes(r.key));
   const badgeKind = hostKind || fallbackHostKind(hostIsSemantic);
 
   const blocks = Array.isArray(chain) ? chain : [];

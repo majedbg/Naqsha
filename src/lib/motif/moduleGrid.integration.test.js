@@ -414,6 +414,49 @@ describe('Module Grid inherits the shared host-anchor resolver (#149)', () => {
   });
 });
 
+describe('the shared stash-key contract', () => {
+  // `cells` joins STASH_GEOMETRY_KEYS, which resolveMotifHost and
+  // pickStashGeometry both forward for EVERY stash host — so from here on each
+  // host receives keys it does not own. Nothing renders wrong today (no other
+  // host publishes `cells`), but #152 and #153 are about to add keys to the same
+  // list, so the blindness is pinned rather than left to a grep.
+  const EDGES = [
+    { x1: 100, y1: 100, x2: 300, y2: 100 },
+    { x1: 300, y1: 100, x2: 300, y2: 300 },
+    { x1: 300, y1: 300, x2: 100, y2: 300 },
+    { x1: 100, y1: 300, x2: 100, y2: 100 },
+  ];
+  const SITES = [{ x: 200, y: 200 }];
+
+  it('a host IGNORES stash keys it does not own', () => {
+    // voronoi must not see `cells`…
+    const voronoiOwn = getSemanticAnchors('voronoi', {}, W, H, {
+      drawnEdges: EDGES,
+      sites: SITES,
+    });
+    expect(voronoiOwn.length).toBeGreaterThan(0);
+    expect(
+      getSemanticAnchors('voronoi', {}, W, H, { drawnEdges: EDGES, sites: SITES, cells: grid() })
+    ).toEqual(voronoiOwn);
+
+    // …and modulegrid must not see `circles` or `drawnEdges`.
+    const cells = grid();
+    expect(
+      getSemanticAnchors('modulegrid', PARAMS, W, H, {
+        cells,
+        circles: [{ x: 1, y: 2, r: 3 }],
+        drawnEdges: EDGES,
+        sites: SITES,
+      })
+    ).toEqual(getSemanticAnchors('modulegrid', PARAMS, W, H, { cells }));
+
+    // A host given ONLY someone else's key is unprobed, not empty.
+    expect(getSemanticAnchors('modulegrid', PARAMS, W, H, { circles: [{ x: 1, y: 2, r: 3 }] }))
+      .toBeNull();
+    expect(getSemanticAnchors('voronoi', {}, W, H, { cells })).toBeNull();
+  });
+});
+
 describe('Module Grid composes with the Chain', () => {
   const chain = (selection) =>
     placeMotifs(

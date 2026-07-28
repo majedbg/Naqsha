@@ -232,6 +232,66 @@ function outwardNormal(tangent, pos, centroid) {
 }
 
 /**
+ * Shoelace signed area. Positive and negative encode the winding direction; the
+ * magnitude says whether the figure encloses anything at all.
+ * @param {{x:number,y:number}[]} points
+ * @returns {number}
+ */
+function polygonSignedArea(points) {
+  let area = 0;
+  const n = points.length;
+  for (let i = 0; i < n; i++) {
+    const p0 = points[i];
+    const p1 = points[(i + 1) % n];
+    area += p0.x * p1.y - p1.x * p0.y;
+  }
+  return area / 2;
+}
+
+/**
+ * How a CLOSED path orients its glyphs (#164). Resolved ONCE per path, because
+ * both answers are per-path constants — which is the whole point.
+ *
+ * ── WHY THERE ARE TWO BRANCHES ───────────────────────────────────────────────
+ *
+ * A REAL AREA ⇒ WINDING. `tangent ± π/2`, sign taken from the winding. On a
+ * simple closed polygon this IS the outward normal, and being a per-path
+ * constant added to a continuous tangent it CANNOT reverse mid-curve.
+ *
+ * This replaced outward-from-centroid, which is the outward normal only when
+ * the ring is star-shaped about its own centroid — true of a circle, false of
+ * most real contours. Measured on shipping topographic before the change: the
+ * normal pointed OUT at 505 of 554 anchors (91%), with 47 reversals on smooth
+ * stretches, across 46 of its 50 rings. After: 554 of 554, zero reversals. A
+ * convex ring is unaffected (a sampled ellipse changed 0 of 754 anchors), so
+ * this is a strict generalisation rather than a different convention.
+ *
+ * SIGN CONVENTION: in the studio's screen space (y down) a POSITIVE shoelace
+ * area is clockwise on screen, whose outward normal is `tangent - π/2`. Note
+ * this is winding-ROBUST for the same reason the old rule was: reversing the
+ * point order adds π to every tangent AND flips the area's sign, and the two
+ * cancel exactly.
+ *
+ * A DEGENERATE AREA ⇒ RADIAL, exactly as before. `|area| < EPS` means the figure
+ * encloses nothing, so there is no winding to read and no "outward" to be right
+ * about — a default Lissajous has signed area ~1e-9 by harmonic orthogonality at
+ * freqA 3 / freqB 2. It keeps `outwardNormal` from the vertex-average centroid,
+ * byte-identical to the pre-#164 behaviour. That was a deliberate call (#164
+ * decision 2a): the radial look is coherent, and changing it would have reversed
+ * ~50% of the glyphs on every existing Lissajous document to fix an artifact
+ * that sits where the curve passes closest to the centre — the least visible
+ * place on the figure.
+ *
+ * @param {{x:number,y:number}[]} points
+ * @returns {{sign:number}|{centroid:{x:number,y:number}}} winding branch, or radial branch.
+ */
+function closedOrientation(points) {
+  const area = polygonSignedArea(points);
+  if (Math.abs(area) >= EPS) return { sign: area > 0 ? -1 : 1 };
+  return { centroid: polygonCentroid(points) };
+}
+
+/**
  * Normalize a path entry to { points, closed }. Accepts either the canonical
  * { points, closed } shape or a bare array of points (implicit closed=false).
  * @param {{points:{x:number,y:number}[], closed?:boolean}|{x:number,y:number}[]} path
@@ -288,12 +348,18 @@ export function sampleEdgeAnchors(paths, opts = {}) {
       return; // Nothing requested for this path.
     }
 
-    const centroid = closed ? polygonCentroid(points) : null;
+    // Resolved once per path — see closedOrientation for why it can be.
+    const orient = closed ? closedOrientation(points) : null;
 
     samples.forEach((sample, sampleIndex) => {
-      const normal = closed
-        ? outwardNormal(sample.tangent, sample, centroid)
-        : sample.tangent + Math.PI / 2;
+      let normal;
+      if (!closed) {
+        normal = sample.tangent + Math.PI / 2;
+      } else if (orient.sign !== undefined) {
+        normal = sample.tangent + orient.sign * (Math.PI / 2);
+      } else {
+        normal = outwardNormal(sample.tangent, sample, orient.centroid);
+      }
 
       anchors.push({
         id: anchorId(idPrefix, pathIndex, sampleIndex),

@@ -4,7 +4,7 @@
 // (see src/lib/motif/glyphs.js MOTIF_GLYPHS — no customGlyphs, so a chip
 // works in any document, including one with none imported yet).
 //
-// Pure module — no p5/DOM/React. `chip.build(patternType)` returns the
+// Pure module — no p5/DOM/React. `chip.build(patternType, params)` returns the
 // SAME shape `Inspector.jsx`'s `addMotif` already passes to `onAddMotif`
 // (`{glyphRef, anchorMode, binding}`), except `binding` is already CHAIN-FORM
 // (`{chain, placement}`) rather than legacy `{selection, placement}` — C1's

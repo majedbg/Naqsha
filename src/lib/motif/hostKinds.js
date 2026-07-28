@@ -211,10 +211,16 @@ export function defaultRolesForHost(patternType) {
  * Whether a host anchors motifs by a structural (crossing/tip/cell) extractor.
  * Params-aware, the exact complement of isEdgeHost for a grid: a single-axis grid
  * is NOT semantic (it routes through edge capture). `params` is optional — omit it
- * and a grid stays semantic (single-arg back-compat: the pre-render binding
- * writers in defaultBinding/starterChips call this by type alone and rely on the
- * render-time edge override + coerceEdgeRoles to fix a grid that later goes
- * single-axis, so their by-type answer is intentionally the two-axis default).
+ * and a grid stays semantic (single-arg back-compat, still relied on by callers
+ * that genuinely have no params in hand).
+ *
+ * SUPERSEDED NOTE (#154 step 2): this docblock used to say the pre-render binding
+ * writers in defaultBinding/starterChips call this BY TYPE ALONE and lean on the
+ * render-time edge override to fix a grid that later goes single-axis. They no
+ * longer do — both now pass the host's live params, so a motif created on a
+ * columns-only grid gets `anchorMode: 'edge'` at CREATE time rather than being
+ * corrected at render. The render-time override still stands as the safety net
+ * for documents written before that change.
  * @param {string} patternType @param {object} [params] @returns {boolean}
  */
 export function isSemanticHost(patternType, params) {

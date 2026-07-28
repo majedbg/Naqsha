@@ -904,10 +904,11 @@ function MotifDevice({
   const importInputRef = useRef(null);
   const importTargetIdRef = useRef(null);
 
-  // Starter MODES are host-aware presets: chip.build(patternType) allocates a
-  // fresh chain-form binding per chip. Build them ONCE per host pattern type
-  // (not on every render of this device, which re-renders on every motif edit)
-  // — they only change when the host's pattern type changes. Declared ABOVE the
+  // Starter MODES are host-aware presets: chip.build(patternType, params)
+  // allocates a fresh chain-form binding per chip. Build them ONCE per host
+  // pattern type AND params (#154 step 2 — a chip's Route roles are params-aware,
+  // so a columns-only Grid offers different roles from a two-axis one), not on
+  // every render of this device, which re-renders on every motif edit. Declared ABOVE the
   // self-hide early return so the hook order is unconditional. Each entry carries
   // the display shape the MotifModeColumn needs: the route block's roles (for
   // the RoleBadge), the whole chain (for the lit-row RhythmStrip), and `built`

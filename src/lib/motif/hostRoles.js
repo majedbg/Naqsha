@@ -123,7 +123,8 @@ const NARROW_ROLES = Object.freeze({
  *
  * `params` is optional and behaves exactly as it does in hostKinds: omitting it
  * keeps the by-type answer, so a grid stays two-axis (semantic) for the
- * pre-render binding writers that call by type alone.
+ * pre-render binding writers that call by type alone. (#154 step 2 moved the
+ * create-time writers onto `defaultRolesFor` below, which DOES pass params.)
  *
  * A type that hosts no motif at all returns `[]` — NOT the `['edge']` universal
  * anchor fallback. Offering Edges on a non-host is a plausible-looking wrong

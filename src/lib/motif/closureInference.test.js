@@ -88,6 +88,16 @@ describe('#147 closure inference — the shipped figures', () => {
     expect(paths[0].closed).toBe(true);
   });
 
+  it('lissajous: EVERY radial symmetry copy is reported closed, not just the base', () => {
+    // Each copy is its own beginShape/endShape under a different CTM. A rotation
+    // preserves the endpoint distance but not the bounding box orientation, so a
+    // tolerance that keyed off anything but the copy's own folded points would
+    // classify the copies inconsistently.
+    const paths = captureHost('lissajous', { damping: 0, symmetry: 5, startAngle: 41 });
+    expect(paths).toHaveLength(5);
+    for (const p of paths) expect(p.closed).toBe(true);
+  });
+
   it('lissajous: a damped (spiralling) figure is still reported OPEN', () => {
     // damping > 0 is a harmonograph ribbon that decays inward: it genuinely has
     // two ends, 63 px apart at damping 0.01. Reporting it closed would be the

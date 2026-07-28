@@ -3,6 +3,11 @@ import { Pattern } from './drawingContext';
 import { stackWarpDisplacement } from '../fields/warp';
 
 export default class FlowField extends Pattern {
+  // WARP-CAPTURE CONTRACT (motif/warpCapture.js): a warp modulation displaces
+  // the drawn trail vertices below, so the motif capture probe must receive the
+  // same guide-resolved modulation the paint pass does (#110).
+  static warpsDrawnGeometry = true;
+
   generate(ctx, seed, params, canvasW, canvasH, color, opacity) {
     this.svgElements = [];
     ctx.noiseSeed(seed);

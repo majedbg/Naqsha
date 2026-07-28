@@ -3,6 +3,13 @@ import { Pattern } from './drawingContext';
 import { gridLinePositions, gridWarpCurves } from './gridGeometry';
 
 export default class Grid extends Pattern {
+  // WARP-CAPTURE CONTRACT (motif/warpCapture.js): a warp modulation replaces
+  // each straight lattice line with a warped bezierVertex curve below, so the
+  // motif capture probe must be handed the SAME guide-resolved modulation the
+  // paint pass gets — otherwise a warped single-axis grid captures unwarped
+  // geometry and its vine floats off the drawn curve (#103 / #111).
+  static warpsDrawnGeometry = true;
+
   generate(ctx, seed, params, canvasW, canvasH, color, opacity) {
     this.svgElements = [];
     ctx.randomSeed(seed);

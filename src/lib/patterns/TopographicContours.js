@@ -33,6 +33,11 @@ import { fbm } from '../fields/fbm';
  * control — symmetry is hardcoded to 1.
  */
 export default class TopographicContours extends Pattern {
+  // WARP-CAPTURE CONTRACT (motif/warpCapture.js): a warp modulation displaces
+  // the stitched iso-contour vertices below, so the motif capture probe must
+  // receive the same guide-resolved modulation the paint pass does (#110).
+  static warpsDrawnGeometry = true;
+
   generate(ctx, seed, params, canvasW, canvasH, color, opacity) {
     ctx.noiseSeed(seed);
     ctx.randomSeed(seed);

@@ -55,7 +55,7 @@
 // runs one way only (roles → capability); hostCapability must never import this
 // module back.
 
-import { isEdgeHost, isSemanticHost } from './hostKinds.js';
+import { isEdgeHost, isSemanticHost, defaultRolesForHost } from './hostKinds.js';
 import { hostAvailability } from './hostCapability.js';
 
 /** The four structural anchor roles, in the studio's canonical display order. */
@@ -123,7 +123,8 @@ const NARROW_ROLES = Object.freeze({
  *
  * `params` is optional and behaves exactly as it does in hostKinds: omitting it
  * keeps the by-type answer, so a grid stays two-axis (semantic) for the
- * pre-render binding writers that call by type alone.
+ * pre-render binding writers that call by type alone. (#154 step 2 moved the
+ * create-time writers onto `defaultRolesFor` below, which DOES pass params.)
  *
  * A type that hosts no motif at all returns `[]` — NOT the `['edge']` universal
  * anchor fallback. Offering Edges on a non-host is a plausible-looking wrong
@@ -149,4 +150,46 @@ export function rolesForHost(patternType, params) {
   if (!isSemanticHost(patternType, params)) return [];
   const narrow = NARROW_ROLES[patternType];
   return narrow ? [...narrow] : [...ALL_ROLES];
+}
+
+/**
+ * The role a motif CREATED on this host right now should start with — the
+ * params-aware companion to `defaultRolesForHost` (#154 step 2).
+ *
+ * WHY IT LIVES HERE AND NOT IN hostKinds. `defaultRolesForHost` cannot consult
+ * `rolesForHost` itself: hostRoles imports hostKinds, so the reverse import
+ * would close a cycle. hostKinds owns the params-BLIND by-type answer; this
+ * module is "THE single params-aware host→roles capability seam" (see the top
+ * of this file), so the params-aware answer belongs on this side of the edge.
+ * Create-time writers call this; `defaultRolesForHost` stays as the by-type
+ * fallback and is still what `coerceRoles` uses at render.
+ *
+ * THE RULE, in three lines:
+ *   • the by-type default is offered here  ⇒ keep it (the overwhelmingly common
+ *     case — every answer is byte-identical to today's);
+ *   • it is not offered                    ⇒ the first OFFERED role in canonical
+ *     order (a columns-only Grid: crossing → edge);
+ *   • nothing is offered at all            ⇒ the by-type default, unchanged.
+ *
+ * THAT LAST LINE IS LOAD-BEARING, and it is why this returns the by-type answer
+ * rather than `[]` for an unavailable host. `chain.js applyRoute` reads
+ * `roles: []` as an empty Set ⇒ FILTERS EVERYTHING, while
+ * `AnchorGhostOverlay.jsx` reads `[]` as all-pass, and `roles: null` is all-pass
+ * in both. So neither `[]` nor `null` is safe to STORE: one renders a permanent
+ * blank, the other silently means "every role". A blank Chladni therefore keeps
+ * storing its by-type `['edge']` — a real, single, non-empty role that comes
+ * back by itself the moment the maker changes m or n. This mirrors `coerceRoles`,
+ * which also declines to narrow when `rolesForHost` is empty.
+ *
+ * @param {string} patternType
+ * @param {object} [params]  the host's live params; omit for the by-type answer.
+ * @returns {string[]} a fresh, NON-EMPTY array of exactly one role.
+ */
+export function defaultRolesFor(patternType, params) {
+  const byType = defaultRolesForHost(patternType);
+  if (params === undefined) return byType;
+  const avail = rolesForHost(patternType, params);
+  if (!avail.length) return byType; // unavailable / non-host — never store [] or null
+  if (byType.every((r) => avail.includes(r))) return byType;
+  return [ALL_ROLES.find((r) => avail.includes(r)) ?? byType[0]];
 }

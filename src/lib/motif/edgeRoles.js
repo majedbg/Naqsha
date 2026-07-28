@@ -68,9 +68,10 @@ export function coerceEdgeRoles(binding) {
 //      role:'edge' and place nothing. It is also what diverts every
 //      params-dependent host — a single-axis grid included — before the fallback
 //      below can ever see it, which is why `defaultRolesForHost` stays
-//      params-BLIND: no host that reaches the fallback needs params to answer,
-//      and making it params-aware would only set a trap for the create-time
-//      writers that call it by type alone (see the deferral note below).
+//      params-BLIND: no host that reaches the fallback needs params to answer.
+//      #154 step 2 added the params-AWARE companion next door as
+//      `hostRoles.defaultRolesFor` rather than changing this one, because
+//      hostRoles imports hostKinds and the reverse import would close a cycle.
 //
 //   2. AN EMPTY `rolesForHost` NEVER REWRITES. It answers `[]` for two genuinely
 //      different reasons — the host is currently UNAVAILABLE (a blank Chladni) or
@@ -114,12 +115,18 @@ export function coerceEdgeRoles(binding) {
 //     isSemanticHost and resolveMotifHost forces 'edge' iff isEdgeHost — so this
 //     is the same answer, derived from the same fact, at each seam.
 //
-// DEFERRED, DELIBERATELY (#154): the create-time writers (`defaultBinding.js`,
-// `starterChips.js`) stay params-blind. Making them params-aware needs
-// `chip.build` / `modeForMotif` / `applyModeChain` to go params-aware in the same
-// change (modeMatch.js rebuilds chips params-blind), or every chip created on a
-// single-axis grid reads as Custom the instant it is created. That is its own
-// slice; the render-time coercion here already delivers the behaviour.
+// DONE (#154 step 2) — this used to read "DEFERRED, DELIBERATELY". The
+// create-time writers (`defaultBinding.js`, `starterChips.js`) are now
+// params-aware, via `hostRoles.defaultRolesFor`, and `chip.build` /
+// `modeForMotif` / `applyModeChain` went params-aware in the same change (which
+// is what the deferral was waiting on: modeMatch.js rebuilt chips params-blind,
+// so moving the writers alone would have made every chip on a single-axis grid
+// read as Custom the instant it was created).
+//
+// The coercion below is therefore a SAFETY NET for documents written before that
+// change, not the workflow. It still runs on every render and still owns the
+// cases create-time prevention cannot reach — a host whose params change AFTER
+// the motif was created, which is exactly what the Grid axis toggle does.
 
 const sameRoles = (a, b) => a.length === b.length && a.every((r, i) => r === b[i]);
 

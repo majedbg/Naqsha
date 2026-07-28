@@ -759,16 +759,20 @@ function MotifModeColumn({
 function MotifRowModeColumn({
   binding,
   hostPatternType,
+  hostParams,
   modeChips,
   hostKind,
   onApply,
   onReset,
   markerFrac = null,
 }) {
+  // hostParams participates (#154 step 2): a chip's roles are params-aware, so
+  // the SAME chain reads as a different mode once the host switches to a single
+  // axis. Re-derive when the host's params change or the lit mode goes stale.
   const litModeId = useMemo(
-    () => modeForMotif(binding, hostPatternType),
+    () => modeForMotif(binding, hostPatternType, hostParams),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [binding?.chain, hostPatternType]
+    [binding?.chain, hostPatternType, hostParams]
   );
   // Reset is meaningful only when a PRESET is lit — Custom has no factory to reset
   // to (modeForMotif returns a chip id or 'custom'). Enabled ⇔ not Custom.
@@ -900,10 +904,11 @@ function MotifDevice({
   const importInputRef = useRef(null);
   const importTargetIdRef = useRef(null);
 
-  // Starter MODES are host-aware presets: chip.build(patternType) allocates a
-  // fresh chain-form binding per chip. Build them ONCE per host pattern type
-  // (not on every render of this device, which re-renders on every motif edit)
-  // — they only change when the host's pattern type changes. Declared ABOVE the
+  // Starter MODES are host-aware presets: chip.build(patternType, params)
+  // allocates a fresh chain-form binding per chip. Build them ONCE per host
+  // pattern type AND params (#154 step 2 — a chip's Route roles are params-aware,
+  // so a columns-only Grid offers different roles from a two-axis one), not on
+  // every render of this device, which re-renders on every motif edit. Declared ABOVE the
   // self-hide early return so the hook order is unconditional. Each entry carries
   // the display shape the MotifModeColumn needs: the route block's roles (for
   // the RoleBadge), the whole chain (for the lit-row RhythmStrip), and `built`
@@ -911,7 +916,7 @@ function MotifDevice({
   const modeChips = useMemo(
     () =>
       STARTER_CHIPS.map((chip) => {
-        const built = chip.build(layer.patternType);
+        const built = chip.build(layer.patternType, layer.params);
         const route = built.binding.chain.find((b) => b.type === "route");
         return {
           id: chip.id,
@@ -921,7 +926,10 @@ function MotifDevice({
           built,
         };
       }),
-    [layer.patternType]
+    // layer.params joins the deps (#154 step 2): a chip's Route roles are now
+    // params-aware, so the chips a columns-only Grid offers differ from a
+    // two-axis one's and must rebuild when the host's axes change.
+    [layer.patternType, layer.params]
   );
 
   // Host anchors for the per-block sieve chips (Variant D). Resolved ONCE per host
@@ -1111,7 +1119,7 @@ function MotifDevice({
   // Shared with the library panel's drag-apply (motif-shell, D) so the two
   // add paths can never drift on anchor mode / roles / placement defaults.
   const addMotif = () =>
-    onAddMotif?.(layer.id, defaultMotifAddOpts(layer.patternType, "leaf"));
+    onAddMotif?.(layer.id, defaultMotifAddOpts(layer.patternType, "leaf", layer.params));
 
   // Pick a MODE on an EXISTING motif (Variant D + modeCache, ADR 0008). Switching
   // modes must never destroy work, so the motif layer carries `params.modeCache`
@@ -1132,15 +1140,16 @@ function MotifDevice({
   //   • Unknown / factory-less preset → no-op.
   const applyMode = (m, modeId) => {
     const host = layer.patternType;
+    const hostParams = layer.params;
     const outgoingBinding = m.params?.binding;
-    const litModeId = modeForMotif(outgoingBinding, host);
+    const litModeId = modeForMotif(outgoingBinding, host, hostParams);
     if (modeId === litModeId) return; // clicking the lit mode is a no-op
 
     const cache = m.params?.modeCache || {};
     const incoming =
       modeId === "custom"
         ? cache.custom
-        : cache[modeId] || applyModeChain(modeId, host);
+        : cache[modeId] || applyModeChain(modeId, host, hostParams);
     if (!incoming) return;
 
     onUpdateLayer(m.id, {
@@ -1171,8 +1180,9 @@ function MotifDevice({
   // One onUpdateLayer = one undo entry.
   const resetMode = (m) => {
     const host = layer.patternType;
-    const litModeId = modeForMotif(m.params?.binding, host);
-    const factory = applyModeChain(litModeId, host);
+    const hostParams = layer.params;
+    const litModeId = modeForMotif(m.params?.binding, host, hostParams);
+    const factory = applyModeChain(litModeId, host, hostParams);
     if (!factory) return; // Custom / unknown → no factory to reset to
     const rest = { ...(m.params?.modeCache || {}) };
     delete rest[litModeId]; // drop the lit mode's stash — Reset returns to factory
@@ -1192,7 +1202,7 @@ function MotifDevice({
   // returns exactly the {glyphRef, anchorMode, binding} opts shape). This folds
   // in the old quick-start-chip add behavior.
   const startWith = (modeId) => {
-    const applied = applyModeChain(modeId, layer.patternType);
+    const applied = applyModeChain(modeId, layer.patternType, layer.params);
     if (!applied) return;
     onAddMotif?.(layer.id, applied);
   };
@@ -1562,6 +1572,7 @@ function MotifDevice({
                   <MotifRowModeColumn
                     binding={m.params?.binding}
                     hostPatternType={layer.patternType}
+                    hostParams={layer.params}
                     modeChips={modeChips}
                     hostKind={hostKind}
                     onApply={(modeId) => applyMode(m, modeId)}

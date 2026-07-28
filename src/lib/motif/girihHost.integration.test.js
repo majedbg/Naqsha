@@ -269,6 +269,66 @@ describe('Girih anchors sit on the real skeleton', () => {
   });
 });
 
+describe('Girih at the BOUNDARIES, not just at defaults', () => {
+  // The adversarial question: would this pass at default params and fail at an
+  // edge of the parameter space? Every girih control is swept — both tilings,
+  // the density clamp floor and a dense field, both ends of the contact angle,
+  // full irregularity, and the bandWidth<=0 branch that silently takes the
+  // skeleton render.
+  const CASES = [
+    ['defaults', {}],
+    ['hex12', { tiling: 'hex12' }],
+    ['density floor', { density: 1 }], // clamped to 2 by the pattern
+    ['density dense', { density: 10 }],
+    ['contactAngle min', { contactAngle: 1 }],
+    ['contactAngle max', { contactAngle: 89 }],
+    ['irregularity max', { irregularity: 1 }],
+    ['bandWidth 0 (skeleton branch)', { bandWidth: 0 }],
+    ['hex12 + jitter + angle + offsets', {
+      tiling: 'hex12',
+      irregularity: 0.8,
+      startAngle: 47,
+      offsetX: -33,
+      offsetY: 19,
+    }],
+  ];
+
+  it('emits all three roles, with unique ids, at every boundary', () => {
+    for (const [name, params] of CASES) {
+      const anchors = anchorsFor(params);
+      expect(Array.isArray(anchors), name).toBe(true);
+      expect(byRole(anchors, 'crossing').length, name).toBeGreaterThan(0);
+      expect(byRole(anchors, 'edge').length, name).toBeGreaterThan(0);
+      expect(byRole(anchors, 'tip').length, name).toBeGreaterThan(0);
+      expect(byRole(anchors, 'cell').length, name).toBe(0);
+      // Ids must be unique — override records match by exact id, so a collision
+      // would silently apply one maker's edit to two glyphs.
+      expect(new Set(anchors.map((a) => a.id)).size, name).toBe(anchors.length);
+      // Every anchor is finite and carries a path.
+      for (const a of anchors) {
+        expect(Number.isFinite(a.x) && Number.isFinite(a.y), name).toBe(true);
+        expect(Number.isFinite(a.tangent) && Number.isFinite(a.normal), name).toBe(true);
+        expect(Number.isInteger(a.meta.pathIndex), name).toBe(true);
+      }
+    }
+  });
+
+  it('places glyphs at every boundary, and the placement cap is not a throw', () => {
+    for (const [name, params] of CASES) {
+      const { placements } = place(anchorsFor(params), { roles: ['crossing'] });
+      expect(placements.length, name).toBeGreaterThan(0);
+    }
+  });
+
+  it('strand ordering is stable at every boundary', () => {
+    for (const [name, params] of CASES) {
+      expect(anchorsFor(params).map((a) => a.id), name).toEqual(
+        anchorsFor(params).map((a) => a.id)
+      );
+    }
+  });
+});
+
 describe('Girih strands compose with the Chain and Zones', () => {
   it('an every-Nth rhythm runs the LENGTH of a strap, not restarting at every bend', () => {
     const anchors = anchorsFor();

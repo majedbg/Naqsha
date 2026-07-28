@@ -1238,6 +1238,53 @@ describe("Route card path scope + canvas-pick (C4)", () => {
     expect(screen.queryByTestId("motif-route-scope-picked")).toBeNull();
   });
 
+  it("GATING: GIRIH offers all four scopes AND the canvas strap picker (#152)", () => {
+    // Girih is a SEMANTIC host whose anchors nevertheless carry meta.pathIndex /
+    // meta.closed — its straps are genuine paths. The gate is
+    // hostKinds.hostHasPathStructure, not the semantic/edge split, so the maker
+    // can scope to a strap and pick individual straps on canvas.
+    const motif = chainMotif("m1", "g1", [
+      { type: "route", roles: ["edge"], pathScope: "picked", pickedPaths: [] },
+    ]);
+    expand(
+      <Inspector
+        layers={[hostLayer("g1", "girih"), motif]}
+        selectedLayerId="g1"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+        motifPick={null}
+        onArmMotifPick={() => {}}
+      />
+    );
+    expect(screen.getByTestId("motif-route-scope-all")).toBeInTheDocument();
+    expect(screen.getByTestId("motif-route-scope-closed")).toBeInTheDocument();
+    expect(screen.getByTestId("motif-route-scope-open")).toBeInTheDocument();
+    expect(screen.getByTestId("motif-route-scope-picked")).toBeInTheDocument();
+    // …and the Picked scope really exposes the pick affordance on girih.
+    expect(screen.getByTestId("motif-route-pick")).toBeInTheDocument();
+    // Cells are NOT offered — girih tiles are out of scope for PRD #143.
+    expect(screen.queryByTestId("motif-block-role-cell")).toBeNull();
+    expect(screen.getByTestId("motif-block-role-crossing")).toBeInTheDocument();
+    expect(screen.getByTestId("motif-block-role-edge")).toBeInTheDocument();
+    expect(screen.getByTestId("motif-block-role-tip")).toBeInTheDocument();
+  });
+
+  it("GATING: Circle Packing still hides closed/picked — path structure is the gate, not stash-ness", () => {
+    const motif = chainMotif("m1", "cp", [
+      { type: "route", roles: ["cell"], pathScope: "all" },
+    ]);
+    expand(
+      <Inspector
+        layers={[hostLayer("cp", "circlepacking"), motif]}
+        selectedLayerId="cp"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    expect(screen.queryByTestId("motif-route-scope-closed")).toBeNull();
+    expect(screen.queryByTestId("motif-route-scope-picked")).toBeNull();
+  });
+
   it("selecting a scope writes chain-form pathScope (one undo, no selection resurrection)", () => {
     const onUpdateLayer = vi.fn();
     // Legacy binding → the write must migrate to chain-form and drop selection.

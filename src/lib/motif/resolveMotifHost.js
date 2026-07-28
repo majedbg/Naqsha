@@ -72,6 +72,8 @@ export function resolveMotifHostParams(layer, layers, hostGeometry = {}) {
     //   • voronoi       → drawnEdges + sites (the boundary-hardened seam the
     //                     extractor prefers) and/or legacy drawnCells
     //   • circlepacking → circles (accepted container circles, #146)
+    //   • girih         → girihVertices + girihEdges (the de-duplicated skeleton
+    //                     vertex graph, #152)
     // Absent → omit (graceful null anchors → nothing placed, e.g. a host that has
     // not been probed yet).
     const geom = hostGeometry[hostId];

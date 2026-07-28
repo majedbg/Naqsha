@@ -45,6 +45,7 @@
 import { anchorId, sampleEdgeAnchors } from './anchors.js';
 import { pointHostAnchors } from './pointHostAnchors.js';
 import { cellGridAnchors } from './cellGridAnchors.js';
+import { girihGraphAnchors } from './girihAnchors.js';
 import { gridAnchorsCentered } from '../patterns/gridAnchors.js';
 import { makeP5Random } from '../patterns/rng.js';
 import { toSymmetryCount } from '../patterns/symmetryUtils.js';
@@ -1076,6 +1077,10 @@ function voronoiAnchors(_params, _canvasW, _canvasH, opts) {
  *     in world coords and in the painted frame (#151, modulegrid; #153 reuses
  *     the key for Truchet). One `cell` anchor per cell, declaring the cell's
  *     half-extent as `hostRadius` and its rotation as tangent/normal.
+ *   • opts.girihVertices + opts.girihEdges — the GIRIH host's de-duplicated
+ *     skeleton vertex graph, in world coords and in the painted frame (#152).
+ *     Decomposed into strands: `crossing` where straps meet, `edge` riding the
+ *     straps, `tip` where a strap is cut at the crop margin.
  * Backward-compatible: existing 4-arg callers pass no opts, so recursive/spiral
  * are unaffected, grid falls back to the jitter=0 baseline, and voronoi returns
  * null (graceful fallback).
@@ -1150,6 +1155,23 @@ export function getSemanticAnchors(patternType, params, canvasW, canvasH, opts) 
       // so MotifPattern takes its documented fallback and nothing is placed. An
       // EMPTY cells array ⇒ [], an honest empty anchor set.
       return opts && Array.isArray(opts.cells) ? cellGridAnchors(opts.cells) : null;
+
+    case 'girih':
+      // GEOMETRY-IN, like voronoi and circlepacking (#152). IslamicStar stashes
+      // its de-duplicated skeleton VERTEX GRAPH (`girihVertices` + `girihEdges`,
+      // world coords, painted frame) during generate() — never its DRAW LIST,
+      // which holds strap lines in skeleton mode and woven band polygons in
+      // interlace mode, so reading it would make the host's anchors depend on its
+      // look. girihGraphAnchors walks maximal chains of degree-two BEND vertices,
+      // cutting at every vertex of degree one (tip) or three-or-more (crossing).
+      //
+      // NULL vs [] is the same contract voronoi and circlepacking carry: no
+      // vertex/edge keys at all (host not yet probed) ⇒ null, so MotifPattern
+      // takes its documented fallback and nothing is placed. Present but empty ⇒
+      // an honest empty anchor set.
+      return opts && Array.isArray(opts.girihVertices) && Array.isArray(opts.girihEdges)
+        ? girihGraphAnchors(opts.girihVertices, opts.girihEdges)
+        : null;
     // Extractors for other hosts are deferred to later slices.
     default:
       return null;

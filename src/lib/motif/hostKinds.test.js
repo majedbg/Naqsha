@@ -16,14 +16,15 @@ import {
   isMotifHost,
   isStashHost,
   defaultRolesForHost,
+  hostHasPathStructure,
 } from './hostKinds.js';
 import { getPatternClass } from '../patterns/index.js';
 import { rolesForHost } from './hostRoles.js';
 
 describe('hostKinds', () => {
-  it('keeps the four legacy semantic hosts, plus circlepacking (#146) and modulegrid (#151)', () => {
+  it('keeps the four legacy semantic hosts, plus circlepacking (#146), modulegrid (#151) and girih (#152)', () => {
     expect([...SEMANTIC_MOTIF_HOSTS].sort()).toEqual(
-      ['grid', 'recursive', 'spiral', 'voronoi', 'circlepacking', 'modulegrid'].sort()
+      ['grid', 'recursive', 'spiral', 'voronoi', 'circlepacking', 'modulegrid', 'girih'].sort()
     );
   });
 
@@ -32,7 +33,7 @@ describe('hostKinds', () => {
     // resolveMotifHost must forward its harvested geometry. The probe is a single
     // boolean, so a stash host must NOT also be an edge host.
     expect([...STASH_MOTIF_HOSTS].sort()).toEqual(
-      ['circlepacking', 'voronoi', 'modulegrid'].sort()
+      ['circlepacking', 'voronoi', 'modulegrid', 'girih'].sort()
     );
     for (const t of STASH_MOTIF_HOSTS) {
       expect(SEMANTIC_MOTIF_HOSTS.has(t)).toBe(true);
@@ -62,6 +63,27 @@ describe('hostKinds', () => {
       expect([t, roles.length]).toEqual([t, 1]);
       expect([t, rolesForHost(t).includes(roles[0])]).toEqual([t, true]);
     }
+  });
+
+  it('girih defaults to the crossing role — a glyph at every strap crossing (#152)', () => {
+    // NOT a copy of grid/recursive's default: it is the historical naqsheh idiom
+    // (PRD #143 story 23), and girih emits crossings under every params set.
+    expect(defaultRolesForHost('girih')).toEqual(['crossing']);
+  });
+
+  it('girih carries PATH STRUCTURE, so its straps are pickable on canvas (#152)', () => {
+    // The Route block's `closed`/`picked` scopes and the canvas path picker were
+    // gated on isEdgeHost, because until girih no semantic host emitted
+    // meta.pathIndex. hostHasPathStructure is the ONE predicate both surfaces ask.
+    expect(hostHasPathStructure('girih')).toBe(true);
+    expect(hostHasPathStructure('flowfield')).toBe(true); // every edge host
+    expect(hostHasPathStructure('grid', { drawVertical: 1, drawHorizontal: 0 })).toBe(true);
+    expect(hostHasPathStructure('grid')).toBe(false); // a two-axis grid does not
+    expect(hostHasPathStructure('voronoi')).toBe(false);
+    expect(hostHasPathStructure('circlepacking')).toBe(false);
+    expect(hostHasPathStructure('recursive')).toBe(false);
+    expect(hostHasPathStructure(undefined)).toBe(false);
+    expect(hostHasPathStructure('modulegrid')).toBe(false);
   });
 
   it('every edge-host key resolves to a real registered PatternClass', () => {

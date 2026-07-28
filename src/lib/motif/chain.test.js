@@ -111,6 +111,28 @@ describe('runSelectionChain — route block', () => {
     ).toEqual(['p0', 'p2']);
   });
 
+  it("pathScope 'picked' also honours MULTI-PATH membership via meta.strands", () => {
+    // A girih crossing sits on several straps at once (#152): it carries the
+    // LOWEST incident strand as its single canonical pathIndex — what per-path
+    // rhythms and Zones group by — plus the full incident set as `strands`, so
+    // picking ANY of its straps on canvas finds it.
+    const anchors = [
+      mkAnchor('crossing', 0, 0, 'x', { pathIndex: 0, strands: [0, 3, 5] }),
+      mkAnchor('edge', 1, 1, 'e3', { pathIndex: 3 }),
+      mkAnchor('edge', 2, 2, 'e9', { pathIndex: 9 }),
+    ];
+    const pick = (paths) =>
+      ids(
+        runSelectionChain(anchors, [
+          { type: 'route', pathScope: 'picked', pickedPaths: paths },
+        ]).survivors,
+      );
+    expect(pick([0])).toEqual(['x']); // its canonical path
+    expect(pick([5])).toEqual(['x']); // an incident strand that is NOT the canonical one
+    expect(pick([3])).toEqual(['x', 'e3']);
+    expect(pick([9])).toEqual(['e9']); // not incident → not picked
+  });
+
   it('combines roles AND path scope', () => {
     const anchors = [
       mkAnchor('edge', 0, 0, 'e-closed', { closed: true }),

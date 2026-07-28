@@ -66,7 +66,7 @@ import { resolveHostAnchors } from '../../lib/motif/hostAnchors';
 import { resolveSelection } from '../../lib/motif/compileSelectionToChain';
 import { coerceEdgeRoles } from '../../lib/motif/edgeRoles';
 import { resolvePlacements } from '../../lib/motif/placementEngine';
-import { isEdgeHost } from '../../lib/motif/hostKinds';
+import { isEdgeHost, hostHasPathStructure } from '../../lib/motif/hostKinds';
 
 const ACCENT = '#7c3aed'; // violet — placed / included fill
 const EXCLUDE_STROKE = '#ef4444'; // red — force-excluded outline
@@ -259,7 +259,14 @@ export default function AnchorGhostOverlay({
   // has to close an open glyph popover, so it is computed at hook level rather
   // than inside the render branch below.
   const edgeMode = !!host && isEdgeHost(host.patternType, host.params);
-  const pickArmed = edgeMode && !!motif && !!motifPick && motifPick.layerId === motif.id;
+  // The PICK gate is NOT `edgeMode` (#152). Path picking needs anchors carrying
+  // `meta.pathIndex`, which every edge host has — and, since girih, one SEMANTIC
+  // host too, whose straps are genuine paths. Asked of the one predicate in
+  // hostKinds so this and the Route card cannot drift. Deliberately separate from
+  // `edgeMode`, which still governs role COERCION and the placed-only dot set:
+  // girih is not an edge host and must not have its roles coerced to `edge`.
+  const pathPickable = !!host && hostHasPathStructure(host.patternType, host.params);
+  const pickArmed = pathPickable && !!motif && !!motifPick && motifPick.layerId === motif.id;
 
   // Arming pick force-closes the per-glyph popover (#141). Without this the card
   // would merely be hidden behind the early return below and RESURRECT on

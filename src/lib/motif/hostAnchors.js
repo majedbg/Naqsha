@@ -11,10 +11,12 @@
 // Before this module the overlay answered the question itself and hardcoded
 // `voronoi` as the only stash-backed host; every other structural host fell
 // through to a params-only call. Circle Packing (#146) is a second stash-backed
-// host and Module Grid (#151), Girih (#152) and Truchet (#153) are three more, so
-// as things stood they painted glyphs with NO dots and NO popover — the ornament
-// looked right and was uneditable. That hardcoded branch is gone; its removal is
-// the thing that shows this is the right seam.
+// host and Girih (#152) a third, with Module Grid (#151) and Truchet (#153) to
+// come, so as things stood they painted glyphs with NO dots and NO popover — the
+// ornament looked right and was uneditable. That hardcoded branch is gone; its
+// removal is the thing that shows this is the right seam. Girih registered
+// through the six steps below and changed NOTHING in this file — the intended
+// proof that the seam holds.
 //
 // ── ADDING A NEW STASH HOST ────────────────────────────────────────────────
 // A host REGISTERS; it does not add a branch here. Nothing in this file names a

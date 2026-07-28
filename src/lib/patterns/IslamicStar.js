@@ -130,6 +130,69 @@ export default class IslamicStar extends Pattern {
     const inBounds = (p) => p.x >= -mx && p.x <= mx && p.y >= -my && p.y <= my;
     edges = edges.filter(([a, b]) => inBounds(verts[a]) || inBounds(verts[b]));
 
+    // --- Motif host-geometry capture (GRAPH seam, PRD #143 / #152) -----------
+    // Stash the DE-DUPLICATED VERTEX GRAPH + SKELETON EDGE LIST so a Motif layer
+    // adorning this host can put a glyph at every strap crossing, glyphs riding
+    // the straps between them, and a glyph where a strap is cut at the crop
+    // margin. Captured HERE — after the crop, BEFORE the render branch below —
+    // because the DRAW LIST differs between modes (skeleton holds strap lines,
+    // interlace holds woven band polygons) and reading it would make the host's
+    // anchors depend on its look. The graph is the same in both.
+    //
+    // ONLY VERTICES ON A SURVIVING EDGE. The crop above drops EDGES and never
+    // touches `verts`, so the raw array keeps endpoints whose every incident edge
+    // was filtered away. Those are degree-0: not a tip, not a crossing, on no
+    // strand, and pure noise in any index scheme. Re-index onto the referenced set
+    // so every stashed vertex sits on a drawn skeleton edge. (girihStrands guards
+    // degree-0 independently — it is also handed literal test geometry.)
+    //
+    // NOTE the deliberate difference from `isCrossing` in buildInterlace below,
+    // which is `adj[node].length === 4`: that is the WEAVE crossing (where two
+    // ribbons cross and one must dive under). The motif host's crossing is
+    // degree >= 3 — a vertex where straps meet, whether or not they weave. Two
+    // different questions; do NOT "fix" one to match the other.
+    //
+    // NO RNG. Everything here is index bookkeeping and arithmetic — the only
+    // ctx.random calls in this file remain the irregularity loop above (exactly
+    // two per skeleton vertex), so the draw count is still 0 with irregularity off.
+    // (IslamicStar.motif.test.js pins the count AND the draw stream by digest.)
+    //
+    // FRAME: the graph is built origin-CENTRED and painted through
+    // applySymmetryDraw(..., 1, cx, cy, drawBase, startAngle, offsetX, offsetY),
+    // which translates to (cx+offsetX, cy+offsetY) and THEN rotates by startAngle:
+    //     world = R(startAngle)·centred + (canvasW/2 + offsetX, canvasH/2 + offsetY)
+    // and that is what we stash. Symmetry is hardcoded to 1, so there are no
+    // copies to replicate — but the start-angle rotation is real and IS applied.
+    // (Deliberately NOT Voronoi's frame handling: Voronoi stashes pre-startAngle
+    // geometry and documents that it matches no visible copy at a nonzero start
+    // angle. Following that here would reproduce a known bug.) Layer NODE
+    // transforms are out of scope — pre-existing and cross-host, per PRD #143.
+    {
+      const startRad = (startAngle * Math.PI) / 180;
+      const cosA = Math.cos(startRad);
+      const sinA = Math.sin(startRad);
+      const shiftX = cx + offsetX;
+      const shiftY = cy + offsetY;
+      const remap = new Map(); // old vertex index -> stashed index
+      const girihVertices = [];
+      const girihEdges = [];
+      const keep = (i) => {
+        let j = remap.get(i);
+        if (j === undefined) {
+          j = girihVertices.length;
+          remap.set(i, j);
+          const v = verts[i];
+          girihVertices.push({
+            x: v.x * cosA - v.y * sinA + shiftX,
+            y: v.x * sinA + v.y * cosA + shiftY,
+          });
+        }
+        return j;
+      };
+      for (const [a, b] of edges) girihEdges.push([keep(a), keep(b)]);
+      this.motifHostGeometry = { girihVertices, girihEdges };
+    }
+
     if (render === 'skeleton' || bandWidth <= 0) {
       this._emitSkeleton(verts, edges, color, strokeWeight);
     } else {

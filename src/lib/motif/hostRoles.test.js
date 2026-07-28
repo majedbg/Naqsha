@@ -20,6 +20,20 @@ describe('rolesForHost', () => {
     expect(rolesForHost('circlepacking', { render: 'nested' })).toEqual(['cell']);
   });
 
+  it('offers Crossings, Edges and Tips on Girih — and NOT Cells (#152)', () => {
+    // Girih tiles as a cell role need planar face traversal and are explicitly
+    // out of scope for PRD #143; the host ships with the three strap roles.
+    expect(rolesForHost('girih')).toEqual(['crossing', 'edge', 'tip']);
+    // Params never widen or narrow it — the strap graph exists at every setting.
+    expect(rolesForHost('girih', { render: 'skeleton' })).toEqual(['crossing', 'edge', 'tip']);
+    expect(rolesForHost('girih', { tiling: 'hex12', irregularity: 1 })).toEqual([
+      'crossing',
+      'edge',
+      'tip',
+    ]);
+    expect(rolesForHost('girih')).not.toContain('cell');
+  });
+
   it('leaves the existing semantic hosts exactly as they are today (#154 narrows them)', () => {
     // Narrowing voronoi (dead Tips) and spiral (dead Cells) is #154's criteria,
     // not this ticket's. Asserting the CURRENT set here is what makes that a

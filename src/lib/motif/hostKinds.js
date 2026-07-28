@@ -24,7 +24,7 @@
 
 /** Hosts with a structural (crossing/tip/cell) anchor extractor. */
 export const SEMANTIC_MOTIF_HOSTS = Object.freeze(
-  new Set(['grid', 'recursive', 'spiral', 'voronoi', 'circlepacking', 'modulegrid'])
+  new Set(['grid', 'recursive', 'spiral', 'voronoi', 'circlepacking', 'modulegrid', 'girih'])
 );
 
 /**
@@ -43,7 +43,7 @@ export const SEMANTIC_MOTIF_HOSTS = Object.freeze(
  * listed in EDGE_MOTIF_HOSTS.
  */
 export const STASH_MOTIF_HOSTS = Object.freeze(
-  new Set(['voronoi', 'circlepacking', 'modulegrid'])
+  new Set(['voronoi', 'circlepacking', 'modulegrid', 'girih'])
 );
 
 /**
@@ -53,6 +53,9 @@ export const STASH_MOTIF_HOSTS = Object.freeze(
  *   • voronoi        → drawnEdges (+ sites), legacy drawnCells
  *   • circlepacking  → circles (accepted container circles, #146)
  *   • modulegrid     → cells (resolved per-cell {x,y,half,rotation}, #151)
+ *   • girih          → girihVertices + girihEdges (the de-duplicated skeleton
+ *                      VERTEX GRAPH, never the draw list — that differs between
+ *                      the skeleton and interlace renders, #152)
  *
  * `cells` is the GENERIC cell-grid key, matching the generic extractor
  * (cellGridAnchors.js) that reads it: Truchet (#153) reuses the same key for its
@@ -64,6 +67,8 @@ export const STASH_GEOMETRY_KEYS = Object.freeze([
   'drawnCells',
   'circles',
   'cells',
+  'girihVertices',
+  'girihEdges',
 ]);
 
 /**
@@ -149,6 +154,12 @@ export const MOTIF_HOSTS = Object.freeze(
 // `binding.selection.roles`, the Route filter then drops every cell anchor, and
 // the first motif a maker adds shows NO glyphs and NO dots — while the resolver,
 // the extractor and every unit test keyed off a hand-picked role stay green.
+//
+// GIRIH defaults to `crossing` (#152) — and not as a copy of grid/recursive.
+// A glyph at every strap crossing is exactly what the historical naqsheh work
+// does (PRD #143 story 23), and girih emits crossings under every params set
+// (its skeleton always has degree-4 vertices where straps meet), so the first
+// placement is never empty.
 const DEFAULT_SEMANTIC_ROLE = Object.freeze({
   grid: 'crossing',
   recursive: 'crossing',
@@ -156,6 +167,7 @@ const DEFAULT_SEMANTIC_ROLE = Object.freeze({
   spiral: 'edge',
   circlepacking: 'cell',
   modulegrid: 'cell',
+  girih: 'crossing',
 });
 
 /**
@@ -221,6 +233,37 @@ export function isEdgeHost(patternType, params) {
   if (EDGE_MOTIF_HOSTS.has(patternType)) return true;
   if (patternType === 'grid' && params && gridIsSingleAxis(params)) return true;
   return false;
+}
+
+/**
+ * Semantic hosts whose anchors carry PATH STRUCTURE — `meta.pathIndex` and
+ * `meta.closed`. Every EDGE host does by construction (arc-length samples along
+ * captured polylines); until girih (#152) no SEMANTIC host did, which is why the
+ * Route block's `closed`/`picked` scopes and the canvas path picker were both
+ * gated on `isEdgeHost`. Girih's straps ARE paths — the strand decomposition is
+ * the whole point of its extractor — so it belongs to the same class for those
+ * two surfaces even though its anchors are structural, not sampled.
+ *
+ * Kept HERE rather than in hostCapability.js on purpose: this is mechanism
+ * classification (what shape do this host's anchors have), the same kind of
+ * statement as `isEdgeHost` beside it. hostCapability answers ONE question with
+ * ONE shape — `{available, reason}` — and its header warns against growing it.
+ */
+const PATH_STRUCTURED_SEMANTIC_HOSTS = Object.freeze(new Set(['girih']));
+
+/**
+ * Whether `patternType` emits anchors carrying `meta.pathIndex` / `meta.closed`,
+ * i.e. whether the Route block should offer the Closed / Open / Picked path
+ * scopes and the canvas strap picker. THE single predicate both the Route UI and
+ * AnchorGhostOverlay ask — never an inline `patternType === 'girih'`.
+ *
+ * Params-aware exactly as its neighbours are: a single-axis grid routes through
+ * edge capture and so does carry path structure, while a two-axis grid does not.
+ * @param {string} patternType @param {object} [params] @returns {boolean}
+ */
+export function hostHasPathStructure(patternType, params) {
+  if (isEdgeHost(patternType, params)) return true;
+  return PATH_STRUCTURED_SEMANTIC_HOSTS.has(patternType);
 }
 
 /** @param {string} patternType @returns {boolean} */

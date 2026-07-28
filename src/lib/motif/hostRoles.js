@@ -15,6 +15,12 @@
 // them is a user-visible behaviour change with its own acceptance criteria, and
 // doing it here would smuggle #154's work into #146's diff.
 //
+// #144 added `radialetch` / `hilbert` / `lissajous` as EDGE hosts and made
+// MotifBlockRack derive its Route options from this function. They need NO entry
+// in the table below: an edge host's roles are answered by `isEdgeHost`, and a
+// new edge host is therefore a one-line change in hostKinds.js alone. Only a
+// SEMANTIC host whose emitted set is narrower than all four needs a row here.
+//
 // PARAMS-AWARE by contract. What a host emits can depend on its params — the
 // single-axis Grid already does (columns-only ⇒ edges alone, no crossings), and
 // Chladni will (equal mode numbers ⇒ a blank plate, no roles at all). Callers

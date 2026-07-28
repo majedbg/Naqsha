@@ -72,9 +72,12 @@ export function isStashHost(patternType) {
  * polylines in generate() and (2) reseed (randomSeed/noiseSeed) at the top of
  * generate() so the capture probe does not perturb the painted output.
  */
-// Keys are the PATTERN_CLASSES registry ids (src/lib/patterns/index.js), NOT the
-// class names: WaveInterference→'wave', PhyllotaxisDash→'phyllodash',
-// DifferentialGrowth→'diffgrowth'.
+// Keys are the pattern registry ids, NOT the class names: WaveInterference→
+// 'wave', PhyllotaxisDash→'phyllodash', DifferentialGrowth→'diffgrowth'. Most
+// live in the STATIC map (src/lib/patterns/index.js); the built-in extras
+// (Hilbert, Lissajous) self-register into the DYNAMIC registry at app boot
+// (src/lib/registerBuiltinExtras.js). Resolve either with getPatternClass(id) —
+// the static map alone would report a working host as unknown.
 export const EDGE_MOTIF_HOSTS = Object.freeze(
   new Set([
     'flowfield', // FlowField — particle-trail beginShape/vertex polylines
@@ -84,6 +87,20 @@ export const EDGE_MOTIF_HOSTS = Object.freeze(
     'phyllodash', // PhyllotaxisDash — ctx.line dash segments
     'diffgrowth', // DifferentialGrowth — grown-blob beginShape/vertex polyline
     'dendrite', // Dendrite — ctx.line branch segments (node ellipses ignored)
+    // ── #144 (PRD #143) ──────────────────────────────────────────────────────
+    // Each verified against BOTH membership conditions in the module header, in
+    // the pattern source, before inclusion:
+    'radialetch', // RadialEtch — ctx.line rays; randomSeed+noiseSeed at generate() top
+    'hilbert', // Hilbert (extra) — ONE beginShape/vertex run; reseeds both streams
+    'lissajous', // Lissajous (extra) — ONE beginShape/vertex run; reseeds both streams
+    // DELIBERATELY ABSENT — do not add by reflex:
+    //   truchet — emits CELLS as well as edges. The probe is a single boolean
+    //     (record the draw stream OR read the stash, never both), so listing it
+    //     here would silently cost it the cell role. Its edges come from the
+    //     stash, alongside its tile centres (PRD #143).
+    //   chladni — needs the warp-capture contract (it warps its final contour
+    //     vertices, so a bare capture floats glyphs off the painted nodal lines)
+    //     and a params-aware blank-plate gate at equal mode numbers. Ticket #148.
   ])
 );
 

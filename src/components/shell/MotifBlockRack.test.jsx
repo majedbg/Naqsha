@@ -422,7 +422,7 @@ describe("MotifBlockRack — slot glyph-swap picker", () => {
   });
 });
 
-// ── Route role availability (#146) ───────────────────────────────────────────
+// ── Route role availability (#146 creates the seam, #144 adds three hosts) ───
 // The Route block offers only the roles the HOST actually emits, and it learns
 // that from the ONE params-aware capability seam (lib/motif/hostRoles.js) — never
 // from a conditional in this component. Asserted from the outside: which role
@@ -462,13 +462,43 @@ describe("MotifBlockRack — Route offers only the roles the host emits", () => 
     expect(rolesOffered()).toEqual(["edge"]);
   });
 
+  it("a host type + params narrow the offer — and OVERRIDE a stale hostIsSemantic (#144)", () => {
+    // The discriminating case: a caller says the host is semantic, but the host
+    // is a COLUMNS-ONLY grid, which routes through edge capture and emits only
+    // `edge`. The seam is params-aware and says edges; a component-local
+    // `hostIsSemantic ? all four : edges` conditional would offer all four.
+    render(
+      <MotifBlockRack
+        {...baseProps}
+        hostIsSemantic
+        hostPatternType="grid"
+        hostParams={{ drawHorizontal: 0 }}
+      />
+    );
+    expect(rolesOffered()).toEqual(["edge"]);
+  });
+
   it("offers Edges alone on a native edge host", () => {
     render(<MotifBlockRack {...baseProps} hostPatternType="flowfield" hostParams={{}} />);
     expect(rolesOffered()).toEqual(["edge"]);
   });
 
+  it("each #144 capture host offers Edges alone", () => {
+    for (const type of ["radialetch", "hilbert", "lissajous"]) {
+      const { unmount } = render(
+        <MotifBlockRack {...baseProps} hostIsSemantic hostPatternType={type} hostParams={{}} />
+      );
+      expect(rolesOffered(), `wrong roles offered on "${type}"`).toEqual(["edge"]);
+      unmount();
+    }
+  });
+
   it("a caller that names no host keeps the pre-#146 semantic/edge split", () => {
-    render(<MotifBlockRack {...baseProps} />);
+    const { unmount } = render(<MotifBlockRack {...baseProps} />);
     expect(rolesOffered()).toEqual(["crossing", "edge", "tip", "cell"]);
+    unmount();
+    // …and the FALSE half of that legacy boolean (#144).
+    render(<MotifBlockRack {...baseProps} hostIsSemantic={false} />);
+    expect(rolesOffered()).toEqual(["edge"]);
   });
 });

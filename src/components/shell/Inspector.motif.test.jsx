@@ -1551,3 +1551,64 @@ describe("MotifDevice — type scale (typography pass)", () => {
     expect(para.className).toContain("text-xs");
   });
 });
+
+// ── #144 — role availability on the three new record-mode capture hosts ──────
+// Radial Etch, Hilbert and Lissajous emit ONLY captured polylines, so `edge` is
+// the only anchor role that exists on them. Route must offer Edges and nothing
+// else, or the maker can pick Crossings/Tips/Cells and get a silently empty
+// motif. The answer comes from the single host→roles seam (lib/motif/hostRoles),
+// never from a conditional inside this component.
+describe("Route role availability on the #144 edge hosts", () => {
+  function chainMotif(id, hostId) {
+    return {
+      id,
+      name: id,
+      type: MOTIF_TYPE,
+      patternType: MOTIF_TYPE,
+      params: createMotifParams({
+        hostLayerId: hostId,
+        glyphRef: "leaf",
+        binding: {
+          chain: [{ type: "route", roles: ["edge"], pathScope: "all" }],
+          placement: defaultBinding.placement,
+        },
+      }),
+      randomizeKeys: [],
+      paramsCache: {},
+    };
+  }
+
+  function openRoute(hostType) {
+    render(
+      <Inspector
+        layers={[hostLayer("h1", hostType), chainMotif("m1", "h1")]}
+        selectedLayerId="h1"
+        onUpdateLayer={() => {}}
+        onChangeLayerPattern={() => {}}
+      />
+    );
+    fireEvent.click(screen.getByTestId("motif-toggle"));
+    const routeCard = screen
+      .getAllByTestId("motif-block")
+      .find((c) => c.getAttribute("data-block-type") === "route");
+    expect(routeCard, `no Route card — "${hostType}" is not a motif host`).toBeTruthy();
+    fireEvent.click(within(routeCard).getByTestId("motif-block-disclosure"));
+  }
+
+  for (const hostType of ["radialetch", "hilbert", "lissajous"]) {
+    it(`${hostType}: the Route block offers Edges and no other role`, () => {
+      openRoute(hostType);
+      expect(screen.getByTestId("motif-block-role-edge")).toBeTruthy();
+      expect(screen.queryByTestId("motif-block-role-crossing")).toBeNull();
+      expect(screen.queryByTestId("motif-block-role-tip")).toBeNull();
+      expect(screen.queryByTestId("motif-block-role-cell")).toBeNull();
+    });
+  }
+
+  it("a two-axis grid host still offers all four roles (no regression)", () => {
+    openRoute("grid");
+    for (const role of ["crossing", "edge", "tip", "cell"]) {
+      expect(screen.getByTestId(`motif-block-role-${role}`)).toBeTruthy();
+    }
+  });
+});

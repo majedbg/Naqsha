@@ -146,6 +146,67 @@ describe('selecting Chladni as a motif host places glyphs along the nodal lines'
   }
 });
 
+// Chladni draws inside applySymmetryDraw(ctx, symmetry, cx, cy, drawBase,
+// startAngle, offsetX, offsetY), so its polylines are emitted in an
+// origin-centred frame and only land on the plate through the recorded
+// transform stack. capturePolylines folds that stack — this proves it for
+// Chladni specifically rather than trusting the generic claim, because glyphs
+// captured in the wrong frame float off the visible nodal lines.
+describe('captured contours arrive in the PAINTED frame (symmetry, start angle, offsets)', () => {
+  it('symmetry N replicates the captured contours N times', () => {
+    const one = captureChladni({ symmetry: 1 }).hostPaths;
+    const three = captureChladni({ symmetry: 3 }).hostPaths;
+    expect(one.length).toBeGreaterThan(0);
+    expect(three.length).toBe(one.length * 3);
+  });
+
+  it('a start angle rotates the captured contours about the canvas centre', () => {
+    const base = captureChladni({ startAngle: 0 }).hostPaths;
+    const spun = captureChladni({ startAngle: 90 }).hostPaths;
+    expect(spun.length).toBe(base.length);
+
+    // Rotating the FIRST captured contour's first vertex by +90° about the
+    // canvas centre must land on the rotated capture's corresponding vertex.
+    const cx = CANVAS_W / 2;
+    const cy = CANVAS_H / 2;
+    const p = base[0].points[0];
+    const expected = { x: cx - (p.y - cy), y: cy + (p.x - cx) };
+    const got = spun[0].points[0];
+    expect(got.x).toBeCloseTo(expected.x, 6);
+    expect(got.y).toBeCloseTo(expected.y, 6);
+    // …and it genuinely moved (otherwise the assertion above is vacuous).
+    expect(Math.hypot(got.x - p.x, got.y - p.y)).toBeGreaterThan(1);
+  });
+
+  it('offsets translate the captured contours by exactly that offset', () => {
+    const base = captureChladni({}).hostPaths;
+    const shifted = captureChladni({ offsetX: 37, offsetY: -21 }).hostPaths;
+    expect(shifted.length).toBe(base.length);
+    const a = base[0].points[0];
+    const b = shifted[0].points[0];
+    expect(b.x - a.x).toBeCloseTo(37, 6);
+    expect(b.y - a.y).toBeCloseTo(-21, 6);
+  });
+
+  it('placed glyphs still sit on the contours with symmetry + start angle + offsets applied', () => {
+    const { hostPaths } = captureChladni({
+      symmetry: 3,
+      startAngle: 37,
+      offsetX: 25,
+      offsetY: -18,
+    });
+    const anchors = sampleEdgeAnchors(hostPaths, { spacing: 20 });
+    const { placements } = placeMotifs(anchors, BINDING, {
+      canvasW: CANVAS_W,
+      canvasH: CANVAS_H,
+    });
+    expect(placements.length).toBeGreaterThan(0);
+    for (const p of placements) {
+      expect(distanceToNearestPathVertex(p, hostPaths)).toBeLessThan(10);
+    }
+  });
+});
+
 describe('a blank Chladni plate is genuinely empty, and the gate says so', () => {
   const BLANK_CASES = [
     ['first mode pair equal', { m: 4, n: 4, blend: 0 }],

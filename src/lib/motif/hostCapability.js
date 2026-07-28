@@ -81,7 +81,13 @@ function chladniAvailability(params) {
   const m2 = params?.m2 ?? 5;
   const n2 = params?.n2 ?? 2;
   const blend = params?.blend ?? 0;
-  const w = Math.max(0, Math.min(1, blend)); // same clamp as Chladni.js
+  // Same clamp as Chladni.js. It is comparison-equivalent to using `blend` raw
+  // for the two tests below (blend>1 ⇒ !(<1) either way; blend<0 ⇒ !(>0) either
+  // way), so it is kept for provenance rather than effect — read it as "this is
+  // the same w the pattern computes", not as load-bearing arithmetic. NaN
+  // survives the clamp and correctly fails BOTH tests: a NaN field emits no
+  // contour at all, so a NaN blend is genuinely blank.
+  const w = Math.max(0, Math.min(1, blend));
 
   // A pair is "live" when its coefficient in F is non-zero. At w === 1 the first
   // coefficient (1 − w) is exactly 0; at w === 0 the second is.

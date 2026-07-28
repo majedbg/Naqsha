@@ -129,12 +129,24 @@ describe('hostAvailability — Chladni blank plate', () => {
     expect(hostAvailability('chladni', { m: 4, n: 3, blend: 0, m2: 5, n2: 5 }).available).toBe(true);
   });
 
-  it('clamps Blend exactly as the pattern does (out-of-range values do not open a hole)', () => {
-    // Chladni clamps blend to [0,1] before use, so blend 2 behaves as 1.
+  it('an out-of-range Blend behaves exactly as the pattern treats it (clamped to [0,1])', () => {
+    // Chladni clamps blend to [0,1] before use, so blend 2 behaves as 1…
     expect(hostAvailability('chladni', { m: 4, n: 3, blend: 2, m2: 5, n2: 5 }).available).toBe(false);
+    expect(capturedPathCount({ m: 4, n: 3, blend: 2, m2: 5, n2: 5 })).toBe(0);
     // …and blend -1 behaves as 0.
     expect(hostAvailability('chladni', { m: 4, n: 4, blend: -1 }).available).toBe(false);
+    expect(capturedPathCount({ m: 4, n: 4, blend: -1 })).toBe(0);
     expect(hostAvailability('chladni', { m: 4, n: 3, blend: -1, m2: 5, n2: 5 }).available).toBe(true);
+    expect(capturedPathCount({ m: 4, n: 3, blend: -1, m2: 5, n2: 5 })).toBeGreaterThan(0);
+  });
+
+  it('a NaN Blend is reported unavailable — and the pattern really does draw nothing', () => {
+    // NaN propagates through (1-w)·f1 + w·f2, every field sample is NaN, every
+    // `corner > iso` comparison is false, so every marching-square cell scores
+    // code 0 and no contour is emitted. The gate must agree rather than promise
+    // a plate that is not there.
+    expect(hostAvailability('chladni', { m: 4, n: 3, blend: NaN }).available).toBe(false);
+    expect(capturedPathCount({ m: 4, n: 3, blend: NaN })).toBe(0);
   });
 
   it('a reason is always a non-empty string when unavailable, and null when available', () => {

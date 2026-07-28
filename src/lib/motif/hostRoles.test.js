@@ -34,14 +34,41 @@ describe('rolesForHost', () => {
     expect(rolesForHost('girih')).not.toContain('cell');
   });
 
-  it('leaves the existing semantic hosts exactly as they are today (#154 narrows them)', () => {
-    // Narrowing voronoi (dead Tips) and spiral (dead Cells) is #154's criteria,
-    // not this ticket's. Asserting the CURRENT set here is what makes that a
-    // deliberate later change rather than an accidental one now.
+  it('leaves grid and recursive at all four roles — they really do emit all four', () => {
     expect(rolesForHost('grid')).toEqual([...ALL_ROLES]);
     expect(rolesForHost('recursive')).toEqual([...ALL_ROLES]);
-    expect(rolesForHost('voronoi')).toEqual([...ALL_ROLES]);
-    expect(rolesForHost('spiral')).toEqual([...ALL_ROLES]);
+  });
+
+  // ── #154 criterion 5 ────────────────────────────────────────────────────────
+  // The two long-standing mismatches, both measured against REAL generated
+  // geometry at three seeds (hostRoles.conformance.test.js runs the tally as a
+  // standing guard): a tessellation has no free termini, and an open arm encloses
+  // no region. Both options were offerable in the Route card and produced nothing.
+  it('offers Crossings, Edges and Cells on Voronoi — and NOT Tips (#154)', () => {
+    expect(rolesForHost('voronoi')).toEqual(['crossing', 'edge', 'cell']);
+    expect(rolesForHost('voronoi', { cellCount: 200, jitter: 0 })).not.toContain('tip');
+    expect(rolesForHost('voronoi', { drawMode: 'filled' })).not.toContain('tip');
+  });
+
+  it('offers Crossings, Edges and Tips on Spiral — and NOT Cells (#154)', () => {
+    expect(rolesForHost('spiral')).toEqual(['crossing', 'edge', 'tip']);
+    expect(rolesForHost('spiral', { innerRadius: 0, armCount: 3 })).not.toContain('cell');
+    expect(rolesForHost('spiral', { armCount: 1 })).not.toContain('cell');
+  });
+
+  // ── #154 criterion 4 ────────────────────────────────────────────────────────
+  // Shipped by #153; asserted here because criterion 4 is #154's to certify.
+  it('offers Cells and Edges on Truchet across EVERY tile set (#154 criterion 4)', () => {
+    for (const tileSet of ['arcs', 'diagonals', 'triangles']) {
+      expect(rolesForHost('truchet', { tiles: 6, tileSet })).toEqual(['edge', 'cell']);
+    }
+  });
+
+  // ── #154 criterion 2 ────────────────────────────────────────────────────────
+  it('Circle Packing and Module Grid each offer Cells ALONE (#154 criterion 2)', () => {
+    expect(rolesForHost('circlepacking')).toEqual(['cell']);
+    expect(rolesForHost('modulegrid')).toEqual(['cell']);
+    expect(rolesForHost('modulegrid', { module: 'ring' })).toEqual(['cell']);
   });
 
   it('is params-aware — a single-axis grid offers Edges alone', () => {

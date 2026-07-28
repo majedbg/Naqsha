@@ -187,8 +187,15 @@ describe('spiral host — chip route defaults to a LIVE role, not the dead cross
       // emits none of) WITHOUT the dead-default bug the other chips guard
       // against: it also holds 'edge'/'tip', which a spiral DOES produce, so its
       // selection is never empty (see "every chip PLACES on a default-spiral-
-      // shaped anchor set"). Narrowing Spiral's dead 'cell' option is #154's.
-      expect(route.roles).toEqual(['crossing', 'edge', 'tip', 'cell']);
+      // shaped anchor set").
+      //
+      // #154 narrowed Spiral's dead `cell` option away, so the union is three
+      // roles now. KNOWN AND ACCEPTED CONSEQUENCE: a Vine already saved on a
+      // Spiral (or a Voronoi) stores the old four-role union, so `modeForMotif`
+      // stops matching `chip.build()` and the mode column reads **Custom** on
+      // load, with no maker action. Render-neutral — spiral emits no cells, so
+      // the placements are identical — but user-visible, and deliberate.
+      expect(route.roles).toEqual(['crossing', 'edge', 'tip']);
     } else {
       expect(route.roles).toEqual(['edge']);
       expect(route.roles).not.toContain('crossing'); // the pre-fix dead default

@@ -33,7 +33,7 @@ import { Pattern } from '../patterns/drawingContext';
 import { parsePathD } from '../plotter/pathOps';
 import { sampleEdgeAnchors } from './anchors.js';
 import { resolveHostAnchors } from './hostAnchors.js';
-import { coerceEdgeRoles } from './edgeRoles.js';
+import { coerceRoles } from './edgeRoles.js';
 import { resolveSelection } from './compileSelectionToChain.js';
 import { resolvePlacements } from './placementEngine.js';
 import { getGlyph } from './glyphs.js';
@@ -131,10 +131,20 @@ export default class MotifPattern extends Pattern {
     // Overrides are never a chain Block (ADR-0004) — they ride the fixed
     // post-chain step, so we pass `binding.overrides` through if present
     // (undefined otherwise).
-    // In edge mode, un-bake any stale non-edge route roles (e.g. a single-axis
-    // grid whose binding still says ['crossing']) so the role filter passes the
-    // edge anchors. No-op for semantic mode and for already-edge bindings.
-    const binding = anchorMode === 'edge' ? coerceEdgeRoles(p.binding || {}) : p.binding || {};
+    // ROLE AVAILABILITY, DERIVED AT RENDER (#154). Intersect this binding's Route
+    // roles with what the host actually emits: in edge mode that un-bakes a stale
+    // non-edge role (a single-axis grid whose binding still says ['crossing']) as
+    // it always did; on a semantic host it drops roles the host cannot serve and
+    // falls back to the host's default role when nothing survives, so a Route
+    // asking only for a dead role renders instead of rendering blank. Nothing is
+    // written — see edgeRoles.js for why the branch ORDER is load-bearing.
+    // AnchorGhostOverlay calls the identical function so the editable dots and
+    // the drawn glyphs can never disagree.
+    const binding = coerceRoles(p.binding || {}, {
+      type: p.hostPatternType,
+      params: p.hostParams,
+      anchorMode,
+    });
     // `overrideRecords` is the resolved ref→anchor map for the POST-PLACEMENT
     // per-glyph scale/angle step (#137). It MUST come out of resolveSelection:
     // a LEGACY binding's overrides live at `binding.selection.overrides` and only

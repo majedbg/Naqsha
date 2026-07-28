@@ -45,6 +45,7 @@ import { useMeasuredWidth } from "../../lib/hooks/useMeasuredWidth";
 import { rolesForHost, ALL_ROLES } from "../../lib/motif/hostRoles";
 import { hostHasPathStructure } from "../../lib/motif/hostKinds";
 import { zonesForRoles } from "../../lib/motif/zones";
+import { coerceRoles } from "../../lib/motif/edgeRoles";
 import {
   makeBlock,
   canAddBlock,
@@ -1520,14 +1521,40 @@ export default function MotifBlockRack({
   // anchor set degrades to no chips rather than throwing. `stageByIndex` maps a
   // block's chain index to its {inCount, outCount}; `placed` is the terminal
   // Sequencer's non-rest placement count.
+  // THE CHAIN THE CANVAS ACTUALLY RUNS (#154, amendment A2). The render resolves
+  // a Route block's stored roles against what the host emits (`coerceRoles`), so
+  // counting the RAW chain here would make the card read "→ 0" beside a canvas
+  // full of glyphs — the same dots-vs-glyphs divergence in its third surface. The
+  // ONE function the render and the overlay call, never a conditional grown here.
+  //
+  // `anchorMode` is derived from the HOST, exactly as AnchorGhostOverlay derives
+  // it, because it must describe the anchor set the chips are counting — the
+  // `anchors` prop is the SEMANTIC extractor's output (Inspector.hostAnchors).
+  // `hostIsSemantic` is the pre-#146 fallback for bare callers that name no host;
+  // it is literally the rule defaultBinding.js / starterChips.js use to WRITE
+  // anchorMode. Do NOT "simplify" this to `?? 'edge'`: that would send every bare
+  // caller down the edge branch and rewrite its roles to ['edge'] before counting.
+  const sieveChain = useMemo(() => {
+    const blocksIn = Array.isArray(chain) ? chain : [];
+    const coerced = coerceRoles(
+      { chain: blocksIn },
+      {
+        type: hostPatternType,
+        params: hostParams,
+        anchorMode: hostIsSemantic ? "semantic" : "edge",
+      }
+    );
+    return Array.isArray(coerced.chain) ? coerced.chain : blocksIn;
+  }, [chain, hostPatternType, hostParams, hostIsSemantic]);
+
   const sieve = useMemo(() => {
     if (!Array.isArray(anchors)) return null;
     try {
-      return sieveCounts(chain, anchors, overrides ? { overrides } : {});
+      return sieveCounts(sieveChain, anchors, overrides ? { overrides } : {});
     } catch {
       return null;
     }
-  }, [chain, anchors, overrides]);
+  }, [sieveChain, anchors, overrides]);
   const stageByIndex = useMemo(() => {
     const map = new Map();
     if (sieve) for (const s of sieve.stages) map.set(s.blockIndex, s);

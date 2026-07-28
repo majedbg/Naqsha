@@ -1,5 +1,19 @@
 # #164 and #165 — investigation, options, recommendations
 
+> **RESOLVED 2026-07-28. This is no longer an open question** — it is kept as the
+> evidence behind the decisions, which were:
+>
+> | | decision | shipped in |
+> |---|---|---|
+> | #164 Decision 1 (correctness) | **1a** — winding-signed normal when `\|area\| ≥ EPS` | PR #180 |
+> | #164 Decision 2 (aesthetics) | **2a** — degenerate figures keep today's radial look | PR #180 (deliberately unchanged, locked by test) |
+> | #165 | **Option 3** — girih Tips stays a structural role that places nothing | PR #181 (documentation only) |
+>
+> **The figures are dated.** `topographic-levels6-BEFORE` shows the pre-#164
+> behaviour (13 reversals) and `-AFTER` the shipped one (0). The Lissajous pair is
+> labelled `-KEPT` (what ships) and `-REJECTED` (the option not taken) — note that
+> `-KEPT` is the one *with* 24 reversals, which is the point of Decision 2a.
+
 Measured against `main` @ `3297332`, canvas 800×600, spacing 24, seed 7. Every
 placement count is `placements.length` (accepted placements), never
 `placementStats`. Scratch measurement scripts are preserved outside the repo;
@@ -170,10 +184,10 @@ Answering the ticket's three questions under **1a + 2a**:
 `docs/decisions-164-165-figures/` — dark red ticks are glyph normals, orange
 ticks are glyphs rotated 180° from their neighbour on a smooth stretch of curve.
 
-- `topographic-levels6-current` (13 reversals) vs `-proposed` (0) — **this is
-  Decision 1**, and the orange ticks are visibly pointing into the contour.
-- `lissajous-default-3-2-current` (24 reversals, radial) vs `-proposed` (0,
-  comb) — **this is Decision 2**, and it is a look, not a bug.
+- `topographic-levels6-BEFORE` (13 reversals) vs `-AFTER` (0) — **Decision 1**,
+  and the orange ticks are visibly pointing into the contour. Shipped.
+- `lissajous-default-3-2-KEPT` (24 reversals, radial) vs `-REJECTED` (0, comb) —
+  **Decision 2**, a look rather than a bug. The KEPT one ships unchanged.
 
 ---
 

@@ -22,16 +22,22 @@
 //   1. its registry id in `SEMANTIC_MOTIF_HOSTS` and `STASH_MOTIF_HOSTS`
 //      (hostKinds.js) — the first makes it a structural host, the second tells
 //      the render router to forward its stash;
-//   2. its geometry key(s) in `STASH_GEOMETRY_KEYS` (hostKinds.js) — this module
+//   2. an entry in `DEFAULT_SEMANTIC_ROLE` (hostKinds.js) whenever the host does
+//      NOT emit `edge`. This one is easy to miss and fails SILENTLY: the map's
+//      fallback is `'edge'`, `defaultMotifAddOpts` writes that straight into
+//      `binding.selection.roles`, and on a CELL-ONLY host the Route filter then
+//      drops every anchor — so a freshly added motif shows no glyphs AND no
+//      dots while the resolver is working perfectly;
+//   3. its geometry key(s) in `STASH_GEOMETRY_KEYS` (hostKinds.js) — this module
 //      and resolveMotifHost both forward that list verbatim;
-//   3. its pattern stashing that geometry on `instance.motifHostGeometry` during
+//   4. its pattern stashing that geometry on `instance.motifHostGeometry` during
 //      generate(), in the painted frame and consuming no RNG;
-//   4. a `case` in `getSemanticAnchors` (semanticAnchors.js) turning that
+//   5. a `case` in `getSemanticAnchors` (semanticAnchors.js) turning that
 //      geometry into anchors — the extractor DISPATCH is per-host by nature and
 //      is the one place a new host still writes its own line;
-//   5. optionally an entry in `NARROW_ROLES` (hostRoles.js) if it emits fewer
+//   6. optionally an entry in `NARROW_ROLES` (hostRoles.js) if it emits fewer
 //      than all four roles.
-// Steps 1–3 are registration. Step 4 is the host's own extractor, which is the
+// Steps 1–4 are registration. Step 5 is the host's own extractor, which is the
 // work the host ticket is for. NOTHING in the overlay, the render router or this
 // resolver changes.
 //

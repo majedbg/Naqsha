@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { capturePolylines } from './capturePolylines.js';
+import { capturePolylines, CLOSURE_TOLERANCE_RELATIVE, closureToleranceFor } from './capturePolylines.js';
 import Grid from '../patterns/Grid.js';
 import { RecordingContext, P5Adapter } from '../patterns/drawingContext.js';
 import { mulberry32 } from '../patterns/rng.js';
@@ -363,5 +363,120 @@ describe('capturePolylines — warped Grid through the record-mode P5Adapter (pr
     const paths = capturePolylines(ctx.calls);
     expect(paths.length).toBeGreaterThan(0);
     expect(Math.max(...paths.map((p) => p.points.length))).toBeGreaterThan(3);
+  });
+});
+
+// ── #147 · closure inference from endpoint coincidence ───────────────────────
+// The tolerance is a stated contract, not an implementation detail, so it is
+// pinned on BOTH sides here with synthetic geometry whose bbox diagonal — and
+// therefore whose exact threshold — is known to the test. Every case computes
+// the threshold FROM the exported constant, so widening or narrowing the
+// tolerance moves these tests rather than quietly passing them.
+describe('capturePolylines — #147 closure inference', () => {
+  // A square traced counter-clockwise, with the run ending `gap` px short of its
+  // start. The tail point (0, gap) never moves the bounding box (x∈[0,S],
+  // y∈[0,S] is fixed by the other three corners), so the diagonal — and hence
+  // the tolerance — is exactly S·√2 whatever the gap.
+  const S = 100;
+  const DIAG = Math.hypot(S, S);
+  const TOL = CLOSURE_TOLERANCE_RELATIVE * DIAG;
+
+  const squareWithGap = (gap) => capturePolylines([
+    { op: 'beginShape', args: [] },
+    { op: 'vertex', args: [0, 0] },
+    { op: 'vertex', args: [S, 0] },
+    { op: 'vertex', args: [S, S] },
+    { op: 'vertex', args: [0, S] },
+    { op: 'vertex', args: [0, gap] },
+    { op: 'endShape', args: [] },
+  ])[0];
+
+  it('states its tolerance: 1e-6 of the path bounding-box diagonal, floored at 1px', () => {
+    expect(CLOSURE_TOLERANCE_RELATIVE).toBe(1e-6);
+    expect(closureToleranceFor([{ x: 0, y: 0 }, { x: S, y: 0 }, { x: S, y: S }, { x: 0, y: S }]))
+      .toBeCloseTo(TOL, 15);
+    // Floor: a sub-pixel figure still gets an absolute 1e-6 px tolerance rather
+    // than a threshold that shrinks to nothing with the shape.
+    expect(closureToleranceFor([{ x: 0, y: 0 }, { x: 0.1, y: 0 }, { x: 0, y: 0.1 }]))
+      .toBe(CLOSURE_TOLERANCE_RELATIVE);
+  });
+
+  it('INSIDE the tolerance ⇒ closed', () => {
+    expect(squareWithGap(TOL * 0.5).closed).toBe(true);
+  });
+
+  it('OUTSIDE the tolerance ⇒ open', () => {
+    expect(squareWithGap(TOL * 2).closed).toBe(false);
+  });
+
+  it('exactly AT the tolerance ⇒ closed (the boundary is inclusive)', () => {
+    expect(squareWithGap(TOL).closed).toBe(true);
+  });
+
+  it('is scale-invariant: the same figure at 10x reports the same closure', () => {
+    const scaled = (gapFactor) => capturePolylines([
+      { op: 'scale', args: [10] },
+      { op: 'beginShape', args: [] },
+      { op: 'vertex', args: [0, 0] },
+      { op: 'vertex', args: [S, 0] },
+      { op: 'vertex', args: [S, S] },
+      { op: 'vertex', args: [0, S] },
+      { op: 'vertex', args: [0, TOL * gapFactor] },
+      { op: 'endShape', args: [] },
+    ])[0];
+    // The gap scales with the figure, so the RELATIVE gap — and the verdict —
+    // is unchanged. An absolute epsilon would flip one of these two.
+    expect(scaled(0.5).closed).toBe(true);
+    expect(scaled(2).closed).toBe(false);
+  });
+
+  it('a genuinely open run is untouched', () => {
+    const paths = capturePolylines([
+      { op: 'beginShape', args: [] },
+      { op: 'vertex', args: [0, 0] },
+      { op: 'vertex', args: [10, 0] },
+      { op: 'vertex', args: [10, 10] },
+      { op: 'endShape', args: [] },
+    ]);
+    expect(paths[0].closed).toBe(false);
+  });
+
+  it('an explicit endShape(CLOSE) still wins even when the ends are far apart', () => {
+    const paths = capturePolylines([
+      { op: 'beginShape', args: [] },
+      { op: 'vertex', args: [0, 0] },
+      { op: 'vertex', args: [10, 0] },
+      { op: 'vertex', args: [10, 10] },
+      { op: 'endShape', args: ['close'] },
+    ]);
+    expect(paths[0].closed).toBe(true);
+  });
+
+  it('a 2-point path is never inferred closed — a segment is not a loop', () => {
+    // A zero-length ctx.line, and a 2-vertex shape that starts and ends in the
+    // same place. Neither encloses anything; calling them loops would give the
+    // Zone partitioner a path with no Apex and no interior.
+    expect(capturePolylines([{ op: 'line', args: [7, 7, 7, 7] }])[0].closed).toBe(false);
+    const shape = capturePolylines([
+      { op: 'beginShape', args: [] },
+      { op: 'vertex', args: [7, 7] },
+      { op: 'vertex', args: [7, 7] },
+      { op: 'endShape', args: [] },
+    ]);
+    expect(shape[0].closed).toBe(false);
+  });
+
+  it('a contour whose last vertex REPEATS the first is closed (the stitcher convention)', () => {
+    // Chladni's and TopographicContours' marching-squares stitcher terminates a
+    // ring by appending the start point again — gap exactly 0.
+    const paths = capturePolylines([
+      { op: 'beginShape', args: [] },
+      { op: 'vertex', args: [10, 10] },
+      { op: 'vertex', args: [30, 10] },
+      { op: 'vertex', args: [30, 30] },
+      { op: 'vertex', args: [10, 10] },
+      { op: 'endShape', args: [] },
+    ]);
+    expect(paths[0].closed).toBe(true);
   });
 });

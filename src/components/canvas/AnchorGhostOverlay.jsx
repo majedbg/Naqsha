@@ -27,14 +27,17 @@
 // SCOPE — this overlay has TWO render paths, split by whether the motif's Route
 // card is ARMED for path picking, not by host kind:
 //   • OVERRIDE overlay (`data-mode="override"`) — every host kind, unarmed.
-//     Semantic hosts (grid / recursive / spiral PLUS voronoi) show the full
-//     placed/candidate ghost field; EDGE hosts (#141) show PLACED-ONLY dots (see
-//     the edge display rule below). Click = per-glyph popover, double-click =
-//     quick hide. Voronoi is GEOMETRY-IN (getSemanticAnchors needs the host's
-//     drawn segments), wired via the `patternInstances` prop: the real drawn host
-//     instance stashes `motifHostGeometry = {drawnEdges, sites}` during
-//     generate(), and RightPanel keeps `patternInstances` in React state
-//     (refreshed after every p5 render).
+//     Semantic hosts show the full placed/candidate ghost field; EDGE hosts
+//     (#141) show PLACED-ONLY dots (see the edge display rule below). Click =
+//     per-glyph popover, double-click = quick hide. STASH hosts are GEOMETRY-IN
+//     (their anchors cannot be derived from params), wired via the
+//     `patternInstances` prop: the real drawn host instance stashes
+//     `motifHostGeometry` during generate() — voronoi `{drawnEdges, sites}`,
+//     circlepacking `{circles}` — and RightPanel keeps `patternInstances` in
+//     React state (refreshed after every p5 render). Since #149 the overlay names
+//     no host: it asks the SHARED resolver (lib/motif/hostAnchors.js), the same
+//     module the render path calls, so a new stash host inherits dots by
+//     registering in hostKinds rather than by editing this file.
 //   • EDGE-HOST PATH PICKER (C4, `data-mode="pick"`) — an edge host whose Route
 //     card is armed (`motifPick`). Dots come from the SAME record-mode polyline
 //     capture the render uses (`motifHostGeometry.hostPaths`, also surfaced
@@ -59,20 +62,11 @@ import {
 import { copyGlyphSettings, readGlyphClipboard } from '../../lib/motif/glyphClipboard';
 import GlyphPopover from './GlyphPopover';
 import { glyphScreenRect } from './glyphPopoverPlacement';
-import { getSemanticAnchors } from '../../lib/motif/semanticAnchors';
-import { sampleEdgeAnchors } from '../../lib/motif/anchors';
+import { resolveHostAnchors } from '../../lib/motif/hostAnchors';
 import { resolveSelection } from '../../lib/motif/compileSelectionToChain';
 import { coerceEdgeRoles } from '../../lib/motif/edgeRoles';
 import { resolvePlacements } from '../../lib/motif/placementEngine';
-import { SEMANTIC_MOTIF_HOSTS, isEdgeHost } from '../../lib/motif/hostKinds';
-
-// The hosts whose anchors come from a SEMANTIC extractor (grid/recursive/spiral
-// are FORMULA hosts — anchors from params alone; voronoi is GEOMETRY-IN via the
-// drawn host's stashed `motifHostGeometry`, supplied through `patternInstances`).
-// getSemanticAnchors returns null for an edge host, so this set gates only WHICH
-// extractor runs — edge hosts take the hostPaths branch below and, since #141,
-// reach the same override overlay.
-const MOTIF_HOSTS = SEMANTIC_MOTIF_HOSTS;
+import { isEdgeHost } from '../../lib/motif/hostKinds';
 
 const ACCENT = '#7c3aed'; // violet — placed / included fill
 const EXCLUDE_STROKE = '#ef4444'; // red — force-excluded outline
@@ -174,61 +168,53 @@ export default function AnchorGhostOverlay({
     [layers, motif]
   );
 
-  // Semantic anchors — semantic hosts only; may still be null (e.g. warp/distort
-  // modulation refuses to emit). Keyed on the host object ref (updateLayer
-  // replaces layer objects immutably) + canvas dims + patternInstances (voronoi
-  // geometry).
+  // Host anchors — through the ONE SHARED RESOLVER (#149, hostAnchors.js), the
+  // same module MotifPattern's render path calls. There is deliberately no host
+  // kind named here any more: the resolver decides formula-vs-stash-vs-edge from
+  // hostKinds, and forwards whatever geometry the host stashed. Removing this
+  // overlay's hardcoded `voronoi` branch is what let Circle Packing (#146) — and
+  // Module Grid / Girih / Truchet after it — inherit editable dots and the glyph
+  // popover without touching this file at all.
   //
-  // TIMING — for voronoi, geometry comes from `patternInstances`, which useCanvas
-  // sets AFTER p5 draws (post-render setState). So on a host-param change the
-  // overlay may render one frame against the PREVIOUS geometry, then self-heal
-  // when the fresh instances arrive. This is safe because the extractor is
-  // deterministic (same seed+params ⇒ same drawnEdges/sites ⇒ same anchor ids +
-  // coords), so ghost/glyph agreement is exact once settled. Absent geometry
-  // (first frame before p5 draws) ⇒ null ⇒ overlay renders nothing (graceful).
-  // A HIDDEN host is NOT the absent case (#140): useCanvas still generates
-  // hidden layers through the no-draw adapter, which stashes motifHostGeometry
-  // like any drawn frame — so dots and the glyph popover survive "hide the
-  // scaffold, keep the ornament". Locked by AnchorGhostOverlay.hiddenHost.test.
+  // WHAT THE RESOLVER GETS:
+  //   • the HOST's patternType/params/seed — a single-axis grid is a params-aware
+  //     EDGE host, so its dots land ALONG each line (matching the render) rather
+  //     than at the semantic extractor's 2 tips per line;
+  //   • `geometry` = the drawn instance's `motifHostGeometry`, which is either a
+  //     STASH host's own harvest (voronoi: drawnEdges+sites; circlepacking:
+  //     circles) or the prepass-captured `hostPaths` of an edge host;
+  //   • the MOTIF's edgeOpts, so edge dots resample exactly as the glyphs did.
+  //     Fallback `{}` is the RENDER's fallback, which samples NOTHING without a
+  //     spacing/count — a friendlier default would draw dots claiming "placed"
+  //     over a canvas where no glyph drew.
+  //
+  // Keyed on the host object ref (updateLayer replaces layer objects immutably) +
+  // canvas dims + patternInstances (host geometry) + the motif (edgeOpts).
+  //
+  // TIMING — geometry comes from `patternInstances`, which useCanvas sets AFTER
+  // p5 draws (post-render setState). So on a host-param change the overlay may
+  // render one frame against the PREVIOUS geometry, then self-heal when the fresh
+  // instances arrive. This is safe because the extractors are deterministic (same
+  // seed+params ⇒ same geometry ⇒ same anchor ids + coords), so ghost/glyph
+  // agreement is exact once settled. Absent geometry (first frame before p5
+  // draws, or a host that has not been probed) ⇒ the resolver returns null ⇒ the
+  // overlay renders nothing (graceful, never a throw).
+  // A HIDDEN host is NOT the absent case (#140): useCanvas still generates hidden
+  // layers through the no-draw adapter, which stashes motifHostGeometry like any
+  // drawn frame, and the edge prepass probes visibility-blind — so dots and the
+  // glyph popover survive "hide the scaffold, keep the ornament". Locked by
+  // AnchorGhostOverlay.hiddenHost.test and .stashHost.test.
   const anchors = useMemo(() => {
     if (!host) return null;
-    // A single-axis grid is a params-aware EDGE host (hostKinds) — route it to the
-    // edge branch below so the ghost dots land ALONG each line, matching the real
-    // render, instead of the semantic extractor's 2 tip dots per line.
-    const edgeMode = isEdgeHost(host.patternType, host.params);
-    if (!edgeMode && MOTIF_HOSTS.has(host.patternType)) {
-      if (host.patternType === 'voronoi') {
-        const geo = patternInstances[host.id]?.motifHostGeometry;
-        if (!geo) return null;
-        // geo IS the opts object — it carries drawnEdges + sites.
-        return getSemanticAnchors('voronoi', host.params, canvasW, canvasH, geo);
-      }
-      // Thread the host layer seed so grid anchors sit on the LIVE-p5
-      // jittered/symmetry lattice — matching MotifPattern's real render, so
-      // ghost previews land exactly where the motifs actually place.
-      return getSemanticAnchors(host.patternType, host.params, canvasW, canvasH, {
-        hostSeed: host.seed,
-      });
-    }
-    // C4 — EDGE host (flowfield/wave/…): the dots come from the SAME polyline
-    // capture the render uses (hostPaths, surfaced on the drawn instance by
-    // useCanvas), resampled with the motif's OWN edgeOpts so the ghost dots land
-    // where the glyphs would. Each edge anchor carries meta.pathIndex (the pick
-    // key). Absent capture (host not yet probed) → null → no ghost; a HIDDEN
-    // host still has capture — the useCanvas prepass probes visibility-blind
-    // (#140).
-    if (edgeMode) {
-      const hostPaths = patternInstances[host.id]?.motifHostGeometry?.hostPaths;
-      if (!hostPaths || !hostPaths.length) return null;
-      // edgeOpts fallback is `{}` — the RENDER's fallback (MotifPattern), which
-      // samples NOTHING without a spacing/count. A friendlier default here (it
-      // used to be {spacing:24}) would draw dots claiming "placed" over a canvas
-      // where no glyph drew. createMotifParams gives every real motif
-      // {spacing:24}, so this only ever bites a hand-rolled/legacy params blob —
-      // exactly the case where agreeing with the render matters.
-      return sampleEdgeAnchors(hostPaths, motif?.params?.edgeOpts || {});
-    }
-    return null;
+    return resolveHostAnchors({
+      patternType: host.patternType,
+      params: host.params,
+      canvasW,
+      canvasH,
+      geometry: patternInstances[host.id]?.motifHostGeometry,
+      hostSeed: host.seed,
+      edgeOpts: motif?.params?.edgeOpts,
+    });
   }, [host, canvasW, canvasH, patternInstances, motif]);
 
   // Placements — run the SAME chain-aware path the real render uses

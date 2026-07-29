@@ -1610,6 +1610,11 @@ function MotifDevice({
                     column to Custom with no extra wiring. */}
                     <MotifBlockRack
                       chain={chain}
+                      // The MOTIF's id, not the host's. The rack renders on the
+                      // HOST's card (this device is refused on a motif layer),
+                      // so the slot card's footprint reveal has no other way to
+                      // name the layer whose glyphs the canvas should ring.
+                      layerId={m.id}
                       onFlushHistory={onFlushHistory}
                       hostIsSemantic={hostIsSemantic}
                       // The Route block asks the ONE host-capability seam

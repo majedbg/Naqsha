@@ -67,6 +67,8 @@ import { resolveSelection } from '../../lib/motif/compileSelectionToChain';
 import { coerceRoles } from '../../lib/motif/edgeRoles';
 import { resolvePlacements } from '../../lib/motif/placementEngine';
 import { isEdgeHost, hostHasPathStructure } from '../../lib/motif/hostKinds';
+import { useFootprintReveal } from '../shell/footprintRevealContext';
+import { firstSequenceIndex, placementsForSlotScope } from './footprintScope';
 
 const ACCENT = '#7c3aed'; // violet — placed / included fill
 const EXCLUDE_STROKE = '#ef4444'; // red — force-excluded outline
@@ -77,6 +79,48 @@ const EXCLUDE_STROKE = '#ef4444'; // red — force-excluded outline
 // hidden; the dot says which glyph you are editing — but the filled-vs-hollow
 // SHAPE is left alone, so the state is still legible underneath.
 const SELECTED = 'var(--saffron)';
+
+// FOOTPRINT OVERLAY (#189, decision 14). Two rings per glyph on the hovered
+// slot: SOLID at `packedRadius` (what was RESERVED into the packer — the circle
+// that pushes neighbours around) and DASHED at `drawnRadius` (what was actually
+// DRAWN). They coincide at `hold 0`; their separation as the drag proceeds IS
+// the feature made visible, which is why one ring would not do — a single ring
+// draws the circle that is NOT the packing circle and teaches the wrong model at
+// exactly the moment the control is being learned.
+//
+// WHICH RING TAKES THE HEAVY STROKE is `capBy` read straight off the canvas, no
+// legend (decision 14). `capBy` names what bound `drawnRadius` — the radius the
+// user SEES (decision 15b) — so:
+//   'neighbour'          → the SOLID ring. The reserve is the lerp's floor, and
+//                          the neighbour is what set it.
+//   'boundary' | 'host'  → the DASHED ring, which is sitting exactly ON the hard
+//                          cap (`drawnRadius === hardCap`, an exact equality by
+//                          construction — placementEngine.js:617).
+//   'natural'            → NEITHER. Nothing is capping this glyph; two light
+//                          rings is the honest reading, and it is also the only
+//                          thing distinguishing "at hold 0, uncapped" from "at
+//                          hold 0, neighbour-capped", where the rings coincide
+//                          either way.
+// THAT MAPPING IS THE SATURATION ANSWER (story 25, decision 2b): as `hold`
+// climbs with `neighbourCap < hardCap < naturalTarget`, `capBy` is 'neighbour'
+// until `lerp > hardCap`, at which instant `drawnRadius` pins to `hardCap` and
+// `capBy` flips to the hard term — so the heavy stroke visibly JUMPS from the
+// solid ring to the dashed one at the moment the drag stops responding. The
+// canvas rect is deliberately NOT drawn (decision 17): the page edge is already
+// on screen, and drawing a second one over the artwork being judged buys
+// nothing.
+const RING_HEAVY = 3; // × the base stroke, on the binding ring
+
+// Stable identity for "nothing resolved", so the memos downstream of the
+// placement pipeline do not re-run on every render of an unresolvable overlay.
+const EMPTY_RESOLVED = Object.freeze({ placements: [], survivors: [], sequence: null });
+
+/** Which ring `capBy` marks as binding. null ⇒ nothing is capping this glyph. */
+const bindingRing = (capBy) => {
+  if (capBy === 'neighbour') return 'packed';
+  if (capBy === 'boundary' || capBy === 'host') return 'drawn';
+  return null; // 'natural', or an unrecognised value — mark nothing
+};
 
 // String-keyed record refs only (records may legally hold {x,y,role} refs too,
 // but this overlay only ever writes/reads id strings — spatial refs stay the
@@ -146,10 +190,16 @@ export default function AnchorGhostOverlay({
   const [openGlyph, setOpenGlyph] = useState(null); // { anchorId, rect } | null
   // Open across a gesture's live writes; see onFlushHistory above.
   const gestureOpen = useRef(false);
+  // THE FOOTPRINT REVEAL (#188/#189, decision 19). `scope` is null when nothing
+  // is revealed; it is an OPAQUE plain object — that file stores whatever a
+  // trigger passes and classifies none of it, so classification happens here
+  // (see footprintScope.js). Outside the provider this reads the frozen CLEARED
+  // value, so every existing standalone test of this overlay is unaffected.
+  const { scope: revealScope } = useFootprintReveal();
   // Every hook runs on every render (guards live INSIDE the memos, the single
   // early return is at the end). Mounting this overlay unconditionally means a
   // selection change must not change the hook count — Rules of Hooks.
-  const motif = useMemo(() => {
+  const selectedMotif = useMemo(() => {
     const list = layers || [];
     // PICK MODE takes precedence: the Route card's "Pick on canvas" arm lives in
     // the HOST's inspector, so the HOST (not the motif) is the selected layer
@@ -162,6 +212,31 @@ export default function AnchorGhostOverlay({
     }
     return list.find((l) => l.id === selectedLayerId && isMotifLayer(l)) || null;
   }, [layers, selectedLayerId, motifPick]);
+
+  // THE MOTIF A REVEAL NAMES — a SECOND selector, not a filter (#189).
+  //
+  // This is load-bearing and non-obvious: the slot card that raises the reveal
+  // lives in the MotifDevice, which the Inspector renders on the HOST layer and
+  // explicitly refuses to render on a motif layer (Inspector.jsx:984). So while
+  // the user is hovering a `hold` row, the SELECTED layer is the host and
+  // `selectedMotif` is null — the render gate below would return null and the
+  // overlay would never draw. Exactly the fails-OFF signature the reveal context
+  // warns about, from a different cause. `scope.layerId` is what resolves it.
+  //
+  // Deliberately NOT folded into the memo above: the two answer different
+  // questions and only one of them may raise the ghost-dot field (see
+  // `ghostsVisible` at the render gate). One reveal ⇒ one extra memo pass, not
+  // one per drag frame — the context re-uses the stored scope object when a
+  // re-raise describes the same thing (`sameScope`).
+  const revealMotif = useMemo(() => {
+    const id = revealScope && revealScope.layerId;
+    if (!id) return null;
+    return (layers || []).find((l) => l.id === id && isMotifLayer(l)) || null;
+  }, [layers, revealScope]);
+
+  // Selection (or the pick arm) wins: a reveal must never silently retarget an
+  // overlay the user is already editing through.
+  const motif = selectedMotif || revealMotif;
 
   const host = useMemo(
     () => (motif ? (layers || []).find((l) => l.id === motifHostId(motif)) || null : null),
@@ -263,27 +338,60 @@ export default function AnchorGhostOverlay({
     [motif, host]
   );
 
-  const placements = useMemo(() => {
-    if (!anchors || !motif) return [];
+  const resolved = useMemo(() => {
+    if (!anchors || !motif) return EMPTY_RESOLVED;
     // EDGE hosts run the same pipeline (#141) — placed/candidate is what the
     // override dots are made of.
-    const { survivors, sequence } = resolveSelection(binding, anchors, {
+    const { survivors, sequence, overrideRecords } = resolveSelection(binding, anchors, {
       canvasW,
       canvasH,
       overrides: binding.overrides,
     });
     const placementConfig = { ...(binding.placement || {}) };
     if (sequence) placementConfig.sequence = sequence;
-    // `overrideRecords` (the post-placement per-glyph scale/angle map, #137) is
-    // deliberately NOT threaded here: this overlay reads only `anchorId` off the
-    // placements (to compute `placedIds` below), and per-glyph scale/angle change
-    // neither which anchors are placed nor their x/y. Thread it if this overlay
-    // ever starts drawing footprints at their real radius/rotation.
-    const { placements: p } = resolvePlacements(survivors, placementConfig, {
+    // `overrideRecords` (the post-placement per-glyph scale/angle map, #137) IS
+    // threaded now. It used to be deliberately omitted, on the recorded ground
+    // that this overlay read only `anchorId` off the placements — with the note
+    // "thread it if this overlay ever starts drawing footprints at their real
+    // radius/rotation". THAT PRECONDITION HAS FIRED (#189): the footprint rings
+    // below are drawn at `packedRadius` / `drawnRadius`, and per-glyph overrides
+    // apply AFTER packing (overrides.js `applyGlyphOverrides`), so without this
+    // the rings would not be the rings on screen.
+    //
+    // ⚠️ `applyGlyphOverrides` scales `drawnRadius` alongside `radius` and
+    // deliberately leaves `packedRadius` alone — the reserve genuinely did not
+    // move, packing never saw the override. So on an overridden glyph the two
+    // rings legitimately differ even at `hold 0`. That is the truth, not a bug.
+    //
+    // SURVIVORS AND SEQUENCE COME OUT TOO, for the slot→placement mapping the
+    // footprint overlay needs (footprintScope.js). `Placement` carries no slot
+    // field and must not gain one.
+    const { placements } = resolvePlacements(survivors, placementConfig, {
       boundary: { type: 'rect', width: canvasW, height: canvasH },
+      overrideRecords,
     });
-    return p;
+    return { placements, survivors, sequence };
   }, [anchors, motif, binding, canvasW, canvasH]);
+  const placements = resolved.placements;
+
+  // THE HOVERED SLOT'S PLACEMENTS — decision 16: the hovered slot's glyphs, NOT
+  // every placement on the layer (that stays legible on a sparse host and
+  // becomes a grey haze at MAX_PLACEMENTS). `null` when no slot reveal names
+  // this motif; `[]` when it does and that slot places nothing.
+  //
+  // Gated on the reveal naming the SAME motif the pipeline above resolved: with
+  // a motif layer selected AND a different motif's slot hovered, `motif` is the
+  // selected one and these placements would describe the wrong layer.
+  const footprintPlacements = useMemo(() => {
+    if (!motif || !revealMotif || revealMotif.id !== motif.id) return null;
+    return placementsForSlotScope(revealScope, {
+      motifId: motif.id,
+      seqIndex: firstSequenceIndex(readChain(motif.params?.binding)),
+      survivors: resolved.survivors,
+      sequence: resolved.sequence,
+      placements: resolved.placements,
+    });
+  }, [motif, revealMotif, revealScope, resolved]);
 
   // Is THIS motif's Route card armed for path picking on an EDGE host? That is
   // the ONE thing that decides which of the two render paths runs — and it also
@@ -376,6 +484,76 @@ export default function AnchorGhostOverlay({
       </svg>
     );
   }
+
+  // ── FOOTPRINT OVERLAY (#189) ───────────────────────────────────────────────
+  // A THIRD, independent render path, and the only one that is not driven by
+  // selection: the reveal raises it while the user hovers or drags a `hold` row
+  // in the HOST's inspector, where no motif is selected at all. It is therefore
+  // computed here, ABOVE the override overlay's own machinery, and returned on
+  // its own when nothing is selected — so this overlay never grows a ghost-dot
+  // field the user did not ask for (decision 16 is about not drawing a
+  // population; a full dot field raised by a size drag is the same mistake in a
+  // different mark).
+  //
+  // Stroke widths are in CANVAS units like everything else here (the parent
+  // scales the box), floored so they survive a small canvas.
+  const ringW = Math.max(0.75, Math.min(canvasW, canvasH) * 0.0018);
+  const footprint =
+    footprintPlacements && footprintPlacements.length ? (
+      <svg
+        data-testid="motif-footprint-overlay"
+        data-mode="footprint"
+        className="pointer-events-none absolute inset-0"
+        width={canvasW}
+        height={canvasH}
+        viewBox={`0 0 ${canvasW} ${canvasH}`}
+        aria-hidden="true"
+      >
+        {footprintPlacements.map((p) => {
+          const binds = bindingRing(p.capBy);
+          // Dash scaled to the ring it rides so it reads as "dashed" on a 4-unit
+          // glyph and on a 60-unit one alike.
+          const dash = Math.max(2, p.drawnRadius * 0.3);
+          return (
+            <g
+              key={p.anchorId}
+              data-anchor-id={p.anchorId}
+              data-cap-by={p.capBy}
+              data-saturated={p.saturated ? 'true' : undefined}
+            >
+              {/* RESERVED — what pushes neighbours around. */}
+              <circle
+                data-ring="packed"
+                cx={p.x}
+                cy={p.y}
+                r={p.packedRadius}
+                fill="none"
+                stroke={ACCENT}
+                strokeOpacity={0.9}
+                strokeWidth={binds === 'packed' ? ringW * RING_HEAVY : ringW}
+              />
+              {/* DRAWN — what actually inked. Coincident at `hold 0`. */}
+              <circle
+                data-ring="drawn"
+                cx={p.x}
+                cy={p.y}
+                r={p.drawnRadius}
+                fill="none"
+                stroke={ACCENT}
+                strokeOpacity={0.9}
+                strokeWidth={binds === 'drawn' ? ringW * RING_HEAVY : ringW}
+                strokeDasharray={`${dash} ${dash}`}
+              />
+            </g>
+          );
+        })}
+      </svg>
+    ) : null;
+
+  // REVEAL-ONLY: no layer is selected through this overlay, so there is no dot
+  // field and no popover to render. `footprint` is null when nothing is
+  // revealed, which is today's behaviour for an unselected motif exactly.
+  if (!selectedMotif) return footprint;
 
   // `binding` is the COERCED one resolved at hook level — the same value the
   // placement pipeline above ran on (#154 A2). Everything below reads role and
@@ -658,8 +836,11 @@ export default function AnchorGhostOverlay({
     </svg>
   );
 
+  // Footprint FIRST so the ghost dots paint over it: the dots are the clickable
+  // surface, and a heavy binding stroke passing through one must not hide it.
   return (
     <>
+      {footprint}
       {ghosts}
       {popover}
     </>

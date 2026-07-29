@@ -41,6 +41,7 @@ import {
   sortableKeyboardCoordinates,
 } from "@dnd-kit/sortable";
 import { useInspectorDockContext } from "./inspectorDockContext";
+import { useFootprintRevealTrigger } from "./footprintRevealContext";
 import { useMeasuredWidth } from "../../lib/hooks/useMeasuredWidth";
 import { rolesForHost, ALL_ROLES } from "../../lib/motif/hostRoles";
 import { hostHasPathStructure } from "../../lib/motif/hostKinds";
@@ -693,6 +694,12 @@ function SortableSlotChip({
   onDuplicate,
   onFlushHistory = () => {},
   sizingMode,
+  // The FOOTPRINT REVEAL scope base for this strip — `{kind:'slot', layerId,
+  // seqIndex, zoneId}` — or null for a caller that names no layer (every bare
+  // test, the legacy layout), which makes the reveal inert rather than absent.
+  // The chip completes it with its own `slotIndex`; the pair (zoneId, slotIndex)
+  // is the slot identity, because `slotIndex` is ZONE-LOCAL in a zoned deal.
+  slotScope = null,
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id });
@@ -745,6 +752,34 @@ function SortableSlotChip({
   // grow a no-op key on every document a drag merely passes through 0. Same
   // shape as `Reset settings` below, which clears by writing `undefined`.
   const holdPatch = (v) => ({ hold: v > 0 ? v : undefined });
+
+  // FOOTPRINT REVEAL (#188/#189, decisions 18/19). `hold` is the first of the
+  // five triggers to be wired, and it is the one the ship-coupling ruling
+  // (decision 22) exists for: `hold` is visibly inert whenever the boundary or
+  // the host cell binds, so shipping it without the overlay ships a control that
+  // does nothing with no way to find out why.
+  //
+  // The hook WRAPS this chip's own handlers rather than sitting beside them, so
+  // there is one gesture system and half the lifecycle cannot be forgotten. A
+  // null scope (a bare caller that named no layer) makes it inert, not absent.
+  //
+  // ⚠️ `pointerProps` must land on a DOM ELEMENT — `DragNumber` does not forward
+  // unknown props, so spreading them onto it would silently do nothing and the
+  // overlay would simply never appear. Hence the wrapper <div> on the row below.
+  // NOT hoisted to the chip root: enter/leave would then fire for the eye, the
+  // grip and the menu, raising the overlay on gestures that move no radius.
+  //
+  // The reveal is raised even when the row is DISABLED (`fixed` sizing): the
+  // rings are still the honest answer there — `packedRadius === drawnRadius`,
+  // packing took nothing, which is precisely what the disabled row says in
+  // words. A control that explains itself should not stop explaining itself.
+  const holdReveal = useFootprintRevealTrigger(
+    slotScope ? { ...slotScope, slotIndex: index } : null,
+    {
+      onChange: (v) => patchLive(holdPatch(v)),
+      onCommit: (v) => patchCommit(holdPatch(v)),
+    },
+  );
 
   // The eye writes the EFFECTIVE ref, never a bare `rest:true`. A slot that
   // never named a glyph still draws the layer's base one (`effectiveRef`), and
@@ -995,25 +1030,31 @@ function SortableSlotChip({
                 currently unreachable in-app (§8a, verified 2026-07-28): nothing
                 outside tests writes it and the Inspector exposes only
                 `sizing.size`. Built for correctness; deliberately undesigned. */}
-            <DragNumber
-              value={hold}
-              min={0}
-              max={1}
-              step={0.01}
-              disabled={isFixedSizing}
-              format={(v) => `hold ${SCALE_FORMAT(v)}`}
-              parse={SCALE_PARSE}
-              label="Hold against packing"
-              title={
-                isFixedSizing
-                  ? "Off in fixed sizing · packing takes nothing away, so there is nothing to give back"
-                  : "Drag ↕ · how much of what packing took is given back · stops at the page edge or host cell"
-              }
-              slotWidth="10ch"
-              testId="motif-slot-hold"
-              onChange={(v) => patchLive(holdPatch(v))}
-              onCommit={(v) => patchCommit(holdPatch(v))}
-            />
+            {/* `flex flex-col` on the wrapper, not a bare <div>: the row is a
+                flex item of this column and stretches to full width today, and
+                a block wrapper would shrink the (inline-flex) control to its
+                content — visibly narrowing its hover surface. */}
+            <div className="flex flex-col" {...holdReveal.pointerProps}>
+              <DragNumber
+                value={hold}
+                min={0}
+                max={1}
+                step={0.01}
+                disabled={isFixedSizing}
+                format={(v) => `hold ${SCALE_FORMAT(v)}`}
+                parse={SCALE_PARSE}
+                label="Hold against packing"
+                title={
+                  isFixedSizing
+                    ? "Off in fixed sizing · packing takes nothing away, so there is nothing to give back"
+                    : "Drag ↕ · how much of what packing took is given back · stops at the page edge or host cell"
+                }
+                slotWidth="10ch"
+                testId="motif-slot-hold"
+                onChange={holdReveal.onChange}
+                onCommit={holdReveal.onCommit}
+              />
+            </div>
             {/* Rotation — SIGNED, because this is an offset from each anchor's
                 base orientation, not a bearing. Stored 0..359 (the engine adds
                 it to the base), displayed \u2212179..+180 so "turn it back a bit"
@@ -1242,6 +1283,7 @@ function SlotStrip({
   onEditSlot,
   onSwapSlot,
   sizingMode,
+  slotScope = null,
 }) {
   const slotIds = slots.map((_, i) => `${idPrefix}-${i}`);
   const slotSensors = useSensors(
@@ -1293,6 +1335,7 @@ function SlotStrip({
                 onDuplicate={() => onDuplicateSlot(i)}
                 onFlushHistory={onFlushHistory}
                 sizingMode={sizingMode}
+                slotScope={slotScope}
               />
             ))}
           </div>
@@ -1346,6 +1389,7 @@ const ZONE_TOOLTIPS = {
 function ZoneSection({
   zone,
   seqIndex,
+  layerId = null,
   onEditChain,
   onFlushHistory,
   customGlyphs,
@@ -1417,6 +1461,9 @@ function ZoneSection({
         onEditSlot={(i, ref) => onEditSlotGlyph(seqIndex, i, ref, zoneId)}
         onSwapSlot={(i, payload) => onSwapSlotGlyph({ seqIndex, zone: zoneId, slotIndex: i }, payload)}
         sizingMode={sizingMode}
+        // ZONED: `zoneId` is the FLAT/ZONED discriminator and it is load-bearing
+        // — Apex slot 1 and Stem slot 1 are different slots sharing an index.
+        slotScope={layerId ? { kind: "slot", layerId, seqIndex, zoneId } : null}
       />
     </div>
   );
@@ -1425,6 +1472,7 @@ function ZoneSection({
 function SequenceCardBody({
   block,
   seqIndex,
+  layerId = null,
   liveZones,
   onEditChain,
   onFlushHistory,
@@ -1454,6 +1502,7 @@ function SequenceCardBody({
             key={zone.zone}
             zone={zone}
             seqIndex={seqIndex}
+            layerId={layerId}
             onEditChain={onEditChain}
             onFlushHistory={onFlushHistory}
             customGlyphs={customGlyphs}
@@ -1500,6 +1549,9 @@ function SequenceCardBody({
         onEditSlot={(i, ref) => onEditSlotGlyph(seqIndex, i, ref)}
         onSwapSlot={(i, payload) => onSwapSlotGlyph({ seqIndex, slotIndex: i }, payload)}
         sizingMode={sizingMode}
+        // FLAT: `zoneId: null` explicitly, never omitted — the overlay compares
+        // it, and an absent key would read the same as a zoned mismatch.
+        slotScope={layerId ? { kind: "slot", layerId, seqIndex, zoneId: null } : null}
       />
     </div>
   );
@@ -1508,6 +1560,7 @@ function SequenceCardBody({
 function BlockCardBody({
   block,
   index,
+  layerId = null,
   roleOptions,
   hostHasPaths,
   liveZones,
@@ -1549,6 +1602,7 @@ function BlockCardBody({
         <SequenceCardBody
           block={block}
           seqIndex={index}
+          layerId={layerId}
           liveZones={liveZones}
           onEditChain={onEditChain}
           onFlushHistory={onFlushHistory}
@@ -1662,6 +1716,7 @@ function SortableBlockCard({
   id,
   block,
   index,
+  layerId = null,
   roleOptions,
   hostHasPaths,
   liveZones,
@@ -1741,6 +1796,7 @@ function SortableBlockCard({
     <BlockCardBody
       block={block}
       index={index}
+      layerId={layerId}
       roleOptions={roleOptions}
       hostHasPaths={hostHasPaths}
       liveZones={liveZones}
@@ -1856,6 +1912,14 @@ function SortableBlockCard({
 
 export default function MotifBlockRack({
   chain,
+  // The MOTIF layer's id, threaded for ONE purpose: the slot card's `hold` row
+  // raises the shared FOOTPRINT REVEAL (#188/#189), and the scope it publishes
+  // is `{kind:'slot', layerId, seqIndex, zoneId, slotIndex}` — the canvas
+  // overlay uses `layerId` to find the motif whose footprints to ring. It must
+  // come from outside: the rack is rendered on the HOST's inspector card, so
+  // nothing here knows which motif it is editing. Omitted by bare callers
+  // (tests, legacy), which makes the reveal inert rather than absent.
+  layerId = null,
   onEditChain,
   // Closes the current undo-coalescing window. `updateLayer` merges every write
   // carrying the same `${id}:params` signature for 400ms, so a slot-card drag
@@ -2066,6 +2130,7 @@ export default function MotifBlockRack({
                 id={ids[i]}
                 block={block}
                 index={i}
+                layerId={layerId}
                 roleOptions={roleOptions}
                 hostHasPaths={hostHasPaths}
                 liveZones={liveZones}

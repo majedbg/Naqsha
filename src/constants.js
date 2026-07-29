@@ -67,6 +67,7 @@ export const PATTERN_TYPES = [
   { id: 'dendrite', label: 'Dendrite' },
   { id: 'branch', label: 'Branch' },
   { id: 'rinceau', label: 'Rinceau' },
+  { id: 'magnetscroll', label: 'Magnetic Scroll' },
 ];
 
 // Absolute DOCUMENT layer bound — the hard backstop every layer creator
@@ -455,6 +456,22 @@ export const DEFAULT_PARAMS = {
     jitter: 0,
     margin: 60,
     strokeWeight: 0.8,
+    symmetry: 1,
+    startAngle: 0,
+    offsetX: 0,
+    offsetY: 0,
+  },
+  magnetscroll: {
+    layout: 'row',
+    scrollCount: 12,
+    scrollRadius: 78,
+    turns: 2.25,
+    taper: 0.7,
+    rotation: 'alternate',
+    branch: 'paired',
+    branchScale: 0.55,
+    jitter: 0.3,
+    strokeWeight: 0.9,
     symmetry: 1,
     startAngle: 0,
     offsetX: 0,
@@ -1042,6 +1059,35 @@ export const PATTERN_PARAM_DEFS = {
     START_ANGLE_PARAM,
     OFFSET_PAD_PARAM,
   ],
+  magnetscroll: [
+    { key: 'layout', label: 'Seed Layout', type: 'select', options: [
+      { value: 'row', label: 'Baseline Row' },
+      { value: 'grid', label: 'Grid' },
+      { value: 'scatter', label: 'Golden Scatter' },
+    ], tooltip: 'Where the scrolls are launched from — Row = border/rinceau strip' },
+    { key: 'scrollCount', label: 'Scrolls', min: 1, max: 48, step: 1, tooltip: 'How many volutes are launched — each ends in one eye' },
+    { key: 'scrollRadius', label: 'Scroll Size', min: 12, max: 200, step: 2, tooltip: 'Radius of the outermost coil — the volute’s overall scale' },
+    { key: 'turns', label: 'Coil Turns', min: 0.75, max: 5, step: 0.25, tooltip: 'Total winding. Below ~1.5 it reads as a hook, above as a volute' },
+    // The range STARTS at 0.5 because that is where the volute actually closes
+    // on an eye across the whole `turns` range — below it the coil is a nest of
+    // near-circles and the tip, which is where a vine's Apex flower lands, sits
+    // on an outer loop instead of at the centre. Asserted in MagneticScroll.test.
+    { key: 'taper', label: 'Taper', min: 0.5, max: 0.9, step: 0.05, tooltip: 'Charge-decay α — low = even spiral, high = long stem into a tight eye' },
+    { key: 'rotation', label: 'Counter-Rotation', type: 'select', options: [
+      { value: 'alternate', label: 'Alternating' },
+      { value: 'uniform', label: 'All Same Way' },
+    ], tooltip: 'Alternating flips the coil direction seed to seed — the islimi read' },
+    { key: 'branch', label: 'Secondary Scroll', type: 'select', options: [
+      { value: 'single', label: 'Off' },
+      { value: 'paired', label: 'Paired Volute' },
+    ], tooltip: 'Throws a smaller opposite-handed scroll off each stem' },
+    { key: 'branchScale', label: 'Branch Size', min: 0.15, max: 0.8, step: 0.05, showIf: (p) => p.branch === 'paired', tooltip: 'Secondary scroll size, as a fraction of its parent' },
+    { key: 'jitter', label: 'Jitter', min: 0, max: 1, step: 0.05, tooltip: 'Seeded variation in position, launch angle and size — hand-drawn feel' },
+    { key: 'strokeWeight', label: 'Stroke Weight', min: 0.3, max: 3, step: 0.1, tooltip: 'Line thickness' },
+    SYMMETRY_PARAM,
+    START_ANGLE_PARAM,
+    OFFSET_PAD_PARAM,
+  ],
 };
 
 export const DEFAULT_COLORS = ['#00c9b1', '#ff6b6b', '#4ecdc4', '#45b7d1', '#f7dc6f', '#bb8fce'];
@@ -1276,6 +1322,7 @@ export const PATTERN_TAXONOMY = {
   flowfield:  { family: 'F', geom: 3, form: 'flowing', det: 'seeded', mark: 'line', sym: true, blurb: 'Particles tracing a Perlin flow field.' },
   flowhatch:  { family: 'F', geom: 3, form: 'flowing', det: 'seeded', mark: 'dash', sym: true, blurb: 'Hatching dashes following a flow field.' },
   grainfield: { family: 'F', geom: 3, form: 'flowing', det: 'stochastic', mark: 'dash', sym: true, bridge: 'G', blurb: 'Flow-aligned dashes like wood grain.' },
+  magnetscroll:{ family: 'F', geom: 2, form: 'radial', det: 'seeded', mark: 'line', sym: true, bridge: 'G', blurb: 'Charged particles in a decaying field — counter-rotating islimi scrolls.' },
 
   // ── Partition & Packing ──────────────────────────────────────────────────
   voronoi:      { family: 'P', geom: 2, form: 'cellular', det: 'seeded', mark: 'line', sym: false, blurb: 'Voronoi cell partition of the plane.' },
@@ -1304,6 +1351,6 @@ export const PATTERN_SYMBOLS = {
   grid: 'Gr', modulegrid: 'Mg', girih: 'Gi', recursive: 'Re',
   topographic: 'To', radialetch: 'Ra', flowfield: 'Ff', flowhatch: 'Fh',
   grainfield: 'Gn', voronoi: 'Vo', circlepacking: 'Cp', diffgrowth: 'Dg',
-  dendrite: 'De', branch: 'Bn', rinceau: 'Ri',
+  dendrite: 'De', branch: 'Bn', rinceau: 'Ri', magnetscroll: 'Ms',
   turing: 'Tu', lissajous: 'Ls', chladni: 'Ch', truchet: 'Tr', hilbert: 'Hi',
 };

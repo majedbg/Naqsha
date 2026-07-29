@@ -207,7 +207,13 @@ describe('every EDGE_MOTIF_HOSTS type captures polylines at default params + res
 // These deliberately run the REAL pattern classes — the whole claim is that the
 // real draw stream is capturable, which a hand-built fixture cannot establish.
 
-const NEW_EDGE_HOSTS = ['radialetch', 'hilbert', 'lissajous'];
+//
+// `magnetscroll` (the magnetic-curve volute field) joins the sweep on exactly
+// the same terms: it is origin-centred, param-heavy, and its param space has a
+// real collapse risk at the ends (a huge scrollRadius on a small canvas, a
+// single scroll, the minimum coil), which is precisely what this block exists
+// to catch.
+const NEW_EDGE_HOSTS = ['radialetch', 'hilbert', 'lissajous', 'magnetscroll'];
 
 /** Capture one real host run at `params` into absolute-coordinate hostPaths. */
 function captureHost(type, params, { w = CANVAS_W, h = CANVAS_H, seed = 7 } = {}) {

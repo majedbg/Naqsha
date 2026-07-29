@@ -202,9 +202,36 @@ describe('hostKinds', () => {
       ]) {
         expect(EDGE_MOTIF_HOSTS.has(type), `lost edge host "${type}"`).toBe(true);
       }
-      // …and adds nothing beyond the three of #144, chladni (#145) and the
-      // rinceau running-scroll spine (T2, docs/vine-scaffolds-PLAN.md).
-      expect(EDGE_MOTIF_HOSTS.size).toBe(12);
+      // …and adds nothing beyond the three of #144, chladni (#145), the
+      // rinceau running-scroll spine (T2, docs/vine-scaffolds-PLAN.md) and
+      // magnetscroll (the vine-scaffold volute field).
+      expect(EDGE_MOTIF_HOSTS.size).toBe(13);
+    });
+  });
+
+  // MagneticScroll — the edge host the VINE was built for. Every volute is one
+  // open beginShape/vertex run whose TIP is the eye of the scroll, so an Apex
+  // glyph lands once per scroll where a palmette sits in the historical
+  // ornament. Both membership conditions (polyline emission + reseed at the top
+  // of generate) are runtime-proved by the generic loop in hostCapture.test.js.
+  describe('magnetscroll — the counter-rotating scroll field', () => {
+    it('is an EDGE host, a motif host, and NOT semantic', () => {
+      expect(EDGE_MOTIF_HOSTS.has('magnetscroll')).toBe(true);
+      expect(isEdgeHost('magnetscroll')).toBe(true);
+      expect(isEdgeHost('magnetscroll', {})).toBe(true);
+      expect(isSemanticHost('magnetscroll')).toBe(false);
+      expect(isSemanticHost('magnetscroll', {})).toBe(false);
+      expect(isMotifHost('magnetscroll')).toBe(true);
+      expect(SEMANTIC_MOTIF_HOSTS.has('magnetscroll')).toBe(false);
+      expect(isStashHost('magnetscroll')).toBe(false);
+    });
+
+    it('defaults a fresh motif to the edge role only', () => {
+      expect(defaultRolesForHost('magnetscroll')).toEqual(['edge']);
+    });
+
+    it('carries path structure, so the Route scopes and strap picker apply', () => {
+      expect(hostHasPathStructure('magnetscroll')).toBe(true);
     });
   });
 

@@ -150,6 +150,21 @@ export const EDGE_MOTIF_HOSTS = Object.freeze(
     //       statements, so the capture probe cannot shift the painted output.
     //       The seed is read only by the `jitter` param, which defaults to 0.
     'rinceau',
+    // ── magnetscroll (vine scaffolds, Family C) ──────────────────────────────
+    // MagneticScroll — one beginShape/vertex run per volute, no CLOSE; reseeds
+    // BOTH randomSeed and noiseSeed at the top of generate(). Verified against
+    // both membership conditions in the source before inclusion.
+    //
+    // It is the edge host the VINE was built for: every trace is an open,
+    // arc-length-ordered root→tip path whose TIP is the eye of the scroll, so an
+    // Apex glyph lands where a palmette sits in the historical ornament, once
+    // per scroll. (That holds for EVERY params set the UI can produce — the
+    // `taper` slider's minimum is set to the value where the eye closes, and
+    // both facts are asserted together in MagneticScroll.test.js.) `edge` is the
+    // right (and only) role — the volutes have no
+    // lattice to cross and no cell to fill — so it needs no DEFAULT_SEMANTIC_ROLE
+    // entry and takes the blanket 'edge' fallback correctly.
+    'magnetscroll',
     // DELIBERATELY ABSENT — do not add by reflex:
     //   truchet — emits CELLS as well as edges. The probe is a single boolean
     //     (record the draw stream OR read the stash, never both), so listing it

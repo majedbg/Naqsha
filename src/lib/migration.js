@@ -7,6 +7,7 @@
 //
 //   legacy layer.role  → operationId (referencing a seeded operation)
 //   legacy outputMode  → machineProfile
+//   v ≤ 1 motif layer  → sizing.footprint: 'root' (PRD #197, decision 3)
 //
 // Policy (locked): rewrite bundled examples; migrate cloud forward losslessly;
 // migrate share links at hydrate where cheap; a version-LESS document is treated
@@ -15,8 +16,15 @@
 
 import { seedOperations, resolveOperation, operationIdForRole } from './operations.js';
 import { PROFILE_IDS } from './machineProfiles.js';
+import { isMotifLayer } from './motif/motifLayer.js';
 
-export const SCHEMA_VERSION = 1;
+//   v2  motif sizing gains `footprint` — layers arriving at v ≤ 1 are PINNED
+//       to the root-centred reserve they were authored against (PRD #197,
+//       decision 3). See pinFootprint below.
+export const SCHEMA_VERSION = 2;
+
+// A layer arriving BELOW this version predates the per-glyph footprint.
+const FOOTPRINT_PIN_BELOW = 2;
 
 // Legacy `outputMode` values only ever covered laser/plotter; the new model
 // (machineProfiles.js) backs these ids and adds 'dragCutter' (no legacy
@@ -35,21 +43,72 @@ function isValidProfile(id) {
   return PROFILE_IDS.includes(id);
 }
 
+// v2 (PRD #197, decision 3): pin a pre-footprint motif layer to the root-centred
+// reserve. Before v2 a glyph's collision circle was ALWAYS centred on its `root`;
+// v2 introduces a tighter, art-centred alternative that lives in the glyph
+// library — i.e. in CODE, not in document state — so there is no absent-implies-
+// unchanged fallback available. Without this pin, opening a saved design would
+// silently resize every glyph in it, and `:12-14` forbids exactly that: on a
+// machine that cuts material, a re-packed motif layer IS a change of fabrication
+// intent.
+//
+// An ABSENT version counts as legacy, per `:12-13` — so the bare
+// `migrateLayer(l)` call sites in useLayers.js pin too. That is the conservative
+// read, the one that never resizes saved work.
+//
+// Three no-op guarantees, in the order they are checked:
+//   • not below the pin version              → untouched (a v2 doc is not re-stamped)
+//   • not a motif layer                      → untouched
+//   • no EXISTING `params.binding.placement.sizing` object → untouched; the path
+//     is never created where it did not exist
+// Plus `??`-style preservation, the same shape migrateLayer already uses for
+// nameIsCustom/locked: an existing `footprint` is never overwritten, and a
+// second pass returns the input by reference.
+//
+// `sizing` lives at `layer.params.binding.placement.sizing` — the fixed placement
+// tail (starterChips.js, and motifLayer.js's normalizeBinding for chain-form and
+// legacy bindings alike) — so only that spine is rebuilt. Every sibling (`chain`,
+// `overrides`, `orientation`, `flip`, `glyphRef`) keeps its reference.
+function pinFootprint(layer, schemaVersion) {
+  if (typeof schemaVersion === 'number' && schemaVersion >= FOOTPRINT_PIN_BELOW) return layer;
+  if (!isMotifLayer(layer)) return layer;
+  const placement = layer.params?.binding?.placement;
+  const sizing = placement?.sizing;
+  if (!sizing || typeof sizing !== 'object' || Array.isArray(sizing)) return layer;
+  if (sizing.footprint != null) return layer;
+  return {
+    ...layer,
+    params: {
+      ...layer.params,
+      binding: {
+        ...layer.params.binding,
+        placement: { ...placement, sizing: { ...sizing, footprint: 'root' } },
+      },
+    },
+  };
+}
+
 // Migrate one layer: honor an existing operationId, otherwise derive it from the
-// legacy `role` (absent role → Cut). Pure; safe on null. Used both by
-// migrateConfig and as the per-layer funnel inside loadLayerSet so EVERY load
-// boundary (local / cloud / share / examples) yields a resolvable operationId.
-export function migrateLayer(layer, operations) {
+// legacy `role` (absent role → Cut), and pin a pre-v2 motif layer's footprint.
+// Pure; safe on null. Used both by migrateConfig and as the per-layer funnel
+// inside loadLayerSet so EVERY load boundary (local / cloud / share / examples)
+// yields a resolvable operationId. `schemaVersion` is the DOCUMENT's version;
+// migrateConfig threads `cfg.schemaVersion` through, and the load boundaries that
+// hold a bare layers array (no config in scope) pass nothing — absent is legacy.
+export function migrateLayer(layer, operations, schemaVersion) {
   if (!layer || typeof layer !== 'object') return layer;
+  // Pinned BEFORE the defaults spread and BEFORE the operationId early-return,
+  // so saved work carrying a valid operationId is pinned too.
+  const pinned = pinFootprint(layer, schemaVersion);
   // WI-1 migration defaults applied at EVERY load boundary, BEFORE the
   // operationId early-return (so saved work with a valid operationId still gets
   // them). `??` keeps it idempotent: a persisted nameIsCustom:false / locked:true
   // survives, and existing `name` values are never rewritten. A layer lacking
   // nameIsCustom is treated as `true` (never surprise-rename saved work).
   const withDefaults = {
-    ...layer,
-    nameIsCustom: layer.nameIsCustom ?? true,
-    locked: layer.locked ?? false,
+    ...pinned,
+    nameIsCustom: pinned.nameIsCustom ?? true,
+    locked: pinned.locked ?? false,
   };
   if (withDefaults.operationId && (!operations || resolveOperation(operations, withDefaults.operationId))) {
     return withDefaults;
@@ -58,26 +117,40 @@ export function migrateLayer(layer, operations) {
 }
 
 // Migrate a saved-design `config` object to the current schema. Pure and
-// idempotent: a config already at SCHEMA_VERSION with a valid operations list is
-// passed through (only filling any layer that still lacks an operationId).
+// idempotent: a versioned config with a valid operations list keeps its
+// operations and machineProfile (only filling any layer that still lacks an
+// operationId), and is stamped forward to SCHEMA_VERSION.
 //
 // Accepts null/partial input without throwing.
 export function migrateConfig(config) {
   const cfg = config && typeof config === 'object' ? config : {};
-  const alreadyCurrent =
-    cfg.schemaVersion === SCHEMA_VERSION && Array.isArray(cfg.operations) && cfg.operations.length > 0;
+  // "Carries the new-path model", NOT "is at the current version". These are the
+  // same test only while SCHEMA_VERSION is 1. `operations` and `machineProfile`
+  // arrived together at v1 and have not changed shape since, so a v1 document's
+  // saved values are honored across the v2 bump — otherwise raising the version
+  // would re-seed its operations and recompute its profile from the legacy
+  // `outputMode`, and NO legacy outputMode maps to 'dragCutter', so a drag-cutter
+  // document would come back a plotter. That is the reset-to-default `:12-14`
+  // forbids. A version-LESS document still fails this test and is migrated, per
+  // `:12-13`. Any FUTURE version that reshapes operations/machineProfile must
+  // narrow this predicate, not widen it.
+  const carriesNewModel =
+    typeof cfg.schemaVersion === 'number' &&
+    cfg.schemaVersion >= 1 &&
+    Array.isArray(cfg.operations) &&
+    cfg.operations.length > 0;
 
-  const operations = alreadyCurrent ? cfg.operations : seedOperations();
+  const operations = carriesNewModel ? cfg.operations : seedOperations();
   const layers = Array.isArray(cfg.layers) ? cfg.layers : [];
 
-  const migratedLayers = layers.map((layer) => migrateLayer(layer, operations));
+  const migratedLayers = layers.map((layer) => migrateLayer(layer, operations, cfg.schemaVersion));
 
   // `outputMode` is the legacy global toggle; the new-path model carries a
   // `machineProfile` instead, so drop the raw field from the migrated output.
   const { outputMode: _legacyOutputMode, ...rest } = cfg;
 
   const machineProfile =
-    alreadyCurrent && isValidProfile(cfg.machineProfile)
+    carriesNewModel && isValidProfile(cfg.machineProfile)
       ? cfg.machineProfile
       : profileFromOutputMode(cfg.outputMode);
 

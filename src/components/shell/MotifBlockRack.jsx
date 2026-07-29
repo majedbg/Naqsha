@@ -997,7 +997,7 @@ function SortableSlotChip({
               format={(v) => `hold ${SCALE_FORMAT(v)}`}
               parse={SCALE_PARSE}
               label="Hold against packing"
-              title="Drag ↕ · gives back the size packing took away · stops at the page edge or host cell"
+              title="Drag ↕ · how much of what packing took is given back · stops at the page edge or host cell"
               slotWidth="10ch"
               testId="motif-slot-hold"
               onChange={(v) => patchLive(holdPatch(v))}

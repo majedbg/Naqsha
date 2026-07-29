@@ -115,6 +115,11 @@ export default function DragNumber({
   hitHeight = 24,
   title = "Drag ↕ · click to type · Shift coarse · Option fine",
   testId = "drag-number",
+  /** Inert: no drag, no click-to-type, no keyboard, out of the tab order. The
+   *  control stays VISIBLE and keeps showing its value — a control that
+   *  disappears when it stops applying teaches nothing about why. Pair it with a
+   *  `title` that states the reason. */
+  disabled = false,
   /** CSS width reserved for the readout, e.g. "4ch". Fixed-width and
    *  LEFT-anchored, so a value whose digit count changes (7% → 100%, 1° → 359°)
    *  cannot resize the row and slide the thumb sideways. Omit for intrinsic
@@ -173,12 +178,15 @@ export default function DragNumber({
     onCommit,
     onClick: openEditor,
     gains,
-    disabled: editing,
+    // `disabled` gates onPointerDown, so `drag.current` is never set and endDrag
+    // returns before `onClick` — one flag turns off the scrub AND click-to-type.
+    disabled: editing || disabled,
   });
 
   /* ------------------------------------------------------------ keyboard */
 
   const onKeyDown = (e) => {
+    if (disabled) return;
     if (e.key === "Enter") {
       e.preventDefault();
       openEditor();
@@ -252,7 +260,11 @@ export default function DragNumber({
   return (
     <span
       role="slider"
-      tabIndex={0}
+      // Out of the tab order when inert, so Tab does not stop on a control that
+      // cannot be operated. `aria-disabled` rather than the `disabled` attribute
+      // — this is a span with role=slider, not a form control.
+      tabIndex={disabled ? -1 : 0}
+      aria-disabled={disabled || undefined}
       aria-label={label}
       aria-valuenow={value}
       aria-valuemin={min}
@@ -264,9 +276,17 @@ export default function DragNumber({
       title={title}
       {...handlers}
       onKeyDown={onKeyDown}
-      onPointerEnter={() => setHover(true)}
+      onPointerEnter={() => !disabled && setHover(true)}
       onPointerLeave={() => setHover(false)}
-      className="inline-flex cursor-ns-resize select-none items-center gap-2xs rounded-xs px-1 outline-none hover:bg-paper-warm focus-visible:ring-2 focus-visible:ring-violet"
+      // Inert reads as inert: the repo's `disabled:opacity-40` + default cursor,
+      // applied directly because this is a span, not a form control that can
+      // carry the `:disabled` variant. No hover lift, no focus ring, no
+      // ns-resize cursor promising a drag that will not happen.
+      className={`inline-flex select-none items-center gap-2xs rounded-xs px-1 outline-none ${
+        disabled
+          ? "cursor-default opacity-40"
+          : "cursor-ns-resize hover:bg-paper-warm focus-visible:ring-2 focus-visible:ring-violet"
+      }`}
       style={{ height: hitHeight, touchAction: "none" }}
     >
       <svg

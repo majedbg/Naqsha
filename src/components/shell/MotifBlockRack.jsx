@@ -692,6 +692,7 @@ function SortableSlotChip({
   onRemove,
   onDuplicate,
   onFlushHistory = () => {},
+  sizingMode,
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id });
@@ -714,6 +715,9 @@ function SortableSlotChip({
   const weight = slot?.weight != null ? slot.weight : 1;
   const sizeScale = slot?.sizeScale != null ? slot.sizeScale : 1;
   const hold = slot?.hold != null ? slot.hold : 0;
+  // Absent mode = 'proportional', matching placementEngine.js's own DEFAULTS —
+  // so only an explicit 'fixed' turns the row off, never a bare caller.
+  const isFixedSizing = sizingMode === "fixed";
   const rotationOffset = slot?.rotationOffset != null ? slot.rotationOffset : 0;
   const flipState = slot?.flip === undefined ? "inherit" : slot.flip ? "on" : "off";
 
@@ -982,22 +986,29 @@ function SortableSlotChip({
                 cannot represent 0, which is this field's default value. Linear
                 in RADIUS is also decision 10, matching what the overlay draws.
 
-                `fixed` sizing mode should disable this row with a stated reason
-                (§8a) — the lerp is identically a no-op there. NOT BUILT: the
-                motif's `placement.sizing` is written in Inspector.jsx and never
-                reaches this rack (no `sizing` prop on MotifBlockRack, SlotStrip
-                or this chip), and DragNumber has no `disabled` prop either. Both
-                would have to be invented for a state §8a records as currently
-                unreachable in-app. */}
+                DISABLED, NOT HIDDEN, in `fixed` sizing mode (§8a). There
+                `packedRadius === naturalTarget` — packing took nothing, so the
+                lerp is identically a no-op and there is nothing to give back.
+                The row stays on the card carrying its value and a title saying
+                why, because a control that vanishes when it stops applying
+                teaches nothing about the mode it vanished under. ⚠️ `fixed` is
+                currently unreachable in-app (§8a, verified 2026-07-28): nothing
+                outside tests writes it and the Inspector exposes only
+                `sizing.size`. Built for correctness; deliberately undesigned. */}
             <DragNumber
               value={hold}
               min={0}
               max={1}
               step={0.01}
+              disabled={isFixedSizing}
               format={(v) => `hold ${SCALE_FORMAT(v)}`}
               parse={SCALE_PARSE}
               label="Hold against packing"
-              title="Drag ↕ · how much of what packing took is given back · stops at the page edge or host cell"
+              title={
+                isFixedSizing
+                  ? "Off in fixed sizing · packing takes nothing away, so there is nothing to give back"
+                  : "Drag ↕ · how much of what packing took is given back · stops at the page edge or host cell"
+              }
               slotWidth="10ch"
               testId="motif-slot-hold"
               onChange={(v) => patchLive(holdPatch(v))}
@@ -1230,6 +1241,7 @@ function SlotStrip({
   onFlushHistory,
   onEditSlot,
   onSwapSlot,
+  sizingMode,
 }) {
   const slotIds = slots.map((_, i) => `${idPrefix}-${i}`);
   const slotSensors = useSensors(
@@ -1280,6 +1292,7 @@ function SlotStrip({
                 onRemove={() => onRemoveSlot(i)}
                 onDuplicate={() => onDuplicateSlot(i)}
                 onFlushHistory={onFlushHistory}
+                sizingMode={sizingMode}
               />
             ))}
           </div>
@@ -1341,6 +1354,7 @@ function ZoneSection({
   onManageLibrary,
   onEditSlotGlyph,
   onSwapSlotGlyph,
+  sizingMode,
 }) {
   const zoneId = zone.zone;
   const slots = Array.isArray(zone.slots) ? zone.slots : [];
@@ -1402,6 +1416,7 @@ function ZoneSection({
         onFlushHistory={onFlushHistory}
         onEditSlot={(i, ref) => onEditSlotGlyph(seqIndex, i, ref, zoneId)}
         onSwapSlot={(i, payload) => onSwapSlotGlyph({ seqIndex, zone: zoneId, slotIndex: i }, payload)}
+        sizingMode={sizingMode}
       />
     </div>
   );
@@ -1419,6 +1434,7 @@ function SequenceCardBody({
   onManageLibrary,
   onEditSlotGlyph,
   onSwapSlotGlyph,
+  sizingMode,
 }) {
   // ZONED (ADR 0008): one SECTION per Zone instead of the flat slot row, in the
   // chain's STORED order — Apex → Stem → Cell, as the chip factories author it.
@@ -1446,6 +1462,7 @@ function SequenceCardBody({
             onManageLibrary={onManageLibrary}
             onEditSlotGlyph={onEditSlotGlyph}
             onSwapSlotGlyph={onSwapSlotGlyph}
+            sizingMode={sizingMode}
           />
         ))}
       </div>
@@ -1482,6 +1499,7 @@ function SequenceCardBody({
         onFlushHistory={onFlushHistory}
         onEditSlot={(i, ref) => onEditSlotGlyph(seqIndex, i, ref)}
         onSwapSlot={(i, payload) => onSwapSlotGlyph({ seqIndex, slotIndex: i }, payload)}
+        sizingMode={sizingMode}
       />
     </div>
   );
@@ -1504,6 +1522,7 @@ function BlockCardBody({
   onManageLibrary,
   onEditSlotGlyph,
   onSwapSlotGlyph,
+  sizingMode,
 }) {
   switch (block.type) {
     case "route":
@@ -1539,6 +1558,7 @@ function BlockCardBody({
           onManageLibrary={onManageLibrary}
           onEditSlotGlyph={onEditSlotGlyph}
           onSwapSlotGlyph={onSwapSlotGlyph}
+          sizingMode={sizingMode}
         />
       );
     default:
@@ -1659,6 +1679,7 @@ function SortableBlockCard({
   onManageLibrary,
   onEditSlotGlyph,
   onSwapSlotGlyph,
+  sizingMode,
   // Anchor-sieve numbers for THIS block (nullable — only when host anchors were
   // resolvable). `stage` is {inCount, outCount}; `placedCount` is the terminal
   // Sequencer's non-rest placement count for its header chip.
@@ -1734,6 +1755,7 @@ function SortableBlockCard({
       onManageLibrary={onManageLibrary}
       onEditSlotGlyph={onEditSlotGlyph}
       onSwapSlotGlyph={onSwapSlotGlyph}
+      sizingMode={sizingMode}
     />
   );
 
@@ -1842,6 +1864,14 @@ export default function MotifBlockRack({
   // exactly one entry per gesture with the canvas following throughout. Same
   // seam the canvas glyph popover uses (Studio.jsx, onFlushHistory).
   onFlushHistory = () => {},
+  // The MOTIF's placement sizing mode ('proportional' | 'fixed'), read from
+  // `binding.placement.sizing.mode` — the fixed tail the Inspector authors
+  // beside this rack, NOT a chain block. The only thing it reaches is the slot
+  // card's `hold` row, which is honestly inert in `fixed` mode: there,
+  // `packedRadius === naturalTarget`, so nothing was taken away and the lerp is
+  // identically a no-op. Absent (bare callers, and every document today) reads
+  // as 'proportional', the engine's own default (placementEngine.js DEFAULTS).
+  sizingMode,
   hostIsSemantic = true,
   // The HOST's registry id + live params. Threaded so the Route block can ask the
   // ONE host-capability seam (rolesForHost, #146) which roles this host actually
@@ -2059,6 +2089,7 @@ export default function MotifBlockRack({
                 onManageLibrary={onManageLibrary}
                 onEditSlotGlyph={onEditSlotGlyph}
                 onSwapSlotGlyph={onSwapSlotGlyph}
+                sizingMode={sizingMode}
               />
             ))}
           </div>

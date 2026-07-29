@@ -1620,6 +1620,11 @@ function MotifDevice({
                       hostKind={hostKind}
                       anchors={hostAnchors}
                       overrides={m.params?.binding?.overrides}
+                      // Same fixed placement tail the Size field below writes
+                      // (`placement.sizing`), read for ONE purpose: the slot
+                      // card's `hold` row is honestly inert in `fixed` mode and
+                      // disables itself there rather than lying.
+                      sizingMode={m.params?.binding?.placement?.sizing?.mode}
                       onEditChain={(mutate) => editChain(m, mutate)}
                       // Canvas-pick arm state (C4): this row is armed only when the
                       // Studio-level pick target names THIS motif; onArmRoute reports

@@ -24,8 +24,11 @@
 
 import { describe, it, expect } from 'vitest';
 import { resolvePlacements } from './placementEngine.js';
-import { neighbourLimit } from './footprintSolve.js';
+import { neighbourLimit, hostLimit } from './footprintSolve.js';
 import { MOTIF_GLYPHS } from './glyphs.js';
+import { minEnclosingCircle } from './minEnclosingCircle.js';
+import { placementMatrix, applyMatrix } from './instancing.js';
+import { flattenPathD } from '../plotter/pathOps.js';
 
 const LEAF = MOTIF_GLYPHS.leaf;
 const DOT = MOTIF_GLYPHS.dot;
@@ -333,17 +336,23 @@ describe("`capBy`'s winner is the smallest max-R, not the nearest disc (decision
   });
 });
 
-describe('the HARD tier restates against the tight disc (decision 5)', () => {
+// ⚠️ SUPERSEDED IN PART BY 5-rev. These cases all use `leaf`, whose reach
+// |f̂c| + f̂r is 0.9963 — the ONE glyph in the library below 1 — so its tight
+// bound wins the max even at an undisplaced centre and every expectation below
+// still reads the same under 5-rev. They no longer establish that the tier is
+// tight-only; the `max(R_root, R_tight)` describe further down does that, on
+// `slice100`, the glyph that reaches furthest.
+describe('the HARD tier binds against the tight disc where the tight disc is tighter', () => {
   it('a glyph on a CENTRED cell anchor gains almost nothing — and that is structural', () => {
-    // ⚠️ A FINDING, recorded here because decision 5 claims "glyphs inside cells
-    // get up to 2× bigger in radius". At an UNDISPLACED centre no glyph in the
-    // library gains more than 1.004×, and the reason is the same construction §1
-    // rests on: `viewRadius` is measured from the root to the farthest point, and
-    // the root sits ON the minimal enclosing circle, so |f̂c| + f̂r ≈ 1 for all 62.
-    // Containment about the anchor is `R(|f̂c| + f̂r) ≤ H` — i.e. ≈ `R ≤ H`, which
-    // is the root law's answer. The 2× is real but needs a DISPLACED centre (the
-    // next test) or a lean that points back into the cell; the tier still had to
-    // restate, because leaving it root-centred is the mixed model 5b rejects.
+    // ⚠️ A FINDING, and the measurement that overturned decision 5. At an
+    // UNDISPLACED centre no glyph in the library gains more than 1.004×, and the
+    // reason is the same construction §1 rests on: `viewRadius` is measured from
+    // the root to the farthest point, and the root sits ON the minimal enclosing
+    // circle, so |f̂c| + f̂r ≈ 1 for all 62 — and ≥ 1 for 61 of them. Containment
+    // about the anchor is `R(|f̂c| + f̂r) ≤ H`, i.e. ≈ `R ≤ H`, which is the root
+    // law's answer, and WORSE than it whenever the reach exceeds 1. The 2× is
+    // real but needs a DISPLACED centre (the next test) or a lean that points
+    // back into the cell.
     const anchors = [anchor('a', 500, 500, { hostRadius: 12 })];
     const root = place(anchors, { ...PROP, margin: 1, footprint: 'root' }).placements[0];
     const tight = place(anchors, { ...PROP, margin: 1, footprint: 'tight' }).placements[0];
@@ -531,5 +540,346 @@ describe('no degenerate radius ever reaches a placement or the obstacle list', (
     for (const r of rejected) {
       expect(['no-fit', 'below-floor']).toContain(r.reason);
     }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DECISION 5-rev — THE HARD TIER TAKES `max(R_root, R_tight)`.
+//
+// Decision 5 restated host and boundary containment against the TIGHT disc
+// alone. Measurement overturned it: by the triangle inequality `|f̂c| + f̂r ≥ 1`
+// always, so at an undisplaced centre the tight bound is `H/(|f̂c| + f̂r) ≤ H` —
+// never better than the root bound, and 61 of 62 glyphs shrank (`slice100`, the
+// worst reach at 1.2058, to 0.829×). Both bounds are INDEPENDENTLY SOUND
+// containment certificates — art inside the root disc guarantees art inside the
+// container, and so does art inside the tight disc — so the tier takes whichever
+// permits the LARGER radius. The NEIGHBOUR term is untouched: it is genuinely
+// disc-vs-disc, the tight disc is correct there, and the whole 4× lives in it.
+//
+// ⚠️ WHAT SURVIVES 5-rev IS *ART* INSIDE THE CONTAINER, NOT *TIGHT DISC* INSIDE
+// THE CONTAINER. When the root bound wins, the tight disc may legitimately poke
+// out — it bulges past the ink on the far side. The containment assertions below
+// are therefore made against the FLATTENED ART, pushed through the very matrix
+// the renderer uses, not against the reserve disc.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const SLICE100 = MOTIF_GLYPHS.slice100;
+const S_FR = SLICE100.footprintRadius / SLICE100.viewRadius;
+const S_REACH =
+  (Math.hypot(SLICE100.footprintCenter.x, SLICE100.footprintCenter.y) +
+    SLICE100.footprintRadius) /
+  SLICE100.viewRadius;
+
+/** Every flattened art point of `glyph`, through the matrix the renderer builds. */
+function inkPoints(placement, glyph, radius = placement.radius) {
+  const m = placementMatrix(
+    {
+      x: placement.x,
+      y: placement.y,
+      rotation: placement.rotation,
+      radius,
+      flip: !!placement.flip,
+    },
+    glyph.viewRadius,
+    glyph.root || { x: 0, y: 0, angle: 0 }
+  );
+  const out = [];
+  for (const p of glyph.paths || []) {
+    for (const [px, py] of flattenPathD(p.d, 0.05).points) {
+      out.push(applyMatrix({ x: px, y: py }, m));
+    }
+  }
+  return out;
+}
+
+describe('the HARD tier takes max(R_root, R_tight) — decision 5-rev', () => {
+  const HOST = 12;
+  const cellRun = (footprint, glyph, extra = {}) =>
+    resolvePlacements(
+      [anchor('a', 500, 500, { hostRadius: HOST })],
+      { orientation: PAGE, sizing: { ...PROP, margin: 1, footprint }, ...extra },
+      { boundary: BOUNDARY, glyph }
+    ).placements[0];
+
+  it('slice100 at an UNDISPLACED cell centre is back to 1.000× — the ROOT bound wins', () => {
+    const root = cellRun('root', SLICE100);
+    const tight = cellRun('tight', SLICE100);
+    expect(root.capBy).toBe('host');
+    expect(tight.capBy).toBe('host');
+    expect(root.radius).toBe(HOST);
+    // Bit-identical, not merely close: the tight arm evaluates the same root
+    // expression on the same inputs and that value wins the max.
+    expect(tight.radius).toBe(root.radius);
+
+    // NON-VACUITY — the tight bound really is the smaller one here, by exactly
+    // the reach factor. This is the 0.829× regression 5-rev exists to undo.
+    const tightOnly = hostLimit({ x: 0, y: 0 }, { x: 0, y: -S_FR * 0 }, S_FR, HOST);
+    expect(tightOnly).toBeGreaterThan(0);
+    const leaning = hostLimit(
+      { x: 0, y: 0 },
+      {
+        x: SLICE100.footprintCenter.x / SLICE100.viewRadius,
+        y: SLICE100.footprintCenter.y / SLICE100.viewRadius,
+      },
+      S_FR,
+      HOST
+    );
+    expect(leaning / HOST).toBeCloseTo(1 / S_REACH, 12);
+    expect(leaning / HOST).toBeCloseTo(0.829, 3);
+
+    // CONTAINMENT — stated against the ART, which is what is inviolable.
+    for (const q of inkPoints(tight, SLICE100)) {
+      expect(Math.hypot(q.x - 500, q.y - 500)).toBeLessThanOrEqual(HOST + 1e-6);
+    }
+    // …and the tight disc DOES poke outside the cell, which is fine and is why
+    // the assertion above is about ink and not about the reserve.
+    const dx = tight.footprintCenter.x - 500;
+    const dy = tight.footprintCenter.y - 500;
+    expect(Math.hypot(dx, dy) + tight.packedRadius * S_FR).toBeGreaterThan(HOST);
+  });
+
+  it('slice100 leaning straight INTO an edge is back to 1.000× too', () => {
+    // 30 from the top edge, fc pointing −y: the reserve reaches the edge at the
+    // same moment the root disc does, times the 1.2058 reach.
+    const at = (footprint) =>
+      resolvePlacements(
+        [anchor('a', 500, 30)],
+        { orientation: PAGE, sizing: { ...PROP, size: 200, margin: 1, footprint } },
+        { boundary: BOUNDARY, glyph: SLICE100 }
+      ).placements[0];
+    const root = at('root');
+    const tight = at('tight');
+    expect(root.capBy).toBe('boundary');
+    expect(root.radius).toBeCloseTo(30, 12);
+    expect(tight.radius).toBe(root.radius);
+    for (const q of inkPoints(tight, SLICE100)) {
+      expect(q.y).toBeGreaterThanOrEqual(-1e-6);
+    }
+  });
+
+  it('a DISPLACED centre leaning back across its cell — the TIGHT bound wins the max', () => {
+    // Jitter pushes the centre 5.86 UP the normal; rotation 180 turns slice100 so
+    // it leans back DOWN across the anchor. The root law can only offer
+    // `H − d = 6.14`; the tight law knows the ink comes back into the cell.
+    const jitter = {
+      seed: 7, lateral: 1, along: 0, rotation: 0, scale: 0,
+      lateralRange: 6, alongRange: 0, rotationRange: 0, scaleRange: 0,
+    };
+    const run = (footprint) =>
+      resolvePlacements(
+        [anchor('a', 500, 500, { hostRadius: HOST })],
+        {
+          orientation: { ...PAGE, offset: 180 },
+          jitter,
+          sizing: { ...PROP, margin: 1, footprint },
+        },
+        { boundary: BOUNDARY, glyph: SLICE100 }
+      ).placements[0];
+    const root = run('root');
+    const tight = run('tight');
+    expect(root.capBy).toBe('host');
+    expect(tight.capBy).toBe('host');
+    expect(root.radius).toBeCloseTo(HOST - 5.8595, 3);
+    expect(tight.radius).toBeGreaterThan(root.radius);
+    expect(tight.radius / root.radius).toBeGreaterThan(2);
+    // The tight bound won, so here the DISC is inside the cell as well.
+    const dx = tight.footprintCenter.x - 500;
+    const dy = tight.footprintCenter.y - 500;
+    expect(Math.hypot(dx, dy) + tight.packedRadius * S_FR).toBeLessThanOrEqual(HOST + 1e-9);
+    for (const q of inkPoints(tight, SLICE100)) {
+      expect(Math.hypot(q.x - 500, q.y - 500)).toBeLessThanOrEqual(HOST + 1e-6);
+    }
+  });
+
+  it('NO glyph in the library shrinks under the tight law — all 62, cell and edge', () => {
+    // The population statement 5-rev makes. A single anchor, so greedy
+    // redistribution (§7z 5e-obs) cannot confound it: per glyph the hard tier is
+    // now a max over two bounds and can only be ≥ either.
+    const all = Object.values(MOTIF_GLYPHS);
+    expect(all.length).toBe(62);
+    let tightEverWins = 0;
+    for (const glyph of all) {
+      const rootCell = cellRun('root', glyph);
+      const tightCell = cellRun('tight', glyph);
+      expect(tightCell.radius).toBeGreaterThanOrEqual(rootCell.radius);
+      if (tightCell.radius > rootCell.radius) tightEverWins += 1;
+
+      const edge = (footprint) =>
+        resolvePlacements(
+          [anchor('e', 500, 30)],
+          { orientation: PAGE, sizing: { ...PROP, size: 200, margin: 1, footprint } },
+          { boundary: BOUNDARY, glyph }
+        ).placements[0];
+      expect(edge('tight').radius).toBeGreaterThanOrEqual(edge('root').radius);
+    }
+    // …and the max is live, not a dressed-up root law: some glyphs do win on the
+    // tight side even undisplaced (every glyph whose reach is below 1).
+    expect(tightEverWins).toBeGreaterThan(0);
+  });
+
+  it('neither bound permitting a positive R is still `no-fit` (decision 5c)', () => {
+    // Displaced clean out of the container: the root bound is `max(0, H − d) = 0`
+    // and `hostLimit` reports −1. A max over two rejections is still a rejection.
+    const { placements, rejected } = resolvePlacements(
+      [anchor('a', 500, 500, { hostRadius: 3 })],
+      {
+        orientation: PAGE,
+        jitter: { seed: 3, lateral: 1, along: 0, rotation: 0, scale: 0, lateralRange: 40, alongRange: 0, rotationRange: 0, scaleRange: 0 },
+        sizing: { ...PROP, footprint: 'tight' },
+      },
+      { boundary: BOUNDARY, glyph: SLICE100 }
+    );
+    expect(placements).toHaveLength(0);
+    expect(rejected[0].reason).toBe('no-fit');
+  });
+
+  it('the §1a leaf neighbour result is UNTOUCHED — 4.25 → 20.00 at anchors 25 apart', () => {
+    // The 4× recovery lives entirely in the neighbour term, which 5-rev does not
+    // touch. Pinned to the exact numbers, not to a ratio: if either moves, the
+    // neighbour term was edited.
+    const anchors = [anchor('a', 400, 500), anchor('b', 375, 500)];
+    const root = place(anchors, { ...PROP, footprint: 'root' }).placements;
+    const tight = place(anchors, { ...PROP, footprint: 'tight' }).placements;
+    expect(root[1].capBy).toBe('neighbour');
+    expect(root[1].radius).toBeCloseTo(4.25, 12);
+    expect(tight[1].radius).toBeCloseTo(20.0, 12);
+    expect(tight[1].capBy).toBe('natural');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// `root.angle` — THE GROWTH TURN. `placementMatrix` composes
+//
+//     M = T(P) · R(θ) · S(sx,sy) · R(−φ) · T(−root),   φ = root.angle
+//
+// so a root-relative art point `q` lands at `P + R(θ)·diag(σ,1)·s·R(−φ)·q` with
+// `σ = −1` when flipped. `R(θ)·R(−φ) = R(θ−φ)`, and since
+// `diag(−1,1)·R(−φ) = R(φ)·diag(−1,1)`, the flipped case is
+// `R(θ+φ)·(−f̂c.x, f̂c.y)`. The engine reserved `R(θ)·f̂c` — correct only at φ = 0,
+// which every one of the 62 built-ins happens to be, so the bug shipped latent.
+// `PenCanvas.jsx:433-435` lets the user drag that angle.
+//
+// These tests use SYNTHETIC glyphs, because shipped data cannot exercise it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** A synthetic glyph: real flattened geometry, a root the pen editor could drag. */
+function synthGlyph(id, d, root) {
+  const pts = flattenPathD(d, 0.05).points.map(([x, y]) => ({ x, y }));
+  const mec = minEnclosingCircle(pts);
+  return {
+    id,
+    name: id,
+    tradition: 'test',
+    paths: [{ d, closed: true }],
+    root,
+    viewRadius: Math.max(...pts.map((p) => Math.hypot(p.x - root.x, p.y - root.y))),
+    footprintCenter: { x: mec.x - root.x, y: mec.y - root.y },
+    footprintRadius: mec.r,
+  };
+}
+
+const HOOK_D = 'M 0 0 C 20 -30 60 -20 70 10 L 40 25 Z';
+
+describe('the reserve honours `root.angle` (the growth turn)', () => {
+  const THETAS = [0, 37, 90, 180, 270];
+
+  /** Worst ink excursion outside the committed reserve, as a fraction of it. */
+  function worstExcursion(glyph) {
+    const fr = glyph.footprintRadius / glyph.viewRadius;
+    let worst = 0;
+    for (const theta of THETAS) {
+      for (const flipEnabled of [false, true]) {
+        const { placements } = resolvePlacements(
+          [anchor('a', 500, 500), anchor('b', 545, 500)],
+          {
+            orientation: { ...PAGE, offset: theta },
+            flip: flipEnabled,
+            sizing: { ...PROP, footprint: 'tight' },
+          },
+          { boundary: BOUNDARY, glyph }
+        );
+        for (const p of placements) {
+          expect(p.radius).toBe(p.packedRadius);
+          const r = p.packedRadius * fr;
+          for (const q of inkPoints(p, glyph)) {
+            const out =
+              (Math.hypot(q.x - p.footprintCenter.x, q.y - p.footprintCenter.y) - r) / r;
+            if (out > worst) worst = out;
+          }
+        }
+      }
+    }
+    return worst;
+  }
+
+  it.each([0, 30, 90, -45, 137, 180])(
+    'root.angle %d° — every ink point lies inside the committed reserve, at every rotation and both flips',
+    (phi) => {
+      expect(worstExcursion(synthGlyph('hook', HOOK_D, { x: 5, y: -3, angle: phi }))).toBeLessThan(
+        1e-9
+      );
+    }
+  );
+
+  it('the PROVED case: slice100 given a 90° growth turn keeps its ink inside the disc', () => {
+    // The adversarial pass constructed exactly this and measured ink 74.9% of the
+    // reserve radius OUTSIDE the committed disc — a cut outside the material.
+    const turned = { ...SLICE100, root: { ...SLICE100.root, angle: 90 } };
+    expect(worstExcursion(turned)).toBeLessThan(1e-9);
+  });
+
+  it('the offset is Rot(θ−φ)·f̂c, and Rot(θ+φ)·(−f̂c.x, f̂c.y) when flipped', () => {
+    const phi = 55;
+    const glyph = synthGlyph('hook', HOOK_D, { x: 5, y: -3, angle: phi });
+    const fcx = glyph.footprintCenter.x / glyph.viewRadius;
+    const fcy = glyph.footprintCenter.y / glyph.viewRadius;
+    const rot = (v, deg) => {
+      const t = (deg * Math.PI) / 180;
+      return { x: v.x * Math.cos(t) - v.y * Math.sin(t), y: v.x * Math.sin(t) + v.y * Math.cos(t) };
+    };
+    const theta = 37;
+    const { placements } = resolvePlacements(
+      [anchor('a', 500, 500), anchor('b', 545, 500)],
+      {
+        orientation: { ...PAGE, offset: theta },
+        flip: true,
+        sizing: { ...PROP, footprint: 'tight' },
+      },
+      { boundary: BOUNDARY, glyph }
+    );
+    const [unflipped, flipped] = placements;
+    expect(unflipped.flip).toBe(false);
+    expect(flipped.flip).toBe(true);
+
+    const eU = rot({ x: fcx, y: fcy }, theta - phi);
+    expect(unflipped.footprintCenter.x - unflipped.x).toBeCloseTo(unflipped.packedRadius * eU.x, 10);
+    expect(unflipped.footprintCenter.y - unflipped.y).toBeCloseTo(unflipped.packedRadius * eU.y, 10);
+
+    const eF = rot({ x: -fcx, y: fcy }, theta + phi);
+    expect(flipped.footprintCenter.x - flipped.x).toBeCloseTo(flipped.packedRadius * eF.x, 10);
+    expect(flipped.footprintCenter.y - flipped.y).toBeCloseTo(flipped.packedRadius * eF.y, 10);
+
+    // The sign matters: θ+φ and θ−φ are not interchangeable, so a flipped/
+    // unflipped mix-up cannot pass by symmetry.
+    expect(eU.x).not.toBeCloseTo(eF.x, 3);
+  });
+
+  it('at root.angle 0 the reserve is EXACTLY the pre-fix `Rot(θ)·f̂c` — no churn', () => {
+    // The short-circuit that keeps all 62 built-ins bit-identical.
+    const glyph = synthGlyph('hook', HOOK_D, { x: 5, y: -3, angle: 0 });
+    const fcx = glyph.footprintCenter.x / glyph.viewRadius;
+    const fcy = glyph.footprintCenter.y / glyph.viewRadius;
+    const theta = 37;
+    const t = (theta * Math.PI) / 180;
+    const p = resolvePlacements(
+      [anchor('a', 500, 500)],
+      { orientation: { ...PAGE, offset: theta }, sizing: { ...PROP, footprint: 'tight' } },
+      { boundary: BOUNDARY, glyph }
+    ).placements[0];
+    // Compared UNSUBTRACTED: `footprintCenter.x − x` cancels 500 against 500 and
+    // loses the low bits, so a difference there would be the test's arithmetic,
+    // not the engine's.
+    expect(p.footprintCenter.x).toBe(p.x + p.packedRadius * (fcx * Math.cos(t) - fcy * Math.sin(t)));
+    expect(p.footprintCenter.y).toBe(p.y + p.packedRadius * (fcx * Math.sin(t) + fcy * Math.cos(t)));
   });
 });

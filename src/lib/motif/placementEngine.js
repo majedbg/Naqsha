@@ -373,9 +373,16 @@ const DEG_TO_RAD = Math.PI / 180;
  * material. Falling back to the root law instead would be worse: the layer would
  * be packed by the law the user opted out of, silently and greenly. So it throws.
  *
+ * THE GROWTH TURN COMES BACK WITH IT. `root.angle` is part of the frame `fc` was
+ * measured in — `placementMatrix` de-rotates by it BEFORE the core scale/rotate
+ * (`instancing.js:63`), so the reserve has to as well. An absent or non-finite
+ * angle reads as 0, which is what every built-in carries and what
+ * `importMotif.js` hard-codes; only the pen editor produces anything else.
+ *
  * @param {object|null|undefined} glyph
  * @param {string} anchorId  named in the message — the failure is per-glyph.
- * @returns {{cx:number, cy:number, r:number}} `f̂c` and `f̂r`, in units of `R`.
+ * @returns {{cx:number, cy:number, r:number, angle:number}} `f̂c` and `f̂r`, in
+ *   units of `R`, plus `root.angle` in degrees.
  */
 function normalisedFootprint(glyph, anchorId) {
   if (!glyph || typeof glyph !== 'object') {
@@ -402,7 +409,9 @@ function normalisedFootprint(glyph, anchorId) {
         "`viewRadius` are all required under sizing.footprint 'tight'"
     );
   }
-  return { cx: fc.x / viewRadius, cy: fc.y / viewRadius, r: fr / viewRadius };
+  const root = glyph.root;
+  const angle = root && Number.isFinite(root.angle) ? root.angle : 0;
+  return { cx: fc.x / viewRadius, cy: fc.y / viewRadius, r: fr / viewRadius, angle };
 }
 
 /**
@@ -761,22 +770,68 @@ export function resolvePlacements(survivors, config = {}, opts = {}) {
         // put a CUT outside the material or outside its cell, which #146 and the
         // PRD's story 8 call inviolable. So the mirror is applied here, in the one
         // expression that reads the glyph, and costs nothing.
+        //
+        // ⚠️ THE GROWTH TURN IS PART OF THE COMPOSITION, and leaving it out is a
+        // CUT OUTSIDE THE MATERIAL. `placementMatrix` composes
+        //     M = T(P) · R(θ) · S(sx,sy) · R(−φ) · T(−root),   φ = root.angle
+        // (`instancing.js:63`), so a root-relative art point `q` lands at
+        // `P + R(θ)·diag(σ,1)·s·R(−φ)·q` with `σ = −1` when flipped. Since
+        // `R(θ)·R(−φ) = R(θ−φ)` and `diag(−1,1)·R(−φ) = R(φ)·diag(−1,1)`, the
+        // reserve offset is `R(θ−φ)·f̂c` unflipped and `R(θ+φ)·(−f̂c.x, f̂c.y)`
+        // flipped — ONE angle either way, so this still costs one cos/sin pair.
+        // `Rot(θ)·f̂c` alone is correct only at φ = 0; measured, `slice100` given
+        // a 90° turn put ink 74.9% of the reserve radius outside the committed
+        // disc. Latent because all 62 built-ins and `importMotif.js:116` are 0 —
+        // `PenCanvas.jsx:433-435` is not.
+        //
+        // φ === 0 short-circuits to the bare `rotation`, mirroring
+        // `placementMatrix`'s own default-root short-circuit: it keeps every
+        // shipped glyph bit-identical instead of relying on `±0` arithmetic.
         const localX = flip ? -f.cx : f.cx;
-        const theta = rotation * DEG_TO_RAD;
+        const turned = f.angle === 0 ? rotation : flip ? rotation + f.angle : rotation - f.angle;
+        const theta = turned * DEG_TO_RAD;
         const cosT = Math.cos(theta);
         const sinT = Math.sin(theta);
         const u = { x: localX * cosT - f.cy * sinT, y: localX * sinT + f.cy * cosT };
 
-        // HARD TIER — boundary AND host, together and both against the tight disc
-        // (decision 5). Ruled A because it is NOT a safety tradeoff: the root disc
-        // and the tight disc both fully contain the art, so "disc inside container
-        // ⇒ art inside container" holds either way. A is the same guarantee with
-        // less waste, and glyphs inside cells get up to 2× bigger in radius.
-        // Keeping this tier root-centred would have created the genuine mixed
-        // model decision 5b rejects — offset reserve for neighbours, root-centred
-        // reserve for host and boundary, two footprints for one glyph in one
-        // sizing branch.
-        const boundaryCap = capOf(boundaryLimit({ x, y }, u, f.r, boundary));
+        // HARD TIER — boundary AND host, each the LARGER of the two bounds
+        // (decision 5-rev, ruled by Majed 2026-07-29, superseding 5/5b/5c/5d).
+        //
+        // Decision 5 restated this tier against the tight disc ALONE, on the
+        // grounds that it is "the same guarantee with less waste". The first half
+        // is true and the second is backwards. `viewRadius` is measured from the
+        // root to the farthest point and the root sits ON the minimal enclosing
+        // circle, so `|f̂c| + f̂r ≥ 1` by the triangle inequality — ALWAYS. At an
+        // undisplaced centre the tight law therefore reads `R ≤ H/(|f̂c| + f̂r)`,
+        // which is never better than the root law's `R ≤ H`: 61 of the 62
+        // built-ins SHRANK, `slice100` (reach 1.2058) to 0.829×. The minimal
+        // enclosing circle bulges past the ink on the far side, so as an envelope
+        // for containment measured FROM A POINT it is strictly looser, even
+        // though it is strictly tighter disc-against-disc.
+        //
+        // Both bounds are INDEPENDENTLY SOUND CONTAINMENT CERTIFICATES — art
+        // inside the root disc guarantees art inside the container, and so does
+        // art inside the tight disc — so taking whichever permits the larger `R`
+        // is safe and is never worse than either. Root wins at an undisplaced
+        // centre; tight wins once jitter displaces the glyph away from the
+        // direction it leans, which is where decision 5's 2× actually lives.
+        //
+        // ⚠️ WHAT SURVIVES IS *ART* INSIDE THE CONTAINER, NOT *RESERVE* INSIDE THE
+        // CONTAINER. When the root bound wins, the committed tight disc may poke
+        // outside the cell or the region — legitimately, because it bulges past
+        // the ink. Anything asserting containment must assert it of the flattened
+        // art, not of `footprintCenter ± packedRadius·f̂r`.
+        //
+        // ⚠️ THE NEIGHBOUR TERM IS NOT TOUCHED. It is genuinely disc-vs-disc, the
+        // tight disc is correct there, and the entire 4× recovery lives in it.
+        //
+        // The root-side expressions below are COPIED from the legacy arm, not
+        // shared with it: ADR-0005 is a byte-identity contract and the legacy arm
+        // must keep running its own literal lines (decision 7b).
+        const boundaryCap = Math.max(
+          capOf(parts.boundary),
+          capOf(boundaryLimit({ x, y }, u, f.r, boundary))
+        );
         hardCap = Math.min(naturalTarget, boundaryCap);
         hardCapBy = boundaryCap < naturalTarget ? 'boundary' : 'natural';
 
@@ -789,7 +844,24 @@ export function resolvePlacements(survivors, config = {}, opts = {}) {
           // `hostLimit`'s `-1` (centre already outside the container) reports.
           const v = { x: x - anchor.x, y: y - anchor.y };
           const lim = hostLimit(v, u, f.r, anchor.hostRadius);
-          if (lim <= 0) {
+          // `capOf`, not a bare `margin * lim`, for the reason recorded at the
+          // guard's definition above: a container that never binds comes back
+          // `Infinity`, and `0 * Infinity` is NaN. On every finite `lim` this is
+          // the identical product §5e writes. A non-positive `lim` — `-1` for a
+          // centre already outside the container — contributes NOTHING to the max
+          // rather than a negative number, so it can never drag the root bound
+          // down; it just loses.
+          const tightHostCap = lim > 0 ? capOf(lim) : 0;
+          // The root-law bound, COPIED verbatim from the legacy arm below (the
+          // same `d`, the same `Math.max(0, …)` clamp, the same `margin ×`).
+          const d = Math.hypot(x - anchor.x, y - anchor.y);
+          const rootHostCap = margin * Math.max(0, anchor.hostRadius - d);
+          const hostCap = Math.max(rootHostCap, tightHostCap);
+          // Decision 5c, restated for the max: reject only when NEITHER bound
+          // permits a positive `R`. Under the root law that is "displaced clean
+          // out of the container"; under the tight law it is `hostLimit`'s `-1`,
+          // which is the same condition. They agree, so this stays a single guard.
+          if (hostCap <= 0) {
             rejected.push({
               anchorId: anchor.id,
               reason: 'no-fit',
@@ -800,11 +872,6 @@ export function resolvePlacements(survivors, config = {}, opts = {}) {
             });
             return;
           }
-          // `capOf`, not a bare `margin * lim`, for the reason recorded at the
-          // guard's definition above: a container that never binds comes back
-          // `Infinity`, and `0 * Infinity` is NaN. On every finite `lim` this is
-          // the identical product §5e writes.
-          const hostCap = capOf(lim);
           // The same `<=` tie-break, for the same recorded reason (the boundary is
           // already on screen; the host container has no visual representation).
           if (hostCap <= hardCap) {

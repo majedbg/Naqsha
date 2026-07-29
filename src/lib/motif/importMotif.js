@@ -11,6 +11,10 @@
 //     scale, so root is the scale pivot; viewRadius is therefore measured FROM
 //     root (a bounding circle centered at root, NOT at the bbox center) so the
 //     placed footprint equals placement.radius.
+//   - footprintCenter / footprintRadius — the MINIMAL ENCLOSING CIRCLE of the
+//     same sampled cloud, root-relative, so a user SVG packs by the same law
+//     the 62 built-ins do (#202, §5c of docs/motif-footprint-fix-decisions.md).
+//     Derived, never authored, and never a substitute for viewRadius.
 //
 // Normalization is DECIDED (do not redesign): every `d` is kept VERBATIM so
 // exported curves survive round-trip; geometry is only SAMPLED (never rewritten)
@@ -35,6 +39,7 @@
 
 import { extractMotifDrawables } from '../svgImport.js';
 import { flattenPathD } from '../plotter/pathOps.js';
+import { minEnclosingCircle } from './minEnclosingCircle.js';
 
 // Degenerate single-point geometry (e.g. `<path d="M5,5"/>`) has a well-defined
 // root but a zero bounding radius. Fall back to this small positive radius so
@@ -74,6 +79,8 @@ function deriveName(svg) {
  *   paths: {d: string, closed: boolean}[],
  *   viewRadius: number,
  *   root: {x: number, y: number, angle: number},
+ *   footprintCenter: {x: number, y: number},
+ *   footprintRadius: number,
  * } } | { ok: false, error: string }}
  *   The glyph carries NO id — the caller (WI-5) stamps it on insert.
  */
@@ -112,6 +119,27 @@ export function importMotif(svgText) {
     return { ok: false, error: 'No sampleable geometry in this SVG.' };
   }
 
+  // Non-finite point guard. `flattenPathD` refuses to emit a point built from
+  // an unparseable coordinate, but its subdividers still do arithmetic, so an
+  // extreme `d` can overflow a midpoint to ±Infinity/NaN INSIDE the cloud.
+  // Nothing downstream fails loudly on that:
+  //   - the bbox comparisons are all `<`/`>`, and every comparison with NaN is
+  //     false, so a NaN point silently does not widen the box;
+  //   - `viewRadius`'s `dist > viewRadius` is false for NaN too, so it keeps
+  //     the last finite maximum;
+  //   - and #198's finding — `minEnclosingCircle` SWALLOWS an interior NaN.
+  //     `inCirc` reads `NaN <= r` as false, so the point counts as "not
+  //     contained", `circ2`/`circ3` propagate the NaN into the circle, and a
+  //     later real point replaces it. The result is a plausible-looking circle
+  //     and no throw.
+  // So the only place this can be caught is here, explicitly, before either
+  // reduction runs. Same rejection channel as the empty-cloud guard above.
+  for (const [x, y] of cloud) {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      return { ok: false, error: 'This SVG contains coordinates too extreme to measure.' };
+    }
+  }
+
   // 3–4. root = bbox BOTTOM-CENTER (SVG y-down, so maxY is the bottom edge).
   const root = { x: (minX + maxX) / 2, y: maxY, angle: 0 };
 
@@ -126,8 +154,43 @@ export function importMotif(svgText) {
   // to a small positive fallback so downstream scaling stays well-defined.
   if (!(viewRadius > 0)) viewRadius = MIN_VIEW_RADIUS;
 
+  // 5b (§5c, decisions 2 / 2b). footprint = the MINIMAL ENCLOSING CIRCLE of the
+  // SAME cloud, expressed RELATIVE TO ROOT so it lands in the frame
+  // placementMatrix's trailing R(−root.angle)·T(−root) leaves the glyph in
+  // (instancing.js:96-105) — the frame the reserve is solved in. One cloud, two
+  // reductions: measuring the footprint over a second flattening pass would let
+  // the two numbers disagree about what the glyph is.
+  //
+  // ⚠️ `footprintRadius` is NOT a substitute for `viewRadius` and never becomes
+  // one (decision 2b). `viewRadius` stays the placementMatrix scale divisor and
+  // the root-centred bound; `footprintRadius` is what the packer reserves.
+  //
+  // ⚠️ Stored BEFORE any rotation, exactly as the built-ins are — a bare
+  // `mec − root` translation, no R(−root.angle) applied. `root.angle` is part
+  // of the frame `fc` is measured in, and placementEngine re-applies the growth
+  // turn downstream (§7z 7g). Every import is angle 0 (see the `root` literal
+  // above), so this is the same short-circuited case all 62 built-ins are in.
+  //
+  // The circle itself needs no second finiteness gate: `cloud` is all-finite by
+  // the guard above, `circ3` returns null rather than dividing by a vanishing
+  // determinant, and `circ2`/`Math.hypot` of finite inputs are finite. The
+  // enrichment script (`scripts/enrichVectorMotifFootprints.mjs:132-141`) checks
+  // both sides only because it hard-exits; here the input guard is the only
+  // reachable one, so there is no untestable branch to add.
+  const mec = minEnclosingCircle(cloud.map(([x, y]) => ({ x, y })));
+  const footprintCenter = { x: mec.x - root.x, y: mec.y - root.y };
+  // Degenerate single-point (every sampled point coincides) → a well-defined
+  // centre and a ZERO radius. Reuse MIN_VIEW_RADIUS for the identical reason it
+  // exists for `viewRadius`: a zero `fr` makes A = |fc|² and B = 2(a·u) describe
+  // a POINT reserve — legal arithmetic, but it would let a degenerate import
+  // claim nothing and stack on top of its neighbours.
+  const footprintRadius = mec.r > 0 ? mec.r : MIN_VIEW_RADIUS;
+
   // 6. name — a cheap friendly default; the UI can rename later (WI-5/P2).
   const name = deriveName(svgText);
 
-  return { ok: true, glyph: { name, tradition: 'imported', paths, viewRadius, root } };
+  return {
+    ok: true,
+    glyph: { name, tradition: 'imported', paths, viewRadius, root, footprintCenter, footprintRadius },
+  };
 }

@@ -525,7 +525,11 @@ describe('resolvePlacements — sizing fixed', () => {
     // Sizing-stage rejections carry their geometry (#191) — see the dedicated
     // describe below. In `fixed` mode `wantedRadius` is the literal fixed
     // radius, `size × scaleFactor × sizeScale`.
-    expect(rejected).toEqual([{ anchorId: 'a1', reason: 'no-fit', x: 3, y: 0, wantedRadius: 5 }]);
+    // `rotation` (#200) rides along on every sizing-stage rejection. Default
+    // `path`/`useNormal` orientation over a normal of 0 and no jitter ⇒ 0.
+    expect(rejected).toEqual([
+      { anchorId: 'a1', reason: 'no-fit', x: 3, y: 0, rotation: 0, wantedRadius: 5 },
+    ]);
   });
 
   it("rejects 'below-floor' when radius < min", () => {
@@ -534,7 +538,7 @@ describe('resolvePlacements — sizing fixed', () => {
     });
     expect(placements).toEqual([]);
     expect(rejected).toEqual([
-      { anchorId: 'a0', reason: 'below-floor', x: 0, y: 0, wantedRadius: 2 },
+      { anchorId: 'a0', reason: 'below-floor', x: 0, y: 0, rotation: 0, wantedRadius: 2 },
     ]);
   });
 });
@@ -567,7 +571,7 @@ describe('resolvePlacements — rejection geometry (#191)', () => {
     );
     expect(placements).toEqual([]);
     expect(rejected).toEqual([
-      { anchorId: 'a0', reason: 'below-floor', x: 50, y: 50, wantedRadius: 10 },
+      { anchorId: 'a0', reason: 'below-floor', x: 50, y: 50, rotation: 0, wantedRadius: 10 },
     ]);
   });
 
@@ -582,7 +586,7 @@ describe('resolvePlacements — rejection geometry (#191)', () => {
     );
     expect(placements.map((p) => p.anchorId)).toEqual(['a0']);
     expect(rejected).toEqual([
-      { anchorId: 'a1', reason: 'no-fit', x: 52, y: 50, wantedRadius: 10 },
+      { anchorId: 'a1', reason: 'no-fit', x: 52, y: 50, rotation: 0, wantedRadius: 10 },
     ]);
   });
 
@@ -620,6 +624,74 @@ describe('resolvePlacements — rejection geometry (#191)', () => {
       { boundary },
     );
     expect(rest.rejected).toEqual([{ anchorId: 'a0', reason: 'rest' }]);
+  });
+});
+
+// ── REJECTION ROTATION (#200, footprint decision 8) ─────────────────────────
+// The footprint overlay offsets every ring by the glyph's ROTATED footprint
+// centre, so a rejected anchor's dotted ring needs the same rotation its
+// surviving neighbours got — otherwise the four rings that exist to explain the
+// gap-20 mystery sit in the wrong place and add one. The field is FREE at the
+// source: rotation is fully resolved at `placementEngine.js:462/:473/:476`,
+// ABOVE all five sizing-stage push sites, so nothing is recomputed, nothing is
+// re-derived from the anchor, and no RNG draw is added.
+describe('resolvePlacements — rejection rotation (#200)', () => {
+  const boundary = { type: 'rect', width: 100, height: 100 };
+
+  it('a sizing-stage rejection reports the SAME resolved rotation a survivor does', () => {
+    // Built so the equality is EXACT rather than approximate: `page` policy ⇒
+    // baseDeg 0 for every anchor, and no rotation jitter ⇒ the slot's
+    // rotationOffset IS the whole rotation. Both slots carry the same offset;
+    // only sizeScale differs, so slot 0 clears the floor and slot 1 does not.
+    const { placements, rejected } = resolvePlacements(
+      [mkA('a0', 20, 20), mkA('a1', 80, 80)],
+      {
+        sequence: {
+          type: 'sequence',
+          mode: 'cycle',
+          slots: [
+            { glyphRef: 'g', rotationOffset: 37 },
+            { glyphRef: 'g', rotationOffset: 37, sizeScale: 0.1 },
+          ],
+        },
+        orientation: { policy: 'page' },
+        sizing: { mode: 'fixed', size: 5, min: 2 },
+      },
+      { boundary },
+    );
+    expect(placements.map((p) => p.anchorId)).toEqual(['a0']);
+    expect(rejected).toEqual([
+      { anchorId: 'a1', reason: 'below-floor', x: 80, y: 80, rotation: 37, wantedRadius: 0.5 },
+    ]);
+    // The point of the field, stated as the assertion: the ring the overlay
+    // draws for a1 turns exactly as far as the glyph a0 drew.
+    expect(rejected[0].rotation).toBe(placements[0].rotation);
+  });
+
+  it('junction-skip and rest gain NO rotation key — the shape stays conditional', () => {
+    // `toEqual` passes on a present-but-undefined key, so these assert ABSENCE
+    // explicitly. Both still reject above the transform; decision 8 leaves them
+    // untouched even though a page-policy offset makes a rotation available.
+    const orientation = { policy: 'page', offset: 37 };
+    const skip = resolvePlacements(
+      [mkA('a0', 50, 50, { junction: true })],
+      { orientation, sizing: { mode: 'fixed', size: 5 }, junction: 'skip' },
+      { boundary },
+    );
+    expect(skip.rejected).toStrictEqual([{ anchorId: 'a0', reason: 'junction-skip' }]);
+    expect('rotation' in skip.rejected[0]).toBe(false);
+
+    const rest = resolvePlacements(
+      [mkA('a0', 50, 50)],
+      {
+        orientation,
+        sequence: { type: 'sequence', mode: 'cycle', slots: [{ rest: true }] },
+        sizing: { mode: 'fixed', size: 5 },
+      },
+      { boundary },
+    );
+    expect(rest.rejected).toStrictEqual([{ anchorId: 'a0', reason: 'rest' }]);
+    expect('rotation' in rest.rejected[0]).toBe(false);
   });
 });
 
@@ -912,11 +984,17 @@ describe('resolvePlacements — Sequencer Rest reserves no footprint', () => {
     // a2 is REJECTED when a1 is a glyph (footprint blocks it)...
     expect(byAnchorId(allGlyph.placements, 'a2')).toBeUndefined();
     // Rotation-only jitter ⇒ the centre is still exactly the anchor (#191).
+    // The rejection's `rotation` (#200) is the JITTERED one, so it is written
+    // here as the very number a2 gets when the rest lets it place: the rest
+    // consumed its four draws, so the stream — and therefore a2's rotation — is
+    // identical in both runs. Hard-coding the mulberry32 value instead would
+    // re-implement the engine inside its own test.
     expect(allGlyph.rejected).toContainEqual({
       anchorId: 'a2',
       reason: 'no-fit',
       x: 9,
       y: 0,
+      rotation: byAnchorId(withRest.placements, 'a2').rotation,
       wantedRadius: 2.5,
     });
     // ...but ACCEPTED when a1 is a rest (rest reserved no footprint).
@@ -961,6 +1039,7 @@ describe('resolvePlacements — Sequencer sizeScale drives acceptance packing', 
       reason: 'no-fit',
       x: 2.5,
       y: 0,
+      rotation: 0, // no jitter, normal 0, default orientation (#200)
       wantedRadius: 1,
     });
   });

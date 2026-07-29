@@ -225,7 +225,7 @@ export function selectAnchors(anchors, rules = {}, opts = {}) {
  *   `{x,y,r}`, never a reference into the packer's growing obstacle list.
  *
  * @typedef {{anchorId:string, reason:'junction-skip'|'below-floor'|'no-fit'|'rest',
- *            x?:number, y?:number, wantedRadius?:number}} Rejection
+ *            x?:number, y?:number, rotation?:number, wantedRadius?:number}} Rejection
  *
  *   REJECTION GEOMETRY (#191) — `x`, `y` and `wantedRadius` are present on the
  *   SIZING-STAGE reasons ONLY (`below-floor` and `no-fit`), because those are the
@@ -243,6 +243,15 @@ export function selectAnchors(anchors, rules = {}, opts = {}) {
  *   want", and a `below-floor` glyph's drawn radius is by definition below
  *   `sizing.min`, so a ring drawn there would be an invisible speck — the exact
  *   failure the overlay exists to fix.
+ *
+ *   `rotation` (#200, footprint decision 8) rides with them, on the same five
+ *   sizing-stage sites and no others. The footprint overlay offsets every ring by
+ *   the glyph's ROTATED footprint centre, so without it a rejected anchor's dotted
+ *   ring would be the one mark on screen still drawn anchor-centred — the mark that
+ *   exists to explain a mystery would be adding one. It is FREE at the source:
+ *   rotation is fully resolved below (`:462`, `:473`, `:476`) ABOVE every one of
+ *   those sites, so it is COPIED — never recomputed, never re-derived from the
+ *   anchor — and it is the SAME number a surviving placement reports.
  *
  *   THE CONDITIONAL SHAPE IS CORRECT, not an oversight. `junction-skip` and `rest`
  *   reject at the TOP of the loop, above the transform that computes the centre —
@@ -506,11 +515,25 @@ export function resolvePlacements(survivors, config = {}, opts = {}) {
       // the fixed radius IS the natural target — the very same expression — so
       // `wantedRadius` is `radius` with nothing to hoist.
       if (R <= 0 || !fitsAt(center, radius, placed, boundary)) {
-        rejected.push({ anchorId: anchor.id, reason: 'no-fit', x, y, wantedRadius: radius });
+        rejected.push({
+          anchorId: anchor.id,
+          reason: 'no-fit',
+          x,
+          y,
+          rotation,
+          wantedRadius: radius,
+        });
         return;
       }
       if (radius < min) {
-        rejected.push({ anchorId: anchor.id, reason: 'below-floor', x, y, wantedRadius: radius });
+        rejected.push({
+          anchorId: anchor.id,
+          reason: 'below-floor',
+          x,
+          y,
+          rotation,
+          wantedRadius: radius,
+        });
         return;
       }
       // `fixed` mode's CONTROL FLOW is untouched by #186 and `hold` is honestly
@@ -556,7 +579,14 @@ export function resolvePlacements(survivors, config = {}, opts = {}) {
       // That is not "capped by a neighbour", it is coincident with one, so it
       // stays a hard drop at every value of `hold` (decision 5).
       if (R <= 0) {
-        rejected.push({ anchorId: anchor.id, reason: 'no-fit', x, y, wantedRadius: naturalTarget });
+        rejected.push({
+          anchorId: anchor.id,
+          reason: 'no-fit',
+          x,
+          y,
+          rotation,
+          wantedRadius: naturalTarget,
+        });
         return;
       }
       const margin = Math.min(1, Math.max(0, sizing.margin));
@@ -608,6 +638,7 @@ export function resolvePlacements(survivors, config = {}, opts = {}) {
             reason: 'no-fit',
             x,
             y,
+            rotation,
             wantedRadius: naturalTarget,
           });
           return;
@@ -656,6 +687,7 @@ export function resolvePlacements(survivors, config = {}, opts = {}) {
           reason: 'below-floor',
           x,
           y,
+          rotation,
           wantedRadius: naturalTarget,
         });
         return;

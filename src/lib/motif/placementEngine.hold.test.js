@@ -435,13 +435,15 @@ describe('rejection — what `hold` may and may not rescue', () => {
 
   it('`no-fit` stays a hard drop at every value of `hold`', () => {
     // a1's centre sits INSIDE a0's committed disc ⇒ R <= 0. No jitter, so the
-    // centre the rejection reports (#191) is exactly the anchor.
+    // centre the rejection reports (#191) is exactly the anchor, and the
+    // rotation it reports (#200) is 0 — normal 0, no rotation jitter, no slot
+    // rotationOffset.
     const anchors = [at('a0', 100, 200), at('a1', 105, 200)];
     for (const w of [0, 0.5, 1]) {
       const { placements, rejected } = run(anchors, STOCK, holdSeq(w));
       expect(placements.map((p) => p.anchorId)).toEqual(['a0']);
       expect(rejected).toEqual([
-        { anchorId: 'a1', reason: 'no-fit', x: 105, y: 200, wantedRadius: 18 },
+        { anchorId: 'a1', reason: 'no-fit', x: 105, y: 200, rotation: 0, wantedRadius: 18 },
       ]);
     }
   });
@@ -469,7 +471,15 @@ describe('rejection — what `hold` may and may not rescue', () => {
       );
       expect(placements).toEqual([]);
       expect(rejected).toEqual([
-        { anchorId: 'h0', reason: 'no-fit', x: centre.x, y: centre.y, wantedRadius: 50 },
+        {
+          anchorId: 'h0',
+          reason: 'no-fit',
+          x: centre.x,
+          y: centre.y,
+          // LATERAL-only jitter, so rotation is untouched (#200).
+          rotation: centre.rotation,
+          wantedRadius: 50,
+        },
       ]);
     }
   });
@@ -495,6 +505,7 @@ describe('`hold` turns dotted rings into glyphs (#191)', () => {
       reason: 'below-floor',
       x: 120,
       y: 200,
+      rotation: 0, // NO_JITTER over normal 0 (#200)
       wantedRadius: 18,
     });
     expect(byId(free.placements, 'a1')).toBeUndefined();

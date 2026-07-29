@@ -131,6 +131,78 @@ describe("MotifBlockRack — collapsed one-line rows", () => {
   });
 });
 
+// ── Branch order (T4) ───────────────────────────────────────────────────────
+describe("MotifBlockRack — Branch order card", () => {
+  const orderChain = [{ type: "order", min: 2, max: null }];
+  const orderProps = { ...baseProps, chain: orderChain };
+
+  it("renders as a full card (no chevron) with both bounds; blank max = Any", () => {
+    render(<MotifBlockRack {...orderProps} />);
+    const card = cardOf("order");
+    expect(within(card).queryByTestId("motif-block-disclosure")).toBeNull();
+    expect(within(card).getByTestId("motif-block-order-min")).toHaveValue(2);
+    const max = within(card).getByTestId("motif-block-order-max");
+    expect(max).toHaveValue(null); // unbounded above renders blank…
+    expect(max).toHaveAttribute("placeholder", "Any"); // …and says so
+  });
+
+  it("is offered in the add-block menu", () => {
+    render(<MotifBlockRack {...orderProps} />);
+    const menu = screen.getByTestId("motif-block-add");
+    expect(
+      within(menu)
+        .getAllByRole("option")
+        .map((o) => o.value)
+    ).toContain("order");
+  });
+
+  it("editing a bound writes through the SAME editChain seam as every other block", () => {
+    const onEditChain = vi.fn();
+    render(<MotifBlockRack {...orderProps} onEditChain={onEditChain} />);
+    fireEvent.change(within(cardOf("order")).getByTestId("motif-block-order-max"), {
+      target: { value: "3" },
+    });
+    const next = onEditChain.mock.calls[0][0](orderChain);
+    expect(next[0]).toEqual({ type: "order", min: 2, max: 3 });
+  });
+
+  it("clearing the max writes null (unbounded), never 0", () => {
+    const onEditChain = vi.fn();
+    render(
+      <MotifBlockRack
+        {...baseProps}
+        chain={[{ type: "order", min: 2, max: 4 }]}
+        onEditChain={onEditChain}
+      />
+    );
+    fireEvent.change(within(cardOf("order")).getByTestId("motif-block-order-max"), {
+      target: { value: "" },
+    });
+    const next = onEditChain.mock.calls[0][0]([{ type: "order", min: 2, max: 4 }]);
+    expect(next[0].max).toBeNull();
+  });
+
+  it("CANNOT author an inverted band — raising min carries max with it", () => {
+    const chain = [{ type: "order", min: 1, max: 2 }];
+    const onEditChain = vi.fn();
+    render(<MotifBlockRack {...baseProps} chain={chain} onEditChain={onEditChain} />);
+    fireEvent.change(within(cardOf("order")).getByTestId("motif-block-order-min"), {
+      target: { value: "5" },
+    });
+    expect(onEditChain.mock.calls[0][0](chain)[0]).toEqual({ type: "order", min: 5, max: 5 });
+  });
+
+  it("…and lowering the max pulls min down with it", () => {
+    const chain = [{ type: "order", min: 3, max: 4 }];
+    const onEditChain = vi.fn();
+    render(<MotifBlockRack {...baseProps} chain={chain} onEditChain={onEditChain} />);
+    fireEvent.change(within(cardOf("order")).getByTestId("motif-block-order-max"), {
+      target: { value: "1" },
+    });
+    expect(onEditChain.mock.calls[0][0](chain)[0]).toEqual({ type: "order", min: 1, max: 1 });
+  });
+});
+
 describe("MotifBlockRack — inline summary controls edit through the chain seam", () => {
   it("toggling a Route role in the collapsed summary writes roles via editChain", () => {
     const onEditChain = vi.fn();

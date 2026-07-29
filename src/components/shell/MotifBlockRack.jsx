@@ -89,6 +89,7 @@ import RoleGlyphToggles from "../ui/RoleGlyphToggles";
 // Human labels for each block type (add-menu + card header).
 const BLOCK_LABELS = {
   route: "Route",
+  order: "Branch order",
   everyN: "Every N",
   skip: "Skip",
   density: "Density",
@@ -96,8 +97,10 @@ const BLOCK_LABELS = {
   sequence: "Sequencer",
 };
 
-// Add-menu order. Sequencer last (it is the terminal block).
-const ADDABLE_TYPES = ["route", "everyN", "skip", "density", "field", "sequence"];
+// Add-menu order. `order` sits next to Route because they are the two "which
+// anchors" filters and the payoff stacks them (route → order → sequence).
+// Sequencer last (it is the terminal block).
+const ADDABLE_TYPES = ["route", "order", "everyN", "skip", "density", "field", "sequence"];
 
 // Blocks that COLLAPSE to a one-line row (Variant D): grip · chevron+name ·
 // inline summary control · anchor chip · power. The chevron unfolds the SAME
@@ -449,6 +452,77 @@ function DensityCardBody({ block, onPatch }) {
           </select>
         </label>
       </div>
+    </div>
+  );
+}
+
+// The Branch-order card (T4): an inclusive [min, max] band over the anchor's
+// Horton–Strahler `meta.order` — 1 is a twig, higher is trunk-ward.
+//
+// TWO HONESTIES THE CARD OWES THE MAKER, both stated in the hint line rather than
+// hidden in behaviour: only a BRANCHING host carries an order (everywhere else
+// this block passes every anchor through untouched — chain.js applyOrder), and
+// every TIP is order 1 because a terminus is a leaf, so a band starting above 1
+// keeps stems only. "Any" is the empty upper bound (null = unbounded), typed as a
+// blank field rather than a magic number.
+//
+// The two inputs are CLAMPED against each other so an inverted band can never be
+// authored here: raising min pushes max up with it, lowering max pulls min down.
+// The engine evaluates min>max naturally (it matches nothing) — this makes that
+// state unreachable from the UI rather than silently repaired in the engine.
+function OrderCardBody({ block, onPatch }) {
+  const min = Number.isFinite(block.min) ? block.min : 1;
+  const hasMax = Number.isFinite(block.max);
+  const max = hasMax ? block.max : "";
+  return (
+    <div className="space-y-1.5">
+      <div className="flex flex-wrap items-center gap-3">
+        <label className="flex items-center gap-1.5 text-xs text-ink-soft">
+          <span className="whitespace-nowrap">From</span>
+          <input
+            type="number"
+            data-testid="motif-block-order-min"
+            aria-label="Minimum branch order"
+            min={1}
+            step={1}
+            value={min}
+            onChange={(e) => {
+              const raw = Number(e.target.value);
+              const next = Number.isFinite(raw) && raw >= 1 ? Math.round(raw) : 1;
+              // Never author an inverted band: carry max up with min.
+              onPatch(hasMax && block.max < next ? { min: next, max: next } : { min: next });
+            }}
+            className="w-12 rounded-xs border border-hairline bg-paper px-1 py-0.5 text-xs text-ink outline-none focus:border-violet num"
+          />
+        </label>
+        <label className="flex items-center gap-1.5 text-xs text-ink-soft">
+          <span className="whitespace-nowrap">To</span>
+          <input
+            type="number"
+            data-testid="motif-block-order-max"
+            aria-label="Maximum branch order (blank for any)"
+            placeholder="Any"
+            min={1}
+            step={1}
+            value={max}
+            onChange={(e) => {
+              const text = e.target.value;
+              if (text === "") {
+                onPatch({ max: null }); // blank ⇒ unbounded above
+                return;
+              }
+              const raw = Number(text);
+              const next = Number.isFinite(raw) && raw >= 1 ? Math.round(raw) : 1;
+              onPatch(next < min ? { min: next, max: next } : { max: next });
+            }}
+            className="w-12 rounded-xs border border-hairline bg-paper px-1 py-0.5 text-xs text-ink outline-none focus:border-violet num"
+          />
+        </label>
+      </div>
+      <p className="text-2xs text-ink-soft/60">
+        1 = twigs · higher = trunk. Tips are always 1; anchors with no branch order
+        pass through.
+      </p>
     </div>
   );
 }
@@ -1593,6 +1667,8 @@ function BlockCardBody({
       );
     case "everyN":
       return <EveryNCardBody block={block} onPatch={onPatch} />;
+    case "order":
+      return <OrderCardBody block={block} onPatch={onPatch} />;
     case "skip":
       return <SkipCardBody block={block} onPatch={onPatch} />;
     case "density":

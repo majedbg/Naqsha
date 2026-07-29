@@ -50,6 +50,14 @@ export function makeBlock(type) {
       return { type: 'skip', mask: [false, true], continuous: false };
     case 'density':
       return { type: 'density', density: 0.5, seed: 1, rngMode: 'hash' };
+    // `order` (T4) defaults to the TRUNK-WARD selection — order 2 and up, no upper
+    // bound — because that is the visible thing it is for ("big palmettes on the
+    // trunk"). Note what min:2 does on a branching host: every tip is a leaf and
+    // therefore order 1, so this block as added drops the Apex flowers and keeps
+    // the crossings / edge samples on the thicker stems. On any other host no
+    // anchor carries an order at all and the block is inert by construction.
+    case 'order':
+      return { type: 'order', min: 2, max: null };
     case 'field':
       return { type: 'field', threshold: 0.5, invert: false };
     case 'sequence':

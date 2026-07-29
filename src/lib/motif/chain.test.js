@@ -246,6 +246,108 @@ describe('runSelectionChain — density block', () => {
 });
 
 // ========================================================================
+// order (Horton–Strahler branch order, T4)
+// ========================================================================
+describe('runSelectionChain — order block', () => {
+  // Four anchors carrying the branch orders a small plant produces: two twigs
+  // (1), a limb (2), the trunk (3).
+  const ordered = () => [
+    mkAnchor('edge', 0, 0, 'o1a', { order: 1 }),
+    mkAnchor('edge', 10, 0, 'o1b', { order: 1 }),
+    mkAnchor('edge', 20, 0, 'o2', { order: 2 }),
+    mkAnchor('edge', 30, 0, 'o3', { order: 3 }),
+  ];
+
+  it('min selects the trunk-ward subset (inclusive)', () => {
+    const out = runSelectionChain(ordered(), [{ type: 'order', min: 2 }]);
+    expect(ids(out.survivors)).toEqual(['o2', 'o3']);
+  });
+
+  it('max selects the twig-ward subset (inclusive)', () => {
+    const out = runSelectionChain(ordered(), [{ type: 'order', max: 1 }]);
+    expect(ids(out.survivors)).toEqual(['o1a', 'o1b']);
+  });
+
+  it('min+max is a closed band', () => {
+    const out = runSelectionChain(ordered(), [{ type: 'order', min: 2, max: 2 }]);
+    expect(ids(out.survivors)).toEqual(['o2']);
+  });
+
+  it('an absent/null bound is unbounded on that side; neither bound keeps all', () => {
+    const anchors = ordered();
+    expect(ids(runSelectionChain(anchors, [{ type: 'order' }]).survivors)).toEqual(ids(anchors));
+    expect(
+      ids(runSelectionChain(anchors, [{ type: 'order', min: null, max: null }]).survivors),
+    ).toEqual(ids(anchors));
+  });
+
+  it('anchors WITHOUT meta.order pass through UNAFFECTED (inert on every other host)', () => {
+    const plain = edgeRow(4); // no meta.order at all — every non-branch host
+    for (const block of [
+      { type: 'order', min: 3 },
+      { type: 'order', max: 0 },
+      { type: 'order', min: 5, max: 9 },
+    ]) {
+      expect(ids(runSelectionChain(plain, [block]).survivors)).toEqual(ids(plain));
+    }
+  });
+
+  it('a MIXED stage keeps every orderless anchor and filters only the ordered ones', () => {
+    const mixed = [
+      mkAnchor('edge', 0, 0, 'legacy'), // no meta.order
+      mkAnchor('edge', 10, 0, 'twig', { order: 1 }),
+      mkAnchor('edge', 20, 0, 'trunk', { order: 4 }),
+    ];
+    const out = runSelectionChain(mixed, [{ type: 'order', min: 2 }]);
+    expect(ids(out.survivors)).toEqual(['legacy', 'trunk']);
+  });
+
+  it('a non-numeric meta.order is treated as absent (never drops)', () => {
+    const weird = [
+      mkAnchor('edge', 0, 0, 'nan', { order: NaN }),
+      mkAnchor('edge', 10, 0, 'str', { order: '3' }),
+      mkAnchor('edge', 20, 0, 'real', { order: 3 }),
+    ];
+    const out = runSelectionChain(weird, [{ type: 'order', min: 3 }]);
+    expect(ids(out.survivors)).toEqual(['nan', 'str', 'real']);
+  });
+
+  it('an inverted range (min > max) matches no ordered anchor — not leniently repaired', () => {
+    const out = runSelectionChain(ordered(), [{ type: 'order', min: 3, max: 1 }]);
+    expect(out.survivors).toEqual([]);
+  });
+
+  it('bypass makes it a pass-through like every other block', () => {
+    const anchors = ordered();
+    const out = runSelectionChain(anchors, [{ type: 'order', min: 3, bypass: true }]);
+    expect(ids(out.survivors)).toEqual(ids(anchors));
+  });
+
+  it('stacks with route — the payoff shape (route → order → …)', () => {
+    const anchors = [
+      mkAnchor('tip', 0, 0, 'tip1', { order: 1 }),
+      mkAnchor('edge', 10, 0, 'stem1', { order: 1 }),
+      mkAnchor('edge', 20, 0, 'stem3', { order: 3 }),
+    ];
+    const out = runSelectionChain(anchors, [
+      { type: 'route', roles: ['edge'] },
+      { type: 'order', min: 2 },
+    ]);
+    expect(ids(out.survivors)).toEqual(['stem3']);
+  });
+
+  it('is traced by onStage like any other filter block', () => {
+    const seen = [];
+    runSelectionChain(ordered(), [{ type: 'order', min: 2 }], {
+      onStage: (e) => seen.push(e),
+    });
+    expect(seen).toEqual([
+      expect.objectContaining({ blockIndex: 0, type: 'order', inCount: 4, outCount: 2 }),
+    ]);
+  });
+});
+
+// ========================================================================
 // field
 // ========================================================================
 describe('runSelectionChain — field block', () => {

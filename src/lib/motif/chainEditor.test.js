@@ -61,6 +61,13 @@ describe('chainEditor — makeBlock defaults', () => {
     expect(makeBlock('field')).toMatchObject({ type: 'field', invert: false });
     expect(makeBlock('sequence')).toMatchObject({ type: 'sequence', slots: [] });
   });
+
+  it('a new ORDER block is the trunk-ward band (min 2, unbounded above)', () => {
+    // "Defaults to a value that DOES something when added" — order 2+ is the
+    // trunk-ward selection the payoff wants, and it narrows visibly on a
+    // branching host (it drops the order-1 tips) while staying inert elsewhere.
+    expect(makeBlock('order')).toEqual({ type: 'order', min: 2, max: null });
+  });
 });
 
 describe('chainEditor — canAddBlock (sequence is at-most-one)', () => {

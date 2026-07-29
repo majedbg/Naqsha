@@ -63,6 +63,7 @@ import { applyOverrides, resolveOverrideRecords } from './overrides.js';
  * @typedef {{type:'everyN', bypass?:boolean, continuous?:boolean, n?:number, offset?:number}} EveryNBlock
  * @typedef {{type:'skip', bypass?:boolean, continuous?:boolean, mask?:boolean[]}} SkipBlock
  * @typedef {{type:'density', bypass?:boolean, density?:number, seed?:number, rngMode?:'sequential'|'hash'}} DensityBlock
+ * @typedef {{type:'order', bypass?:boolean, min?:number|null, max?:number|null}} OrderBlock
  * @typedef {{type:'field', bypass?:boolean, field?:{sampleNorm:(u:number,v:number)=>number}, threshold?:number, invert?:boolean}} FieldBlock
  * @typedef {{type:'sequence', [k:string]:any}} SequenceBlock
  */
@@ -198,6 +199,52 @@ function applyDensity(stage, block) {
 }
 
 /**
+ * ORDER: keep anchors whose HORTON–STRAHLER branch order (`meta.order`) falls in
+ * the inclusive [min, max] range. An absent/null bound is unbounded on that side,
+ * so a block with neither bound keeps everything.
+ *
+ * ── The pass-through rule (load-bearing, deliberately unconditional) ─────────
+ * An anchor with NO numeric `meta.order` ALWAYS passes. Only a branching host
+ * (`branch`, via spaceColonizationSkeleton's Strahler post-pass) carries an
+ * order; every other host, and every document authored before this block existed,
+ * carries none — so on them this block is INERT rather than fatal. That is not a
+ * default someone may flip: there is no `passUnordered` option, because the hard
+ * requirement is "a misplaced order block must never empty the selection", and an
+ * option is a way to violate it. A designer who wants to drop the orderless
+ * anchors already has Route for that.
+ *
+ * DEGENERATE RANGE: `min > max` is a genuine user contradiction (two independent
+ * numbers), not a slider that wandered out of range, so it is NOT leniently
+ * repaired the way `everyN`'s n<1 is — it simply matches no ordered anchor. The
+ * rack clamps its two inputs so the range cannot be authored inverted, which makes
+ * this reachable only from hand-written / imported chain state.
+ *
+ * WHY meta AND NOT THE ID: branch order is data ABOUT an anchor, never part of its
+ * identity. `anchorId()` builds ids and random-mode slot dealing hashes on
+ * `anchor.id` (ADR-0005 survivor stability), so folding order into an id would
+ * silently re-roll every random-mode glyph assignment in every existing document.
+ * @param {Anchor[]} stage
+ * @param {OrderBlock} block
+ * @returns {Anchor[]}
+ */
+function applyOrder(stage, block) {
+  // Number.isFinite (NOT the global isFinite) throughout — the global COERCES, so
+  // it would read the string '3' as an order and a numeric-looking bound as a
+  // bound. The same spelling is used in modeMatch.canonicalBlock and the rack's
+  // OrderCardBody; keep all three on it.
+  const min = Number.isFinite(block.min) ? block.min : null;
+  const max = Number.isFinite(block.max) ? block.max : null;
+  if (min === null && max === null) return stage; // unbounded ⇒ keep all.
+  return stage.filter((a) => {
+    const order = a && a.meta ? a.meta.order : undefined;
+    if (!Number.isFinite(order)) return true; // no (usable) order ⇒ untouched
+    if (min !== null && order < min) return false;
+    if (max !== null && order > max) return false;
+    return true;
+  });
+}
+
+/**
  * FIELD: keep anchors whose scalar field sample compares to `threshold`
  * (invert flips). No-op unless a field AND both canvas dims are present —
  * byte-identical to selectAnchors' field stage.
@@ -235,7 +282,7 @@ function applyField(stage, block, opts) {
  * `onStage` is byte-identical to one with it (this is `sieveCounts.js`'s seam).
  *
  * @param {Anchor[]} anchors  input order is contractual and preserved in survivors.
- * @param {Array<RouteBlock|EveryNBlock|SkipBlock|DensityBlock|FieldBlock|SequenceBlock>} chain
+ * @param {Array<RouteBlock|EveryNBlock|SkipBlock|DensityBlock|OrderBlock|FieldBlock|SequenceBlock>} chain
  * @param {{canvasW?:number, canvasH?:number, overrides?:{include?:OverrideRef[], exclude?:OverrideRef[], tolerance?:number}|{records?:Array<{ref:OverrideRef, hidden?:boolean, scale?:number, angle?:number}>, tolerance?:number}, onStage?:(entry:{blockIndex:number, block:object, type:string, inCount:number, outCount:number, bypassed:boolean})=>void}} [opts]
  * @returns {{survivors: Anchor[], orphans: OverrideRef[], sequence: SequenceBlock|null,
  *            overrideRecords: Map<string, {ref:OverrideRef, hidden?:boolean, scale?:number, angle?:number}>}}
@@ -289,6 +336,9 @@ export function runSelectionChain(anchors, chain, opts = {}) {
         break;
       case 'density':
         stage = applyDensity(stage, block);
+        break;
+      case 'order':
+        stage = applyOrder(stage, block);
         break;
       case 'field':
         stage = applyField(stage, block, opts);

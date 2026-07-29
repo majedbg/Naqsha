@@ -793,6 +793,31 @@ function spiralAnchors(params, canvasW, canvasH) {
 //     EXCLUDED so an edge sample can never duplicate a tip.
 //   • NO cells: a stem is an open curve enclosing no region.
 //
+// ── meta.order — HORTON–STRAHLER BRANCH ORDER (T4) ──────────────────────────
+// ONE RULE, all three roles: an anchor carries the Strahler order of the SEGMENT
+// ARRIVING FROM ITS PARENT — i.e. the order of that segment's DISTAL (child) node,
+// which is the order of the whole subtree the segment feeds. Concretely:
+//   • crossing / tip → `order[node]`, since a node's own Strahler order IS the
+//     order of its parent edge;
+//   • edge sample → `order[nodeIds[i+1]]` for the segment [i, i+1] it sits on,
+//     located from the sample's arc length `s` under the upper-inclusive rule
+//     cum[i] < s <= cum[i+1] (a sample landing exactly on an interior vertex is
+//     read as belonging to the DISTAL segment). Strahler order is non-increasing
+//     root→tip along a main-branch path, so a stem's samples read as a descending
+//     staircase from its own order down to 1.
+//
+// EVERY TIP IS ORDER 1, UNCONDITIONALLY. A tip is childless, and
+// `strahlerFromParents` gives every leaf order 1 — including the trunk's own
+// terminus. So the `order` chain filter differentiates STEM anchors (crossings +
+// edge samples: "big palmettes on the trunk, buds on first-order twigs"), never
+// Apex flowers; a filter with min>1 drops every tip. Pinned by test rather than
+// left as a surprise. There is deliberately no second, path-scoped order key —
+// one anchor, one order, or the two would be confused at the point of use.
+//
+// It goes in `meta`, NEVER in the id: `anchorId()` builds ids and random-mode slot
+// dealing hashes on `anchor.id` (ADR-0005 survivor stability), so folding order in
+// would silently re-roll every random-mode glyph assignment in existing documents.
+//
 // EDGE SAMPLING — a documented deviation from spiral. Spiral makes ONE
 // sampleEdgeAnchors call over all arms because its arms are all the same length.
 // A plant's stems are not: they range from ~30px twigs to ~950px trunks, and
@@ -840,7 +865,7 @@ function branchAnchors(params, canvasW, canvasH, opts) {
 
   const rand = makeP5Random(opts && opts.hostSeed);
   const skeleton = buildSkeleton(params || {}, canvasW, canvasH, () => rand());
-  const { nodes, parent, junctions, paths } = skeleton;
+  const { nodes, parent, junctions, paths, order } = skeleton;
   if (paths.length === 0) return []; // nothing drawn ⇒ nothing to anchor.
 
   // World frame, matching Spiral: the core builds CENTRED coords and drawBase is
@@ -873,13 +898,31 @@ function branchAnchors(params, canvasW, canvasH, opts) {
       tangent,
       normal: tangent + HALF_PI,
       s: 0,
-      meta: { junction: true, node: j, pathIndex: owner[j] },
+      meta: { junction: true, node: j, pathIndex: owner[j], order: order[j] },
     });
   }
 
   // ── EDGES: interior arc-length samples per stem (see the header's deviation).
   for (let k = 0; k < paths.length; k++) {
     const pts = paths[k].points.map((p) => ({ x: p.x + ox, y: p.y + oy }));
+    // Cumulative arc length at each VERTEX of the very polyline handed to
+    // sampleEdgeAnchors, so a sample's `s` maps back to its segment exactly (see
+    // the header's meta.order rule). cum[i] is the distance from the path start
+    // to nodeIds[i]; segment i spans (cum[i], cum[i+1]].
+    const cum = new Array(pts.length);
+    cum[0] = 0;
+    for (let i = 1; i < pts.length; i++) {
+      cum[i] = cum[i - 1] + Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+    }
+    const nodeIds = paths[k].nodeIds;
+    const orderAt = (s) => {
+      // Upper-inclusive: the first vertex whose cumulative length reaches `s`
+      // ends the segment the sample sits on, and that DISTAL node carries the
+      // segment's Strahler order. Endpoints are excluded by the sampler, so the
+      // scan always lands on an interior segment; the final clamp is a backstop.
+      for (let i = 1; i < cum.length; i++) if (s <= cum[i]) return order[nodeIds[i]];
+      return order[nodeIds[nodeIds.length - 1]];
+    };
     const length = objectPolylineLength(pts, false);
     const maxCount = Math.floor(length / MIN_EDGE_SPACING) - 1;
     const count = Math.min(Math.round(edgeSamplesPerBranch), maxCount);
@@ -893,7 +936,7 @@ function branchAnchors(params, canvasW, canvasH, opts) {
       anchors.push({
         ...e,
         id: anchorId('edge', k, e.meta.sampleIndex),
-        meta: { ...e.meta, pathIndex: k, branch: k },
+        meta: { ...e.meta, pathIndex: k, branch: k, order: orderAt(e.s) },
       });
     }
   }
@@ -914,7 +957,10 @@ function branchAnchors(params, canvasW, canvasH, opts) {
       tangent: grow + HALF_PI,
       normal: grow,
       s: 0,
-      meta: { pathIndex: k, branch: k, node: paths[k].tipNode },
+      // A tip is childless ⇒ order 1, always (see the header). Read from the
+      // skeleton rather than written as a literal 1, so a future generator that
+      // changes what a terminus means changes this with it.
+      meta: { pathIndex: k, branch: k, node: paths[k].tipNode, order: order[paths[k].tipNode] },
     });
   }
 

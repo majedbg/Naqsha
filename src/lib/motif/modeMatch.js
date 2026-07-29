@@ -227,6 +227,15 @@ function canonicalBlock(block) {
       out.mask = Array.isArray(b.mask) ? [...b.mask].map(Boolean) : [];
       out.continuous = !!b.continuous;
       break;
+    case 'order':
+      // Both bounds are OPTIONAL and unbounded when absent, so null is the
+      // canonical "no bound" on either side — an omitted max and an explicit
+      // `max:null` are the same design. Without this case the lenient default
+      // would collapse every order block to `{type:'order'}` and call two
+      // different bands equal.
+      out.min = Number.isFinite(b.min) ? b.min : null;
+      out.max = Number.isFinite(b.max) ? b.max : null;
+      break;
     case 'density':
       out.density = b.density != null ? b.density : 1;
       out.seed = b.seed != null ? b.seed : 1;

@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
+import { createHash } from 'node:crypto';
 import { getSemanticAnchors } from './semanticAnchors.js';
+import { runSelectionChain } from './chain.js';
+import { buildSkeleton } from '../patterns/spaceColonizationSkeleton.js';
 import { anchorId, MIN_EDGE_SPACING } from './anchors.js';
 import { placeMotifs, selectAnchors } from './placementEngine.js';
 import { partitionZones } from './zones.js';
@@ -2159,7 +2162,160 @@ describe('branch — edge sampling honours the endpoint + spacing contract', () 
     const ids = anchors.map((a) => a.id);
     expect(new Set(ids).size).toBe(ids.length);
     for (const a of anchors) expect(a.id.startsWith(`${a.role}:`)).toBe(true);
-    expect(anchors.every((a) => a.meta.order === undefined)).toBe(true); // T4 wires this
+    // T4: order lives in meta. An id is `role:pathIndex[:sampleIndex]` and NOTHING
+    // else — an id that mentioned the order would re-roll every random-mode glyph
+    // assignment in every existing document the moment a skeleton shifted.
+    for (const a of anchors) {
+      const parts = a.id.split(':');
+      expect(parts.length).toBe(a.role === 'edge' ? 3 : 2);
+      expect(parts.slice(1).map(Number)).toEqual(
+        a.role === 'edge'
+          ? [a.meta.pathIndex, a.meta.sampleIndex]
+          : [a.role === 'tip' ? a.meta.pathIndex : a.meta.node]
+      );
+    }
+  });
+});
+
+// ── T4: meta.order (Horton–Strahler) ─────────────────────────────────────────
+//
+// The rule under test, stated once in the extractor header: an anchor carries the
+// Strahler order of the SEGMENT ARRIVING FROM ITS PARENT — the order of that
+// segment's distal (child) node. Ground truth is the SAME seeded buildSkeleton the
+// extractor runs, but the edge→segment association is re-derived GEOMETRICALLY
+// here (nearest segment to the sample point) rather than from arc length, so the
+// test is an independent check and not a copy of the implementation.
+describe('branch — meta.order carries Strahler branch order (T4)', () => {
+  const params = branchParams();
+  const anchors = getSemanticAnchors(
+    'branch', params, BRANCH_W, BRANCH_H, { hostSeed: BRANCH_SEED }
+  );
+  const rand = makeP5Random(BRANCH_SEED);
+  const skeleton = buildSkeleton(params, BRANCH_W, BRANCH_H, () => rand());
+  const ox = BRANCH_W / 2;
+  const oy = BRANCH_H / 2;
+
+  /** Order of the segment nearest to (x,y) on path k, distal node's order. */
+  function geometricOrder(k, x, y) {
+    const { nodeIds } = skeleton.paths[k];
+    let best = 1;
+    let bestD = Infinity;
+    for (let i = 1; i < nodeIds.length; i++) {
+      const a = skeleton.nodes[nodeIds[i - 1]];
+      const b = skeleton.nodes[nodeIds[i]];
+      const ax = a.x + ox;
+      const ay = a.y + oy;
+      const bx = b.x + ox;
+      const by = b.y + oy;
+      const vx = bx - ax;
+      const vy = by - ay;
+      const len2 = vx * vx + vy * vy;
+      const t = len2 === 0 ? 0 : Math.max(0, Math.min(1, ((x - ax) * vx + (y - ay) * vy) / len2));
+      const d = Math.hypot(x - (ax + t * vx), y - (ay + t * vy));
+      if (d < bestD) {
+        bestD = d;
+        best = skeleton.order[nodeIds[i]];
+      }
+    }
+    return best;
+  }
+
+  it('every anchor carries a finite integer order >= 1', () => {
+    expect(anchors.length).toBeGreaterThan(100);
+    for (const a of anchors) {
+      expect(Number.isInteger(a.meta.order)).toBe(true);
+      expect(a.meta.order).toBeGreaterThanOrEqual(1);
+    }
+  });
+
+  it('CROSSING anchors carry their own node order (= the order of their parent edge)', () => {
+    const crossings = anchors.filter((a) => a.role === 'crossing');
+    expect(crossings.length).toBeGreaterThan(10);
+    for (const c of crossings) expect(c.meta.order).toBe(skeleton.order[c.meta.node]);
+    // A junction is where orders are promoted, so the plant really has depth.
+    expect(Math.max(...crossings.map((c) => c.meta.order))).toBeGreaterThan(1);
+  });
+
+  it('EVERY TIP IS ORDER 1 — a terminus is a leaf, trunk included', () => {
+    const tips = anchors.filter((a) => a.role === 'tip');
+    expect(tips.length).toBeGreaterThan(20);
+    expect(new Set(tips.map((t) => t.meta.order))).toEqual(new Set([1]));
+  });
+
+  it('EDGE samples carry the order of the segment they sit on', () => {
+    const edges = anchors.filter((a) => a.role === 'edge');
+    expect(edges.length).toBeGreaterThan(50);
+    for (const e of edges) {
+      expect(e.meta.order).toBe(geometricOrder(e.meta.pathIndex, e.x, e.y));
+    }
+  });
+
+  it('order is NON-INCREASING root→tip along each stem', () => {
+    const byPath = new Map();
+    for (const e of anchors.filter((a) => a.role === 'edge')) {
+      if (!byPath.has(e.meta.pathIndex)) byPath.set(e.meta.pathIndex, []);
+      byPath.get(e.meta.pathIndex).push(e);
+    }
+    for (const [k, list] of byPath) {
+      const seq = list.slice().sort((a, b) => a.s - b.s).map((e) => e.meta.order);
+      for (let i = 1; i < seq.length; i++) expect(seq[i]).toBeLessThanOrEqual(seq[i - 1]);
+      // and never exceeds the stem's own order (its first segment).
+      const { nodeIds } = skeleton.paths[k];
+      expect(Math.max(...seq)).toBeLessThanOrEqual(skeleton.order[nodeIds[1]]);
+    }
+  });
+
+  it('the TRUNK carries the highest order in the plant (the payoff: palmettes there)', () => {
+    const trunk = anchors.filter((a) => a.role === 'edge' && a.meta.pathIndex === 0);
+    expect(trunk.length).toBeGreaterThan(0);
+    const maxTrunk = Math.max(...trunk.map((a) => a.meta.order));
+    const maxAll = Math.max(...anchors.map((a) => a.meta.order));
+    expect(maxTrunk).toBe(maxAll);
+    expect(maxTrunk).toBeGreaterThanOrEqual(3);
+  });
+
+  it('the chain ORDER filter selects exactly the expected subset of a seeded skeleton', () => {
+    const maxAll = Math.max(...anchors.map((a) => a.meta.order));
+    for (const [min, max] of [[2, null], [1, 1], [maxAll, null], [2, 2]]) {
+      const expected = anchors
+        .filter((a) => {
+          const o = a.role === 'edge' ? geometricOrder(a.meta.pathIndex, a.x, a.y)
+            : a.role === 'tip' ? skeleton.order[a.meta.node]
+            : skeleton.order[a.meta.node];
+          return (min == null || o >= min) && (max == null || o <= max);
+        })
+        .map((a) => a.id);
+      const { survivors } = runSelectionChain(anchors, [{ type: 'order', min, max }]);
+      expect(survivors.map((a) => a.id)).toEqual(expected);
+      expect(expected.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('ANCHOR IDS ARE BYTE-IDENTICAL to the pre-T4 extractor (ADR-0005 hard constraint)', () => {
+    // Fingerprints captured by running THIS extractor on the commit before
+    // meta.order existed (T3, 54b0803). Adding data to `meta` must not move a
+    // single id: anchorId() and random-mode slot dealing hash on anchor.id, so a
+    // changed id silently re-rolls glyph assignments in every saved document.
+    //
+    // WHEN THIS FAILS, READ THE COUNT FIRST. The hashes are a function of
+    // DEFAULT_PARAMS.branch + the seed, not of the id SCHEME alone: retuning a
+    // skeleton default (attractorCount / killDistance / stepLength / …) grows a
+    // different plant and legitimately invalidates these literals — re-capture
+    // them, do not hunt an ADR-0005 violation that did not happen. A count that
+    // still matches while the hash moved is the real alarm: the same anchors under
+    // different ids, which is exactly the regression this guards.
+    const fingerprint = (params_, seed) =>
+      getSemanticAnchors('branch', params_, BRANCH_W, BRANCH_H, { hostSeed: seed }).map((a) => a.id);
+    const sha = (ids) => createHash('sha256').update(ids.join('\n')).digest('hex').slice(0, 32);
+    for (const [params_, seed, count, hash] of [
+      [branchParams(), BRANCH_SEED, 391, '37f0c131c1ece13e8092eb735b64bdbb'],
+      [branchParams(), 7, 343, 'edc2c1dcfe88bbba9701f3275588506b'],
+      [branchParams({ edgeSamplesPerBranch: 3 }), BRANCH_SEED, 244, 'f1e96ffc50dc07c271a81c5363873a81'],
+    ]) {
+      const ids = fingerprint(params_, seed);
+      expect(ids.length).toBe(count); // geometry — a default-param change lands here
+      expect(sha(ids)).toBe(hash); //    identity — an id-scheme change lands here
+    }
   });
 });
 

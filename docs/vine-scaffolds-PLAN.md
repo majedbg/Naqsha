@@ -1,7 +1,7 @@
 # Vine Motif Scaffolds — Build Plan
 
 **Branch:** `feat/motif-lines-updates` (ported from `vine-motif-scaffolds`) · **Date:** 2026-07-26, updated 2026-07-29
-**Status:** T3 BUILT — cherry-picked onto post-footprint main (PR #210) and suite-green (7621); T1/T2/T4/S1 in flight this branch
+**Status:** T3 + T4 BUILT on this branch (suite-green); T1/T2/S1 still in flight
 **Companion to:** `docs/vine-scaffolds-RESEARCH.md` (candidates, sources, ranking)
 
 RESEARCH names the techniques and ranks them. This doc turns that ranking into
@@ -348,6 +348,37 @@ Per D2/V4. Strahler number as a pure post-pass over `parent[]`, written to
   silent regression that only surfaces on old saves.
 - **Payoff:** big palmettes on the trunk, buds on first-order twigs — the thing
   that makes the output read as a plant rather than a scatter.
+
+#### T4 BUILT — 2026-07-29
+
+**The rule, one sentence for all three roles:** an anchor carries the Strahler
+order of the SEGMENT ARRIVING FROM ITS PARENT — the order of that segment's distal
+(child) node, which is the order of the subtree it feeds. So `crossing`/`tip` take
+`order[node]` (a node's own Strahler order IS its parent edge's), and an `edge`
+sample takes the order of the segment its arc length `s` lands on, upper-inclusive
+(`cum[i] < s <= cum[i+1]` ⇒ the distal segment).
+
+**Discovered while building — every tip is order 1, unconditionally.** A terminus
+is childless, and `strahlerFromParents` gives every leaf order 1, the trunk's own
+terminus included. So the `order` filter differentiates STEM anchors (crossings +
+edge samples) and never Apex flowers; a band starting above 1 drops every tip.
+Pinned by test and stated in the extractor header + the card's hint line rather
+than left as a surprise. The payoff still lands — "palmettes on the trunk" is a
+Stem-zone selection — but order-differentiated FLOWERS would need a second,
+path-scoped key, deliberately not shipped (one anchor, one order).
+
+**Filter shape:** `{type:'order', min?, max?}`, an inclusive band; absent/null is
+unbounded on that side. Anchors with no numeric `meta.order` ALWAYS pass — there is
+no `passUnordered` flag, because the requirement is "a misplaced order block must
+never empty the selection" and an option is a way to violate it. `min > max` is a
+real contradiction rather than a wandering slider, so it is not leniently repaired
+(it matches no ordered anchor); the rack clamps its two inputs against each other,
+which makes that state unreachable from the UI instead of silently fixed.
+
+**Files:** `semanticAnchors.js` (attach), `chain.js` (typedef + `applyOrder` +
+dispatch), `chainEditor.js` (`makeBlock`), `modeMatch.js` (canonicalization),
+`MotifBlockRack.jsx` (labels + add menu + `OrderCardBody`). ADR 0008 untouched.
+Anchor ids are pinned byte-identical to pre-T4 by a fingerprint test.
 
 ### T5 — Space colonization · **medium · reuses T3's seam**
 RESEARCH's best-looking branchy scaffold. Once T3 exists, this is a second

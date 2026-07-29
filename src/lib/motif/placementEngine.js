@@ -224,7 +224,32 @@ export function selectAnchors(anchors, rules = {}, opts = {}) {
  *   what bound `packedRadius` (decision 15b). `capObstacle` is a COPIED
  *   `{x,y,r}`, never a reference into the packer's growing obstacle list.
  *
- * @typedef {{anchorId:string, reason:'junction-skip'|'below-floor'|'no-fit'|'rest'}} Rejection
+ * @typedef {{anchorId:string, reason:'junction-skip'|'below-floor'|'no-fit'|'rest',
+ *            x?:number, y?:number, wantedRadius?:number}} Rejection
+ *
+ *   REJECTION GEOMETRY (#191) — `x`, `y` and `wantedRadius` are present on the
+ *   SIZING-STAGE reasons ONLY (`below-floor` and `no-fit`), because those are the
+ *   two the footprint overlay draws, as a dotted empty ring at the size the glyph
+ *   wanted. It cannot derive that ring from `{anchorId, reason}`: `x`/`y` are the
+ *   POST-JITTER centre and the radius depends on `placed`, `margin`,
+ *   `scaleFactor` and `sizeScale`, none of which a caller holds.
+ *
+ *   `wantedRadius` is the NATURAL TARGET (`size × scaleFactor × sizeScale`), never
+ *   the drawn radius. It is the one quantity BOTH modes and BOTH reasons agree on:
+ *   on the PROPORTIONAL path a `no-fit` at `R <= 0` returns before any cap is
+ *   computed, so no drawn radius exists there at all; in `fixed` mode a radius does
+ *   exist by then, but it IS this same expression, so the two modes report the same
+ *   thing under one name. Decision 7 defines naturalTarget as literally "the size I
+ *   want", and a `below-floor` glyph's drawn radius is by definition below
+ *   `sizing.min`, so a ring drawn there would be an invisible speck — the exact
+ *   failure the overlay exists to fix.
+ *
+ *   THE CONDITIONAL SHAPE IS CORRECT, not an oversight. `junction-skip` and `rest`
+ *   reject at the TOP of the loop, above the transform that computes the centre —
+ *   the fields DO NOT EXIST YET at those two sites — and neither is a rejection
+ *   the user needs explained, so the overlay draws nothing for them. Hoisting the
+ *   transform to make the shape uniform would buy nothing and cost the two early
+ *   returns their point.
  */
 
 // Placement budget (2026-07-19 post-crash hardening, docs §6). A motif-bearing
@@ -381,6 +406,12 @@ export function resolvePlacements(survivors, config = {}, opts = {}) {
     const dScale = rand();
 
     // 1. Junction policy.
+    //
+    // BARE `{anchorId, reason}` — no rejection geometry (#191), and the same at
+    // the Rest below. Both reject HERE, above the transform at step 4, so `x`/`y`
+    // do not exist yet; and neither is a rejection the user needs a ring for (a
+    // skipped junction and a Rest are both things they asked for). Only the two
+    // SIZING-stage reasons carry geometry.
     if (anchor.meta && anchor.meta.junction === true && junction === 'skip') {
       rejected.push({ anchorId: anchor.id, reason: 'junction-skip' });
       return;
@@ -471,12 +502,15 @@ export function resolvePlacements(survivors, config = {}, opts = {}) {
       // sizeScale (slot modifier, default 1) grows the footprint BEFORE the
       // acceptance test so a bigger slot claims more space.
       radius = size * scaleFactor * sizeScale;
+      // Both rejections carry the ring the overlay draws (#191). In `fixed` mode
+      // the fixed radius IS the natural target — the very same expression — so
+      // `wantedRadius` is `radius` with nothing to hoist.
       if (R <= 0 || !fitsAt(center, radius, placed, boundary)) {
-        rejected.push({ anchorId: anchor.id, reason: 'no-fit' });
+        rejected.push({ anchorId: anchor.id, reason: 'no-fit', x, y, wantedRadius: radius });
         return;
       }
       if (radius < min) {
-        rejected.push({ anchorId: anchor.id, reason: 'below-floor' });
+        rejected.push({ anchorId: anchor.id, reason: 'below-floor', x, y, wantedRadius: radius });
         return;
       }
       // `fixed` mode's CONTROL FLOW is untouched by #186 and `hold` is honestly
@@ -502,21 +536,30 @@ export function resolvePlacements(survivors, config = {}, opts = {}) {
       // overlap and an unbounded region (R=Inf) simply falls back to the natural
       // size — no Infinity leaks out.
       //
-      // `no-fit` at R <= 0 means the centre is INSIDE an already-committed disc.
-      // That is not "capped by a neighbour", it is coincident with one, so it
-      // stays a hard drop at every value of `hold` (decision 5).
-      if (R <= 0) {
-        rejected.push({ anchorId: anchor.id, reason: 'no-fit' });
-        return;
-      }
-      const margin = Math.min(1, Math.max(0, sizing.margin));
       // sizeScale grows only the NATURAL target, never the boundary/neighbour
       // caps nor the host-container cap, so the no-overlap invariant is
       // preserved and a Slot's size scale can never break containment.
       // `sizeScale` is INSIDE naturalTarget (decision 7), which is what makes
       // the pair read "Scale = the size I want; `hold` = how much packing is
       // allowed to take it away".
+      //
+      // HOISTED ABOVE THE `R <= 0` RETURN (#191) so that rejection can report the
+      // radius it wanted — the only radius it will ever have, since it bails out
+      // before any cap is computed. The move is byte-identical: this is pure
+      // arithmetic over `size`, `scaleFactor` and `sizeScale`, all three fixed by
+      // now, and all four RNG draws were consumed at the top of the loop, so the
+      // determinism keystone ("exactly four draws per survivor, before any early
+      // return") is untouched.
       const naturalTarget = size * scaleFactor * sizeScale;
+
+      // `no-fit` at R <= 0 means the centre is INSIDE an already-committed disc.
+      // That is not "capped by a neighbour", it is coincident with one, so it
+      // stays a hard drop at every value of `hold` (decision 5).
+      if (R <= 0) {
+        rejected.push({ anchorId: anchor.id, reason: 'no-fit', x, y, wantedRadius: naturalTarget });
+        return;
+      }
+      const margin = Math.min(1, Math.max(0, sizing.margin));
 
       // margin × one term, with the single IEEE754 product that would lie here:
       // `0 * Infinity` is NaN, but an INFINITE term means "this side does not
@@ -560,7 +603,13 @@ export function resolvePlacements(survivors, config = {}, opts = {}) {
         const d = Math.hypot(x - anchor.x, y - anchor.y);
         const hostCap = margin * Math.max(0, anchor.hostRadius - d);
         if (hostCap <= 0) {
-          rejected.push({ anchorId: anchor.id, reason: 'no-fit' });
+          rejected.push({
+            anchorId: anchor.id,
+            reason: 'no-fit',
+            x,
+            y,
+            wantedRadius: naturalTarget,
+          });
           return;
         }
         // TIE-BREAK, deliberate: at hostCap === boundaryCap we report 'host'.
@@ -599,7 +648,16 @@ export function resolvePlacements(survivors, config = {}, opts = {}) {
       // Decision 5: the floor tests the DRAWN radius, so `hold` can rescue a
       // glyph that packing shrank out of existence.
       if (drawnRadius < min) {
-        rejected.push({ anchorId: anchor.id, reason: 'below-floor' });
+        // `wantedRadius` is naturalTarget, NOT `drawnRadius` (#191): drawnRadius
+        // is by definition below the floor here, so a ring drawn at it would be
+        // the invisible speck the overlay exists to replace.
+        rejected.push({
+          anchorId: anchor.id,
+          reason: 'below-floor',
+          x,
+          y,
+          wantedRadius: naturalTarget,
+        });
         return;
       }
 

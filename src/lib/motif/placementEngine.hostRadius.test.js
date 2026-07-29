@@ -112,16 +112,24 @@ describe('hostRadius — containment on the displaced centre', () => {
 
   it('a displacement EXCEEDING the container yields rejection, never a negative radius', () => {
     // min is 0, so the pre-existing below-floor path cannot be what rejects this.
-    const { placements, rejected } = resolvePlacements(
-      [cellAnchor('a', 500, 500, 3)],
-      {
-        sizing: { mode: 'proportional', size: 1000, min: 0, margin: 1 },
-        jitter: { seed: 3, lateral: 1, lateralRange: 200 },
-      },
-      { boundary: BOUNDARY }
-    );
+    const config = {
+      sizing: { mode: 'proportional', size: 1000, min: 0, margin: 1 },
+      jitter: { seed: 3, lateral: 1, lateralRange: 200 },
+    };
+    const { placements, rejected } = resolvePlacements([cellAnchor('a', 500, 500, 3)], config, {
+      boundary: BOUNDARY,
+    });
     expect(placements).toHaveLength(0);
-    expect(rejected).toEqual([{ anchorId: 'a', reason: 'no-fit' }]);
+    // The rejection carries the ring the overlay draws (#191). Its post-jitter
+    // centre comes from a SIBLING RUN with a container big enough to place: the
+    // four RNG draws and the centre transform run entirely above every sizing
+    // decision, so widening the container leaves x/y byte-identical.
+    const centre = resolvePlacements([cellAnchor('a', 500, 500, 5000)], config, {
+      boundary: BOUNDARY,
+    }).placements[0];
+    expect(rejected).toEqual([
+      { anchorId: 'a', reason: 'no-fit', x: centre.x, y: centre.y, wantedRadius: 1000 },
+    ]);
   });
 
   it('the LAYER SIZE is still a ceiling — host radius never raises a glyph above it', () => {
@@ -163,7 +171,13 @@ describe('hostRadius — containment on the displaced centre', () => {
     };
     const bare = placeMotifs(anchors, binding, { boundary: BOUNDARY });
     expect(bare.placements.map((p) => p.anchorId)).toEqual(['roomy']);
-    expect(bare.rejected).toEqual([{ anchorId: 'tiny', reason: 'below-floor' }]);
+    // No jitter ⇒ the centre the rejection reports (#191) is the anchor, and
+    // `wantedRadius` is the NATURAL target — the layer size, not the 3.6 the
+    // container clamped it to (which is the invisible speck the ring must not
+    // be drawn at).
+    expect(bare.rejected).toEqual([
+      { anchorId: 'tiny', reason: 'below-floor', x: 200, y: 500, wantedRadius: 1000 },
+    ]);
 
     // Same run, now with a per-glyph scale override pinned on the rejected anchor.
     const withOverride = placeMotifs(
@@ -175,7 +189,9 @@ describe('hostRadius — containment on the displaced centre', () => {
       { boundary: BOUNDARY }
     );
     expect(withOverride.placements.map((p) => p.anchorId)).toEqual(['roomy']);
-    expect(withOverride.rejected).toEqual([{ anchorId: 'tiny', reason: 'below-floor' }]);
+    expect(withOverride.rejected).toEqual([
+      { anchorId: 'tiny', reason: 'below-floor', x: 200, y: 500, wantedRadius: 1000 },
+    ]);
   });
 
   it('the FIXED sizing mode ignores host radius entirely', () => {

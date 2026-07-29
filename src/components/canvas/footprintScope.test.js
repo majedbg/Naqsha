@@ -16,7 +16,12 @@
 // it lives (overrides.test.js), and the threading is one argument on one call.
 
 import { describe, it, expect } from 'vitest';
-import { firstSequenceIndex, placementsForSlotScope, captorDisc } from './footprintScope';
+import {
+  firstSequenceIndex,
+  placementsForSlotScope,
+  rejectionsForSlotScope,
+  captorDisc,
+} from './footprintScope';
 
 /** A minimal Anchor. `s` orders samples along a path; `meta.pathIndex` groups. */
 const anchor = (id, role, s, pathIndex = 0) => ({
@@ -63,12 +68,19 @@ const FLAT = {
   slots: [{ glyphRef: 'F0' }, { glyphRef: 'F1' }],
 };
 
+/** A minimal sizing-stage Rejection — the shape #191 added geometry to. */
+const rejection = (anchorId, reason) => ({ anchorId, reason, x: 0, y: 0, wantedRadius: 7 });
+// Every survivor rejected, so "which slot does this one belong to" is the only
+// question left — exactly the all-rejected slot the overlay must still draw.
+const REJECTED = SURVIVORS.map((a) => rejection(a.id, 'below-floor'));
+
 const ctx = (sequence) => ({
   motifId: 'motif-1',
   seqIndex: 1,
   survivors: SURVIVORS,
   sequence,
   placements: PLACEMENTS,
+  rejected: REJECTED,
 });
 
 const slotScope = (over = {}) => ({
@@ -186,6 +198,153 @@ describe('placementsForSlotScope — scopes that name nothing here', () => {
 
   it('returns null for a degenerate sequence block with no slots', () => {
     expect(placementsForSlotScope(slotScope(), ctx({ type: 'sequence', slots: [] }))).toBeNull();
+  });
+});
+
+// REJECTION SELECTION (#191) — the third non-presentational step, and the same
+// posture again: WHICH rejections the hovered slot has to answer for is logic;
+// how a dotted ring is drawn is presentation the PRD excludes. Nothing here
+// touches a radius. Two things ARE load-bearing: the zone-local `slotIndex`
+// disambiguation (inherited from the placement mapper), and the reason filter —
+// `junction-skip` and `rest` are dispositions the user asked for, not the silent
+// deletion this feature exists to explain.
+describe('rejectionsForSlotScope — the dotted rings a slot has to answer for', () => {
+  it('names its own slot\'s rejections and NOT another slot\'s', () => {
+    const first = ids(rejectionsForSlotScope(slotScope({ slotIndex: 0 }), ctx(FLAT)));
+    const second = ids(rejectionsForSlotScope(slotScope({ slotIndex: 1 }), ctx(FLAT)));
+    expect(first).toEqual(['tip:a', 'edge:2', 'tip:b']);
+    expect(second).toEqual(['edge:1', 'edge:3']);
+    expect(first.some((id) => second.includes(id))).toBe(false);
+  });
+
+  it('disambiguates zones exactly as the placement mapper does', () => {
+    // Apex slot 0 and Stem slot 0 share an index; only `zoneId` tells them apart.
+    expect(ids(rejectionsForSlotScope(slotScope({ zoneId: 'apex', slotIndex: 0 }), ctx(ZONED))))
+      .toEqual(['tip:a']);
+    expect(ids(rejectionsForSlotScope(slotScope({ zoneId: 'stem', slotIndex: 0 }), ctx(ZONED))))
+      .toEqual(['edge:1']);
+  });
+
+  it('draws nothing for `rest` or `junction-skip` — only the two SIZING reasons', () => {
+    // A Rest is a gap the user composed and a skipped junction is a rule they
+    // set; neither is a glyph that vanished without saying so. They also carry
+    // no geometry at all (placementEngine.js), so there is no ring to draw.
+    const mixed = {
+      ...ctx(FLAT),
+      rejected: [
+        rejection('tip:a', 'rest'),
+        rejection('edge:2', 'junction-skip'),
+        rejection('tip:b', 'no-fit'),
+      ],
+    };
+    expect(ids(rejectionsForSlotScope(slotScope({ slotIndex: 0 }), mixed))).toEqual(['tip:b']);
+  });
+
+  it('keeps both sizing reasons — below-floor AND no-fit', () => {
+    const mixed = {
+      ...ctx(FLAT),
+      rejected: [rejection('tip:a', 'below-floor'), rejection('edge:2', 'no-fit')],
+    };
+    expect(ids(rejectionsForSlotScope(slotScope({ slotIndex: 0 }), mixed))).toEqual([
+      'tip:a',
+      'edge:2',
+    ]);
+  });
+
+  it('a slot whose rejections are all another slot\'s says so as [], not null', () => {
+    // Same null-vs-[] contract as the placement mapper: [] means "this slot has
+    // nothing to answer for", null means "this scope names nothing here".
+    const only = { ...ctx(FLAT), rejected: [rejection('edge:1', 'no-fit')] };
+    expect(rejectionsForSlotScope(slotScope({ slotIndex: 0 }), only)).toEqual([]);
+  });
+
+  it('returns null for every scope that names nothing on this layer', () => {
+    expect(rejectionsForSlotScope(slotScope({ layerId: 'motif-2' }), ctx(FLAT))).toBeNull();
+    expect(rejectionsForSlotScope({ kind: 'layer', layerId: 'motif-1' }, ctx(FLAT))).toBeNull();
+    expect(rejectionsForSlotScope(null, ctx(FLAT))).toBeNull();
+    expect(rejectionsForSlotScope(slotScope({ seqIndex: 2 }), ctx(FLAT))).toBeNull();
+    expect(rejectionsForSlotScope(slotScope(), { ...ctx(null), seqIndex: 1 })).toBeNull();
+    expect(rejectionsForSlotScope(slotScope(), ctx({ type: 'sequence', slots: [] }))).toBeNull();
+  });
+
+  it('returns null when the run rejected nothing at all', () => {
+    expect(rejectionsForSlotScope(slotScope(), { ...ctx(FLAT), rejected: [] })).toBeNull();
+    expect(rejectionsForSlotScope(slotScope(), { ...ctx(FLAT), rejected: undefined })).toBeNull();
+  });
+
+  // PER-GLYPH OVERRIDE SCALE (#137/#191). `applyGlyphOverrides` multiplies a
+  // placement's `drawnRadius` by an override record's scale AFTER packing, which
+  // is why #189 threaded `overrideRecords` into the overlay at all ("the rings
+  // are the rings on screen"). `wantedRadius` is pre-override by construction —
+  // the engine reports what the glyph asked for before any post-placement step —
+  // so the same multiply has to happen HERE, or the dotted ring and the dashed
+  // ring that replaces it when `hold` rescues the glyph sit in different radius
+  // spaces: a ×2 anchor would be promised at 18 and delivered at 36.
+  describe('the override scale rides the dotted ring too', () => {
+    const recs = (map) => ({ ...ctx(FLAT), overrideRecords: new Map(Object.entries(map)) });
+
+    it('scales `wantedRadius` by a valid record scale, and clones rather than mutating', () => {
+      const source = ctx(FLAT).rejected;
+      const got = rejectionsForSlotScope(slotScope({ slotIndex: 0 }), recs({ 'tip:a': { scale: 2 } }));
+      expect(got.find((r) => r.anchorId === 'tip:a').wantedRadius).toBe(14); // 7 × 2
+      // Untouched anchors come back on the same slot unchanged…
+      expect(got.find((r) => r.anchorId === 'tip:b').wantedRadius).toBe(7);
+      // …and the engine's own array never moved.
+      expect(source.find((r) => r.anchorId === 'tip:a').wantedRadius).toBe(7);
+    });
+
+    it('ignores anything `applyGlyphOverrides` ignores — same rule, verbatim', () => {
+      // Deliberately the SAME validity test, so the dotted ring and the dashed
+      // ring can never disagree about what an override means.
+      for (const scale of [0, -2, NaN, Infinity, '2', null, undefined]) {
+        const got = rejectionsForSlotScope(slotScope({ slotIndex: 0 }), recs({ 'tip:a': { scale } }));
+        expect(got.find((r) => r.anchorId === 'tip:a').wantedRadius).toBe(7);
+      }
+    });
+
+    it('behaves exactly as before with no records at all', () => {
+      const none = rejectionsForSlotScope(slotScope({ slotIndex: 0 }), ctx(FLAT));
+      for (const map of [new Map(), null, undefined]) {
+        const got = rejectionsForSlotScope(slotScope({ slotIndex: 0 }), {
+          ...ctx(FLAT),
+          overrideRecords: map,
+        });
+        expect(got).toEqual(none);
+      }
+      // A record for an anchor with no rejection changes nothing either.
+      expect(rejectionsForSlotScope(slotScope({ slotIndex: 0 }), recs({ 'edge:1': { scale: 3 } })))
+        .toEqual(none);
+    });
+  });
+
+  it('drops a rejection with no usable radius rather than drawing NaN', () => {
+    // A hand-edited/imported document can carry a non-finite `sizeScale`, which
+    // the engine honestly propagates into `wantedRadius` (it clamps `hold`, not
+    // `sizeScale`). "Anything not a finite positive number reads as absent" is
+    // the engine's own `hasHostRadius` idiom; here it means no ring at all,
+    // instead of `r={NaN}` and a React warning for a circle that never paints.
+    const broken = {
+      ...ctx(FLAT),
+      rejected: [
+        { anchorId: 'tip:a', reason: 'no-fit', x: 0, y: 0, wantedRadius: NaN },
+        { anchorId: 'edge:2', reason: 'no-fit', x: 0, y: 0, wantedRadius: 0 },
+        { anchorId: 'tip:b', reason: 'no-fit', x: 0, y: 0, wantedRadius: 5 },
+      ],
+    };
+    expect(ids(rejectionsForSlotScope(slotScope({ slotIndex: 0 }), broken))).toEqual(['tip:b']);
+  });
+
+  it('answers even when the slot placed NOTHING — the whole point of the ticket', () => {
+    // §1b's gap-20 case at its limit: a slot with zero placements and four
+    // rejections. `placementsForSlotScope` returns null here (no placements at
+    // all), so a selector that shared that guard would silently draw nothing.
+    const allRejected = { ...ctx(FLAT), placements: [] };
+    expect(placementsForSlotScope(slotScope({ slotIndex: 0 }), allRejected)).toBeNull();
+    expect(ids(rejectionsForSlotScope(slotScope({ slotIndex: 0 }), allRejected))).toEqual([
+      'tip:a',
+      'edge:2',
+      'tip:b',
+    ]);
   });
 });
 

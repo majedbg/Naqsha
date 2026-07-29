@@ -48,26 +48,27 @@ export function firstSequenceIndex(chain) {
 }
 
 /**
- * The placements belonging to the ONE slot a reveal scope names.
+ * The scope→slot resolution both selectors below share: is this scope naming a
+ * slot of THIS motif's live sequence, and if so, which anchors were dealt it.
  *
- * Returns `null` when the scope does not name a slot of this motif's live
- * sequence at all (wrong kind, wrong layer, wrong sequence block, or no
- * sequence) — distinct from `[]`, which means "that slot exists and currently
- * places nothing" (an all-Rest deal, or every anchor rejected).
+ * ⚠️ THE SHARED PART STOPS HERE, DELIBERATELY. It does NOT check `placements`
+ * (or `rejected`) — each caller guards its OWN list. Folding the placement guard
+ * in here would make `rejectionsForSlotScope` return null in exactly the case
+ * #191 exists for: a slot with ZERO placements and four rejections, where the
+ * overlay must still draw.
  *
- * @param {object|null} scope   the reveal scope, verbatim from the context.
- * @param {{motifId:string, seqIndex:number, survivors:Array, sequence:object|null,
- *          placements:Array}} ctx
- * @returns {Array|null}
+ * @param {object|null} scope
+ * @param {{motifId:string, seqIndex:number, survivors:Array, sequence:object|null}} ctx
+ * @returns {{byAnchorId:Map<string,object>, zoneId:string|null, slotIndex:number}|null}
  */
-export function placementsForSlotScope(scope, ctx) {
+function slotDeal(scope, ctx) {
   if (!scope || scope.kind !== 'slot') return null;
-  const { motifId, seqIndex, survivors, sequence, placements } = ctx || {};
+  const { motifId, seqIndex, survivors, sequence } = ctx || {};
   if (!motifId || scope.layerId !== motifId) return null;
   // A scope naming a non-terminal sequence block addresses nothing the canvas
   // drew. `seqIndex < 0` is "this motif has no sequence block at all".
   if (!(seqIndex >= 0) || scope.seqIndex !== seqIndex) return null;
-  if (!sequence || !Array.isArray(placements) || placements.length === 0) return null;
+  if (!sequence) return null;
 
   const list = Array.isArray(survivors) ? survivors : [];
   const dealt = list.length > MAX_PLACEMENTS ? list.slice(0, MAX_PLACEMENTS) : list;
@@ -83,14 +84,116 @@ export function placementsForSlotScope(scope, ctx) {
 
   // FLAT sequences carry `zoneId: null`; the convention has the trigger pass
   // `null` too, but `?? null` keeps an omitted key from reading as a mismatch.
-  const zoneId = scope.zoneId ?? null;
-  const { slotIndex } = scope;
+  return { byAnchorId, zoneId: scope.zoneId ?? null, slotIndex: scope.slotIndex };
+}
+
+/**
+ * The placements belonging to the ONE slot a reveal scope names.
+ *
+ * Returns `null` when the scope does not name a slot of this motif's live
+ * sequence at all (wrong kind, wrong layer, wrong sequence block, or no
+ * sequence) — distinct from `[]`, which means "that slot exists and currently
+ * places nothing" (an all-Rest deal, or every anchor rejected).
+ *
+ * @param {object|null} scope   the reveal scope, verbatim from the context.
+ * @param {{motifId:string, seqIndex:number, survivors:Array, sequence:object|null,
+ *          placements:Array}} ctx
+ * @returns {Array|null}
+ */
+export function placementsForSlotScope(scope, ctx) {
+  const { placements } = ctx || {};
+  if (!Array.isArray(placements) || placements.length === 0) return null;
+  const deal = slotDeal(scope, ctx);
+  if (!deal) return null;
+  const { byAnchorId, zoneId, slotIndex } = deal;
   return placements.filter((p) => {
     const a = byAnchorId.get(p.anchorId);
     // A Rest emits no placement, so `!a.rest` can only ever be redundant — kept
     // because it is the cheap guard against a future deal that does emit one.
     return !!a && !a.rest && a.slotIndex === slotIndex && (a.zoneId ?? null) === zoneId;
   });
+}
+
+/** The two rejection reasons the overlay explains — and only these (#191). */
+const DRAWN_REASONS = new Set(['below-floor', 'no-fit']);
+
+/**
+ * A per-glyph override record's scale, or null — the SAME validity rule
+ * `applyGlyphOverrides` applies (overrides.js: `Number.isFinite(rec.scale) &&
+ * rec.scale > 0`), replicated verbatim and deliberately.
+ *
+ * The dotted ring and the dashed ring that REPLACES it when `hold` rescues the
+ * glyph must never disagree about what an override means: a record the placement
+ * path ignores has to be ignored here too, or a glyph promised at one radius
+ * arrives at another.
+ *
+ * @param {Map<string, {scale?:number}>|null|undefined} records
+ * @param {string} anchorId
+ * @returns {number|null}
+ */
+function overrideScale(records, anchorId) {
+  if (!records || records.size === 0) return null;
+  const rec = records.get(anchorId);
+  if (!rec) return null;
+  return Number.isFinite(rec.scale) && rec.scale > 0 ? rec.scale : null;
+}
+
+/**
+ * The rejections the ONE slot a reveal scope names has to answer for (#191).
+ *
+ * Mirrors `placementsForSlotScope` — same gating, same re-deal, same null-vs-[]
+ * contract — over the engine's `rejected` array instead of its `placements`:
+ * `null` when the scope names nothing here (or the run rejected nothing at all),
+ * `[]` when it names a slot that lost nothing.
+ *
+ * FILTERED TO THE TWO SIZING REASONS. `below-floor` and `no-fit` are the silent
+ * deletions this feature exists to explain — a glyph the user composed, gone
+ * with every survivor still reporting 100%. `junction-skip` and `rest` are
+ * dispositions the user ASKED for, so they draw nothing; they also carry no
+ * geometry to draw with (placementEngine.js's Rejection typedef). Filtering on
+ * reason is what excludes a `rest`, so no `assignment.rest` test is needed here.
+ *
+ * AND FILTERED TO A DRAWABLE RADIUS. `makeAssignment` does not coerce `sizeScale`
+ * the way the engine clamps `hold`, so a hand-edited or imported document can
+ * carry a non-finite one; the engine honestly propagates it into `wantedRadius`
+ * (fixing that in the sizing math would be a clamp, and this feature adds none).
+ * "Anything not a FINITE POSITIVE number reads as absent" is the engine's own
+ * `hasHostRadius` idiom, and here it means the rejection is simply not drawn —
+ * strictly better than `r={NaN}`, which SVG discards, React warns about, and the
+ * user experiences as the ring silently missing from the very overlay that
+ * exists to stop things going missing silently.
+ *
+ * THE OVERRIDE SCALE IS APPLIED HERE, not in the engine (#137/#191). The engine
+ * reports what the glyph asked for BEFORE any post-placement step, which is the
+ * honest thing for it to report; but `applyGlyphOverrides` then multiplies a
+ * placement's `drawnRadius` by the same record's scale, so a raw `wantedRadius`
+ * would put the dotted ring in a different radius space from the two live rings
+ * beside it — a ×2 anchor promised at 18 and delivered at 36 the moment `hold`
+ * rescues it. Applying it in the selector also keeps it headlessly testable,
+ * which a radius drawn in the component is not (the PRD excludes rendered SVG).
+ * A scaled rejection is a shallow CLONE; the engine's array is never mutated.
+ *
+ * @param {object|null} scope
+ * @param {{motifId:string, seqIndex:number, survivors:Array, sequence:object|null,
+ *          rejected:Array, overrideRecords?:Map<string, {scale?:number}>}} ctx
+ * @returns {Array|null}
+ */
+export function rejectionsForSlotScope(scope, ctx) {
+  const { rejected, overrideRecords } = ctx || {};
+  if (!Array.isArray(rejected) || rejected.length === 0) return null;
+  const deal = slotDeal(scope, ctx);
+  if (!deal) return null;
+  const { byAnchorId, zoneId, slotIndex } = deal;
+  const out = [];
+  for (const r of rejected) {
+    if (!DRAWN_REASONS.has(r.reason)) continue;
+    if (!(Number.isFinite(r.wantedRadius) && r.wantedRadius > 0)) continue;
+    const a = byAnchorId.get(r.anchorId);
+    if (!a || a.slotIndex !== slotIndex || (a.zoneId ?? null) !== zoneId) continue;
+    const scale = overrideScale(overrideRecords, r.anchorId);
+    out.push(scale == null ? r : { ...r, wantedRadius: r.wantedRadius * scale });
+  }
+  return out;
 }
 
 /**

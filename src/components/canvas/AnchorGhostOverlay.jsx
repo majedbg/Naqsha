@@ -68,7 +68,12 @@ import { coerceRoles } from '../../lib/motif/edgeRoles';
 import { resolvePlacements } from '../../lib/motif/placementEngine';
 import { isEdgeHost, hostHasPathStructure } from '../../lib/motif/hostKinds';
 import { useFootprintReveal } from '../shell/footprintRevealContext';
-import { firstSequenceIndex, placementsForSlotScope, captorDisc } from './footprintScope';
+import {
+  firstSequenceIndex,
+  placementsForSlotScope,
+  rejectionsForSlotScope,
+  captorDisc,
+} from './footprintScope';
 
 const ACCENT = '#7c3aed'; // violet — placed / included fill
 const EXCLUDE_STROKE = '#ef4444'; // red — force-excluded outline
@@ -137,9 +142,43 @@ const RING_HEAVY = 3; // × the base stroke, on the binding ring
 // drawn all the same — that is decision 16's point, not an exception to it.
 const CAPTOR_OPACITY = 0.3;
 
+// THE REJECTED RING (#191, §1b). At tight spacing glyphs do not shrink — they
+// are silently DELETED, and every survivor still reports 100%, so the layer
+// reads as deliberate and sparse. Two units of spacing separate "lose half your
+// work" from "keep all of it" and nothing anywhere says so. Every anchor the
+// engine rejected `below-floor` or `no-fit` therefore draws an empty ring AT THE
+// SIZE IT WANTED (`wantedRadius` = the natural target), turning four vanished
+// glyphs into four visible circles.
+//
+// A THIRD VISUAL CATEGORY, and it has to read as one at a glance: the reserved
+// ring is SOLID, the drawn ring is DASHED, this one is DOTTED — a genuinely
+// different pattern (a round dot on a wide gap, via strokeLinecap), not the
+// drawn ring's dash reused at another width.
+//
+// DIMMER THAN BOTH LIVE RINGS, because a rejection is an ABSENCE — the glyph is
+// not there. Above the captor (0.3), which is another glyph's business, and
+// below the two live rings (0.9), which are marks that actually inked.
+//
+// NO CAPTOR IS DRAWN, and that is a SHAPE fact, not a claim that nothing capped
+// these glyphs: a `Rejection` carries neither `capBy` nor `capObstacle`, so
+// there is nothing to select a captor from. It is emphatically NOT true that
+// they were "dropped uncapped" — `below-floor`, the headline case, is a glyph
+// capped so hard it fell through `sizing.min` (§1b: a neighbour cap of
+// 0.85 × (20 − 18) = 1.70 against a floor of 3), and that cap IS the causal
+// story. Only `no-fit` genuinely had no cap computed. Surfacing the captor for a
+// rejection is a real design question, deliberately left open here — do not read
+// this ring's plainness as it having been answered.
+const REJECTED_OPACITY = 0.55;
+
 // Stable identity for "nothing resolved", so the memos downstream of the
 // placement pipeline do not re-run on every render of an unresolvable overlay.
-const EMPTY_RESOLVED = Object.freeze({ placements: [], survivors: [], sequence: null });
+const EMPTY_RESOLVED = Object.freeze({
+  placements: [],
+  survivors: [],
+  sequence: null,
+  rejected: [],
+  overrideRecords: null,
+});
 
 /** Which ring `capBy` marks as binding. null ⇒ nothing is capping this glyph. */
 const bindingRing = (capBy) => {
@@ -392,11 +431,22 @@ export default function AnchorGhostOverlay({
     // SURVIVORS AND SEQUENCE COME OUT TOO, for the slot→placement mapping the
     // footprint overlay needs (footprintScope.js). `Placement` carries no slot
     // field and must not gain one.
-    const { placements } = resolvePlacements(survivors, placementConfig, {
+    //
+    // `rejected` COMES OUT TOO (#191). Both callers of the resolver used to
+    // discard it, which is how the vanishing glyphs stayed invisible: the data
+    // explaining them already existed and nothing carried it to a mark.
+    //
+    // AND `overrideRecords` ITSELF, for the same reason it is threaded above: a
+    // REJECTED anchor never reached `applyGlyphOverrides` (that pass rewrites
+    // finished placements only), so its ring has to be scaled by the selector
+    // instead — see `rejectionsForSlotScope`. Without it the dotted ring and the
+    // dashed ring that replaces it on rescue would disagree by exactly the
+    // override's scale.
+    const { placements, rejected } = resolvePlacements(survivors, placementConfig, {
       boundary: { type: 'rect', width: canvasW, height: canvasH },
       overrideRecords,
     });
-    return { placements, survivors, sequence };
+    return { placements, survivors, sequence, rejected, overrideRecords };
   }, [anchors, motif, binding, canvasW, canvasH]);
   const placements = resolved.placements;
 
@@ -416,6 +466,24 @@ export default function AnchorGhostOverlay({
       survivors: resolved.survivors,
       sequence: resolved.sequence,
       placements: resolved.placements,
+    });
+  }, [motif, revealMotif, revealScope, resolved]);
+
+  // THE HOVERED SLOT'S LOSSES (#191) — the anchors it was dealt that never
+  // became glyphs. Gated EXACTLY like `footprintPlacements` above (same motif
+  // identity check, same scope), because it answers the same question about the
+  // same slot; only the list it reads differs. `null` when the scope names
+  // nothing here or the run rejected nothing at all.
+  const footprintRejections = useMemo(() => {
+    if (!motif || !revealMotif || revealMotif.id !== motif.id) return null;
+    return rejectionsForSlotScope(revealScope, {
+      motifId: motif.id,
+      seqIndex: firstSequenceIndex(readChain(motif.params?.binding)),
+      survivors: resolved.survivors,
+      sequence: resolved.sequence,
+      rejected: resolved.rejected,
+      // The per-glyph scale a rejected anchor never got to apply (#137/#191).
+      overrideRecords: resolved.overrideRecords,
     });
   }, [motif, revealMotif, revealScope, resolved]);
 
@@ -548,8 +616,17 @@ export default function AnchorGhostOverlay({
   // Stroke widths are in CANVAS units like everything else here (the parent
   // scales the box), floored so they survive a small canvas.
   const ringW = Math.max(0.75, Math.min(canvasW, canvasH) * 0.0018);
+  // ⚠️ THE GATE IS PLACEMENTS **OR** REJECTIONS (#191). It used to be placements
+  // alone, and that silently switched this whole slice off in exactly the case
+  // it exists for: §1b's gap-20 slot, at the limit, places NOTHING and rejects
+  // everything — so the <svg> never rendered and the four dotted rings that
+  // explain the mystery had nowhere to live. A slot with both placed and
+  // rejected anchors hides the bug completely.
+  const hasFootprint =
+    (footprintPlacements && footprintPlacements.length > 0) ||
+    (footprintRejections && footprintRejections.length > 0);
   const footprint =
-    footprintPlacements && footprintPlacements.length ? (
+    hasFootprint ? (
       <svg
         data-testid="motif-footprint-overlay"
         data-mode="footprint"
@@ -559,7 +636,10 @@ export default function AnchorGhostOverlay({
         viewBox={`0 0 ${canvasW} ${canvasH}`}
         aria-hidden="true"
       >
-        {footprintPlacements.map((p) => {
+        {/* `|| []` because the gate above is now an OR: with an all-rejected
+            slot this list is legitimately null and the rings below are the
+            entire content of the overlay. */}
+        {(footprintPlacements || []).map((p) => {
           const binds = bindingRing(p.capBy);
           // Dash scaled to the ring it rides so it reads as "dashed" on a 4-unit
           // glyph and on a 60-unit one alike.
@@ -615,6 +695,48 @@ export default function AnchorGhostOverlay({
             </g>
           );
         })}
+        {/* THE LOSSES (#191) — one DOTTED empty ring per anchor this slot was
+            dealt and never got to draw, at the size it wanted. Rendered AFTER
+            the placed glyphs so a ring that overlaps a real one reads as the
+            ghost behind it. No captor, because a `Rejection` carries no `capBy`
+            and no `capObstacle` to select one from — NOT because nothing capped
+            these glyphs. `below-floor` means capped clean through the floor; see
+            REJECTED_OPACITY above. */}
+        {(footprintRejections || []).map((r) => (
+          <g
+            key={`rejected:${r.anchorId}`}
+            data-rejected="true"
+            data-anchor-id={r.anchorId}
+            data-reason={r.reason}
+          >
+            <circle
+              data-ring="rejected"
+              cx={r.x}
+              cy={r.y}
+              r={r.wantedRadius}
+              fill="none"
+              stroke={ACCENT}
+              strokeOpacity={REJECTED_OPACITY}
+              strokeWidth={ringW}
+              // A ROUND DOT on a wide gap — a round cap over a dash far shorter
+              // than the stroke is thick, so each mark is a circle of diameter
+              // `ringW`. That is what makes this read as a THIRD category beside
+              // the solid and the dashed ring rather than as a variant of either
+              // (the drawn ring is a 50%-duty dash; this is a dot on air). The
+              // gap is scaled to the ring it rides, like that dash, so it reads
+              // as dotted on a 4-unit ring and on a 60-unit one alike.
+              //
+              // 0.01 and NOT 0: a zero-length dash with a round cap is specified
+              // to paint a dot, and does in every current browser, but it is
+              // also the exact case a renderer is most likely to drop — and this
+              // ring vanishing is the precise failure the feature exists to fix.
+              // The epsilon is geometrically invisible next to `ringW` and the
+              // cap still sizes the dot.
+              strokeLinecap="round"
+              strokeDasharray={`0.01 ${Math.max(3, r.wantedRadius * 0.22)}`}
+            />
+          </g>
+        ))}
       </svg>
     ) : null;
 

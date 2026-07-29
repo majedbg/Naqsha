@@ -434,12 +434,15 @@ describe('rejection — what `hold` may and may not rescue', () => {
   });
 
   it('`no-fit` stays a hard drop at every value of `hold`', () => {
-    // a1's centre sits INSIDE a0's committed disc ⇒ R <= 0.
+    // a1's centre sits INSIDE a0's committed disc ⇒ R <= 0. No jitter, so the
+    // centre the rejection reports (#191) is exactly the anchor.
     const anchors = [at('a0', 100, 200), at('a1', 105, 200)];
     for (const w of [0, 0.5, 1]) {
       const { placements, rejected } = run(anchors, STOCK, holdSeq(w));
       expect(placements.map((p) => p.anchorId)).toEqual(['a0']);
-      expect(rejected).toEqual([{ anchorId: 'a1', reason: 'no-fit' }]);
+      expect(rejected).toEqual([
+        { anchorId: 'a1', reason: 'no-fit', x: 105, y: 200, wantedRadius: 18 },
+      ]);
     }
   });
 
@@ -448,6 +451,16 @@ describe('rejection — what `hold` may and may not rescue', () => {
     // decided BEFORE any drawn radius exists.
     const anchors = [at('h0', 200, 200, { hostRadius: 1e-6 })];
     const jitter = { seed: 3, lateral: 1, lateralRange: 40, along: 0, rotation: 0, scale: 0 };
+    // The post-jitter centre this rejection reports (#191) comes from a SIBLING
+    // RUN that places: the four draws and the centre transform are entirely
+    // upstream of every sizing decision, so dropping the container leaves x/y
+    // byte-identical. Re-deriving the mulberry32 draw here would re-implement
+    // the engine inside its own test.
+    const centre = resolvePlacements(
+      [at('h0', 200, 200)],
+      { jitter, sizing: { mode: 'proportional', size: 50, min: 0, margin: 1 }, sequence: holdSeq(0) },
+      { boundary: BIG },
+    ).placements[0];
     for (const w of [0, 1]) {
       const { placements, rejected } = resolvePlacements(
         anchors,
@@ -455,7 +468,59 @@ describe('rejection — what `hold` may and may not rescue', () => {
         { boundary: BIG },
       );
       expect(placements).toEqual([]);
-      expect(rejected).toEqual([{ anchorId: 'h0', reason: 'no-fit' }]);
+      expect(rejected).toEqual([
+        { anchorId: 'h0', reason: 'no-fit', x: centre.x, y: centre.y, wantedRadius: 50 },
+      ]);
+    }
+  });
+});
+
+// ── THE RESCUE, MADE LEGIBLE (#191) ────────────────────────────────────────
+// The overlay's whole claim is that raising `hold` converts a dotted empty ring
+// into a real glyph at that exact radius. The visual half is eyeball-verified
+// (the PRD excludes rendered SVG from assertion); the ENGINE half — that the
+// conversion happens at all, and that the ring drawn at hold 0 predicts the
+// glyph you get at hold 1 — is pinned here.
+describe('`hold` turns dotted rings into glyphs (#191)', () => {
+  const STOCK = { mode: 'proportional', size: 18, min: 3, margin: 0.85 };
+
+  it('a below-floor rejection at hold 0 is a PLACEMENT at hold 1, at the radius it wanted', () => {
+    // §1b's gap-20 case: leaf 1 reserves 0.85 × (20 − 18) = 1.70, under the
+    // floor of 3, and vanishes without explanation. That is the dotted ring.
+    const anchors = row(4, 100, 20);
+    const free = run(anchors, STOCK, altHoldSeq(0));
+    const ring = free.rejected.find((r) => r.anchorId === 'a1');
+    expect(ring).toEqual({
+      anchorId: 'a1',
+      reason: 'below-floor',
+      x: 120,
+      y: 200,
+      wantedRadius: 18,
+    });
+    expect(byId(free.placements, 'a1')).toBeUndefined();
+
+    const held = run(anchors, STOCK, altHoldSeq(1));
+    // Gone from `rejected` entirely, and present in `placements`…
+    expect(held.rejected.some((r) => r.anchorId === 'a1')).toBe(false);
+    const rescued = byId(held.placements, 'a1');
+    expect(rescued).toBeDefined();
+    // …drawn at EXACTLY the radius the dotted ring promised. Both are
+    // `size × scaleFactor × sizeScale` with scaleFactor 1, so this is exact.
+    expect(rescued.drawnRadius).toBe(ring.wantedRadius);
+    expect(rescued.x).toBe(ring.x);
+    expect(rescued.y).toBe(ring.y);
+  });
+
+  it('a `no-fit` ring is the SAME ring at every hold, swept 0 → 1', () => {
+    // Decision 5: coincident with a committed disc is a hard drop, not a
+    // negotiation. The overlay must keep drawing the identical dotted ring for
+    // the whole drag — nothing about it may twitch as `hold` climbs.
+    const anchors = [at('a0', 100, 200), at('a1', 105, 200)];
+    const first = run(anchors, STOCK, holdSeq(0)).rejected;
+    for (let k = 0; k <= 10; k++) {
+      const { placements, rejected } = run(anchors, STOCK, holdSeq(k / 10));
+      expect(placements.map((p) => p.anchorId)).toEqual(['a0']);
+      expect(rejected).toEqual(first);
     }
   });
 });

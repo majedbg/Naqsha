@@ -18,7 +18,9 @@
 import { describe, it, expect } from 'vitest';
 import {
   firstSequenceIndex,
+  placementsForScope,
   placementsForSlotScope,
+  rejectionsForScope,
   rejectionsForSlotScope,
   captorDisc,
 } from './footprintScope';
@@ -345,6 +347,187 @@ describe('rejectionsForSlotScope — the dotted rings a slot has to answer for',
       'edge:2',
       'tip:b',
     ]);
+  });
+});
+
+// THE OTHER TWO SCOPE KINDS (#192). `hold` was the first trigger; layer Size,
+// slot Scale and the per-glyph override scale are the rest. Slot Scale reuses
+// the slot scope above verbatim, but the other two publish kinds nothing
+// classified until now — and an unclassified kind is not a harmless no-op, it is
+// a reveal that RAISES and draws NOTHING, which is indistinguishable from the
+// feature never having been wired.
+//
+// Tested through the DISPATCHER, which is the module's public interface for a
+// consumer that does not care which kind it holds: the overlay hands one list to
+// one renderer, whatever raised it.
+describe('placementsForScope / rejectionsForScope — the dispatcher', () => {
+  it('delegates a slot scope to the slot selector, unchanged', () => {
+    const scope = slotScope({ slotIndex: 1 });
+    expect(placementsForScope(scope, ctx(FLAT))).toEqual(
+      placementsForSlotScope(scope, ctx(FLAT))
+    );
+    expect(rejectionsForScope(scope, ctx(FLAT))).toEqual(
+      rejectionsForSlotScope(scope, ctx(FLAT))
+    );
+  });
+
+  it('names nothing for a scope with no kind it knows, and for no scope at all', () => {
+    // A kind this module has never seen (PR 2's spacing/density, say) must ring
+    // nothing rather than ring everything — the reveal context stays opaque and
+    // will happily carry a shape that lands here.
+    for (const scope of [null, undefined, {}, { kind: 'pitch', layerId: 'motif-1' }]) {
+      expect(placementsForScope(scope, ctx(FLAT))).toBeNull();
+      expect(rejectionsForScope(scope, ctx(FLAT))).toBeNull();
+    }
+  });
+});
+
+describe('a LAYER scope — every placement on the layer', () => {
+  const layerScope = (over = {}) => ({ kind: 'layer', layerId: 'motif-1', ...over });
+
+  it('names every placement, across every slot', () => {
+    // Nothing narrows a layer-wide control to a subset. Decision 16 scoped a
+    // SLOT hover to that slot's glyphs; it did not answer a layer trigger, and
+    // the union of the two flat slots is the whole layer.
+    expect(ids(placementsForScope(layerScope(), ctx(FLAT)))).toEqual(
+      PLACEMENTS.map((p) => p.anchorId)
+    );
+  });
+
+  it('needs no sequence at all — a layer is not addressed through one', () => {
+    // `seqIndex: -1` (no sequence block) and a null sequence both kill a SLOT
+    // scope. A layer scope is not addressed through the deal, so neither may
+    // silently switch it off.
+    expect(ids(placementsForScope(layerScope(), { ...ctx(null), seqIndex: -1 }))).toEqual(
+      PLACEMENTS.map((p) => p.anchorId)
+    );
+  });
+
+  it('names nothing on a different layer', () => {
+    expect(placementsForScope(layerScope({ layerId: 'motif-2' }), ctx(FLAT))).toBeNull();
+    expect(rejectionsForScope(layerScope({ layerId: 'motif-2' }), ctx(FLAT))).toBeNull();
+  });
+
+  it('names every DRAWABLE rejection on the layer, and only those', () => {
+    const mixed = {
+      ...ctx(FLAT),
+      rejected: [
+        rejection('tip:a', 'rest'),
+        rejection('edge:1', 'junction-skip'),
+        rejection('edge:2', 'below-floor'),
+        rejection('tip:b', 'no-fit'),
+      ],
+    };
+    // Both sizing reasons, from BOTH slots — the two dispositions the user asked
+    // for still draw nothing.
+    expect(ids(rejectionsForScope(layerScope(), mixed))).toEqual(['edge:2', 'tip:b']);
+  });
+
+  it('answers the rejections even when the layer placed nothing', () => {
+    // The §1b limit case, layer-wide: `placements` is empty, so the placement
+    // side is null and the rejection side is the entire content of the overlay.
+    const allRejected = { ...ctx(FLAT), placements: [] };
+    expect(placementsForScope(layerScope(), allRejected)).toBeNull();
+    expect(ids(rejectionsForScope(layerScope(), allRejected))).toEqual(
+      SURVIVORS.map((a) => a.id)
+    );
+  });
+
+  it('drops a rejection with no usable radius rather than drawing NaN', () => {
+    const broken = {
+      ...ctx(FLAT),
+      rejected: [
+        { anchorId: 'tip:a', reason: 'no-fit', x: 0, y: 0, wantedRadius: NaN },
+        { anchorId: 'edge:1', reason: 'no-fit', x: 0, y: 0, wantedRadius: 5 },
+      ],
+    };
+    expect(ids(rejectionsForScope(layerScope(), broken))).toEqual(['edge:1']);
+  });
+
+  it('rides the per-glyph override scale, cloning rather than mutating', () => {
+    const source = ctx(FLAT).rejected;
+    const got = rejectionsForScope(layerScope(), {
+      ...ctx(FLAT),
+      overrideRecords: new Map([['tip:a', { scale: 2 }]]),
+    });
+    expect(got.find((r) => r.anchorId === 'tip:a').wantedRadius).toBe(14);
+    expect(got.find((r) => r.anchorId === 'tip:b').wantedRadius).toBe(7);
+    expect(source.find((r) => r.anchorId === 'tip:a').wantedRadius).toBe(7);
+  });
+});
+
+describe('a GLYPH scope — the one anchor being overridden', () => {
+  const glyphScope = (anchorId, over = {}) => ({
+    kind: 'glyph',
+    layerId: 'motif-1',
+    anchorId,
+    ...over,
+  });
+
+  it('names exactly one placement', () => {
+    expect(ids(placementsForScope(glyphScope('edge:2'), ctx(FLAT)))).toEqual(['edge:2']);
+  });
+
+  it('names nothing on a different layer', () => {
+    expect(placementsForScope(glyphScope('edge:2', { layerId: 'motif-2' }), ctx(FLAT)))
+      .toBeNull();
+    expect(rejectionsForScope(glyphScope('edge:2', { layerId: 'motif-2' }), ctx(FLAT)))
+      .toBeNull();
+  });
+
+  it('names nothing for a scope carrying no anchor', () => {
+    expect(placementsForScope(glyphScope(undefined), ctx(FLAT))).toBeNull();
+    expect(rejectionsForScope(glyphScope(undefined), ctx(FLAT))).toBeNull();
+  });
+
+  it('says [] — not null — for an anchor this layer did not place', () => {
+    // Reachable and important: a REJECTED anchor keeps a clickable dot and a
+    // popover, so its scale control is a live trigger. [] is "that glyph is not
+    // among the placements", which is exactly what the rejection side answers.
+    const scope = glyphScope('tip:a');
+    const onlyOne = { ...ctx(FLAT), placements: [{ anchorId: 'edge:1' }] };
+    expect(placementsForScope(scope, onlyOne)).toEqual([]);
+    expect(ids(rejectionsForScope(scope, onlyOne))).toEqual(['tip:a']);
+  });
+
+  it('names that anchor\'s rejection and no other slot\'s', () => {
+    expect(ids(rejectionsForScope(glyphScope('edge:3'), ctx(FLAT)))).toEqual(['edge:3']);
+  });
+
+  it('draws nothing for a `rest` or a `junction-skip` on that anchor', () => {
+    const mixed = {
+      ...ctx(FLAT),
+      rejected: [rejection('tip:a', 'rest'), rejection('edge:1', 'junction-skip')],
+    };
+    expect(rejectionsForScope(glyphScope('tip:a'), mixed)).toEqual([]);
+    expect(rejectionsForScope(glyphScope('edge:1'), mixed)).toEqual([]);
+  });
+
+  // THE RINGS MUST MOVE AS THE OVERRIDE SCALE IS DRAGGED (#192's third
+  // acceptance criterion). For a PLACED glyph the link is `applyGlyphOverrides`
+  // scaling `drawnRadius` alongside `radius`, proven in
+  // perGlyphOverrides.test.js ("scales `drawnRadius` with `radius`") and NOT
+  // re-tested here. For a REJECTED one the multiply lives in this module, and
+  // this is the only new link #192 creates.
+  it('rides the override scale on the anchor being dragged', () => {
+    const source = ctx(FLAT).rejected;
+    const got = rejectionsForScope(glyphScope('tip:a'), {
+      ...ctx(FLAT),
+      overrideRecords: new Map([['tip:a', { scale: 2 }]]),
+    });
+    expect(got.map((r) => r.wantedRadius)).toEqual([14]);
+    // The engine's array never moved — the drag re-reads it every frame.
+    expect(source.find((r) => r.anchorId === 'tip:a').wantedRadius).toBe(7);
+  });
+
+  it('ignores anything `applyGlyphOverrides` ignores — same rule, verbatim', () => {
+    for (const scale of [0, -2, NaN, Infinity, '2', null, undefined]) {
+      const got = rejectionsForScope(glyphScope('tip:a'), {
+        ...ctx(FLAT),
+        overrideRecords: new Map([['tip:a', { scale }]]),
+      });
+      expect(got.map((r) => r.wantedRadius)).toEqual([7]);
+    }
   });
 });
 

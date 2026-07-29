@@ -12,6 +12,10 @@ import { render, screen, fireEvent, within, act } from "@testing-library/react";
 import GlyphPopover from "./GlyphPopover";
 import { glyphScreenRect, placeSurface } from "./glyphPopoverPlacement";
 import {
+  FootprintRevealProvider,
+  useFootprintReveal,
+} from "../shell/footprintRevealContext";
+import {
   clearGlyphClipboard,
   copyGlyphSettings,
   readGlyphClipboard,
@@ -451,5 +455,149 @@ describe("glyphClipboard — one session-scoped slot", () => {
     copyGlyphSettings({ scale: 2, angle: 90 });
     copyGlyphSettings({ scale: 0.5, angle: 10 });
     expect(readGlyphClipboard()).toEqual({ scale: 0.5, angle: 10 });
+  });
+});
+
+// ── THE FOOTPRINT REVEAL (#192, PRD #184) ──────────────────────────────────
+// The per-glyph override SCALE is the third of PR 1's four triggers: it moves a
+// radius, so it raises the same overlay `hold`, slot Scale and layer Size do
+// (decision 18). The card owns the hook and the overlay passes the scope down,
+// so there is one gesture system rather than a second one bolted onto the
+// caller.
+//
+// ⚠️ THE ROW, NOT THE CARD. This popover funnels scale, the angle dial AND the
+// angle flyout through ONE shared `onPreview`. Wrapping `onPreview` itself — or
+// putting `pointerProps` on the card root — would raise the footprint overlay on
+// an ANGLE drag, which moves no radius at all and appears nowhere in decision
+// 18's list. Half of this block exists to keep both of those wrong wirings red,
+// and each needs its OWN assertion. Dragging the dial pins the `onPreview`
+// variant; it does NOT pin the card-root one, because React synthesises
+// `onPointerEnter` as NON-BUBBLING — an enter fired on the dial's row never
+// reaches a handler on the card, so that wiring would stay green here while a
+// real browser, where `pointerenter` does fire up the ancestor chain, showed
+// rings on every angle gesture. The card root is entered DIRECTLY below.
+describe("GlyphPopover — the footprint reveal (#192)", () => {
+  const SCOPE = { kind: "glyph", layerId: "m1", anchorId: "crossing:3" };
+
+  function Readout() {
+    const { scope } = useFootprintReveal();
+    return <div data-testid="reveal-scope">{scope ? JSON.stringify(scope) : "none"}</div>;
+  }
+
+  const mount = (props = {}) =>
+    render(
+      <FootprintRevealProvider>
+        <Readout />
+        <GlyphPopover
+          anchorRect={anchor}
+          scale={1}
+          angle={0}
+          onPreview={() => {}}
+          footprintScope={SCOPE}
+          {...props}
+        />
+      </FootprintRevealProvider>,
+    );
+
+  const scopeText = () => screen.getByTestId("reveal-scope").textContent;
+  const scaleRow = () => screen.getByTestId("glyph-popover-scale").parentElement;
+
+  it("the scale row raises the reveal on hover and releases on leave", () => {
+    mount();
+    expect(scopeText()).toBe("none");
+    fireEvent.pointerEnter(scaleRow());
+    expect(scopeText()).toBe(JSON.stringify(SCOPE));
+    fireEvent.pointerLeave(scaleRow());
+    expect(scopeText()).toBe("none");
+  });
+
+  it("a scale DRAG holds the reveal past the row and releases on commit", () => {
+    const onPreview = vi.fn();
+    const onCommitScale = vi.fn();
+    mount({ onPreview, onCommitScale });
+    const cell = screen.getByTestId("glyph-popover-scale");
+    fireEvent.pointerDown(cell, { clientY: 300, pointerId: 1 });
+    fireEvent.pointerMove(cell, { clientY: 250, pointerId: 1 });
+    expect(scopeText()).toBe(JSON.stringify(SCOPE));
+    // The card's own seam is untouched — the rings can only move if the live
+    // preview still lands.
+    expect(onPreview.mock.calls.at(-1)[0]).toHaveProperty("scale");
+    // The drag walks the cursor off the row, as a vertical scrub always does.
+    fireEvent.pointerLeave(scaleRow());
+    expect(scopeText()).toBe(JSON.stringify(SCOPE));
+    fireEvent.pointerUp(cell, { clientY: 250, pointerId: 1 });
+    expect(onCommitScale).toHaveBeenCalledTimes(1);
+    // THE COMMITTED VALUE STILL ARRIVES. The wrapper releases the reveal and
+    // then forwards, so a wrap that swallowed its argument would leave every
+    // other popover test green while per-glyph scale silently stopped being
+    // written — the record edit is the only thing keeping the ring where the
+    // drag left it.
+    const [committed] = onCommitScale.mock.calls[0];
+    expect(typeof committed).toBe("number");
+    expect(committed).toBeGreaterThan(1); // dragged UP ⇒ larger
+    expect(scopeText()).toBe("none");
+  });
+
+  it("the ANGLE dial raises NOTHING — angle moves no radius", () => {
+    const onPreview = vi.fn();
+    mount({ onPreview });
+    const dial = screen.getByTestId("glyph-popover-dial");
+    fireEvent.pointerEnter(dial.parentElement);
+    expect(scopeText()).toBe("none");
+    fireEvent.pointerDown(dial, { clientY: 300, pointerId: 1 });
+    fireEvent.pointerMove(dial, { clientY: 270, pointerId: 1 });
+    // The angle preview fires; the reveal does not. Both halves matter — the
+    // shared `onPreview` is exactly what makes the wrong wiring easy.
+    expect(onPreview.mock.calls.at(-1)[0]).toEqual({ angle: 30 });
+    expect(scopeText()).toBe("none");
+    fireEvent.pointerUp(dial, { clientY: 270, pointerId: 1 });
+    expect(scopeText()).toBe("none");
+  });
+
+  it("the CARD ROOT raises nothing — the hover surface is the scale row alone", () => {
+    // Fired on the card itself, not on a descendant: `onPointerEnter` does not
+    // bubble in React, so entering a child could never exercise a handler up
+    // here and the drag tests above cannot see this mistake. In a browser it is
+    // the loudest version of it — every hover anywhere on the card, including
+    // the header, the menu and the angle dial, would ring the glyph.
+    mount();
+    fireEvent.pointerEnter(screen.getByTestId("glyph-popover"));
+    expect(scopeText()).toBe("none");
+    fireEvent.pointerEnter(screen.getByTestId("glyph-popover-header"));
+    expect(scopeText()).toBe("none");
+  });
+
+  it("the angle FLYOUT raises nothing either", () => {
+    mount();
+    const dial = screen.getByTestId("glyph-popover-dial");
+    fireEvent.pointerDown(dial, { clientY: 100, pointerId: 1 });
+    fireEvent.pointerUp(dial, { clientY: 100, pointerId: 1 });
+    const flyout = screen.getByTestId("glyph-popover-flyout");
+    const radial = within(flyout).getByRole("slider");
+    fireEvent.keyDown(radial, { key: "ArrowRight" });
+    fireEvent.pointerEnter(flyout);
+    expect(scopeText()).toBe("none");
+  });
+
+  it("is inert with no scope passed — every existing caller is unaffected", () => {
+    mount({ footprintScope: undefined });
+    fireEvent.pointerEnter(scaleRow());
+    expect(scopeText()).toBe("none");
+  });
+
+  it("releases when the card unmounts mid-drag", () => {
+    // Opening a different dot re-keys the card, and a glyph deleted under the
+    // gesture unmounts it outright. Neither may leave the rings on screen.
+    const view = mount();
+    const cell = screen.getByTestId("glyph-popover-scale");
+    fireEvent.pointerDown(cell, { clientY: 300, pointerId: 1 });
+    fireEvent.pointerMove(cell, { clientY: 250, pointerId: 1 });
+    expect(scopeText()).toBe(JSON.stringify(SCOPE));
+    view.rerender(
+      <FootprintRevealProvider>
+        <Readout />
+      </FootprintRevealProvider>,
+    );
+    expect(scopeText()).toBe("none");
   });
 });

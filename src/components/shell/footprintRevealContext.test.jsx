@@ -69,6 +69,47 @@ function Trigger({ scope, testId, onChange, onCommit, value = 50 }) {
   );
 }
 
+/** The LAYER SIZE shape (#192): a bare `<input type="number">` with NO drag
+ *  lifecycle at all. `pointerProps` on the row it sits in, `focusProps` on the
+ *  field — and its own `onChange` left strictly alone, because routing a
+ *  keystroke through `fp.onChange` would latch `dragging` on a gesture that
+ *  never emits a `pointerup` and strand the reveal forever. */
+function FieldTrigger({ scope, testId, onChange }) {
+  const fp = useFootprintRevealTrigger(scope);
+  return (
+    <label {...fp.pointerProps} data-testid={`${testId}-row`}>
+      <input
+        type="number"
+        data-testid={testId}
+        aria-label={testId}
+        defaultValue={18}
+        onChange={onChange}
+        {...fp.focusProps}
+      />
+    </label>
+  );
+}
+
+/** A DRAG control that also takes focus — the case where `blur` and a running
+ *  gesture collide (a pointerdown on a field moves focus). */
+function DragFocusTrigger({ scope, testId, onCommit }) {
+  const fp = useFootprintRevealTrigger(scope, { onCommit });
+  return (
+    <div {...fp.pointerProps} {...fp.focusProps} data-testid={`${testId}-row`}>
+      <DragNumber
+        value={50}
+        min={0}
+        max={100}
+        step={1}
+        label={testId}
+        testId={testId}
+        onChange={fp.onChange}
+        onCommit={fp.onCommit}
+      />
+    </div>
+  );
+}
+
 function setup({ showA = true, showB = false, onChange, onCommit } = {}) {
   const ui = (props) => (
     <FootprintRevealProvider>
@@ -234,6 +275,126 @@ describe("useFootprintReveal — the ways a gesture can end", () => {
     fireEvent.change(input, { target: { value: "62" } });
     fireEvent.keyDown(input, { key: "Enter" });
     expect(t.scope()).toBe("none");
+  });
+});
+
+// ── FOCUS / BLUR (#192) ──────────────────────────────────────────────────
+// Layer Size is a bare `<input type="number">` with no drag lifecycle — the
+// DEGENERATE case of the same gesture system, not a rival one. `focus`/`blur` is
+// needed regardless of hover, because a field reached by TAB never gets a
+// `pointerenter` and would otherwise explain nothing to a keyboard user.
+//
+// The handlers live in the hook rather than at the call site so that `raised`
+// stays the hook's single source of truth: a consumer calling `reveal`/`release`
+// by hand desyncs that ref and the hook then believes it owns a reveal it does
+// not. They are returned as their OWN key, so the `hold` caller (#187) is
+// untouched by their existence.
+describe("useFootprintReveal — focus and blur, for a field with no drag", () => {
+  const field = (props = {}) =>
+    render(
+      <FootprintRevealProvider>
+        <Readout />
+        <FieldTrigger scope={SCOPE_B} testId="size" {...props} />
+      </FootprintRevealProvider>,
+    );
+  const scopeText = () => screen.getByTestId("scope").textContent;
+
+  it("raises on focus with no pointer involved at all — the TAB case", () => {
+    field();
+    fireEvent.focus(screen.getByTestId("size"));
+    expect(scopeText()).toBe(JSON.stringify(SCOPE_B));
+  });
+
+  it("releases on blur", () => {
+    field();
+    fireEvent.focus(screen.getByTestId("size"));
+    fireEvent.blur(screen.getByTestId("size"));
+    expect(scopeText()).toBe("none");
+  });
+
+  it("raises on hover too, and a hover that never focused still releases on leave", () => {
+    field();
+    fireEvent.pointerEnter(screen.getByTestId("size-row"));
+    expect(scopeText()).toBe(JSON.stringify(SCOPE_B));
+    fireEvent.pointerLeave(screen.getByTestId("size-row"));
+    expect(scopeText()).toBe("none");
+  });
+
+  it("EITHER source releases — a leave clears the reveal even while the field is still focused", () => {
+    // RULED, and pinned deliberately rather than smoothed over: reveal on
+    // pointerenter AND focus, release on pointerleave AND blur. So a user who
+    // tabs in and then happens to sweep the cursor across the field and off it
+    // loses the reveal while still typing in the field.
+    //
+    // The alternative — latching hover and focus separately and releasing only
+    // when BOTH are false — was rejected here: it makes `end()` conditional, and
+    // `end()` is also what the unmount effect and the window pointerup guard
+    // call, so every condition on it is a new way to STRAND a reveal on screen.
+    // Over-releasing is recoverable (re-enter the field); a stuck overlay drawn
+    // over the artwork is the failure this whole module exists to prevent.
+    // Reported as an open question, not silently chosen.
+    field();
+    fireEvent.focus(screen.getByTestId("size"));
+    fireEvent.pointerEnter(screen.getByTestId("size-row"));
+    fireEvent.pointerLeave(screen.getByTestId("size-row"));
+    expect(scopeText()).toBe("none");
+  });
+
+  it("releases when the field unmounts while focused", () => {
+    // The PROVIDER stays mounted and only the field goes away — a fresh
+    // provider would read "none" no matter what the hook did.
+    const ui = (show) => (
+      <FootprintRevealProvider>
+        <Readout />
+        {show && <FieldTrigger scope={SCOPE_B} testId="size" />}
+      </FootprintRevealProvider>
+    );
+    const view = render(ui(true));
+    fireEvent.focus(screen.getByTestId("size"));
+    expect(scopeText()).toBe(JSON.stringify(SCOPE_B));
+    view.rerender(ui(false));
+    expect(scopeText()).toBe("none");
+  });
+
+  it("does NOT arm a drag latch — typing leaves nothing that could strand the reveal", () => {
+    // The trap this shape exists to avoid: routing the field's own `onChange`
+    // through `fp.onChange` calls `beginDrag()`, which latches `dragging` and
+    // arms a `{once:true}` window pointerup guard. A keystroke fires no
+    // pointerup, so the latch never clears and `onPointerLeave` short-circuits
+    // for the rest of the session — the reveal is stranded over the artwork.
+    const onChange = vi.fn();
+    field({ onChange });
+    const input = screen.getByTestId("size");
+    fireEvent.pointerEnter(screen.getByTestId("size-row"));
+    fireEvent.change(input, { target: { value: "24" } });
+    expect(onChange).toHaveBeenCalledTimes(1); // the field's own handler still runs
+    fireEvent.pointerLeave(screen.getByTestId("size-row"));
+    expect(scopeText()).toBe("none");
+  });
+
+  it("keeps the reveal when a BLUR arrives mid-drag, and releases on commit", () => {
+    // Same rule as pointerleave, and necessary rather than merely symmetric: a
+    // pointerdown can move focus, so a blur mid-gesture would clear `raised` and
+    // leave the rest of the drag drawing nothing while the pointerup guard's
+    // release became a no-op. THE GESTURE owns the reveal until it ends —
+    // neither the cursor nor focus does.
+    const onCommit = vi.fn();
+    render(
+      <FootprintRevealProvider>
+        <Readout />
+        <DragFocusTrigger scope={SCOPE_A} testId="d" onCommit={onCommit} />
+      </FootprintRevealProvider>,
+    );
+    const dn = screen.getByTestId("d");
+    down(dn, 100);
+    move(dn, 80);
+    fireEvent.blur(screen.getByTestId("d-row"));
+    expect(scopeText()).toBe(JSON.stringify(SCOPE_A));
+    move(dn, 40);
+    expect(scopeText()).toBe(JSON.stringify(SCOPE_A));
+    up(dn, 40);
+    expect(onCommit).toHaveBeenCalledTimes(1);
+    expect(scopeText()).toBe("none");
   });
 });
 

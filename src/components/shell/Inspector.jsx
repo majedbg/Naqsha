@@ -74,6 +74,7 @@ import { getSemanticAnchors } from "../../lib/motif/semanticAnchors";
 import { STARTER_CHIPS } from "../../lib/motif/starterChips";
 import { modeForMotif, applyModeChain } from "../../lib/motif/modeMatch";
 import MotifBlockRack from "./MotifBlockRack";
+import { useFootprintRevealTrigger } from "./footprintRevealContext";
 import GlyphPickerChip from "./GlyphPickerChip";
 import RoleBadge, { badgeKindForHost } from "../ui/RoleBadge";
 import RhythmStrip from "../ui/RhythmStrip";
@@ -832,6 +833,63 @@ function MotifEyeIcon({ open }) {
       <path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24" />
       <line x1="1" y1="1" x2="23" y2="23" />
     </svg>
+  );
+}
+
+// LAYER SIZE — the motif's base glyph size, and the fourth footprint-reveal
+// trigger (#192, PRD #184, decision 18). Every control that moves a radius
+// raises the same overlay, so the user never has to learn which controls
+// explain themselves.
+//
+// A COMPONENT rather than three lines inside the motif `.map()` below, because
+// `useFootprintRevealTrigger` is a hook and the map's length is the number of
+// motifs on the host: calling it in there would change the hook count whenever a
+// motif is added or removed.
+//
+// HOVER AND FOCUS, no drag (ruled, #192). This is a bare `<input
+// type="number">` — no `useDragValue`, no `DragNumber` — so there is no drag
+// lifecycle to compose with. Converting it to a DragNumber was rejected (scope
+// creep into a shared control with existing assertions) and so was dropping the
+// trigger (that descopes the story). `focus`/`blur` is needed regardless of
+// hover: a field reached by TAB never gets a `pointerenter`.
+//
+// ⚠️ ITS `onChange` DOES NOT GO THROUGH THE TRIGGER, and must not. That path
+// calls `beginDrag()`, which latches `dragging` and arms a once-only window
+// `pointerup` guard; a keystroke fires no `pointerup`, so the latch never clears
+// and every later `pointerleave` short-circuits — the reveal is stranded over
+// the artwork for the rest of the session.
+//
+// ⚠️ THE SCOPE NAMES THE MOTIF, NOT THE HOST. This device renders on the HOST
+// and is refused outright on a motif layer, so while this field is hoverable NO
+// motif is selected and the canvas overlay finds the layer through
+// `scope.layerId` alone — a SELECTOR, not merely a filter (the overlay's
+// `revealMotif` memo exists for exactly this). A scope carrying the host's id
+// would raise a reveal that rings nothing, silently.
+function MotifSizeField({ layerId, value, onCommitSize }) {
+  const reveal = useFootprintRevealTrigger(
+    layerId ? { kind: "layer", layerId } : null
+  );
+  return (
+    <label
+      className="flex items-center gap-1.5 text-xs text-ink-soft"
+      {...reveal.pointerProps}
+    >
+      <span className="whitespace-nowrap">Size</span>
+      <input
+        type="number"
+        data-testid="motif-size"
+        aria-label="Size"
+        min={1}
+        step={1}
+        value={value}
+        onChange={(e) => {
+          const raw = Number(e.target.value);
+          onCommitSize(Number.isFinite(raw) && raw >= 1 ? raw : 1);
+        }}
+        {...reveal.focusProps}
+        className="w-14 rounded-xs border border-hairline bg-paper px-1 py-0.5 text-xs text-ink outline-none focus:border-violet num"
+      />
+    </label>
   );
 }
 
@@ -1663,25 +1721,14 @@ function MotifDevice({
                 {/* Placement (fixed tail, ADR-0004 — NOT a chain block): Size + Flip.
                 Kept as fixed controls so authoring them never regresses. */}
                 <div className="space-y-1.5 border-t border-hairline/60 pt-2">
-                  <label className="flex items-center gap-1.5 text-xs text-ink-soft">
-                    <span className="whitespace-nowrap">Size</span>
-                    <input
-                      type="number"
-                      data-testid="motif-size"
-                      aria-label="Size"
-                      min={1}
-                      step={1}
-                      value={size}
-                      onChange={(e) => {
-                        const raw = Number(e.target.value);
-                        const next = Number.isFinite(raw) && raw >= 1 ? raw : 1;
-                        patchMotif(m, {
-                          placement: { sizing: { size: next } },
-                        });
-                      }}
-                      className="w-14 rounded-xs border border-hairline bg-paper px-1 py-0.5 text-xs text-ink outline-none focus:border-violet num"
-                    />
-                  </label>
+                  <MotifSizeField
+                    // The MOTIF's id, not the host's — see MotifSizeField.
+                    layerId={m.id}
+                    value={size}
+                    onCommitSize={(next) =>
+                      patchMotif(m, { placement: { sizing: { size: next } } })
+                    }
+                  />
                   <label className="flex items-center gap-1.5 text-xs text-ink-soft">
                     <input
                       type="checkbox"

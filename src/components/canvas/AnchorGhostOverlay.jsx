@@ -70,8 +70,8 @@ import { isEdgeHost, hostHasPathStructure } from '../../lib/motif/hostKinds';
 import { useFootprintReveal } from '../shell/footprintRevealContext';
 import {
   firstSequenceIndex,
-  placementsForSlotScope,
-  rejectionsForSlotScope,
+  placementsForScope,
+  rejectionsForScope,
   captorDisc,
 } from './footprintScope';
 
@@ -282,7 +282,7 @@ export default function AnchorGhostOverlay({
   //
   // This is load-bearing and non-obvious: the slot card that raises the reveal
   // lives in the MotifDevice, which the Inspector renders on the HOST layer and
-  // explicitly refuses to render on a motif layer (Inspector.jsx:984). So while
+  // explicitly refuses to render on a motif layer (Inspector.jsx:1042). So while
   // the user is hovering a `hold` row, the SELECTED layer is the host and
   // `selectedMotif` is null — the render gate below would return null and the
   // overlay would never draw. Exactly the fails-OFF signature the reveal context
@@ -450,17 +450,24 @@ export default function AnchorGhostOverlay({
   }, [anchors, motif, binding, canvasW, canvasH]);
   const placements = resolved.placements;
 
-  // THE HOVERED SLOT'S PLACEMENTS — decision 16: the hovered slot's glyphs, NOT
-  // every placement on the layer (that stays legible on a sparse host and
-  // becomes a grey haze at MAX_PLACEMENTS). `null` when no slot reveal names
-  // this motif; `[]` when it does and that slot places nothing.
+  // THE REVEALED PLACEMENTS — whichever control raised the reveal (#192). The
+  // component asks ONE selector and draws ONE list; which kind of scope it is
+  // holding is `footprintScope.js`'s business and never leaks in here, because
+  // "one overlay, N triggers" has to stay true as PR 2 adds a fifth.
+  //
+  // A SLOT hover rings the hovered slot's glyphs only — decision 16: every
+  // placement on the layer stays legible on a sparse host and becomes a grey
+  // haze at MAX_PLACEMENTS. A LAYER trigger (Size) is outside what that decision
+  // answered and rings the whole layer; a GLYPH trigger rings exactly one. Each
+  // returns `null` when the scope names nothing here, `[]` when it names
+  // something that currently places nothing.
   //
   // Gated on the reveal naming the SAME motif the pipeline above resolved: with
   // a motif layer selected AND a different motif's slot hovered, `motif` is the
   // selected one and these placements would describe the wrong layer.
   const footprintPlacements = useMemo(() => {
     if (!motif || !revealMotif || revealMotif.id !== motif.id) return null;
-    return placementsForSlotScope(revealScope, {
+    return placementsForScope(revealScope, {
       motifId: motif.id,
       seqIndex: firstSequenceIndex(readChain(motif.params?.binding)),
       survivors: resolved.survivors,
@@ -469,14 +476,14 @@ export default function AnchorGhostOverlay({
     });
   }, [motif, revealMotif, revealScope, resolved]);
 
-  // THE HOVERED SLOT'S LOSSES (#191) — the anchors it was dealt that never
-  // became glyphs. Gated EXACTLY like `footprintPlacements` above (same motif
-  // identity check, same scope), because it answers the same question about the
-  // same slot; only the list it reads differs. `null` when the scope names
-  // nothing here or the run rejected nothing at all.
+  // THE REVEALED LOSSES (#191) — the anchors the reveal names that never became
+  // glyphs. Gated EXACTLY like `footprintPlacements` above (same motif identity
+  // check, same scope), because it answers the same question about the same
+  // thing; only the list it reads differs. `null` when the scope names nothing
+  // here or the run rejected nothing at all.
   const footprintRejections = useMemo(() => {
     if (!motif || !revealMotif || revealMotif.id !== motif.id) return null;
-    return rejectionsForSlotScope(revealScope, {
+    return rejectionsForScope(revealScope, {
       motifId: motif.id,
       seqIndex: firstSequenceIndex(readChain(motif.params?.binding)),
       survivors: resolved.survivors,
@@ -934,6 +941,15 @@ export default function AnchorGhostOverlay({
         (!placedIds.has(openGlyph.anchorId) && !includeIds.has(openGlyph.anchorId))}
       scale={resolvedScale}
       angle={resolvedAngle}
+      // THE FOOTPRINT REVEAL for this card's SCALE row (#192, decision 18).
+      // Passed down rather than built in the popover because this component is
+      // the one that knows both ids, and handed as an opaque scope so the card
+      // stays a control surface with no notion of what a footprint is. The
+      // popover scopes it to the scale row alone — the angle dial beside it
+      // moves no radius. Built inline: `sameScope` compares value-wise, so a
+      // fresh object per render re-uses the stored reveal rather than
+      // re-rendering the overlay every frame of a drag.
+      footprintScope={{ kind: 'glyph', layerId: motif.id, anchorId: openGlyph.anchorId }}
       label={motif.name || 'Glyph'}
       // Live frames: the canvas updates throughout, all folded into this
       // gesture's single undo entry.

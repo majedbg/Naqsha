@@ -139,6 +139,24 @@ function overrideScale(records, anchorId) {
 }
 
 /**
+ * One rejection as the overlay will draw it, or null if it draws none — the
+ * two filters and the override multiply that every scope kind applies alike
+ * (extracted with #192; the rules and their reasoning are unchanged from #191
+ * and are documented in full on `rejectionsForSlotScope` below).
+ *
+ * @param {{anchorId:string, reason:string, wantedRadius:number}} r
+ * @param {Map<string, {scale?:number}>|null|undefined} overrideRecords
+ * @returns {object|null}
+ */
+function drawableRejection(r, overrideRecords) {
+  if (!DRAWN_REASONS.has(r.reason)) return null;
+  if (!(Number.isFinite(r.wantedRadius) && r.wantedRadius > 0)) return null;
+  const scale = overrideScale(overrideRecords, r.anchorId);
+  // A shallow CLONE when scaled; the engine's array is never mutated.
+  return scale == null ? r : { ...r, wantedRadius: r.wantedRadius * scale };
+}
+
+/**
  * The rejections the ONE slot a reveal scope names has to answer for (#191).
  *
  * Mirrors `placementsForSlotScope` — same gating, same re-deal, same null-vs-[]
@@ -186,14 +204,153 @@ export function rejectionsForSlotScope(scope, ctx) {
   const { byAnchorId, zoneId, slotIndex } = deal;
   const out = [];
   for (const r of rejected) {
-    if (!DRAWN_REASONS.has(r.reason)) continue;
-    if (!(Number.isFinite(r.wantedRadius) && r.wantedRadius > 0)) continue;
     const a = byAnchorId.get(r.anchorId);
     if (!a || a.slotIndex !== slotIndex || (a.zoneId ?? null) !== zoneId) continue;
-    const scale = overrideScale(overrideRecords, r.anchorId);
-    out.push(scale == null ? r : { ...r, wantedRadius: r.wantedRadius * scale });
+    const drawable = drawableRejection(r, overrideRecords);
+    if (drawable) out.push(drawable);
   }
   return out;
+}
+
+/* ------------------------------------------------- the other scope kinds */
+// #192 wires the remaining three triggers, and two of them publish kinds
+// NOTHING CLASSIFIED until now: layer Size raises `{kind:'layer', layerId}` and
+// a per-glyph override raises `{kind:'glyph', layerId, anchorId}` (the
+// conventions recorded in footprintRevealContext.js). An unclassified kind is
+// not a harmless no-op — the reveal raises, the selectors below return null, and
+// the overlay draws nothing at all. That is exactly the fails-OFF signature this
+// PRD keeps warning about: it looks identical to the trigger never having been
+// wired.
+//
+// The three kinds share the layer gate and the null-vs-[] contract, and NOTHING
+// ELSE — `{kind:'slot'}` alone needs the re-deal. Each kind keeps its OWN
+// empty-list guard, for the reason `slotDeal` records: a layer whose every
+// anchor was rejected has NO placements and a full rejection list, and a shared
+// guard would switch off precisely the case #191 exists for.
+
+/**
+ * Does this scope name THIS motif at all? The one thing every kind checks.
+ *
+ * @param {object|null} scope
+ * @param {{motifId?:string}} ctx
+ */
+const namesLayer = (scope, ctx) => !!scope && !!ctx?.motifId && scope.layerId === ctx.motifId;
+
+/**
+ * EVERY placement on the layer — the layer-wide answer, deliberately unnarrowed.
+ *
+ * RULING (#192). Decision 16 — "the hovered slot's glyphs, not every placement
+ * on the layer" — was ruled about a SLOT hover, where a slot is what the user is
+ * pointing at and the rest of the layer is noise. A layer-wide control is
+ * outside what that decision answered: nothing narrows layer Size to a subset,
+ * and picking one arbitrarily (the first slot? the largest glyph?) would ring
+ * glyphs the control does not exclusively move while leaving unringed ones it
+ * does. Drawing nothing is not an option either — it fails this issue's first
+ * acceptance criterion, silently.
+ *
+ * ⚠️ SO THIS REINSTATES THE FULL `MAX_PLACEMENTS` WORST CASE, the one the
+ * handover's perf table measures at 83.77 ms/frame (2000 rings, synthetic, at
+ * the cap). Decision 16's `MAX_PLACEMENTS / numSlots` bound simply does not
+ * apply here: it is a property of dealing a slot, and a layer is not dealt.
+ * A real 286-ring grid reconciles in 5.33 ms; the cap case is a 1-slot sequence
+ * at MAX_PLACEMENTS.
+ *
+ * NO CAP, NO CUTOFF, NO "top N" IS ADDED. An invisible clamp is the exact class
+ * of hidden default this whole PRD exists to stop — the overlay would then be
+ * lying about the layer while claiming to explain it, which is worse than being
+ * slow. Reported to the orchestrator as an open question instead.
+ *
+ * @param {object} scope
+ * @param {{motifId:string, placements:Array}} ctx
+ * @returns {Array|null}
+ */
+function placementsForLayerScope(scope, ctx) {
+  if (!namesLayer(scope, ctx)) return null;
+  const { placements } = ctx;
+  if (!Array.isArray(placements) || placements.length === 0) return null;
+  // The engine's array verbatim — every caller treats these as read-only, and
+  // a defensive copy of up to MAX_PLACEMENTS entries is exactly the cost the
+  // note above is already uncomfortable about. Layer Size has NO drag (it is a
+  // bare number input, ruled in #192), so this does not run per drag frame; it
+  // runs once per raise and then once per KEYSTROKE, since committing a new
+  // size replaces the layer and re-runs the whole resolve → select → draw path
+  // underneath it while the reveal is still up.
+  return placements;
+}
+
+/** Every drawable rejection on the layer. Mirror of the above. */
+function rejectionsForLayerScope(scope, ctx) {
+  if (!namesLayer(scope, ctx)) return null;
+  const { rejected, overrideRecords } = ctx;
+  if (!Array.isArray(rejected) || rejected.length === 0) return null;
+  const out = [];
+  for (const r of rejected) {
+    const drawable = drawableRejection(r, overrideRecords);
+    if (drawable) out.push(drawable);
+  }
+  return out;
+}
+
+/**
+ * The ONE placement a per-glyph override names — plus its captor, which comes
+ * free: the caller selects captors from whatever list it is handed.
+ *
+ * `[]` (rather than null) when that anchor is not among the placements, and that
+ * is a REACHABLE state rather than a defensive one: a rejected anchor still has
+ * a clickable dot and a popover, so its scale control is a live trigger for a
+ * glyph that never drew. Its ring comes from the rejection side.
+ */
+function placementsForGlyphScope(scope, ctx) {
+  if (!namesLayer(scope, ctx) || !scope.anchorId) return null;
+  const { placements } = ctx;
+  if (!Array.isArray(placements) || placements.length === 0) return null;
+  return placements.filter((p) => p.anchorId === scope.anchorId);
+}
+
+/** That anchor's rejection, if it was rejected instead of placed. */
+function rejectionsForGlyphScope(scope, ctx) {
+  if (!namesLayer(scope, ctx) || !scope.anchorId) return null;
+  const { rejected, overrideRecords } = ctx;
+  if (!Array.isArray(rejected) || rejected.length === 0) return null;
+  const out = [];
+  for (const r of rejected) {
+    if (r.anchorId !== scope.anchorId) continue;
+    const drawable = drawableRejection(r, overrideRecords);
+    if (drawable) out.push(drawable);
+  }
+  return out;
+}
+
+/**
+ * WHAT THE OVERLAY CALLS — the placements any reveal scope names, whatever kind
+ * it is. One list, handed to one renderer: the component never learns which
+ * control raised the reveal, which is what keeps "one overlay implementation,
+ * N callers" true as PR 2 adds a fifth trigger.
+ *
+ * An unrecognised kind names NOTHING, deliberately. The reveal context is opaque
+ * and will carry a shape this module has never seen (PR 2's spacing/density is
+ * being written against it right now); ringing the whole layer on a kind we
+ * cannot interpret would be a guess drawn over the user's artwork.
+ *
+ * @param {object|null} scope  the reveal scope, verbatim from the context.
+ * @param {object} ctx  the union of what the kinds need — see each selector.
+ * @returns {Array|null}
+ */
+export function placementsForScope(scope, ctx) {
+  if (!scope) return null;
+  if (scope.kind === 'slot') return placementsForSlotScope(scope, ctx);
+  if (scope.kind === 'layer') return placementsForLayerScope(scope, ctx);
+  if (scope.kind === 'glyph') return placementsForGlyphScope(scope, ctx);
+  return null;
+}
+
+/** The rejections any reveal scope names. Mirror of `placementsForScope`. */
+export function rejectionsForScope(scope, ctx) {
+  if (!scope) return null;
+  if (scope.kind === 'slot') return rejectionsForSlotScope(scope, ctx);
+  if (scope.kind === 'layer') return rejectionsForLayerScope(scope, ctx);
+  if (scope.kind === 'glyph') return rejectionsForGlyphScope(scope, ctx);
+  return null;
 }
 
 /**

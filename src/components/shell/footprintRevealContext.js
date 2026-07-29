@@ -14,10 +14,15 @@
 // edge, so it can express neither "still dragging out here" nor "the gesture is
 // over, put the overlay away". The rules this module implements instead:
 //
-//   reveal   on pointerenter AND on drag start
-//   release  on pointerleave AND on drag commit
-//   DRAG START WINS over pointerleave — a leave arriving mid-drag never releases
+//   reveal   on pointerenter AND on drag start (AND on focus, #192)
+//   release  on pointerleave AND on drag commit (AND on blur, #192)
+//   DRAG START WINS over pointerleave — a leave arriving mid-drag never releases,
+//           and neither does a blur (a pointerdown can move focus)
 //   unmount mid-drag releases
+//
+// FOCUS/BLUR is the degenerate case of the same system, added for layer Size —
+// a bare `<input type="number">` with no drag lifecycle at all, and reachable by
+// TAB, which fires no `pointerenter` ever. See `focusProps` below.
 //
 // The failure mode being defended against is a reveal STUCK ON: an overlay left
 // drawn over the artwork the user is trying to judge. Three things can strand a
@@ -38,12 +43,34 @@
 // the user's NEXT unrelated click and release a reveal somebody else had raised.
 //
 // NO OWNERSHIP TOKENS, deliberately. `release()` takes no argument (the shape
-// decisions 18/19 and issue #188 both specify) and cross-talk is prevented
-// structurally instead: native dispatch always fires `pointerleave` on the old
-// element BEFORE `pointerenter` on the new one, pointer capture keeps a
-// mid-drag pointer from reaching any other control, and each trigger only ever
-// releases a reveal IT raised (`raised`). Don't add tokens without a case you
-// can actually construct.
+// decisions 18/19 and issue #188 both specify). Two of the three structural
+// guards that stood in for tokens still hold:
+//
+//   • pointer capture keeps a mid-drag pointer from reaching any other control;
+//   • native dispatch fires `pointerleave` on the old element BEFORE
+//     `pointerenter` on the new one, so a pointer hand-off is ordered.
+//
+// THE THIRD ONE BROKE WITH `focusProps` (#192), and this comment used to claim
+// otherwise. It read "each trigger only ever releases a reveal IT raised
+// (`raised`)" — true of the ref, but it was resting on the ordering above, and
+// that ordering only orders the POINTER. Focus is a SECOND, INDEPENDENT channel
+// with no dispatch ordering against enter/leave, so two triggers can hold
+// `raised === true` at the same time and either may release the other's reveal.
+// The constructible case: focus the layer Size field, move the cursor onto a
+// slot Scale row (Scale raises, correctly), then Tab away or click the Scale row
+// without dragging — Size's `onBlur` releases, the overlay goes dark, and the
+// cursor is parked on a row that will not re-raise because no `pointerenter` is
+// coming.
+//
+// ACCEPTED, RULED, NOT AN OVERSIGHT. Over-releasing is recoverable — re-enter or
+// re-focus raises it again — while a reveal STUCK ON over the artwork is the
+// failure this whole module exists to prevent. The fix would be to make `end()`
+// conditional (release only when no channel still holds), and `end()` is also
+// what the unmount effect and the window `pointerup`/`pointercancel` guard call:
+// every condition added there is a new way to strand a reveal on screen, in
+// exactly the paths that exist because stranding is easy. Don't add tokens
+// either — they would have to be threaded through `release()`, whose argument-
+// free shape is specified.
 //
 // Kept in a non-component `.js` module (createElement, no JSX) so the file
 // exports a provider and hooks only — react-refresh requires component files to
@@ -233,6 +260,47 @@ export function useFootprintRevealTrigger(scope, handlers = {}) {
       // DRAG START WINS. Mid-drag the cursor is expected to be somewhere else
       // entirely; the gesture, not the cursor, owns the reveal until it ends.
       onPointerLeave: () => {
+        if (dragging.current) return;
+        end();
+      },
+    },
+    /**
+     * Spread onto the FOCUSABLE FIELD, for a control that can be reached by
+     * keyboard (#192). Additive: a consumer that wants hover only — every
+     * DragNumber trigger — simply ignores this key and is unaffected.
+     *
+     * WHY IT EXISTS AT ALL. Layer Size is a bare `<input type="number">` with no
+     * drag lifecycle whatsoever, so hover is the only pointer signal it has; and
+     * a field reached by TAB gets no `pointerenter` at any point, so without
+     * this the control would explain itself to a mouse and stay silent to a
+     * keyboard. This is the DEGENERATE case of the same gesture system, not a
+     * second one — same `raised` bookkeeping, same `end()`, same unmount
+     * release. That is precisely why it lives in the hook: a caller wiring
+     * `reveal`/`release` directly at the call site would desync `raised`, and
+     * the hook would then believe it owns a reveal it does not.
+     *
+     * ⚠️ A FIELD LIKE THAT MUST NOT ROUTE ITS `onChange` THROUGH `onChange`
+     * BELOW. That path calls `beginDrag()`, which latches `dragging` and arms a
+     * once-only window `pointerup` guard; a keystroke fires no `pointerup`, so
+     * the latch never clears, `onPointerLeave` short-circuits forever after, and
+     * the reveal is stranded over the artwork. Hover/focus only, for a control
+     * with no drag.
+     *
+     * EITHER SOURCE RELEASES, and the interleave is knowingly imperfect: a
+     * pointerleave clears a reveal that focus is still holding. Latching hover
+     * and focus separately was rejected — it makes `end()` conditional, and
+     * `end()` is what the unmount effect and the window guard also call, so
+     * every condition on it is a new way to STRAND a reveal. Over-releasing is
+     * recoverable; a stuck overlay is the failure this module exists to prevent.
+     */
+    focusProps: {
+      onFocus: () => raise(),
+      // THE GESTURE OWNS THE REVEAL — not the cursor (above) and not focus.
+      // Necessary rather than merely symmetric: a `pointerdown` can move focus,
+      // so a blur landing mid-drag would clear `raised` and leave the rest of
+      // the drag drawing nothing, with the pointerup guard's release already
+      // reduced to a no-op.
+      onBlur: () => {
         if (dragging.current) return;
         end();
       },

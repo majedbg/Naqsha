@@ -781,6 +781,26 @@ function SortableSlotChip({
     },
   );
 
+  // SCALE raises the SAME reveal (#192, decision 18), and it is the trigger the
+  // issue argues hardest for: measured on 6 anchors at gap 25, raising Scale
+  // 100→300% yields one enormous glyph, some middling ones, and FEWER of them
+  // (6 placed → 4). Wherever the neighbour cap binds, raising Scale moves the
+  // NEIGHBOURS and does nothing to the glyph being adjusted — which is very
+  // likely why a second control was reached for at all, and is exactly what the
+  // rings make visible.
+  //
+  // ITS OWN INSTANCE, not a reuse of `holdReveal`'s wrappers: the two rows write
+  // different fields, so sharing them would write `hold` on a Scale drag. Same
+  // scope object — one slot, one answer, whichever of its two size controls the
+  // user is pointing at.
+  const scaleReveal = useFootprintRevealTrigger(
+    slotScope ? { ...slotScope, slotIndex: index } : null,
+    {
+      onChange: (v) => patchLive({ sizeScale: v }),
+      onCommit: (v) => patchCommit({ sizeScale: v }),
+    },
+  );
+
   // The eye writes the EFFECTIVE ref, never a bare `rest:true`. A slot that
   // never named a glyph still draws the layer's base one (`effectiveRef`), and
   // hiding it without recording that ref would make it indistinguishable from a
@@ -982,22 +1002,44 @@ function SortableSlotChip({
         <div className="flex gap-0.5">
           <div className="flex min-w-0 flex-1 flex-col">
             {/* Scale — a multiplier over the layer's Size, on the popover's own
-                scale (same constants, so 140% means the same thing in both). */}
-            <DragNumber
-              value={sizeScale}
-              min={SCALE_MIN}
-              max={SCALE_MAX}
-              step={SCALE_STEP}
-              mapping="geometric"
-              format={SCALE_FORMAT}
-              parse={SCALE_PARSE}
-              label="Glyph scale"
-              title="Drag ↕ to size every instance · neighbours repack"
-              slotWidth="5ch"
-              testId="motif-slot-scale"
-              onChange={(v) => patchLive({ sizeScale: v })}
-              onCommit={(v) => patchCommit({ sizeScale: v })}
-            />
+                scale (same constants, so 140% means the same thing in both).
+                Wrapped exactly like the `hold` row below, for two of the same
+                reasons: `pointerProps` must land on a DOM ELEMENT (DragNumber
+                forwards no unknown props, so spreading them onto it fails
+                silently OFF), and `flex flex-col` keeps the row full-width so
+                the hover surface is not visibly narrowed.
+
+                ⚠️ IT DOES NOT SATISFY THE HOOK'S SECOND CONSUMER RULE, and
+                neither does the `hold` row: both wrappers live inside
+                `{!isRest && …}` while the hook is called on the CHIP, so if
+                `rest` flips true while the row is hovered — undo, with the
+                cursor parked on the row, is the cheapest repro — the element
+                vanishes without firing `pointerleave`, the chip stays mounted so
+                the hook's unmount release never runs, and the reveal is STUCK
+                ON. That is verbatim the case footprintRevealContext.js warns
+                about ("an element rendered conditionally INSIDE a mounted
+                trigger"). PRE-EXISTING since #187 and duplicated here rather
+                than introduced; hoisting to the chip root was explicitly
+                rejected there, because enter/leave would then fire for the eye,
+                the grip and the menu and raise the overlay on gestures that move
+                no radius. Filed separately — deliberately NOT fixed in #192. */}
+            <div className="flex flex-col" {...scaleReveal.pointerProps}>
+              <DragNumber
+                value={sizeScale}
+                min={SCALE_MIN}
+                max={SCALE_MAX}
+                step={SCALE_STEP}
+                mapping="geometric"
+                format={SCALE_FORMAT}
+                parse={SCALE_PARSE}
+                label="Glyph scale"
+                title="Drag ↕ to size every instance · neighbours repack"
+                slotWidth="5ch"
+                testId="motif-slot-scale"
+                onChange={scaleReveal.onChange}
+                onCommit={scaleReveal.onCommit}
+              />
+            </div>
             {/* hold (#186) — directly UNDER Scale because it modifies Scale, and
                 adjacency is the teaching: Scale is the size I want, `hold` is how
                 much packing is allowed to take it away. Same number machinery as

@@ -23,6 +23,7 @@ import AngleDial from "../ui/AngleDial";
 import DragDial from "../ui/DragDial";
 import DragNumber from "../ui/DragNumber";
 import Menu from "../ui/Menu";
+import { useFootprintRevealTrigger } from "../shell/footprintRevealContext";
 import {
   GLYPH_PASTE_EMPTY_HINT,
   readGlyphClipboard,
@@ -235,6 +236,15 @@ export default function GlyphPopover({
   onClose = () => {},
   label = "Glyph",
   testId = "glyph-popover",
+  /**
+   * What the SCALE row reveals on the canvas (#192, PRD #184) — the opaque
+   * footprint-reveal scope, `{kind:'glyph', layerId, anchorId}`, passed down by
+   * `AnchorGhostOverlay`, its only caller today, because that is the component
+   * holding both ids. Omitted ⇒ the trigger is inert rather than broken, which
+   * is what keeps this card renderable on its own (its placement tests mount it
+   * bare) and what any future caller uninterested in the reveal would get.
+   */
+  footprintScope = null,
 }) {
   const cardRef = useRef(null);
   const moreRef = useRef(null);
@@ -267,6 +277,22 @@ export default function GlyphPopover({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [dialOpen, menuOpen, onClose]);
+
+  // THE FOOTPRINT REVEAL, SCOPED TO THE SCALE ROW ONLY (#192, decision 18).
+  // Scale moves a radius, so it raises the same overlay `hold`, slot Scale and
+  // layer Size raise; the card owns the hook so that there is one gesture
+  // system, and the caller passes only the scope.
+  //
+  // ⚠️ WHY IT WRAPS THE ROW'S OWN HANDLERS AND NOT `onPreview`. Scale, the angle
+  // dial and the angle flyout all report through the SAME `onPreview`, so
+  // wrapping that function — or putting `pointerProps` on the card root, which
+  // is the other tempting shortcut — would raise the footprint overlay on an
+  // ANGLE drag. Angle moves no radius, and decision 18 lists the radius controls
+  // only. The rings would then appear on a gesture they say nothing about.
+  const scaleReveal = useFootprintRevealTrigger(footprintScope, {
+    onChange: (v) => onPreview({ scale: v }),
+    onCommit: onCommitScale,
+  });
 
   const closeMenu = useCallback(() => setMenuOpen(false), []);
 
@@ -373,16 +399,18 @@ export default function GlyphPopover({
         />
       </div>
 
-      {/* row 2 — scale */}
-      <div className="flex justify-start px-2xs py-2xs">
+      {/* row 2 — scale. `pointerProps` on the ROW, never on the DragNumber:
+          it forwards no unknown props, so spreading them there would fail
+          silently OFF and look exactly like the overlay never being built. */}
+      <div className="flex justify-start px-2xs py-2xs" {...scaleReveal.pointerProps}>
         <DragNumber
           value={scale}
           min={SCALE_MIN}
           max={SCALE_MAX}
           step={SCALE_STEP}
           mapping="geometric"
-          onChange={(v) => onPreview({ scale: v })}
-          onCommit={onCommitScale}
+          onChange={scaleReveal.onChange}
+          onCommit={scaleReveal.onCommit}
           label="Glyph scale"
           format={SCALE_FORMAT}
           parse={SCALE_PARSE}

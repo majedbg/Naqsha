@@ -32,6 +32,9 @@ import IslamicStar from './IslamicStar';
 import Moire from './Moire';
 import CirclePacking from './CirclePacking';
 import Dendrite from './Dendrite';
+import Branch from './Branch';
+import Rinceau from './Rinceau';
+import MagneticScroll from './MagneticScroll';
 import MotifPattern from '../motif/MotifPattern';
 
 export const PATTERN_CLASSES = {
@@ -57,6 +60,9 @@ export const PATTERN_CLASSES = {
   moire: Moire,
   circlepacking: CirclePacking,
   dendrite: Dendrite,
+  branch: Branch,
+  rinceau: Rinceau,
+  magnetscroll: MagneticScroll,
   motif: MotifPattern,
 };
 

@@ -65,6 +65,9 @@ export const PATTERN_TYPES = [
   { id: 'moire', label: 'Moiré' },
   { id: 'circlepacking', label: 'Circle Packing' },
   { id: 'dendrite', label: 'Dendrite' },
+  { id: 'branch', label: 'Branch' },
+  { id: 'rinceau', label: 'Rinceau' },
+  { id: 'magnetscroll', label: 'Magnetic Scroll' },
 ];
 
 // Absolute DOCUMENT layer bound — the hard backstop every layer creator
@@ -357,6 +360,33 @@ export const DEFAULT_PARAMS = {
     offsetX: 0,
     offsetY: 0,
   },
+  // Space-colonization plant. The envelope is the silhouette: attractors are
+  // scattered inside it and the tree grows to consume them, so `envelopeScale`
+  // is the coverage lever (0.92 fills a 12" sheet). See
+  // src/lib/patterns/spaceColonizationSkeleton.js — the shared core the motif
+  // extractor re-runs to anchor on this exact skeleton.
+  branch: {
+    envelopeShape: 'circle',
+    envelopeScale: 0.92,
+    attractorCount: 900,
+    attractionRadius: 110,
+    killDistance: 26,
+    stepLength: 11,
+    angleJitter: 12,
+    maxNodes: 2000,
+    // 6, not spiral's 24: a plant's stems are SHORT (median ~88px at these
+    // defaults, vs a spiral arm's full radius), and the emission order the
+    // extractor is contracted to (crossings, edges, tips) doubles as PLACEMENT
+    // priority — every extra edge sample claims space the Apex flower then can't
+    // have. Measured over the 1152px sheet: 10 samples/stem => 34 of 51 flowers
+    // stamped, 6 => 37, 4 => 42.
+    edgeSamplesPerBranch: 6,
+    strokeWeight: 0.8,
+    symmetry: 1,
+    startAngle: 0,
+    offsetX: 0,
+    offsetY: 0,
+  },
   girih: {
     tiling: 'square8',
     contactAngle: 60,
@@ -401,6 +431,47 @@ export const DEFAULT_PARAMS = {
     stickiness: 0.8,
     nodeSpacing: 6,
     strokeWeight: 0.7,
+    symmetry: 1,
+    startAngle: 0,
+    offsetX: 0,
+    offsetY: 0,
+  },
+  // Rinceau — the running-scroll border. `amplitude`, `rowSpread` and
+  // `stripOffset` are FRACTIONS of the cross-axis canvas extent (canvasH for a
+  // horizontal strip, canvasW for a vertical one). amplitude 0.045 at 5 scrolls
+  // puts the wave height at roughly half the wavelength, which is what makes the
+  // spine read as an ornamental scroll rather than a coiled spring — see the
+  // Rinceau.js header. `jitter: 0` keeps the default a pure function of its params.
+  rinceau: {
+    waveform: 'scroll',
+    orientation: 'horizontal',
+    waveCount: 5,
+    amplitude: 0.045,
+    phase: 0,
+    tension: 0.85,
+    rows: 3,
+    rowSpread: 0.62,
+    rowPhase: 180,
+    stripOffset: 0,
+    jitter: 0,
+    margin: 60,
+    strokeWeight: 0.8,
+    symmetry: 1,
+    startAngle: 0,
+    offsetX: 0,
+    offsetY: 0,
+  },
+  magnetscroll: {
+    layout: 'row',
+    scrollCount: 12,
+    scrollRadius: 78,
+    turns: 2.25,
+    taper: 0.7,
+    rotation: 'alternate',
+    branch: 'paired',
+    branchScale: 0.55,
+    jitter: 0.3,
+    strokeWeight: 0.9,
     symmetry: 1,
     startAngle: 0,
     offsetX: 0,
@@ -866,6 +937,26 @@ export const PATTERN_PARAM_DEFS = {
     START_ANGLE_PARAM,
     OFFSET_PAD_PARAM,
   ],
+  branch: [
+    { key: 'envelopeShape', label: 'Envelope', type: 'select', options: [
+      { value: 'circle', label: 'Circle' },
+      { value: 'lozenge', label: 'Lozenge' },
+      { value: 'rect', label: 'Panel' },
+      { value: 'ring', label: 'Ring' },
+    ], tooltip: 'The shape the plant grows to fill — the silhouette' },
+    { key: 'envelopeScale', label: 'Envelope Size', min: 0.2, max: 1, step: 0.02, tooltip: 'Envelope size as a fraction of the sheet — the coverage lever' },
+    { key: 'attractorCount', label: 'Growth Points', min: 100, max: 2000, step: 50, tooltip: 'Attraction points scattered in the envelope — more = denser plant' },
+    { key: 'attractionRadius', label: 'Reach', min: 30, max: 260, step: 5, tooltip: 'How far a stem senses growth points — larger = straighter, fewer branches' },
+    { key: 'killDistance', label: 'Branch Spacing', min: 8, max: 60, step: 1, tooltip: 'How close a stem must get to consume a growth point — smaller = finer twigs' },
+    { key: 'stepLength', label: 'Step', min: 4, max: 30, step: 1, tooltip: 'Length of one growth step — the polyline resolution' },
+    { key: 'angleJitter', label: 'Wander', min: 0, max: 45, step: 1, tooltip: 'Seeded angle wobble per step — 0 = mechanical, higher = hand-grown' },
+    { key: 'maxNodes', label: 'Growth Budget', min: 200, max: 4000, step: 100, tooltip: 'Hard node cap — raise for very dense plants, costs compute' },
+    { key: 'edgeSamplesPerBranch', label: 'Motif Samples / Stem', min: 2, max: 40, step: 1, tooltip: 'Motif anchor positions along each stem (hosted motifs only)' },
+    { key: 'strokeWeight', label: 'Stroke Weight', min: 0.3, max: 3, step: 0.1, tooltip: 'Line thickness' },
+    SYMMETRY_PARAM,
+    START_ANGLE_PARAM,
+    OFFSET_PAD_PARAM,
+  ],
   girih: [
     // Hankin polygons-in-contact star patterns. NOTE: only the two correct
     // tilings ship — square8 (4.8.8 → 8★) and hex12 (3.12.12 → 12★). The
@@ -935,6 +1026,63 @@ export const PATTERN_PARAM_DEFS = {
     { key: 'maxNodes', label: 'Size', min: 200, max: 4000, step: 50, tooltip: 'Particle count — bigger + more compute' },
     { key: 'stickiness', label: 'Stickiness', min: 0.05, max: 1, step: 0.05, tooltip: 'Capture probability — low = denser/smoother, high = feathery/branchy' },
     { key: 'nodeSpacing', label: 'Branch Spacing', min: 2, max: 20, step: 1, tooltip: 'Distance between particles — branch thickness' },
+    { key: 'strokeWeight', label: 'Stroke Weight', min: 0.3, max: 3, step: 0.1, tooltip: 'Line thickness' },
+    SYMMETRY_PARAM,
+    START_ANGLE_PARAM,
+    OFFSET_PAD_PARAM,
+  ],
+  // Rinceau (running scroll). Every fractional knob below is a fraction of the
+  // CROSS-AXIS canvas extent — canvasH for a horizontal strip, canvasW for a
+  // vertical one. `tension` only bites on the scroll waveform (the sine has no
+  // Bézier handles), so it is showIf-gated the way girih gates bandWidth.
+  rinceau: [
+    { key: 'waveform', label: 'Waveform', type: 'select', options: [
+      { value: 'scroll', label: 'Scroll Modules' },
+      { value: 'sine', label: 'Sine' },
+    ], tooltip: 'Bézier S-modules (the ornamental running scroll) vs a pure sine' },
+    { key: 'orientation', label: 'Strip Axis', type: 'select', options: [
+      { value: 'horizontal', label: 'Horizontal' },
+      { value: 'vertical', label: 'Vertical' },
+    ], tooltip: 'Which way the border band runs across the sheet' },
+    { key: 'waveCount', label: 'Scrolls', min: 1, max: 16, step: 1, tooltip: 'Full undulations along the strip — the repeat count' },
+    { key: 'amplitude', label: 'Amplitude', min: 0.01, max: 0.3, step: 0.005, tooltip: 'Wave height, as a fraction of the sheet across the strip. Keep it near half the wavelength or the scroll coils up.' },
+    { key: 'phase', label: 'Phase', type: 'dial', wrap: true, min: 0, max: 360, step: 1, tooltip: 'Slides the scroll along the strip without moving its ends' },
+    { key: 'tension', label: 'Scroll Tension', min: 0.05, max: 1, step: 0.05, showIf: (p) => (p.waveform ?? 'scroll') !== 'sine', tooltip: 'Bézier handle length — low = pinched zigzag, high = flat crests with steep risers' },
+    { key: 'rows', label: 'Strip Rows', min: 1, max: 8, step: 1, tooltip: 'Parallel border strips — each is its own open spine' },
+    { key: 'rowSpread', label: 'Row Spread', min: 0, max: 1, step: 0.01, showIf: (p) => (p.rows ?? 1) > 1, tooltip: 'How far apart the rows sit, as a fraction of the strip width' },
+    { key: 'rowPhase', label: 'Row Phase Step', type: 'dial', wrap: true, min: 0, max: 360, step: 1, showIf: (p) => (p.rows ?? 1) > 1, tooltip: 'Phase added per row — 180° braids adjacent strips against each other' },
+    { key: 'stripOffset', label: 'Strip Position', min: -0.5, max: 0.5, step: 0.01, tooltip: 'Shifts the whole band across the sheet, as a fraction of the strip width' },
+    { key: 'jitter', label: 'Hand Wobble', min: 0, max: 1, step: 0.05, tooltip: 'Seeded organic drift — 0 = drafted, higher = drawn by hand' },
+    { key: 'margin', label: 'End Inset', min: 0, max: 200, step: 5, tooltip: 'Pulls the spine ends back from the canvas edge' },
+    { key: 'strokeWeight', label: 'Stroke Weight', min: 0.3, max: 3, step: 0.1, tooltip: 'Line thickness' },
+    SYMMETRY_PARAM,
+    START_ANGLE_PARAM,
+    OFFSET_PAD_PARAM,
+  ],
+  magnetscroll: [
+    { key: 'layout', label: 'Seed Layout', type: 'select', options: [
+      { value: 'row', label: 'Baseline Row' },
+      { value: 'grid', label: 'Grid' },
+      { value: 'scatter', label: 'Golden Scatter' },
+    ], tooltip: 'Where the scrolls are launched from — Row = border/rinceau strip' },
+    { key: 'scrollCount', label: 'Scrolls', min: 1, max: 48, step: 1, tooltip: 'How many volutes are launched — each ends in one eye' },
+    { key: 'scrollRadius', label: 'Scroll Size', min: 12, max: 200, step: 2, tooltip: 'Radius of the outermost coil — the volute’s overall scale' },
+    { key: 'turns', label: 'Coil Turns', min: 0.75, max: 5, step: 0.25, tooltip: 'Total winding. Below ~1.5 it reads as a hook, above as a volute' },
+    // The range STARTS at 0.5 because that is where the volute actually closes
+    // on an eye across the whole `turns` range — below it the coil is a nest of
+    // near-circles and the tip, which is where a vine's Apex flower lands, sits
+    // on an outer loop instead of at the centre. Asserted in MagneticScroll.test.
+    { key: 'taper', label: 'Taper', min: 0.5, max: 0.9, step: 0.05, tooltip: 'Charge-decay α — low = even spiral, high = long stem into a tight eye' },
+    { key: 'rotation', label: 'Counter-Rotation', type: 'select', options: [
+      { value: 'alternate', label: 'Alternating' },
+      { value: 'uniform', label: 'All Same Way' },
+    ], tooltip: 'Alternating flips the coil direction seed to seed — the islimi read' },
+    { key: 'branch', label: 'Secondary Scroll', type: 'select', options: [
+      { value: 'single', label: 'Off' },
+      { value: 'paired', label: 'Paired Volute' },
+    ], tooltip: 'Throws a smaller opposite-handed scroll off each stem' },
+    { key: 'branchScale', label: 'Branch Size', min: 0.15, max: 0.8, step: 0.05, showIf: (p) => p.branch === 'paired', tooltip: 'Secondary scroll size, as a fraction of its parent' },
+    { key: 'jitter', label: 'Jitter', min: 0, max: 1, step: 0.05, tooltip: 'Seeded variation in position, launch angle and size — hand-drawn feel' },
     { key: 'strokeWeight', label: 'Stroke Weight', min: 0.3, max: 3, step: 0.1, tooltip: 'Line thickness' },
     SYMMETRY_PARAM,
     START_ANGLE_PARAM,
@@ -1023,6 +1171,12 @@ export const PARAM_GROUP_MAP = {
   // knobs (render mode / capture probability / branch spacing) are variation.
   seedMode: 'structure',
   stickiness: 'variation', nodeSpacing: 'variation',
+  // Rinceau: the spine's skeleton (waveform / axis / row count) is structural;
+  // where the band SITS is scale; the character knobs are variation. waveCount,
+  // amplitude, margin, rows and jitter are already mapped above.
+  waveform: 'structure', orientation: 'structure',
+  rowSpread: 'scale', stripOffset: 'scale',
+  phase: 'variation', rowPhase: 'variation', tension: 'variation',
 
   // Scale — size, extent, radii, lengths
   scale: 'scale', scaleMode: 'scale',
@@ -1149,6 +1303,10 @@ export const PATTERN_TAXONOMY = {
   // ── Waves & Interference ─────────────────────────────────────────────────
   wave:       { family: 'W', geom: 0, form: 'wave', det: 'deterministic', mark: 'line', sym: true, blurb: 'Stacked, interfering sine waves.' },
   moire:      { family: 'W', geom: 0, form: 'wave', det: 'deterministic', mark: 'line', sym: false, pickerHidden: true, blurb: 'Two-surface interference fringes (added by switching a layer).' },
+  // `det: 'deterministic'` is the VISUAL classification (a drafted, symmetric
+  // border), matching girih — whose `irregularity` likewise consumes the seed.
+  // Seed-usage lives in patterns/index.js SEEDLESS_PATTERN_IDS, not here.
+  rinceau:    { family: 'W', geom: 0, form: 'wave', det: 'deterministic', mark: 'line', sym: true, blurb: 'Running-scroll border — the serpentine rinceau spine.' },
 
   // ── Lattices & Tilings ───────────────────────────────────────────────────
   grid:       { family: 'T', geom: 0, form: 'grid', det: 'deterministic', mark: 'line', sym: true, blurb: 'Lattice of eased horizontal / vertical lines.' },
@@ -1164,6 +1322,7 @@ export const PATTERN_TAXONOMY = {
   flowfield:  { family: 'F', geom: 3, form: 'flowing', det: 'seeded', mark: 'line', sym: true, blurb: 'Particles tracing a Perlin flow field.' },
   flowhatch:  { family: 'F', geom: 3, form: 'flowing', det: 'seeded', mark: 'dash', sym: true, blurb: 'Hatching dashes following a flow field.' },
   grainfield: { family: 'F', geom: 3, form: 'flowing', det: 'stochastic', mark: 'dash', sym: true, bridge: 'G', blurb: 'Flow-aligned dashes like wood grain.' },
+  magnetscroll:{ family: 'F', geom: 2, form: 'radial', det: 'seeded', mark: 'line', sym: true, bridge: 'G', blurb: 'Charged particles in a decaying field — counter-rotating islimi scrolls.' },
 
   // ── Partition & Packing ──────────────────────────────────────────────────
   voronoi:      { family: 'P', geom: 2, form: 'cellular', det: 'seeded', mark: 'line', sym: false, blurb: 'Voronoi cell partition of the plane.' },
@@ -1172,6 +1331,7 @@ export const PATTERN_TAXONOMY = {
   // ── Growth & Agents ──────────────────────────────────────────────────────
   diffgrowth: { family: 'G', geom: 4, form: 'branching', det: 'stochastic', mark: 'line', sym: true, blurb: 'Self-avoiding differential growth.' },
   dendrite:   { family: 'G', geom: 4, form: 'branching', det: 'stochastic', mark: 'line', sym: true, blurb: 'Diffusion-limited aggregation — frost / coral branches.' },
+  branch:     { family: 'G', geom: 4, form: 'branching', det: 'stochastic', mark: 'line', sym: true, blurb: 'Space-colonization plant — one root, many flowering tips.' },
 
   // ── Reaction-Diffusion & CA ──────────────────────────────────────────────
   turing:     { family: 'C', geom: 4, form: 'cellular', det: 'stochastic', mark: 'dash', sym: true, blurb: 'Reaction-diffusion spots, stripes, labyrinths.' },
@@ -1191,6 +1351,6 @@ export const PATTERN_SYMBOLS = {
   grid: 'Gr', modulegrid: 'Mg', girih: 'Gi', recursive: 'Re',
   topographic: 'To', radialetch: 'Ra', flowfield: 'Ff', flowhatch: 'Fh',
   grainfield: 'Gn', voronoi: 'Vo', circlepacking: 'Cp', diffgrowth: 'Dg',
-  dendrite: 'De',
+  dendrite: 'De', branch: 'Bn', rinceau: 'Ri', magnetscroll: 'Ms',
   turing: 'Tu', lissajous: 'Ls', chladni: 'Ch', truchet: 'Tr', hilbert: 'Hi',
 };

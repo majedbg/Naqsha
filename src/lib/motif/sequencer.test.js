@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { dealSlots, isSequenceBlock, sequenceSlots } from './sequencer.js';
+import { dealSlots, isSequenceBlock, sequenceSlots, resolveSlotSide } from './sequencer.js';
 
 // --- helpers -------------------------------------------------------------
 // Minimal survivor Anchor factory. dealSlots only reads `id` (random deal +
@@ -215,6 +215,82 @@ describe('dealSlots — modifier passthrough + defaults', () => {
     expect(assigns[0].flipSpecified).toBe(true);
     expect(assigns[0].flip).toBe(false);
     expect(assigns[1].flipSpecified).toBe(false);
+  });
+
+  // ── `side` (T1) — the positional peer of `flip`, and NOT derived from it ──
+  it('resolves slot `side` to a sign and marks it specified', () => {
+    const assigns = dealSlots(
+      row(3),
+      seqBlock({
+        mode: 'cycle',
+        continuous: true,
+        slots: [{ side: 1 }, { side: -1 }, { side: 0 }],
+      }),
+    );
+    expect(assigns.map((a) => a.side)).toEqual([1, -1, 0]);
+    expect(assigns.map((a) => a.sideSpecified)).toEqual([true, true, true]);
+  });
+
+  it('reduces any positive/negative magnitude to a bare sign', () => {
+    const assigns = dealSlots(
+      row(2),
+      seqBlock({ mode: 'cycle', continuous: true, slots: [{ side: 7.5 }, { side: -0.25 }] }),
+    );
+    expect(assigns.map((a) => a.side)).toEqual([1, -1]);
+  });
+
+  it('treats an absent or non-finite side as UNSPECIFIED, never as side 0', () => {
+    const assigns = dealSlots(
+      row(4),
+      seqBlock({
+        mode: 'cycle',
+        continuous: true,
+        slots: [{ glyphRef: 'A' }, { side: null }, { side: 'left' }, { side: NaN }],
+      }),
+    );
+    expect(assigns.map((a) => a.side)).toEqual([undefined, undefined, undefined, undefined]);
+    expect(assigns.map((a) => a.sideSpecified)).toEqual([false, false, false, false]);
+  });
+
+  it('gates side and flip SEPARATELY — a slot may state one and inherit the other', () => {
+    const assigns = dealSlots(
+      row(2),
+      seqBlock({
+        mode: 'cycle',
+        continuous: true,
+        slots: [{ flip: true }, { side: -1 }],
+      }),
+    );
+    expect(assigns[0].flipSpecified).toBe(true);
+    expect(assigns[0].sideSpecified).toBe(false);
+    expect(assigns[1].flipSpecified).toBe(false);
+    expect(assigns[1].sideSpecified).toBe(true);
+  });
+
+  it('a Rest neutralises side', () => {
+    const assigns = dealSlots(
+      row(2),
+      seqBlock({ mode: 'cycle', continuous: true, slots: [{ side: -1 }, { rest: true }] }),
+    );
+    expect(assigns[1].rest).toBe(true);
+    expect(assigns[1].side).toBe(undefined);
+    expect(assigns[1].sideSpecified).toBe(false);
+  });
+});
+
+describe('resolveSlotSide', () => {
+  it('maps a value to the sign the engine multiplies normalOffset by', () => {
+    expect(resolveSlotSide(1)).toBe(1);
+    expect(resolveSlotSide(-1)).toBe(-1);
+    expect(resolveSlotSide(0)).toBe(0);
+    expect(resolveSlotSide(-0)).toBe(0);
+    expect(resolveSlotSide(99)).toBe(1);
+  });
+
+  it('returns undefined — the UNSPECIFIED signal — for anything non-finite', () => {
+    for (const bad of [undefined, null, NaN, Infinity, -Infinity, '1', {}, true]) {
+      expect(resolveSlotSide(bad)).toBe(undefined);
+    }
   });
 });
 

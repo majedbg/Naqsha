@@ -23,6 +23,11 @@
 // below was verified against both conditions before inclusion.
 
 /** Hosts with a structural (crossing/tip/cell) anchor extractor. */
+// `branch` (space colonization, T3) is semantic rather than edge BY DESIGN: a
+// rooted skeleton has REAL termini and REAL junctions, so "flowers at the tip" is
+// `tip` semantics (zones.js routes role:'tip' straight to the Apex zone) rather
+// than an approximation derived from min-/max-`s` edge samples. It emits its own
+// `edge` anchors — semantic hosts never route through capture (see isEdgeHost).
 export const SEMANTIC_MOTIF_HOSTS = Object.freeze(
   new Set([
     'grid',
@@ -33,6 +38,7 @@ export const SEMANTIC_MOTIF_HOSTS = Object.freeze(
     'modulegrid',
     'girih',
     'truchet',
+    'branch',
   ])
 );
 
@@ -116,7 +122,7 @@ export const EDGE_MOTIF_HOSTS = Object.freeze(
     'topographic', // TopographicContours — iso-contour beginShape/vertex polylines
     'phyllodash', // PhyllotaxisDash — ctx.line dash segments
     'diffgrowth', // DifferentialGrowth — grown-blob beginShape/vertex polyline
-    'dendrite', // Dendrite — ctx.line branch segments (node ellipses ignored)
+    'dendrite', // Dendrite — beginShape/vertex root→tip branch polylines (S1, node ellipses ignored)
     // ── #144 (PRD #143) ──────────────────────────────────────────────────────
     // Each verified against BOTH membership conditions in the module header, in
     // the pattern source, before inclusion:
@@ -134,6 +140,31 @@ export const EDGE_MOTIF_HOSTS = Object.freeze(
     // hostCapability.js, which rolesForHost consults — an unavailable host emits
     // no roles at all. That is where every capability conditional belongs.
     'chladni',
+    // ── T2 (docs/vine-scaffolds-PLAN.md) ─────────────────────────────────────
+    // Rinceau — the running-scroll spine, built expressly to be ridden. Verified
+    // against BOTH membership conditions in the module header, in the source:
+    //   (1) generate() emits ONE beginShape/vertex/endShape run per strip row
+    //       with NO CLOSE, so every row captures as an OPEN polyline and a vine
+    //       rides it root→tip (Rinceau.js drawBase);
+    //   (2) it calls ctx.randomSeed(seed) + ctx.noiseSeed(seed) as its first two
+    //       statements, so the capture probe cannot shift the painted output.
+    //       The seed is read only by the `jitter` param, which defaults to 0.
+    'rinceau',
+    // ── magnetscroll (vine scaffolds, Family C) ──────────────────────────────
+    // MagneticScroll — one beginShape/vertex run per volute, no CLOSE; reseeds
+    // BOTH randomSeed and noiseSeed at the top of generate(). Verified against
+    // both membership conditions in the source before inclusion.
+    //
+    // It is the edge host the VINE was built for: every trace is an open,
+    // arc-length-ordered root→tip path whose TIP is the eye of the scroll, so an
+    // Apex glyph lands where a palmette sits in the historical ornament, once
+    // per scroll. (That holds for EVERY params set the UI can produce — the
+    // `taper` slider's minimum is set to the value where the eye closes, and
+    // both facts are asserted together in MagneticScroll.test.js.) `edge` is the
+    // right (and only) role — the volutes have no
+    // lattice to cross and no cell to fill — so it needs no DEFAULT_SEMANTIC_ROLE
+    // entry and takes the blanket 'edge' fallback correctly.
+    'magnetscroll',
     // DELIBERATELY ABSENT — do not add by reflex:
     //   truchet — emits CELLS as well as edges. The probe is a single boolean
     //     (record the draw stream OR read the stash, never both), so listing it
@@ -184,6 +215,11 @@ export const MOTIF_HOSTS = Object.freeze(
 // does (PRD #143 story 23), and girih emits crossings under every params set
 // (its skeleton always has degree-4 vertices where straps meet), so the first
 // placement is never empty.
+//
+// BRANCH gets `tip`: a space-colonization plant ALWAYS has termini under default
+// params (dozens of them — that is the whole point of the host), so unlike the
+// spiral hub this default can never be dead. `tip` is also the role that makes
+// the first placement read as intended — a flower at every branch end.
 const DEFAULT_SEMANTIC_ROLE = Object.freeze({
   grid: 'crossing',
   recursive: 'crossing',
@@ -193,6 +229,7 @@ const DEFAULT_SEMANTIC_ROLE = Object.freeze({
   modulegrid: 'cell',
   girih: 'crossing',
   truchet: 'cell',
+  branch: 'tip',
 });
 
 /**

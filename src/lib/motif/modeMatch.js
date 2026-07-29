@@ -91,6 +91,7 @@
 import { STARTER_CHIPS } from './starterChips.js';
 import { coerceRoles } from './edgeRoles.js';
 import { isEdgeHost } from './hostKinds.js';
+import { resolveSlotSide } from './sequencer.js';
 
 /**
  * Which starter mode does this motif's chain represent on `hostPatternType`?
@@ -227,6 +228,15 @@ function canonicalBlock(block) {
       out.mask = Array.isArray(b.mask) ? [...b.mask].map(Boolean) : [];
       out.continuous = !!b.continuous;
       break;
+    case 'order':
+      // Both bounds are OPTIONAL and unbounded when absent, so null is the
+      // canonical "no bound" on either side — an omitted max and an explicit
+      // `max:null` are the same design. Without this case the lenient default
+      // would collapse every order block to `{type:'order'}` and call two
+      // different bands equal.
+      out.min = Number.isFinite(b.min) ? b.min : null;
+      out.max = Number.isFinite(b.max) ? b.max : null;
+      break;
     case 'density':
       out.density = b.density != null ? b.density : 1;
       out.seed = b.seed != null ? b.seed : 1;
@@ -281,6 +291,15 @@ function canonicalBlock(block) {
  * chain and the chip's rebuilt chain run through this same function, absent
  * canonicalizes to 0 on both sides — so every document authored before `hold`
  * existed keeps matching its mode exactly as it did.
+ *
+ * `side` (T1) joins as the peer of `flip`, under the same include-only-when-
+ * specified rule and for the same reason: a slot stating which side of the spine
+ * it sits on is a rhythm the maker set, and unspecified-vs-specified are
+ * genuinely different slots to the ENGINE (`sideSpecified` gates whether the
+ * layer's `sideAlternate` 2-cycle runs at all). It is normalized through
+ * `resolveSlotSide` — the SAME reduction the engine reads it by, imported rather
+ * than re-implemented — so a non-finite `side` is UNSPECIFIED on both sides of
+ * the comparison and every pre-T1 document keeps matching its mode.
  */
 function canonicalSlot(slot) {
   const s = slot || {};
@@ -293,6 +312,8 @@ function canonicalSlot(slot) {
     rotationRandom: canonicalRotationRandom(s.rotationRandom),
   };
   if (s.flip !== undefined) out.flip = !!s.flip;
+  const side = resolveSlotSide(s.side);
+  if (side !== undefined) out.side = side;
   return out;
 }
 

@@ -7,7 +7,7 @@ export const TIER_LIMITS = {
     // Re-enable the gated hierarchy after the workshop by restoring the two
     // commented-out blocks below (and deleting the two override lines).
     patterns: null,                  // null = all patterns open
-    // patterns: ['spirograph', 'flowfield', 'phyllotaxis', 'wave', 'voronoi', 'recursive', 'radialetch', 'grid', 'spiral', 'modulegrid', 'topographic', 'diffgrowth', 'girih', 'moire', 'circlepacking', 'dendrite'],
+    // patterns: ['spirograph', 'flowfield', 'phyllotaxis', 'wave', 'voronoi', 'recursive', 'radialetch', 'grid', 'spiral', 'modulegrid', 'topographic', 'diffgrowth', 'girih', 'moire', 'circlepacking', 'dendrite', 'branch', 'rinceau', 'magnetscroll'],
     maxLayers: 3,
     presetIndices: null,             // all sizes
     allowCustomSize: true,

@@ -44,6 +44,10 @@ const THUMBNAIL_PARAM_OVERRIDES = {
   turing: { targetPoints: 600, simIterations: 40, gridRes: 80 },
   diffgrowth: { maxNodes: 400 },
   dendrite: { maxNodes: 400 },
+  // Space colonization is O(live attractors x rounds); a full-density plant is
+  // ~140ms, far too heavy for a 5x8 card grid. Fewer attractors + a bigger kill
+  // distance keep the branching CHARACTER at a fraction of the cost.
+  branch: { attractorCount: 240, killDistance: 40, maxNodes: 500 },
   // Show the spiral of elements as outlines, not a solid fill-mode blob.
   phyllotaxis: { count: 400, fillMode: 'outline' },
   phyllodash: { seedCount: 500 },

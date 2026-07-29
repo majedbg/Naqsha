@@ -177,6 +177,14 @@ export function selectAnchors(anchors, rules = {}, opts = {}) {
 //   • `flip` is NOT folded into `rotation`; it stays a separate boolean the
 //     renderer interprets as a mirror. `seqId` (sequence cycle) and `flip`
 //     (2-cycle on odd i) are independent counters.
+//   • `side` (T1) is a THIRD independent 2-cycle, and unlike `flip` it does NOT
+//     reach the emitted Placement: it only picks the sign of the positional
+//     `orientation.normalOffset`, which is already baked into `x`/`y` by the time
+//     the placement is built. `flip` has to ride out because the renderer must
+//     mirror the art; side needs no renderer participation at all. So the
+//     Placement shape is UNCHANGED by this slice — which is half of why zero
+//     offset is byte-identical to the pre-T1 engine on the output as well as the
+//     geometry.
 //   • `scale = radius / size` in BOTH sizing modes (fixed:
 //     scaleFactor === radius/size), so the renderer always scales a canonical
 //     motif of radius `size` up to the accepted `radius`.
@@ -189,8 +197,9 @@ export function selectAnchors(anchors, rules = {}, opts = {}) {
 // placement: `sizeScale` multiplies the target radius BEFORE the empty-circle
 // acceptance test (a bigger slot claims a bigger footprint, so greedy packing
 // pushes neighbors away rather than overlapping); `rotationOffset` + the hash-
-// driven `rotationRandom` add to rotation; slot `flip`, WHEN SPECIFIED, REPLACES
-// the legacy 2-cycle (slot-level is the more specific intent). A Rest draws its 4
+// driven `rotationRandom` add to rotation; slot `flip` and slot `side` (T1),
+// WHEN SPECIFIED, each REPLACE their OWN legacy 2-cycle, independently of the
+// other (slot-level is the more specific intent). A Rest draws its 4
 // jitter values (keystone below) then early-returns BEFORE the acceptance loop,
 // reserving NO footprint — a real gap that leaves neighbors' space untouched.
 // The sequencer draws ONLY from hashRng (channels 'slot'/'rot'), NEVER the jitter
@@ -310,7 +319,11 @@ export const MAX_PLACEMENTS = 2000;
 export const PLACEMENT_DEFAULTS = {
   sequence: ['A'],
   flip: false,
-  orientation: { policy: 'path', useNormal: true, offset: 0, perRole: {} },
+  // `sideAlternate` (T1) is the SIDE 2-cycle — the positional peer of `flip`, and
+  // deliberately its own field. See `resolveOrientation` for why the two are not
+  // one control.
+  sideAlternate: false,
+  orientation: { policy: 'path', useNormal: true, offset: 0, normalOffset: 0, perRole: {} },
   jitter: {
     seed: 1,
     lateral: 0, along: 0, rotation: 0, scale: 0,
@@ -431,9 +444,40 @@ function normalisedFootprint(glyph, anchorId) {
 /**
  * Resolve effective orientation for a role: perRole[role] merged (per field)
  * over the base orientation. Never mutates either input.
+ *
+ * ⚠️ `offset` AND `normalOffset` ARE ADJACENT NAMES WITH DIFFERENT UNITS, and
+ * that is not an accident to be tidied away (T1). `offset` is a ROTATION in
+ * DEGREES, added to the bearing the glyph is drawn at. `normalOffset` is a
+ * POSITIONAL DISPLACEMENT in CANVAS PIXELS, along `anchor.normal` — it moves the
+ * glyph OFF the host spine, which nothing in this engine could express before.
+ * The rinceau construction (`docs/vine-scaffolds-RESEARCH.md` §2, steps 3–4) uses
+ * both at once: rotate the leaf to droop along −T, and push it clear of the line
+ * along N.
+ *
+ * WHY CANVAS PIXELS AND NOT GLYPH-RELATIVE UNITS. Two independent reasons, and
+ * either alone would settle it:
+ *   • The source rule is written in canvas space. RESEARCH §2 step 4 specifies
+ *     the displacement as `0.02–0.08·W` — a fraction of the STRIP WIDTH, not of
+ *     the glyph. A glyph-relative unit would be a mistranslation of the rule it
+ *     exists to implement.
+ *   • A glyph-relative unit is not even AVAILABLE here. The drawn radius is not
+ *     known until the empty-circle solve, and that solve consumes the displaced
+ *     centre — so a `× radius` offset would need the answer to compute the
+ *     question. `sizing.size` is available, but it is the radius the glyph WANTS,
+ *     not the one it gets, so "0.5 glyphs off the spine" would be a lie on every
+ *     glyph packing shrank.
+ * Canvas px also matches `jitter.lateralRange`, the only other quantity in this
+ * engine that displaces along `anchor.normal` — the two now share one coefficient
+ * (see the placement loop), which is what makes that agreement structural rather
+ * than a convention.
+ *
+ * `normalOffset` carries MAGNITUDE ONLY. Its SIGN — which side of the spine — is
+ * the separate `side` channel resolved in the placement loop, because side
+ * alternates per-glyph while the distance does not.
+ *
  * @param {object} base
  * @param {string} role
- * @returns {{policy:string, useNormal:boolean, offset:number}}
+ * @returns {{policy:string, useNormal:boolean, offset:number, normalOffset:number}}
  */
 function resolveOrientation(base, role) {
   const b = base || {};
@@ -441,14 +485,32 @@ function resolveOrientation(base, role) {
     policy: b.policy != null ? b.policy : 'path',
     useNormal: b.useNormal != null ? b.useNormal : true,
     offset: b.offset != null ? b.offset : 0,
+    normalOffset: b.normalOffset != null ? b.normalOffset : 0,
   };
   const per = b.perRole && b.perRole[role];
   if (per) {
     if (per.policy != null) eff.policy = per.policy;
     if (per.useNormal != null) eff.useNormal = per.useNormal;
     if (per.offset != null) eff.offset = per.offset;
+    if (per.normalOffset != null) eff.normalOffset = per.normalOffset;
   }
   return eff;
+}
+
+/**
+ * The positional normal offset, coerced to a usable number (T1).
+ *
+ * ANYTHING NON-FINITE READS AS 0 — which is the pre-T1 engine exactly, and is the
+ * same discipline `clamp01` (hold) and `hasHostRadius` follow. That covers a
+ * document predating the field, a hand-edited `null` or string, and a `perRole`
+ * entry that set the key to something meaningless. A NaN slipping through here
+ * would poison `x`/`y`, and a NaN centre sails through `fitsAt` and the sizing
+ * comparisons (every `<` against NaN is false) to emit a placement at no
+ * location — silent, green, and unplottable.
+ * @param {*} v @returns {number}
+ */
+function finiteOrZero(v) {
+  return Number.isFinite(v) ? v : 0;
 }
 
 /**
@@ -458,7 +520,9 @@ function resolveOrientation(base, role) {
  * @param {{
  *   sequence?: string[] | {type:'sequence', mode?:'cycle'|'random', continuous?:boolean, seed?:number, slots:object[]},
  *   flip?: boolean,
- *   orientation?: {policy?:'path'|'page', useNormal?:boolean, offset?:number, perRole?:object},
+ *   sideAlternate?: boolean,
+ *   orientation?: {policy?:'path'|'page', useNormal?:boolean, offset?:number,
+ *                  normalOffset?:number, perRole?:object},
  *   jitter?: {seed?:number, lateral?:number, along?:number, rotation?:number, scale?:number,
  *             lateralRange?:number, alongRange?:number, rotationRange?:number, scaleRange?:number},
  *   sizing?: {mode?:'proportional'|'fixed', size?:number, min?:number, margin?:number,
@@ -507,6 +571,18 @@ export function resolvePlacements(survivors, config = {}, opts = {}) {
   const seqBlock = isSequenceBlock(cfg.sequence) ? cfg.sequence : null;
   const assignments = seqBlock ? dealSlots(list, seqBlock) : null;
   const flipEnabled = !!cfg.flip;
+  // THE SIDE 2-CYCLE (T1) — the positional peer of `flip`, and a SEPARATE field
+  // for the reason recorded on the `Slot` typedef: `flip` mirrors the glyph
+  // template, `side` picks which side of the spine it is displaced to, and both
+  // "alternating sides, same orientation" and "same side, mirrored glyphs" have
+  // to be sayable.
+  //
+  // ⚠️ IT INDEXES THE GLOBAL SURVIVOR INDEX `i`, while the SEQUENCER's cycle
+  // counter restarts per `meta.pathIndex` by default. On a single-path spine (the
+  // rinceau case this exists for) the two coincide; on a multi-path host only the
+  // slot route gives a per-path x-o-x-o, exactly as it is the only route to a
+  // per-path flip today. Same limitation, same shape, stated so T2 can rely on it.
+  const sideAlternateEnabled = !!cfg.sideAlternate;
   const orientation = cfg.orientation || PLACEMENT_DEFAULTS.orientation;
   const j = { ...PLACEMENT_DEFAULTS.jitter, ...(cfg.jitter || {}) };
   const sizing = { ...PLACEMENT_DEFAULTS.sizing, ...(cfg.sizing || {}) };
@@ -559,11 +635,20 @@ export function resolvePlacements(survivors, config = {}, opts = {}) {
       return;
     }
 
-    // 2. Sequence + flip. Sequenced: seqId/glyphRef/modifiers come from the dealt
-    //    Slot; slot flip (when SPECIFIED) REPLACES the legacy 2-cycle, else falls
-    //    back to it. Legacy: the string-array cycle + 2-cycle flip, byte-identical.
+    // 2. Sequence + flip + side. Sequenced: seqId/glyphRef/modifiers come from the
+    //    dealt Slot; a slot `flip` and a slot `side` each (when SPECIFIED)
+    //    REPLACE their own legacy 2-cycle, INDEPENDENTLY — a slot may state one
+    //    and inherit the other. Legacy: the string-array cycle + 2-cycle flip,
+    //    byte-identical.
+    //
+    // The two 2-cycles are written out separately rather than shared: they are
+    // gated by two different `*Specified` flags and enabled by two different
+    // config booleans, so the only thing they have in common is the literal
+    // `i % 2 === 1`. Folding them into one expression would be the first step
+    // back towards deriving side FROM flip, which T1 exists to prevent.
     let seqId;
     let flip;
+    let side;
     let glyphRef;
     let sizeScale = 1;
     let slotRotation = 0;
@@ -573,9 +658,15 @@ export function resolvePlacements(survivors, config = {}, opts = {}) {
       sizeScale = assignment.sizeScale;
       slotRotation = assignment.rotationOffset + assignment.rotationRandomDelta;
       flip = assignment.flipSpecified ? assignment.flip : flipEnabled && i % 2 === 1;
+      side = assignment.sideSpecified
+        ? assignment.side
+        : sideAlternateEnabled && i % 2 === 1
+          ? -1
+          : 1;
     } else {
       seqId = sequence[i % sequence.length];
       flip = flipEnabled && i % 2 === 1;
+      side = sideAlternateEnabled && i % 2 === 1 ? -1 : 1;
     }
 
     // 3. Orientation. `flip` is intentionally NOT folded into rotation.
@@ -600,10 +691,36 @@ export function resolvePlacements(survivors, config = {}, opts = {}) {
     let scaleFactor = 1 + sScale * j.scale * j.scaleRange;
     if (scaleFactor < MIN_SCALE_FACTOR) scaleFactor = MIN_SCALE_FACTOR;
 
+    // 4b. THE POSITIONAL NORMAL OFFSET (T1) — the one new displacement.
+    //
+    // It rides the SAME axis as the lateral jitter (`anchor.normal`), so it folds
+    // into the SAME coefficient rather than adding a third term to `x`/`y`. Two
+    // things fall out of that, both load-bearing:
+    //
+    //   • BYTE-IDENTITY AT ZERO, structurally. The ternary takes the legacy
+    //     expression LITERALLY when there is no offset — no `+ 0` anywhere. That
+    //     is not defensive typing: `lateralDisp` is genuinely `-0` at default
+    //     settings (a negative `sLat` times `j.lateral = 0`), and `-0 + 0` is
+    //     `+0` in IEEE754, so a naive extra term would flip the sign of zero on
+    //     every anchor sitting exactly on an axis. ADR-0005 is a byte-identity
+    //     contract. (`normalDisp === 0` is true for `-0` too, so the fast path
+    //     still fires when `side` is `-1` and the offset is 0.)
+    //   • DOWNSTREAM SEES IT, because `center` is what the empty-circle solve,
+    //     the `hostRadius` containment distance, the committed obstacle disc, the
+    //     emitted `footprintCenter` and `placement.x/y` are all built from. This
+    //     is a real move of the glyph, not a render-only shim: SVG export
+    //     (`MotifPattern.toSVGGroup`) never re-runs placement, it stamps
+    //     `placementMatrix(placement, …)`, so the plotter cuts where the packer
+    //     reserved. A displaced glyph is therefore correctly sized DOWN by a
+    //     `hostRadius` container it is moving out of — the identical rule the
+    //     lateral jitter already obeys, for the identical reason.
+    const normalDisp = side * finiteOrZero(eff.normalOffset);
+    const lateralTotal = normalDisp === 0 ? lateralDisp : lateralDisp + normalDisp;
+
     const x =
-      anchor.x + lateralDisp * Math.cos(anchor.normal) + alongDisp * Math.cos(anchor.tangent);
+      anchor.x + lateralTotal * Math.cos(anchor.normal) + alongDisp * Math.cos(anchor.tangent);
     const y =
-      anchor.y + lateralDisp * Math.sin(anchor.normal) + alongDisp * Math.sin(anchor.tangent);
+      anchor.y + lateralTotal * Math.sin(anchor.normal) + alongDisp * Math.sin(anchor.tangent);
     const center = { x, y };
 
     // 5. Sizing + test-before-place, against current `placed` + boundary.

@@ -39,13 +39,15 @@
 
 import { extractMotifDrawables } from '../svgImport.js';
 import { flattenPathD } from '../plotter/pathOps.js';
-import { minEnclosingCircle } from './minEnclosingCircle.js';
+import { measureFootprint, MIN_MEASURED_RADIUS } from './measureFootprint.js';
 
 // Degenerate single-point geometry (e.g. `<path d="M5,5"/>`) has a well-defined
 // root but a zero bounding radius. Fall back to this small positive radius so
 // downstream scaling never divides by / multiplies against 0. In px (glyph
 // local space), sub-pen-width, so a single-point import stays a visible speck.
-const MIN_VIEW_RADIUS = 0.5;
+// Shared with `measureFootprint`'s degenerate-circle clamp — the same number for
+// the same reason, in one place.
+const MIN_VIEW_RADIUS = MIN_MEASURED_RADIUS;
 
 // Does this `d` end in a close-path command? Matches the task's literal
 // definition ("the d ends in Z/z") rather than flattenPathD's "a Z appears
@@ -177,14 +179,16 @@ export function importMotif(svgText) {
   // enrichment script (`scripts/enrichVectorMotifFootprints.mjs:132-141`) checks
   // both sides only because it hard-exits; here the input guard is the only
   // reachable one, so there is no untestable branch to add.
-  const mec = minEnclosingCircle(cloud.map(([x, y]) => ({ x, y })));
-  const footprintCenter = { x: mec.x - root.x, y: mec.y - root.y };
-  // Degenerate single-point (every sampled point coincides) → a well-defined
-  // centre and a ZERO radius. Reuse MIN_VIEW_RADIUS for the identical reason it
-  // exists for `viewRadius`: a zero `fr` makes A = |fc|² and B = 2(a·u) describe
-  // a POINT reserve — legal arithmetic, but it would let a degenerate import
-  // claim nothing and stack on top of its neighbours.
-  const footprintRadius = mec.r > 0 ? mec.r : MIN_VIEW_RADIUS;
+  //
+  // The reduction itself lives in `measureFootprint` — SHARED with the pen
+  // editor's save and the load-boundary backfill, which measure the same circle
+  // in the same frame and must never drift from this one. The cloud is handed
+  // over in its accumulation order, untouched: Welzl's shuffle is a function of
+  // array length and index order, so any reordering here would move the circle.
+  const { footprintCenter, footprintRadius } = measureFootprint(
+    cloud.map(([x, y]) => ({ x, y })),
+    root
+  );
 
   // 6. name — a cheap friendly default; the UI can rename later (WI-5/P2).
   const name = deriveName(svgText);

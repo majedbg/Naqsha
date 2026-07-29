@@ -11,6 +11,7 @@ import { defaultTextParams } from './text/textLayer';
 import { MOTIF_TYPE, createMotifParams, motifAutoName, isMotifLayer, motifHostId } from './motif/motifLayer';
 import { ETCH_TYPE, createEtchParams } from './etch/etchLayer';
 import { getGlyph, MOTIF_GLYPHS } from './motif/glyphs';
+import { ensureGlyphFootprint, ensureGlyphMapFootprints } from './motif/measureFootprint';
 import { normalizePanels, loadPanels, savePanels, firstPanel } from './panels';
 
 // Distinct group id for a Moiré pair (links role A + role B).
@@ -333,9 +334,26 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
   // pathData — it does NOT ride along inside `layers`; every persistence surface
   // must carry it as a sibling of `layers` (documentSnapshot / shareLink /
   // cloud+draft). Guests (persistToLocal:false) hold it in memory only.
-  const [customGlyphs, setCustomGlyphs] = useState(() =>
-    persistToLocal ? loadCustomGlyphs() : {}
+  // MEASURE-ON-LOAD (PR blocker 2). `footprintCenter`/`footprintRadius` arrived
+  // with the importer at `aee1d1a`; every custom glyph imported before it
+  // carries neither, and since #207 a new motif layer is born
+  // `sizing.footprint: 'tight'`, which THROWS without them (ruling 7d) and paints
+  // a blank layer through useCanvas's per-layer catch. This store is the load
+  // boundary for the whole document, so every seam that puts glyphs into it —
+  // this mount read, the bulk setter below, `resetDocument`, and the two
+  // mutators — measures what it is handed, through the same `measureFootprint`
+  // the importer uses. Already-measured glyphs pass through by identity, and a
+  // glyph with nothing measurable is left alone so the engine still fails loudly.
+  const [customGlyphs, setCustomGlyphsRaw] = useState(() =>
+    persistToLocal ? ensureGlyphMapFootprints(loadCustomGlyphs()) : {}
   );
+  // The bulk document-load / restore seam (Studio, documentSnapshot). Accepts a
+  // map or an updater, mirroring the raw setter it wraps.
+  const setCustomGlyphs = useCallback((next) => {
+    setCustomGlyphsRaw((prev) =>
+      ensureGlyphMapFootprints(typeof next === 'function' ? next(prev) : next)
+    );
+  }, []);
 
   // Applied-Optimizations restored from local storage (WI Run Plan / ADR 0002),
   // read ONCE at mount. Returned so the owner (Studio) can hydrate the optimize
@@ -1050,7 +1068,7 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
   const addCustomGlyph = useCallback((glyph) => {
     const id = genGlyphId();
     recordStructuralFn();
-    setCustomGlyphs((prev) => ({ ...prev, [id]: { ...glyph, id } }));
+    setCustomGlyphsRaw((prev) => ({ ...prev, [id]: { ...ensureGlyphFootprint(glyph), id } }));
     return id;
   }, [recordStructuralFn]);
 
@@ -1060,10 +1078,14 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
   // built-in id would silently never render — and built-ins are read-only (the
   // UI enforces "Duplicate to edit"). We early-return BEFORE recording so a
   // blocked update leaves no dead undo step and never corrupts state.
+  // ⚠️ A FULL REPLACE — whatever the caller omits is DELETED from the document.
+  // That is how a pen-editor Save used to drop the measured footprint (blocker
+  // 1, fixed at the serializer); `ensureGlyphFootprint` is the second line of
+  // defence for any other caller that builds a glyph object by hand.
   const updateCustomGlyph = useCallback((id, glyph) => {
     if (id in MOTIF_GLYPHS) return;
     recordStructuralFn();
-    setCustomGlyphs((prev) => ({ ...prev, [id]: { ...glyph, id } }));
+    setCustomGlyphsRaw((prev) => ({ ...prev, [id]: { ...ensureGlyphFootprint(glyph), id } }));
   }, [recordStructuralFn]);
 
   // Remove a custom glyph from the document store (WI-P2-1b). No-op (no history)
@@ -1074,7 +1096,7 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
   const deleteCustomGlyph = useCallback((id) => {
     if (!(id in customGlyphs)) return;
     recordStructuralFn();
-    setCustomGlyphs((prev) => {
+    setCustomGlyphsRaw((prev) => {
       const next = { ...prev };
       delete next[id];
       return next;
@@ -1111,6 +1133,9 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
   const resetDocument = useCallback((newLayers, newCustomGlyphs = {}, nextOptimizations = null) => {
     clearTimeout(saveTimer.current);
     const migrated = (Array.isArray(newLayers) ? newLayers : []).map((l) => migrateLayer(l));
+    // Measure ONCE, then use the same map for the synchronous disk write and the
+    // in-memory state — measuring twice would be two objects for one document.
+    const glyphs = ensureGlyphMapFootprints(newCustomGlyphs);
     // Normalize the layers→panels pair EXACTLY ONCE and use that same snapshot
     // for BOTH the synchronous disk write and the in-memory state, so memory and
     // disk hold the identical fresh panel id — genuinely byte-identical, not just
@@ -1121,7 +1146,7 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
     const norm = persistToLocal
       ? persistDocumentSnapshotNow({
           layers: migrated,
-          customGlyphs: newCustomGlyphs,
+          customGlyphs: glyphs,
           bgColor: DEFAULT_BG_COLOR,
           optimizations: nextOptimizations,
         })
@@ -1135,7 +1160,7 @@ export default function useLayers({ persistToLocal = true, maxLayers = MAX_LAYER
     nextId = maxNum + 1;
     setLayers(norm.layers);
     setPanels(norm.panels);
-    setCustomGlyphs(newCustomGlyphs);
+    setCustomGlyphsRaw(glyphs);
     setBgColor(DEFAULT_BG_COLOR);
   }, [persistToLocal]);
 

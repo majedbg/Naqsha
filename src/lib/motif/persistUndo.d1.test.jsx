@@ -81,6 +81,24 @@ const LEGACY_BINDING = {
   placement: { sizing: { size: 18 } },
 };
 
+// Every motif fixture in this file is a SAVED, PRE-v2 DOCUMENT — that is the
+// whole subject of the round-trip: what a document written before the footprint
+// field existed does when it comes back through the load boundary. So the
+// create-time `sizing.footprint: 'tight'` stamp #207 added to `createMotifParams`
+// is removed again here, deliberately: leaving it in would build a document that
+// could not have been saved by the version under test, and `pinFootprint` never
+// overwrites an existing value, so the pin the tests below exist to observe would
+// simply never fire.
+function preV2(params) {
+  const placement = params.binding?.placement;
+  if (!placement?.sizing) return params;
+  const { footprint, ...sizing } = placement.sizing;
+  const nextPlacement = { ...placement };
+  if (Object.keys(sizing).length > 0) nextPlacement.sizing = sizing;
+  else delete nextPlacement.sizing;
+  return { ...params, binding: { ...params.binding, placement: nextPlacement } };
+}
+
 function motifLayerObj(id, hostId, binding) {
   return {
     id,
@@ -90,7 +108,9 @@ function motifLayerObj(id, hostId, binding) {
     visible: true,
     color: '#000000',
     opacity: 100,
-    params: createMotifParams({ hostLayerId: hostId, glyphRef: 'leaf', binding, anchorMode: 'edge' }),
+    params: preV2(
+      createMotifParams({ hostLayerId: hostId, glyphRef: 'leaf', binding, anchorMode: 'edge' })
+    ),
     randomizeKeys: [],
     paramsCache: {},
   };
@@ -190,13 +210,25 @@ describe('D1 #2 — chain persistence round-trip (localStorage save↔load)', ()
     localStorage.clear();
   });
 
-  it('LOAD-path bite: migrateLayer does NOT touch params / params.binding (ref-identity preserved)', () => {
+  // The one authored thing SCHEMA_VERSION 2 adds to a pre-v2 layer on load
+  // (PRD #197, decision 3): the footprint pin. Nothing reads it yet.
+  const PINNED_BINDING = {
+    ...RICH_CHAIN_BINDING,
+    placement: { sizing: { ...RICH_CHAIN_BINDING.placement.sizing, footprint: 'root' } },
+  };
+
+  it('LOAD-path bite: migrateLayer touches ONLY the sizing spine (every sibling ref preserved)', () => {
     const layer = motifLayerObj('layer-5-abc', 'layer-0-host', RICH_CHAIN_BINDING);
     const migrated = migrateLayer(layer);
-    // migrateLayer adds nameIsCustom/locked/operationId but must carry `params`
-    // through untouched — the strongest possible bite is REFERENCE identity.
-    expect(migrated.params).toBe(layer.params);
-    expect(migrated.params.binding).toBe(layer.params.binding);
+    // SCHEMA_VERSION 2 pins a pre-footprint layer to `sizing.footprint: 'root'`,
+    // so `params` can no longer be carried through by reference — the spine
+    // params→binding→placement→sizing is rebuilt to hold the stamp. The bite
+    // survives in sharpened form: rebuilt spine, and NOTHING ELSE copied.
+    expect(migrated.params.binding.chain).toBe(layer.params.binding.chain);
+    expect(migrated.params.binding.overrides).toBe(layer.params.binding.overrides);
+    expect(migrated.params.glyphRef).toBe(layer.params.glyphRef);
+    // The pin is the ONLY authored difference in the whole params tree.
+    expect(migrated.params).toEqual({ ...layer.params, binding: PINNED_BINDING });
     // The migration still did its job (added the defaults) — proving this isn't
     // a vacuous "returned the input" path.
     expect(migrated.operationId).toBeTruthy();
@@ -212,8 +244,9 @@ describe('D1 #2 — chain persistence round-trip (localStorage save↔load)', ()
     const loaded = result.current.layers.find((l) => l.id === 'layer-5-abc');
     expect(loaded).toBeTruthy();
     // The whole binding — chain array, sequence slots, pickedPaths, overrides,
-    // placement — survives the JSON.parse + migrateLayer load path intact.
-    expect(loaded.params.binding).toEqual(RICH_CHAIN_BINDING);
+    // placement — survives the JSON.parse + migrateLayer load path intact, plus
+    // the v2 footprint pin the load boundary stamps on a pre-v2 document.
+    expect(loaded.params.binding).toEqual(PINNED_BINDING);
     expect(loaded.params.binding.chain[0].pickedPaths).toEqual([0, 3, 7]);
     expect(loaded.params.binding.chain[2].slots).toEqual(RICH_CHAIN_BINDING.chain[2].slots);
     expect(loaded.params.binding.overrides).toEqual(RICH_CHAIN_BINDING.overrides);

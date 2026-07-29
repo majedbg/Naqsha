@@ -24,6 +24,7 @@
 
 import { mulberry32 } from '../patterns/rng.js';
 import { largestEmptyCircleParts, fitsAt } from './emptyCircle.js';
+import { neighbourLimit, hostLimit, boundaryLimit } from './footprintSolve.js';
 import { applyOverrides, applyGlyphOverrides, resolveOverrideRecords } from './overrides.js';
 import { dealSlots, isSequenceBlock } from './sequencer.js';
 
@@ -209,7 +210,24 @@ export function selectAnchors(anchors, rules = {}, opts = {}) {
  *            packedRadius:number, drawnRadius:number, neighbourCap:number, hardCap:number,
  *            capBy:'natural'|'neighbour'|'boundary'|'host', saturated:boolean,
  *            capObstacle:null|{x:number,y:number,r:number},
+ *            footprintCenter:{x:number,y:number},
  *            seqId:string|number, flip:boolean, glyphRef?:string}} Placement
+ *
+ *   `footprintCenter` (#204, §5f shape 1) is the WORLD centre of the disc this
+ *   placement RESERVED — the same point, to the bit, as the `{x,y}` of the entry
+ *   pushed into the packer's obstacle list, and therefore stated **at
+ *   `packedRadius`**, not at `drawnRadius`. Three things ride on that choice: the
+ *   reserve is what ruling 6e commits (`P + packedRadius·Rot(θ)·f̂c`); a per-glyph
+ *   SCALE override leaves `packedRadius` alone (`overrides.js`), so this key needs
+ *   no rescale there, only the angle recompute #205 adds; and the overlay's other
+ *   ring is one homothety away — centre `P + (R/packedRadius)·(footprintCenter − P)`
+ *   for any `R`, since centre and radius both scale linearly from the anchor (§4a).
+ *
+ *   ALWAYS PRESENT, no conditional shape, in every sizing mode — decision 15's
+ *   precedent again. Under `sizing.footprint: 'root'` (and in `fixed` mode, which
+ *   §5e leaves untouched in both footprint modes) it is `{x: placement.x,
+ *   y: placement.y}`, because the root law's reserve IS anchor-centred at every
+ *   radius.
  *
  *   SIZING DIAGNOSTICS (#186, decision 15/15b) — the seven keys from
  *   `packedRadius` to `capObstacle`. **Always present, in every sizing mode,
@@ -225,7 +243,7 @@ export function selectAnchors(anchors, rules = {}, opts = {}) {
  *   `{x,y,r}`, never a reference into the packer's growing obstacle list.
  *
  * @typedef {{anchorId:string, reason:'junction-skip'|'below-floor'|'no-fit'|'rest',
- *            x?:number, y?:number, wantedRadius?:number}} Rejection
+ *            x?:number, y?:number, rotation?:number, wantedRadius?:number}} Rejection
  *
  *   REJECTION GEOMETRY (#191) — `x`, `y` and `wantedRadius` are present on the
  *   SIZING-STAGE reasons ONLY (`below-floor` and `no-fit`), because those are the
@@ -243,6 +261,15 @@ export function selectAnchors(anchors, rules = {}, opts = {}) {
  *   want", and a `below-floor` glyph's drawn radius is by definition below
  *   `sizing.min`, so a ring drawn there would be an invisible speck — the exact
  *   failure the overlay exists to fix.
+ *
+ *   `rotation` (#200, footprint decision 8) rides with them, on the same five
+ *   sizing-stage sites and no others. The footprint overlay offsets every ring by
+ *   the glyph's ROTATED footprint centre, so without it a rejected anchor's dotted
+ *   ring would be the one mark on screen still drawn anchor-centred — the mark that
+ *   exists to explain a mystery would be adding one. It is FREE at the source:
+ *   rotation is fully resolved below (`:462`, `:473`, `:476`) ABOVE every one of
+ *   those sites, so it is COPIED — never recomputed, never re-derived from the
+ *   anchor — and it is the SAME number a surviving placement reports.
  *
  *   THE CONDITIONAL SHAPE IS CORRECT, not an oversight. `junction-skip` and `rest`
  *   reject at the TOP of the loop, above the transform that computes the centre —
@@ -266,7 +293,21 @@ export function selectAnchors(anchors, rules = {}, opts = {}) {
 // truncation.
 export const MAX_PLACEMENTS = 2000;
 
-const PLACEMENT_DEFAULTS = {
+// EXPORTED (#207) so the overlay can ask rather than remember. `footprintScope`'s
+// `isTightFootprint` used to carry its own copy of "absent ⇒ root"; an overlay
+// that reads one law while the packer runs the other draws anchor-centred rings
+// around offset art, silently and greenly. One object, both readers.
+//
+// ⚠️ `sizing.footprint` is `'root'` HERE and `'tight'` at the layer CONSTRUCTORS
+// (`starterChips.js`, `defaultBinding.js`, `motifLayer.js`), and the asymmetry is
+// the whole of decision 3. The default a NEW layer is born with belongs to the
+// constructors, because it is written into the document and can be read back.
+// What the ENGINE does with an ABSENT field is a different question, and it is
+// answered by `migration.js:77`: `pinFootprint` leaves a v1 layer that never
+// carried a `sizing` object alone rather than inventing the path. Absent must
+// therefore keep meaning root, or exactly those documents repack on load through
+// the one hole the pin cannot cover.
+export const PLACEMENT_DEFAULTS = {
   sequence: ['A'],
   flip: false,
   orientation: { policy: 'path', useNormal: true, offset: 0, perRole: {} },
@@ -275,7 +316,7 @@ const PLACEMENT_DEFAULTS = {
     lateral: 0, along: 0, rotation: 0, scale: 0,
     lateralRange: 0, alongRange: 0, rotationRange: 0, scaleRange: 0,
   },
-  sizing: { mode: 'proportional', size: 10, min: 0, margin: 1.0 },
+  sizing: { mode: 'proportional', size: 10, min: 0, margin: 1.0, footprint: 'root' },
   junction: 'center',
 };
 
@@ -320,6 +361,73 @@ function hasHostRadius(anchor) {
   return Number.isFinite(anchor.hostRadius) && anchor.hostRadius > 0;
 }
 
+const DEG_TO_RAD = Math.PI / 180;
+
+/**
+ * THE TIGHT FOOTPRINT, NORMALISED — the ONE place `viewRadius` divides (#204).
+ *
+ * ⚠️ RULING 7c, THE UNITS. `footprintSolve` is homogeneous: every coefficient is
+ * degree 2 in length, so it solves for the multiplier in whatever frame `u` and
+ * `fr` arrive in. Hand it RAW glyph-local `fc`/`fr` against world obstacles and
+ * its root is `s = R / viewRadius` (the `placementMatrix` scale,
+ * `instancing.js:77`); hand it `fc / viewRadius` and `fr / viewRadius` and its
+ * root is `R` itself. BOTH compute cleanly and produce a plausible answer — one
+ * of them is wrong by a factor of `viewRadius`, silently. The engine normalises
+ * HERE, at the glyph, so the reserve is `P + R·f̂c` with radius `R·f̂r` and every
+ * limit that comes back is directly in `R`, alongside `naturalTarget`, `hardCap`,
+ * `neighbourCap`, `min` and `packedRadius`. A returned `s` that has to be
+ * REMEMBERED to multiply is exactly the silent-and-green error class §7 of the
+ * spec warns about. `footprintSolve.js` is NOT changed for this — it accepts
+ * whatever frame it is handed and says so.
+ *
+ * LOUD, NEVER DEGRADED (ruling 7d). #198 established that Welzl silently swallows
+ * an interior NaN, and an undefined `footprintRadius` sails through the solver's
+ * sign tests and out as `Infinity`, i.e. "this obstacle never binds" — which
+ * reads as a clean placement and DRAWS AS AN OVERLAP, on a machine that cuts
+ * material. Falling back to the root law instead would be worse: the layer would
+ * be packed by the law the user opted out of, silently and greenly. So it throws.
+ *
+ * THE GROWTH TURN COMES BACK WITH IT. `root.angle` is part of the frame `fc` was
+ * measured in — `placementMatrix` de-rotates by it BEFORE the core scale/rotate
+ * (`instancing.js:63`), so the reserve has to as well. An absent or non-finite
+ * angle reads as 0, which is what every built-in carries and what
+ * `importMotif.js` hard-codes; only the pen editor produces anything else.
+ *
+ * @param {object|null|undefined} glyph
+ * @param {string} anchorId  named in the message — the failure is per-glyph.
+ * @returns {{cx:number, cy:number, r:number, angle:number}} `f̂c` and `f̂r`, in
+ *   units of `R`, plus `root.angle` in degrees.
+ */
+function normalisedFootprint(glyph, anchorId) {
+  if (!glyph || typeof glyph !== 'object') {
+    throw new TypeError(
+      `placementEngine: sizing.footprint 'tight' needs a glyph for anchor "${anchorId}" — ` +
+        'pass `opts.glyph` (and `opts.glyphMap` when the layer is sequenced)'
+    );
+  }
+  const fc = glyph.footprintCenter;
+  const fr = glyph.footprintRadius;
+  const viewRadius = glyph.viewRadius;
+  if (
+    !fc ||
+    typeof fc !== 'object' ||
+    !Number.isFinite(fc.x) ||
+    !Number.isFinite(fc.y) ||
+    !Number.isFinite(fr) ||
+    !Number.isFinite(viewRadius) ||
+    viewRadius <= 0
+  ) {
+    throw new TypeError(
+      `placementEngine: glyph "${glyph && glyph.id}" (anchor "${anchorId}") is missing a ` +
+        'measured footprint — `footprintCenter`, `footprintRadius` and a positive ' +
+        "`viewRadius` are all required under sizing.footprint 'tight'"
+    );
+  }
+  const root = glyph.root;
+  const angle = root && Number.isFinite(root.angle) ? root.angle : 0;
+  return { cx: fc.x / viewRadius, cy: fc.y / viewRadius, r: fr / viewRadius, angle };
+}
+
 /**
  * Resolve effective orientation for a role: perRole[role] merged (per field)
  * over the base orientation. Never mutates either input.
@@ -353,11 +461,26 @@ function resolveOrientation(base, role) {
  *   orientation?: {policy?:'path'|'page', useNormal?:boolean, offset?:number, perRole?:object},
  *   jitter?: {seed?:number, lateral?:number, along?:number, rotation?:number, scale?:number,
  *             lateralRange?:number, alongRange?:number, rotationRange?:number, scaleRange?:number},
- *   sizing?: {mode?:'proportional'|'fixed', size?:number, min?:number, margin?:number},
+ *   sizing?: {mode?:'proportional'|'fixed', size?:number, min?:number, margin?:number,
+ *             footprint?:'root'|'tight'},
  *   junction?: 'center'|'skip',
  * }} [config]
+ *
+ *   `sizing.footprint` (#204) selects the PACKING LAW. **Only the exact string
+ *   `'tight'` opts in**; absent, `'root'` and anything else run the legacy arm,
+ *   byte-identically (decision 7b / ADR-0005).
+ *
  * @param {{boundary?: null|{type:'rect',width:number,height:number}|{type:'polygon',points:{x:number,y:number}[]},
- *          overrideRecords?: Map<string, {ref:*, hidden?:boolean, scale?:number, angle?:number}>}} [opts]
+ *          overrideRecords?: Map<string, {ref:*, hidden?:boolean, scale?:number, angle?:number}>,
+ *          glyph?: object, glyphMap?: Record<string, object>}} [opts]
+ *
+ *   `glyph` / `glyphMap` are read ONLY by the `'tight'` arm — the legacy arm is
+ *   glyph-agnostic and must stay so. Resolution mirrors the render loop's own rule
+ *   (`MotifPattern.js`, per-placement glyph resolution): a sequenced slot's
+ *   `glyphRef` resolves through `glyphMap`, everything else uses the base `glyph`,
+ *   and an unresolved ref falls back to the base rather than being skipped — the
+ *   engine cannot "draw nothing", it can only reserve space. A `'tight'` layer
+ *   whose glyph carries no measured footprint THROWS (see `normalisedFootprint`).
  * @returns {{placements: Placement[], rejected: Rejection[], placementStats: {total:number, placed:number}}}
  */
 export function resolvePlacements(survivors, config = {}, opts = {}) {
@@ -389,6 +512,15 @@ export function resolvePlacements(survivors, config = {}, opts = {}) {
   const sizing = { ...PLACEMENT_DEFAULTS.sizing, ...(cfg.sizing || {}) };
   const junction = cfg.junction != null ? cfg.junction : PLACEMENT_DEFAULTS.junction;
   const boundary = opts && opts.boundary != null ? opts.boundary : null;
+  // THE PACKING LAW (#204, decision 7b). ONLY the exact string opts in: absent,
+  // `'root'` and any other value run the legacy arm literally. The dispatch is a
+  // string comparison hoisted out of the loop; nothing else about it is clever,
+  // and that is the point — ADR-0005 is a byte-identity contract, not an
+  // algebraic one, so `'root'` may not be expressed as the `fc = (0,0)`,
+  // `fr = viewRadius` case of the tight law however true that is on paper.
+  const tightFootprint = sizing.footprint === 'tight';
+  const baseGlyph = opts && opts.glyph != null ? opts.glyph : null;
+  const glyphMap = opts && opts.glyphMap != null ? opts.glyphMap : null;
 
   const rand = mulberry32(j.seed);
   const placed = []; // accepted footprints {x,y,r}, grown greedily in order.
@@ -498,6 +630,14 @@ export function resolvePlacements(survivors, config = {}, opts = {}) {
     let saturated; // the drag hit the hard cap and further `hold` does nothing
     let capObstacle; // a COPY of the capping disc, or null
 
+    // THE RESERVE (#204, ruling 6e). Null under the legacy law and in `fixed`
+    // mode, where the reserve IS the anchor-centred disc `(P, R)` at every
+    // radius. The tight arm fills it with `f̂c`/`f̂r` — the offset and radius per
+    // unit of `R` — and the two places that need the actual disc (the `placed`
+    // obstacle record and the emitted `footprintCenter`) build it from
+    // `packedRadius` at the bottom of the loop, where `packedRadius` exists.
+    let footprint = null;
+
     if (sizing.mode === 'fixed') {
       // sizeScale (slot modifier, default 1) grows the footprint BEFORE the
       // acceptance test so a bigger slot claims more space.
@@ -506,11 +646,25 @@ export function resolvePlacements(survivors, config = {}, opts = {}) {
       // the fixed radius IS the natural target — the very same expression — so
       // `wantedRadius` is `radius` with nothing to hoist.
       if (R <= 0 || !fitsAt(center, radius, placed, boundary)) {
-        rejected.push({ anchorId: anchor.id, reason: 'no-fit', x, y, wantedRadius: radius });
+        rejected.push({
+          anchorId: anchor.id,
+          reason: 'no-fit',
+          x,
+          y,
+          rotation,
+          wantedRadius: radius,
+        });
         return;
       }
       if (radius < min) {
-        rejected.push({ anchorId: anchor.id, reason: 'below-floor', x, y, wantedRadius: radius });
+        rejected.push({
+          anchorId: anchor.id,
+          reason: 'below-floor',
+          x,
+          y,
+          rotation,
+          wantedRadius: radius,
+        });
         return;
       }
       // `fixed` mode's CONTROL FLOW is untouched by #186 and `hold` is honestly
@@ -556,7 +710,14 @@ export function resolvePlacements(survivors, config = {}, opts = {}) {
       // That is not "capped by a neighbour", it is coincident with one, so it
       // stays a hard drop at every value of `hold` (decision 5).
       if (R <= 0) {
-        rejected.push({ anchorId: anchor.id, reason: 'no-fit', x, y, wantedRadius: naturalTarget });
+        rejected.push({
+          anchorId: anchor.id,
+          reason: 'no-fit',
+          x,
+          y,
+          rotation,
+          wantedRadius: naturalTarget,
+        });
         return;
       }
       const margin = Math.min(1, Math.max(0, sizing.margin));
@@ -572,58 +733,266 @@ export function resolvePlacements(survivors, config = {}, opts = {}) {
       // this — it is a gap in the sketch, not a liberty taken here.)
       const capOf = (term) => (term === Infinity ? Infinity : margin * term);
 
-      // HARD TIER — the boundary and the host container, together. `hold` can
-      // NEVER relax this (decision 4): a cut outside the material and a glyph
-      // escaping its cell are not aesthetic choices, and #146 already declares
-      // containment inviolable.
-      const boundaryCap = capOf(parts.boundary);
-      hardCap = Math.min(naturalTarget, boundaryCap);
-      let hardCapBy = boundaryCap < naturalTarget ? 'boundary' : 'natural';
-
-      // HOST-SIZE CHANNEL (#146). An anchor may declare the radius of the
-      // CONTAINER it occupies as an optional TOP-LEVEL `hostRadius`. Containment
-      // is a DISTANCE rule, not a radius cap: the four jitter draws above have
-      // already displaced the placement centre along the anchor's normal and
-      // tangent, so a glyph clamped to margin*hostRadius alone still crosses its
-      // container whenever the centre moved. The rule is stated against the
-      // DISPLACED centre, using the GEOMETRIC displacement (the two differ once
-      // tangent and normal are not perpendicular):
-      //     radius <= margin * max(0, hostRadius - d),  d = |centre - anchor|
-      // It enters as a further argument to the SAME minimum, so it can only ever
-      // shrink a glyph — the empty-circle terms and the no-overlap invariant are
-      // untouched, and the layer's size stays a ceiling.
+      // ── THE PACKING LAW, DISPATCHED ON `sizing.footprint` (#204, decision 7b) ──
       //
-      // A zero/negative cap (the centre was displaced clean out of its
-      // container) is a rejection, never a negative radius — and it is decided
-      // HERE, before any drawn radius exists, so `hold` cannot rescue it. The
-      // guard is gated STRICTLY inside this branch: a document with margin 0 and
-      // NO hostRadius still produces the accepted zero-radius placement it
-      // produces today.
-      if (hasHostRadius(anchor)) {
-        const d = Math.hypot(x - anchor.x, y - anchor.y);
-        const hostCap = margin * Math.max(0, anchor.hostRadius - d);
-        if (hostCap <= 0) {
-          rejected.push({
-            anchorId: anchor.id,
-            reason: 'no-fit',
-            x,
-            y,
-            wantedRadius: naturalTarget,
-          });
-          return;
-        }
-        // TIE-BREAK, deliberate: at hostCap === boundaryCap we report 'host'.
-        // The region boundary is already visible on screen and decision 17
-        // forbids drawing it; the host container has no visual representation at
-        // all, so naming the host is the strictly more informative answer.
-        if (hostCap <= hardCap) {
-          hardCap = hostCap;
-          hardCapBy = 'host';
-        }
-      }
+      // Two arms, deliberately not one parameterised expression. The tight law
+      // reduces to the legacy one at `fc = (0,0)`, `fr = viewRadius` ALGEBRAICALLY
+      // and NOT in IEEE754: `√(rⱼ² + |a|² − rⱼ²) − rⱼ` does not return `|a| − rⱼ`
+      // bit-for-bit (the add-then-subtract eats mantissa whenever `rⱼ > |a|` and
+      // the trailing `− rⱼ` cancels catastrophically on top), and `Math.hypot` is
+      // deliberately not `√(dx² + dy²)` bit-for-bit either. ADR-0005 is a
+      // BYTE-IDENTITY contract, so the legacy arm below runs today's expressions
+      // literally — not refactored, not extracted, not sharing a cap expression
+      // with the tight arm. That is the entire reason the solve is a sibling
+      // module and `emptyCircle.js` has a zero-line diff.
+      //
+      // What is shared above this point is shared because it is IDENTICAL in both
+      // laws and computes no clearance: `naturalTarget`, the `R <= 0` guard (still
+      // read from `parts`, the obstacle-identity loop is untouched), `margin` and
+      // `capOf`. What is shared BELOW is everything that CONSUMES the two caps —
+      // §5e: "the footprint change moves what `neighbourCap` and `hardCap` are; it
+      // does not touch what is done with them."
+      let hardCapBy;
+      // The obstacle that produced `neighbourCap` — recorded by the code that lost
+      // to it, never re-derived from geometry by a caller (#185/#186 rule).
+      let capWinner;
 
-      // SOFT TIER — the neighbour term, the only thing `hold` negotiates.
-      neighbourCap = capOf(parts.obstacles);
+      if (tightFootprint) {
+        // ── THE TIGHT LAW ────────────────────────────────────────────────────
+        // The reserve is no longer `(P, R)`. It is the glyph's minimal enclosing
+        // circle carried into the world: centre `P + R·f̂c`, radius `R·f̂r`, with
+        // `f̂c = Rot(θ)·footprintCenter / viewRadius` — so both the centre and the
+        // radius scale with the radius being solved for, and each clearance test
+        // becomes one quadratic where there is one division on the legacy arm.
+        //
+        // ⚠️ UNITS: `normalisedFootprint` already divided by `viewRadius` (ruling
+        // 7c), so every limit returned below is directly in `R`.
+        const glyph =
+          (glyphRef != null && glyphMap ? glyphMap[glyphRef] : null) || baseGlyph;
+        const f = normalisedFootprint(glyph, anchor.id);
+
+        // `u = Rot(rotation)·f̂c`, ONE cos/sin pair per survivor and NO RNG:
+        // `rotation` is fully resolved above (base orientation + jitter + slot
+        // rotation), below all four draws, so the determinism keystone is
+        // untouched — decision 1 needs no pipeline reorder.
+        //
+        // ⚠️ `flip` MIRRORS THE RESERVE, because it mirrors the ART. The renderer
+        // folds flip into `sx` (`instancing.js:78`), so a flipped glyph's ink sits
+        // at `Rot(θ)·(−fc.x, fc.y)`. §5e writes `u = Rot(θ)·fc` without mentioning
+        // flip; reserving the UNMIRRORED disc for mirrored art would put the ink
+        // outside the space the packer cleared — and under the hard tier it would
+        // put a CUT outside the material or outside its cell, which #146 and the
+        // PRD's story 8 call inviolable. So the mirror is applied here, in the one
+        // expression that reads the glyph, and costs nothing.
+        //
+        // ⚠️ THE GROWTH TURN IS PART OF THE COMPOSITION, and leaving it out is a
+        // CUT OUTSIDE THE MATERIAL. `placementMatrix` composes
+        //     M = T(P) · R(θ) · S(sx,sy) · R(−φ) · T(−root),   φ = root.angle
+        // (`instancing.js:63`), so a root-relative art point `q` lands at
+        // `P + R(θ)·diag(σ,1)·s·R(−φ)·q` with `σ = −1` when flipped. Since
+        // `R(θ)·R(−φ) = R(θ−φ)` and `diag(−1,1)·R(−φ) = R(φ)·diag(−1,1)`, the
+        // reserve offset is `R(θ−φ)·f̂c` unflipped and `R(θ+φ)·(−f̂c.x, f̂c.y)`
+        // flipped — ONE angle either way, so this still costs one cos/sin pair.
+        // `Rot(θ)·f̂c` alone is correct only at φ = 0; measured, `slice100` given
+        // a 90° turn put ink 74.9% of the reserve radius outside the committed
+        // disc. Latent because all 62 built-ins and `importMotif.js:116` are 0 —
+        // `PenCanvas.jsx:433-435` is not.
+        //
+        // φ === 0 short-circuits to the bare `rotation`, mirroring
+        // `placementMatrix`'s own default-root short-circuit: it keeps every
+        // shipped glyph bit-identical instead of relying on `±0` arithmetic.
+        const localX = flip ? -f.cx : f.cx;
+        const turned = f.angle === 0 ? rotation : flip ? rotation + f.angle : rotation - f.angle;
+        const theta = turned * DEG_TO_RAD;
+        const cosT = Math.cos(theta);
+        const sinT = Math.sin(theta);
+        const u = { x: localX * cosT - f.cy * sinT, y: localX * sinT + f.cy * cosT };
+
+        // HARD TIER — boundary AND host, each the LARGER of the two bounds
+        // (decision 5-rev, ruled by Majed 2026-07-29, superseding 5/5b/5c/5d).
+        //
+        // Decision 5 restated this tier against the tight disc ALONE, on the
+        // grounds that it is "the same guarantee with less waste". The first half
+        // is true and the second is backwards. `viewRadius` is measured from the
+        // root to the farthest point and the root sits ON the minimal enclosing
+        // circle, so `|f̂c| + f̂r ≥ 1` by the triangle inequality — ALWAYS. At an
+        // undisplaced centre the tight law therefore reads `R ≤ H/(|f̂c| + f̂r)`,
+        // which is never better than the root law's `R ≤ H`: 61 of the 62
+        // built-ins SHRANK, `slice100` (reach 1.2058) to 0.829×. The minimal
+        // enclosing circle bulges past the ink on the far side, so as an envelope
+        // for containment measured FROM A POINT it is strictly looser, even
+        // though it is strictly tighter disc-against-disc.
+        //
+        // Both bounds are INDEPENDENTLY SOUND CONTAINMENT CERTIFICATES — art
+        // inside the root disc guarantees art inside the container, and so does
+        // art inside the tight disc — so taking whichever permits the larger `R`
+        // is safe and is never worse than either. Root wins at an undisplaced
+        // centre; tight wins once jitter displaces the glyph away from the
+        // direction it leans, which is where decision 5's 2× actually lives.
+        //
+        // ⚠️ WHAT SURVIVES IS *ART* INSIDE THE CONTAINER, NOT *RESERVE* INSIDE THE
+        // CONTAINER. When the root bound wins, the committed tight disc may poke
+        // outside the cell or the region — legitimately, because it bulges past
+        // the ink. Anything asserting containment must assert it of the flattened
+        // art, not of `footprintCenter ± packedRadius·f̂r`.
+        //
+        // ⚠️ THE NEIGHBOUR TERM IS NOT TOUCHED. It is genuinely disc-vs-disc, the
+        // tight disc is correct there, and the entire 4× recovery lives in it.
+        //
+        // The root-side expressions below are COPIED from the legacy arm, not
+        // shared with it: ADR-0005 is a byte-identity contract and the legacy arm
+        // must keep running its own literal lines (decision 7b).
+        const boundaryCap = Math.max(
+          capOf(parts.boundary),
+          capOf(boundaryLimit({ x, y }, u, f.r, boundary))
+        );
+        hardCap = Math.min(naturalTarget, boundaryCap);
+        hardCapBy = boundaryCap < naturalTarget ? 'boundary' : 'natural';
+
+        if (hasHostRadius(anchor)) {
+          // The SAME displacement the legacy arm takes `d = |v|` of — the rule is
+          // still stated against the DISPLACED centre, it is just no longer a
+          // distance subtraction, because the disc now inflates and drifts at
+          // once. Decision 5c: `hostCap <= 0 → reject` restates as "no positive R
+          // satisfies the containment inequality → reject", which is exactly what
+          // `hostLimit`'s `-1` (centre already outside the container) reports.
+          const v = { x: x - anchor.x, y: y - anchor.y };
+          const lim = hostLimit(v, u, f.r, anchor.hostRadius);
+          // `capOf`, not a bare `margin * lim`, for the reason recorded at the
+          // guard's definition above: a container that never binds comes back
+          // `Infinity`, and `0 * Infinity` is NaN. On every finite `lim` this is
+          // the identical product §5e writes. A non-positive `lim` — `-1` for a
+          // centre already outside the container — contributes NOTHING to the max
+          // rather than a negative number, so it can never drag the root bound
+          // down; it just loses.
+          const tightHostCap = lim > 0 ? capOf(lim) : 0;
+          // The root-law bound, COPIED verbatim from the legacy arm below (the
+          // same `d`, the same `Math.max(0, …)` clamp, the same `margin ×`).
+          const d = Math.hypot(x - anchor.x, y - anchor.y);
+          const rootHostCap = margin * Math.max(0, anchor.hostRadius - d);
+          const hostCap = Math.max(rootHostCap, tightHostCap);
+          // Decision 5c, restated for the max: reject only when NEITHER bound
+          // permits a positive `R`. Under the root law that is "displaced clean
+          // out of the container"; under the tight law it is `hostLimit`'s `-1`,
+          // which is the same condition. They agree, so this stays a single guard.
+          if (hostCap <= 0) {
+            rejected.push({
+              anchorId: anchor.id,
+              reason: 'no-fit',
+              x,
+              y,
+              rotation,
+              wantedRadius: naturalTarget,
+            });
+            return;
+          }
+          // The same `<=` tie-break, for the same recorded reason (the boundary is
+          // already on screen; the host container has no visual representation).
+          if (hostCap <= hardCap) {
+            hardCap = hostCap;
+            hardCapBy = 'host';
+          }
+        }
+
+        // SOFT TIER — one `neighbourLimit` per obstacle where the legacy arm has
+        // one subtraction. Min-reduced with the SAME `<` accumulation and
+        // `Infinity` seed as `emptyCircle.js:125-135`, so a NaN limit can never
+        // displace a good one (`NaN < x` is false, where `Math.min` would
+        // propagate it) and exact ties select the first obstacle encountered.
+        //
+        // ⚠️ THE WINNER IS FOUND DIFFERENTLY (decision 6b). The legacy captor is
+        // the obstacle minimising `d − r`; this one is the obstacle yielding the
+        // SMALLEST MAX-`R`. Those are not the same ordering once the reserve is
+        // offset — a disc further away in the direction the art leans can bind
+        // harder than a nearer one behind the root. `capBy`'s MEANING is unchanged:
+        // it still names what bound the radius the user sees.
+        //
+        // `neighbourLimit` returns `-1` when the centre is already INSIDE an
+        // obstacle. That is the same condition the `R <= 0` guard above rejected
+        // on (`parts.obstacles = |a| − rⱼ < 0`), so it is unreachable here except
+        // through a float disagreement at exact tangency between `|a| − rⱼ` and
+        // `|a|² − rⱼ²`; it degrades to a negative cap and then to a `below-floor`
+        // rejection, never to a negative reserved radius. No extra branch.
+        let limit = Infinity;
+        for (const obstacle of placed) {
+          const a = { x: x - obstacle.x, y: y - obstacle.y };
+          const lim = neighbourLimit(a, u, f.r, obstacle.r);
+          if (lim < limit) {
+            limit = lim;
+            capWinner = obstacle;
+          }
+        }
+        // ⚠️ SOLVE-THEN-SCALE (decision 6d), the single most misapplicable line in
+        // this build. `capOf(limit)` — NOT `neighbourLimit(a, u, f.r / margin, rⱼ)`,
+        // which is a DIFFERENT NUMBER: `fr` appears in `B = 2(a·u − rⱼ·fr)` as well
+        // as in `A`, and the offset `R·u` scales with `R` too, so an inflated
+        // reserve also sits further out — inflating moves the tangency point rather
+        // than just growing the circle. The binding condition solved here is
+        // `|a + R·u| = R·f̂r + rⱼ`, distance between centres equal to the sum of
+        // radii, which IS external tangency by definition; that is what the
+        // overlay's captor link draws (decision 6c), and inflate-then-solve would
+        // quietly falsify it while every test stayed green.
+        neighbourCap = capOf(limit);
+        // Carried to the bottom of the loop, where `packedRadius` exists: the
+        // committed obstacle disc and the emitted `footprintCenter` are both built
+        // from it (ruling 6e).
+        footprint = { ux: u.x, uy: u.y, fr: f.r };
+      } else {
+        // HARD TIER — the boundary and the host container, together. `hold` can
+        // NEVER relax this (decision 4): a cut outside the material and a glyph
+        // escaping its cell are not aesthetic choices, and #146 already declares
+        // containment inviolable.
+        const boundaryCap = capOf(parts.boundary);
+        hardCap = Math.min(naturalTarget, boundaryCap);
+        hardCapBy = boundaryCap < naturalTarget ? 'boundary' : 'natural';
+
+        // HOST-SIZE CHANNEL (#146). An anchor may declare the radius of the
+        // CONTAINER it occupies as an optional TOP-LEVEL `hostRadius`. Containment
+        // is a DISTANCE rule, not a radius cap: the four jitter draws above have
+        // already displaced the placement centre along the anchor's normal and
+        // tangent, so a glyph clamped to margin*hostRadius alone still crosses its
+        // container whenever the centre moved. The rule is stated against the
+        // DISPLACED centre, using the GEOMETRIC displacement (the two differ once
+        // tangent and normal are not perpendicular):
+        //     radius <= margin * max(0, hostRadius - d),  d = |centre - anchor|
+        // It enters as a further argument to the SAME minimum, so it can only ever
+        // shrink a glyph — the empty-circle terms and the no-overlap invariant are
+        // untouched, and the layer's size stays a ceiling.
+        //
+        // A zero/negative cap (the centre was displaced clean out of its
+        // container) is a rejection, never a negative radius — and it is decided
+        // HERE, before any drawn radius exists, so `hold` cannot rescue it. The
+        // guard is gated STRICTLY inside this branch: a document with margin 0 and
+        // NO hostRadius still produces the accepted zero-radius placement it
+        // produces today.
+        if (hasHostRadius(anchor)) {
+          const d = Math.hypot(x - anchor.x, y - anchor.y);
+          const hostCap = margin * Math.max(0, anchor.hostRadius - d);
+          if (hostCap <= 0) {
+            rejected.push({
+              anchorId: anchor.id,
+              reason: 'no-fit',
+              x,
+              y,
+              rotation,
+              wantedRadius: naturalTarget,
+            });
+            return;
+          }
+          // TIE-BREAK, deliberate: at hostCap === boundaryCap we report 'host'.
+          // The region boundary is already visible on screen and decision 17
+          // forbids drawing it; the host container has no visual representation at
+          // all, so naming the host is the strictly more informative answer.
+          if (hostCap <= hardCap) {
+            hardCap = hostCap;
+            hardCapBy = 'host';
+          }
+        }
+
+        // SOFT TIER — the neighbour term, the only thing `hold` negotiates.
+        neighbourCap = capOf(parts.obstacles);
+        capWinner = parts.obstacle;
+      }
 
       // The radius RESERVED into `placed`. This is exactly the radius the engine
       // produced before #186, and it is what every following glyph sizes around
@@ -656,6 +1025,7 @@ export function resolvePlacements(survivors, config = {}, opts = {}) {
           reason: 'below-floor',
           x,
           y,
+          rotation,
           wantedRadius: naturalTarget,
         });
         return;
@@ -682,9 +1052,14 @@ export function resolvePlacements(survivors, config = {}, opts = {}) {
       // — a reference into `placed` would alias an array the loop keeps
       // mutating, and the overlay must be able to draw the disc without
       // reaching back into engine internals.
+      //
+      // `capWinner` is whichever arm above lost to it: `parts.obstacle` on the
+      // legacy arm (the `d − r` minimiser, unchanged), the smallest-max-`R`
+      // winner on the tight arm (decision 6b). Recorded by the code that did the
+      // capping, never re-derived here.
       capObstacle =
-        capBy === 'neighbour' && parts.obstacle
-          ? { x: parts.obstacle.x, y: parts.obstacle.y, r: parts.obstacle.r }
+        capBy === 'neighbour' && capWinner
+          ? { x: capWinner.x, y: capWinner.y, r: capWinner.r }
           : null;
 
       radius = drawnRadius;
@@ -695,7 +1070,25 @@ export function resolvePlacements(survivors, config = {}, opts = {}) {
     // rescued from below the floor. There is no third "drawn but invisible to
     // the packer" state, and the reserved-disc no-overlap invariant is exactly
     // as strong as it was before #186.
-    placed.push({ x, y, r: packedRadius });
+    //
+    // ⚠️ RULING 6e — UNDER THE TIGHT LAW THE COMMITTED DISC IS THE OFFSET ONE:
+    // `{x: P + R·f̂c, r: R·f̂r}` with `R = packedRadius`. Not a choice, and the
+    // single place this slice could have gone silently inert: keeping obstacles
+    // anchor-centred would size tight discs against root-centred ones — precisely
+    // the mixed model decision 5b rejects — and the reserve the NEIGHBOURS see is
+    // the only reserve that matters, so the fix would have measured as "no
+    // change" while every existing test still passed. Decision 6 is unaffected:
+    // this is still a bare `{x, y, r}` with no back-reference to the glyph.
+    // `footprint` is null on the legacy arm and in `fixed` mode, where the
+    // reserve genuinely IS `(P, R)`.
+    const reserve = footprint
+      ? {
+          x: x + packedRadius * footprint.ux,
+          y: y + packedRadius * footprint.uy,
+          r: packedRadius * footprint.fr,
+        }
+      : { x, y, r: packedRadius };
+    placed.push(reserve);
     const placement = {
       anchorId: anchor.id,
       role: anchor.role,
@@ -712,6 +1105,13 @@ export function resolvePlacements(survivors, config = {}, opts = {}) {
       capBy,
       saturated,
       capObstacle,
+      // The world centre of the disc just committed, stated AT `packedRadius` —
+      // the same two numbers as `reserve`, COPIED rather than shared, because
+      // `reserve` is now an entry in the obstacle list the loop keeps growing and
+      // an alias would let a reader mutate the packer's own state (the same rule
+      // `capObstacle` is copied under). `{x, y}` on the legacy arm and in `fixed`
+      // mode: the root law's reserve is anchor-centred at every radius.
+      footprintCenter: { x: reserve.x, y: reserve.y },
       seqId,
       flip,
     };

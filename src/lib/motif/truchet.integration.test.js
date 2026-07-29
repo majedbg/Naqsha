@@ -24,6 +24,7 @@ import { placeMotifs } from './placementEngine.js';
 import { resolveMotifHostParams } from './resolveMotifHost.js';
 import { resolveHostAnchors } from './hostAnchors.js';
 import { defaultMotifAddOpts } from './defaultBinding.js';
+import { getGlyph } from './glyphs.js';
 import { rolesForHost } from './hostRoles.js';
 import { hostAvailability } from './hostCapability.js';
 import {
@@ -140,10 +141,16 @@ describe('Truchet is a motif host', () => {
     const opts = defaultMotifAddOpts('truchet', 'leaf');
     expect(opts.anchorMode).toBe('semantic');
     expect(opts.binding.selection.roles).toEqual(['cell']);
+    // THE GLYPH RIDES WITH THE BINDING (#207). `defaultMotifAddOpts` now writes
+    // `sizing.footprint: 'tight'`, so the packer reads the glyph's measured
+    // footprint and throws without one — which is the point of testing the REAL
+    // add path rather than a hand-built binding: the real path always has a
+    // glyph, because `opts.glyphRef` is what it was called with.
     const { placements } = placeMotifs(anchorsFor(), opts.binding, {
       canvasW: W,
       canvasH: H,
       boundary: BOUNDARY,
+      glyph: getGlyph(opts.glyphRef),
     });
     expect(placements).toHaveLength(N_TILES);
   });

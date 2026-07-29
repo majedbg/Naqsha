@@ -165,9 +165,37 @@ export default class MotifPattern extends Pattern {
     // it is a no-op for documents with no per-glyph scale/angle.
     const placementConfig = { ...(binding.placement || {}) };
     if (sequence) placementConfig.sequence = sequence;
+    //
+    // THE GLYPHS RIDE IN TOO (#207). Under `sizing.footprint: 'tight'` the engine
+    // reserves the glyph's MEASURED footprint rather than a disc of `viewRadius`
+    // about its root, so it needs the same two sources the draw loop below reads
+    // — the base glyph and the per-slot map — and THROWS without them (ruling
+    // 7d): a layer must never be silently packed by the law the user opted out
+    // of on a machine that cuts material.
+    //
+    // ⚠️ WHAT THE THROW ACTUALLY LOOKS LIKE. Nothing here catches it, but this
+    // whole draw runs inside `useCanvas.js:550/564`'s per-layer guard — the one
+    // that keeps a single bad layer from blanking the frame — so on canvas the
+    // throw surfaces as a `console.warn` and a BLANK LAYER, not a visible error.
+    // Loud to a developer, silent to the user. (An earlier version of this
+    // comment claimed the call was deliberately un-caught, which was never true
+    // of the render path.) The reachable causes are now closed: the pen editor
+    // re-measures on Save (`serializeWorkingCopy`) and the custom-glyph store
+    // measures on load (`ensureGlyphMapFootprints`), so a glyph reaching here
+    // without a footprint means a NEW seam has been added that skips both — the
+    // console line is the signal, and it belongs in that new seam, not here.
+    // The guard is deliberately left alone: swallowing per layer is the right
+    // frame-level behaviour, and narrowing it for this one throw would trade a
+    // blank layer for a blank document.
+    //
+    // `glyphMap` is null when nothing was injected, which the
+    // engine reads as "no map" and falls back to the base glyph — the same rule
+    // the per-placement resolution below applies.
     const { placements, placementStats } = resolvePlacements(survivors, placementConfig, {
       boundary,
       overrideRecords,
+      glyph: baseGlyph,
+      glyphMap,
     });
     // Surface the budget stats so useCanvas can read `instance.lastPlacementStats`
     // after generate() and mirror truncation up to the Inspector (etchBitmaps

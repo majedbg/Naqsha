@@ -51,8 +51,14 @@ import { rolesForHost, defaultRolesFor } from './hostRoles.js';
 // Fixed placement tail (ADR-0004 — not a chain block) shared by every chip;
 // mirrors Inspector.jsx addMotif's default so a chip-created motif sizes the
 // same as a plain "+ Add Motif" one.
+// `footprint: 'tight'` (#207, decision 3) — a NEW layer packs against the glyph's
+// measured minimal enclosing circle, not a disc of `viewRadius` about its root.
+// Written EXPLICITLY here rather than left to the engine's default, which stays
+// `'root'` so that a pre-v2 document carrying no `sizing` object cannot repack on
+// load. `motifLayer.js`'s `normalizeBinding` would stamp it anyway; stating it
+// here keeps the chip's tail readable as the whole tail it is.
 const PLACEMENT = {
-  sizing: { mode: 'proportional', size: 18, min: 3, margin: 0.85 },
+  sizing: { mode: 'proportional', size: 18, min: 3, margin: 0.85, footprint: 'tight' },
   orientation: { policy: 'path', useNormal: true },
   flip: false,
 };

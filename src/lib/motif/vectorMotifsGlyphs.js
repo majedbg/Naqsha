@@ -5,8 +5,24 @@
 // glyphs: glyphs.js spreads them into MOTIF_GLYPHS. Names are filename-derived
 // ("Slice N") — the source art carries no <title>; rename in-app as desired.
 // Regenerate: node scratchpad/genVectorMotifs.mjs src/lib/motif/vectorMotifs <thisFile>
+//
+// ⚠️ THAT GENERATOR DOES NOT EXIST. `scratchpad/` was a working directory and
+// was never committed, so the line above records intent rather than a command
+// you can run. `footprintCenter`/`footprintRadius` were therefore ADDED IN PLACE
+// rather than regenerated, by `scripts/enrichVectorMotifFootprints.mjs` (§5b of
+// docs/motif-footprint-fix-decisions.md) — which is committed, is idempotent,
+// and leaves every `d` string, `viewRadius` and `root` untouched to the bit.
+//   node scripts/enrichVectorMotifFootprints.mjs --check
+//
+// The footprint is the MINIMAL ENCLOSING CIRCLE (Welzl) of the flattened paths,
+// stored RELATIVE TO ROOT so it lands in the frame placementMatrix leaves the
+// glyph in. It is the packer's reserve and is NOT interchangeable with
+// `viewRadius`, which remains the scale divisor (decision 2b). These numbers are
+// PINNED: §7 records that a different flattening tolerance or Welzl shuffle can
+// flip the sign of `|fc|² − fr²` on `slice18`/`slice91` at the 1e-16 level,
+// which is invisible to the eye and fatal to a deep-equal golden.
 
-/** @type {Record<string, import('./glyphs.js').Glyph & {root:{x:number,y:number,angle:number}}>} */
+/** @type {Record<string, import('./glyphs.js').Glyph & {root:{x:number,y:number,angle:number}, footprintCenter:{x:number,y:number}, footprintRadius:number}>} */
 export const VECTOR_MOTIF_GLYPHS = {
   "slice100": {
     "id": "slice100",
@@ -23,7 +39,12 @@ export const VECTOR_MOTIF_GLYPHS = {
       "x": 55.82,
       "y": 84.38,
       "angle": 0
-    }
+    },
+    "footprintCenter": {
+      "x": 0,
+      "y": -28.754999999999995
+    },
+    "footprintRadius": 49.096837219926904
   },
   "slice102": {
     "id": "slice102",
@@ -40,7 +61,12 @@ export const VECTOR_MOTIF_GLYPHS = {
       "x": 55.504999999999995,
       "y": 96.75,
       "angle": 0
-    }
+    },
+    "footprintCenter": {
+      "x": -0.0049999999999954525,
+      "y": -41.22
+    },
+    "footprintRadius": 53.166764054247274
   },
   "slice103": {
     "id": "slice103",
@@ -57,7 +83,12 @@ export const VECTOR_MOTIF_GLYPHS = {
       "x": 55.33,
       "y": 97.02,
       "angle": 0
-    }
+    },
+    "footprintCenter": {
+      "x": 0,
+      "y": -41.25
+    },
+    "footprintRadius": 43.481317827315216
   },
   "slice104": {
     "id": "slice104",
@@ -74,7 +105,12 @@ export const VECTOR_MOTIF_GLYPHS = {
       "x": 55.17,
       "y": 96.75,
       "angle": 0
-    }
+    },
+    "footprintCenter": {
+      "x": 0,
+      "y": -41.22
+    },
+    "footprintRadius": 43.47815658465755
   },
   "slice105": {
     "id": "slice105",
@@ -91,7 +127,12 @@ export const VECTOR_MOTIF_GLYPHS = {
       "x": 55.004999999999995,
       "y": 103.64,
       "angle": 0
-    }
+    },
+    "footprintCenter": {
+      "x": 7.105427357601002e-15,
+      "y": -48.125000000000014
+    },
+    "footprintRadius": 48.125000259740254
   },
   "slice107": {
     "id": "slice107",
@@ -108,7 +149,12 @@ export const VECTOR_MOTIF_GLYPHS = {
       "x": 55.835,
       "y": 96.58,
       "angle": 0
-    }
+    },
+    "footprintCenter": {
+      "x": -0.005000000000002558,
+      "y": -41.245
+    },
+    "footprintRadius": 56.16902727482468
   },
   "slice108": {
     "id": "slice108",
@@ -125,7 +171,12 @@ export const VECTOR_MOTIF_GLYPHS = {
       "x": 55.665000000000006,
       "y": 84.21,
       "angle": 0
-    }
+    },
+    "footprintCenter": {
+      "x": 0,
+      "y": -28.877109374999996
+    },
+    "footprintRadius": 54.76782763853597
   },
   "slice11": {
     "id": "slice11",
@@ -142,7 +193,12 @@ export const VECTOR_MOTIF_GLYPHS = {
       "x": 55.495000000000005,
       "y": 103.79,
       "angle": 0
-    }
+    },
+    "footprintCenter": {
+      "x": 0,
+      "y": -48.125
+    },
+    "footprintRadius": 48.12500025974027
   },
   "slice112": {
     "id": "slice112",
@@ -159,7 +215,12 @@ export const VECTOR_MOTIF_GLYPHS = {
       "x": 54.995,
       "y": 82.17,
       "angle": 0
-    }
+    },
+    "footprintCenter": {
+      "x": 1.9284017458173182,
+      "y": -26.835
+    },
+    "footprintRadius": 50.04340199560049
   },
   "slice13": {
     "id": "slice13",
@@ -176,7 +237,12 @@ export const VECTOR_MOTIF_GLYPHS = {
       "x": 55.165,
       "y": 103.81,
       "angle": 0
-    }
+    },
+    "footprintCenter": {
+      "x": 0,
+      "y": -48.145
+    },
+    "footprintRadius": 48.146900730992016
   },
   "slice136": {
     "id": "slice136",
@@ -193,7 +259,12 @@ export const VECTOR_MOTIF_GLYPHS = {
       "x": 55.645,
       "y": 96.92,
       "angle": 0
-    }
+    },
+    "footprintCenter": {
+      "x": -3.431565125351952,
+      "y": -33.11897498196787
+    },
+    "footprintRadius": 51.68024708347623
   },
   "slice139": {
     "id": "slice139",
@@ -210,7 +281,12 @@ export const VECTOR_MOTIF_GLYPHS = {
       "x": 55.165,
       "y": 85.33,
       "angle": 0
-    }
+    },
+    "footprintCenter": {
+      "x": 4.575655882658907,
+      "y": -29.659999999999997
+    },
+    "footprintRadius": 52.6406558826589
   },
   "slice14": {
     "id": "slice14",
@@ -227,7 +303,12 @@ export const VECTOR_MOTIF_GLYPHS = {
       "x": 54.995000000000005,
       "y": 103.79,
       "angle": 0
-    }
+    },
+    "footprintCenter": {
+      "x": 0.004999999999981242,
+      "y": -48.134241299586265
+    },
+    "footprintRadius": 48.1357587004137
   },
   "slice17": {
     "id": "slice17",
@@ -244,7 +325,12 @@ export const VECTOR_MOTIF_GLYPHS = {
       "x": 55.68000000000001,
       "y": 103.63,
       "angle": 0
-    }
+    },
+    "footprintCenter": {
+      "x": -7.105427357601002e-15,
+      "y": -48.129999999999995
+    },
+    "footprintRadius": 48.129999999999995
   },
   "slice18": {
     "id": "slice18",
@@ -261,7 +347,12 @@ export const VECTOR_MOTIF_GLYPHS = {
       "x": 55.44,
       "y": 103.62,
       "angle": 0
-    }
+    },
+    "footprintCenter": {
+      "x": 0.060000000000002274,
+      "y": -48.120000000000005
+    },
+    "footprintRadius": 48.120000000000005
   },
   "slice21": {
     "id": "slice21",
@@ -278,7 +369,12 @@ export const VECTOR_MOTIF_GLYPHS = {
       "x": 54.995000000000005,
       "y": 103.63,
       "angle": 0
-    }
+    },
+    "footprintCenter": {
+      "x": 1.4210854715202004e-14,
+      "y": -48.12499999999999
+    },
+    "footprintRadius": 48.125000259740254
   },
   "slice22": {
     "id": "slice22",
@@ -295,7 +391,12 @@ export const VECTOR_MOTIF_GLYPHS = {
       "x": 54.99999999999999,
       "y": 94.505,
       "angle": 0
-    }
+    },
+    "footprintCenter": {
+      "x": 7.105427357601002e-15,
+      "y": -39.175
+    },
+    "footprintRadius": 48.12568752755643
   },
   "slice23": {
     "id": "slice23",
@@ -312,7 +413,12 @@ export const VECTOR_MOTIF_GLYPHS = {
       "x": 55.834999999999994,
       "y": 103.46,
       "angle": 0
-    }
+    },
+    "footprintCenter": {
+      "x": -2.1316282072803006e-14,
+      "y": -48.12500000000001
+    },
+    "footprintRadius": 48.12500025974027
   },
   "slice24": {
     "id": "slice24",
@@ -329,7 +435,12 @@ export const VECTOR_MOTIF_GLYPHS = {
       "x": 55.665000000000006,
       "y": 103.46,
       "angle": 0
-    }
+    },
+    "footprintCenter": {
+      "x": 0.042334937534711514,
+      "y": -48.151579390290124
+    },
+    "footprintRadius": 48.16735288377748
   },
   "slice25": {
     "id": "slice25",
@@ -346,7 +457,12 @@ export const VECTOR_MOTIF_GLYPHS = {
       "x": 55.5,
       "y": 103.45,
       "angle": 0
-    }
+    },
+    "footprintCenter": {
+      "x": 0.002249809309553541,
+      "y": -48.128888282756115
+    },
+    "footprintRadius": 48.13114007771252
   },
   "slice26": {
     "id": "slice26",
@@ -363,7 +479,12 @@ export const VECTOR_MOTIF_GLYPHS = {
       "x": 55.339999999999996,
       "y": 98.46189453125001,
       "angle": 0
-    }
+    },
+    "footprintCenter": {
+      "x": 0,
+      "y": -43.00189453125001
+    },
+    "footprintRadius": 47.87
   },
   "slice27": {
     "id": "slice27",
@@ -380,7 +501,12 @@ export const VECTOR_MOTIF_GLYPHS = {
       "x": 55.165,
       "y": 101.17,
       "angle": 0
-    }
+    },
+    "footprintCenter": {
+      "x": 0,
+      "y": -40.88590442477875
+    },
+    "footprintRadius": 50.537552430169626
   },
   "slice28": {
     "id": "slice28",
@@ -397,7 +523,12 @@ export const VECTOR_MOTIF_GLYPHS = {
       "x": 55.06,
       "y": 101.1,
       "angle": 0
-    }
+    },
+    "footprintCenter": {
+      "x": 1.4210854715202004e-14,
+      "y": -40.88236873769416
+    },
+    "footprintRadius": 50.53763126230586
   },
   "slice29": {
     "id": "slice29",
@@ -414,7 +545,12 @@ export const VECTOR_MOTIF_GLYPHS = {
       "x": 54.939921875,
       "y": 101.8225,
       "angle": 0
-    }
+    },
+    "footprintCenter": {
+      "x": 0.00007812499999459988,
+      "y": -43.51798230644871
+    },
+    "footprintRadius": 49.796114152242765
   },
   "slice3": {
     "id": "slice3",
@@ -431,7 +567,12 @@ export const VECTOR_MOTIF_GLYPHS = {
       "x": 55.665,
       "y": 104.08,
       "angle": 0
-    }
+    },
+    "footprintCenter": {
+      "x": 0,
+      "y": -48.185
+    },
+    "footprintRadius": 48.18500233475142
   },
   "slice30": {
     "id": "slice30",
@@ -448,7 +589,12 @@ export const VECTOR_MOTIF_GLYPHS = {
       "x": 55.834921875000006,
       "y": 103.29,
       "angle": 0
-    }
+    },
+    "footprintCenter": {
+      "x": -0.0009511456333868296,
+      "y": -48.124999999999986
+    },
+    "footprintRadius": 48.125000163809766
   },
   "slice33": {
     "id": "slice33",
@@ -465,7 +611,12 @@ export const VECTOR_MOTIF_GLYPHS = {
       "x": 55.335,
       "y": 103.98,
       "angle": 0
-    }
+    },
+    "footprintCenter": {
+      "x": 7.105427357601002e-15,
+      "y": -48.81499999999998
+    },
+    "footprintRadius": 48.81500025606883
   },
   "slice34": {
     "id": "slice34",
@@ -482,7 +633,12 @@ export const VECTOR_MOTIF_GLYPHS = {
       "x": 55.165,
       "y": 103.23,
       "angle": 0
-    }
+    },
+    "footprintCenter": {
+      "x": 7.105427357601002e-15,
+      "y": -48.065
+    },
+    "footprintRadius": 65.34373764944885
   },
   "slice4": {
     "id": "slice4",
@@ -499,7 +655,12 @@ export const VECTOR_MOTIF_GLYPHS = {
       "x": 55.5,
       "y": 103.96,
       "angle": 0
-    }
+    },
+    "footprintCenter": {
+      "x": 0,
+      "y": -48.12499999999999
+    },
+    "footprintRadius": 48.13000233741943
   },
   "slice42": {
     "id": "slice42",
@@ -516,7 +677,12 @@ export const VECTOR_MOTIF_GLYPHS = {
       "x": 55.00075439453125,
       "y": 102.9897900390625,
       "angle": 0
-    }
+    },
+    "footprintCenter": {
+      "x": -0.0007543945312491473,
+      "y": -47.9897900390625
+    },
+    "footprintRadius": 65.25181376789462
   },
   "slice43": {
     "id": "slice43",
@@ -533,7 +699,12 @@ export const VECTOR_MOTIF_GLYPHS = {
       "x": 54.99869140625,
       "y": 103.61557373046875,
       "angle": 0
-    }
+    },
+    "footprintCenter": {
+      "x": 0.0013085937499965894,
+      "y": -47.7851336669922
+    },
+    "footprintRadius": 57.96620166764668
   },
   "slice46": {
     "id": "slice46",
@@ -550,7 +721,12 @@ export const VECTOR_MOTIF_GLYPHS = {
       "x": 55.435,
       "y": 103.96,
       "angle": 0
-    }
+    },
+    "footprintCenter": {
+      "x": 0.007109532998946122,
+      "y": -48.12501907348632
+    },
+    "footprintRadius": 48.13078579186304
   },
   "slice5": {
     "id": "slice5",
@@ -567,7 +743,12 @@ export const VECTOR_MOTIF_GLYPHS = {
       "x": 55.334999999999994,
       "y": 103.96,
       "angle": 0
-    }
+    },
+    "footprintCenter": {
+      "x": -0.003213148610250016,
+      "y": -48.12821314861027
+    },
+    "footprintRadius": 48.12821659480895
   },
   "slice52": {
     "id": "slice52",
@@ -584,7 +765,12 @@ export const VECTOR_MOTIF_GLYPHS = {
       "x": 55.695,
       "y": 104.48,
       "angle": 0
-    }
+    },
+    "footprintCenter": {
+      "x": -0.006744585768295508,
+      "y": -48.815000000000005
+    },
+    "footprintRadius": 48.85174484164454
   },
   "slice54": {
     "id": "slice54",
@@ -601,7 +787,12 @@ export const VECTOR_MOTIF_GLYPHS = {
       "x": 55.47,
       "y": 103.79,
       "angle": 0
-    }
+    },
+    "footprintCenter": {
+      "x": 0,
+      "y": -48.12498092651368
+    },
+    "footprintRadius": 48.13317852659553
   },
   "slice58": {
     "id": "slice58",
@@ -618,7 +809,12 @@ export const VECTOR_MOTIF_GLYPHS = {
       "x": 55.83,
       "y": 96.75,
       "angle": 0
-    }
+    },
+    "footprintCenter": {
+      "x": 0.24499999999999744,
+      "y": -41.25
+    },
+    "footprintRadius": 46.012071513897304
   },
   "slice59": {
     "id": "slice59",
@@ -635,7 +831,12 @@ export const VECTOR_MOTIF_GLYPHS = {
       "x": 55.724999999999994,
       "y": 103.7,
       "angle": 0
-    }
+    },
+    "footprintCenter": {
+      "x": -0.06499999999999773,
+      "y": -48.2
+    },
+    "footprintRadius": 48.20005082984871
   },
   "slice6": {
     "id": "slice6",
@@ -652,7 +853,12 @@ export const VECTOR_MOTIF_GLYPHS = {
       "x": 55.18000000000001,
       "y": 103.96,
       "angle": 0
-    }
+    },
+    "footprintCenter": {
+      "x": 0.0049999999999954525,
+      "y": -48.125
+    },
+    "footprintRadius": 48.12500233766228
   },
   "slice71": {
     "id": "slice71",
@@ -669,7 +875,12 @@ export const VECTOR_MOTIF_GLYPHS = {
       "x": 55,
       "y": 95.886875,
       "angle": 0
-    }
+    },
+    "footprintCenter": {
+      "x": 0,
+      "y": -40.711875
+    },
+    "footprintRadius": 55.391209817081986
   },
   "slice72": {
     "id": "slice72",
@@ -686,7 +897,12 @@ export const VECTOR_MOTIF_GLYPHS = {
       "x": 55.83,
       "y": 103.27,
       "angle": 0
-    }
+    },
+    "footprintCenter": {
+      "x": 0,
+      "y": -48.10999999999999
+    },
+    "footprintRadius": 48.111545391932694
   },
   "slice73": {
     "id": "slice73",
@@ -703,7 +919,12 @@ export const VECTOR_MOTIF_GLYPHS = {
       "x": 55.665,
       "y": 95.936875,
       "angle": 0
-    }
+    },
+    "footprintCenter": {
+      "x": 0,
+      "y": -40.761875
+    },
+    "footprintRadius": 55.45838484846092
   },
   "slice75": {
     "id": "slice75",
@@ -720,7 +941,12 @@ export const VECTOR_MOTIF_GLYPHS = {
       "x": 55.335,
       "y": 96.4,
       "angle": 0
-    }
+    },
+    "footprintCenter": {
+      "x": 7.105427357601002e-15,
+      "y": -41.23500000000001
+    },
+    "footprintRadius": 49.77589836268654
   },
   "slice76": {
     "id": "slice76",
@@ -737,7 +963,12 @@ export const VECTOR_MOTIF_GLYPHS = {
       "x": 55.165000000000006,
       "y": 79.23,
       "angle": 0
-    }
+    },
+    "footprintCenter": {
+      "x": 0.00042846679686903144,
+      "y": -24.055
+    },
+    "footprintRadius": 50.07553820067167
   },
   "slice77": {
     "id": "slice77",
@@ -754,7 +985,12 @@ export const VECTOR_MOTIF_GLYPHS = {
       "x": 55,
       "y": 87.14,
       "angle": 0
-    }
+    },
+    "footprintCenter": {
+      "x": 0,
+      "y": -16
+    },
+    "footprintRadius": 48
   },
   "slice79": {
     "id": "slice79",
@@ -771,7 +1007,12 @@ export const VECTOR_MOTIF_GLYPHS = {
       "x": 55.83,
       "y": 96.25,
       "angle": 0
-    }
+    },
+    "footprintCenter": {
+      "x": 0.0018749999999982947,
+      "y": -41.25
+    },
+    "footprintRadius": 52.6418906867727
   },
   "slice8": {
     "id": "slice8",
@@ -788,7 +1029,12 @@ export const VECTOR_MOTIF_GLYPHS = {
       "x": 55,
       "y": 103.79,
       "angle": 0
-    }
+    },
+    "footprintCenter": {
+      "x": 0,
+      "y": -48.120000000000005
+    },
+    "footprintRadius": 48.129999999999995
   },
   "slice80": {
     "id": "slice80",
@@ -805,7 +1051,12 @@ export const VECTOR_MOTIF_GLYPHS = {
       "x": 55.64,
       "y": 86.83,
       "angle": 0
-    }
+    },
+    "footprintCenter": {
+      "x": -0.0004284667968832423,
+      "y": -31.83185668945312
+    },
+    "footprintRadius": 50.081050169644534
   },
   "slice84": {
     "id": "slice84",
@@ -822,7 +1073,12 @@ export const VECTOR_MOTIF_GLYPHS = {
       "x": 55,
       "y": 96.25,
       "angle": 0
-    }
+    },
+    "footprintCenter": {
+      "x": 0,
+      "y": -41.25
+    },
+    "footprintRadius": 58.33630944789017
   },
   "slice85": {
     "id": "slice85",
@@ -839,7 +1095,12 @@ export const VECTOR_MOTIF_GLYPHS = {
       "x": 54.99,
       "y": 97.08,
       "angle": 0
-    }
+    },
+    "footprintCenter": {
+      "x": 0.0018749999999982947,
+      "y": -41.247499999999995
+    },
+    "footprintRadius": 49.79401803068944
   },
   "slice86": {
     "id": "slice86",
@@ -856,7 +1117,12 @@ export const VECTOR_MOTIF_GLYPHS = {
       "x": 55.83,
       "y": 97.08,
       "angle": 0
-    }
+    },
+    "footprintCenter": {
+      "x": 0,
+      "y": -41.25
+    },
+    "footprintRadius": 58.33630944789017
   },
   "slice87": {
     "id": "slice87",
@@ -873,7 +1139,12 @@ export const VECTOR_MOTIF_GLYPHS = {
       "x": 55.67,
       "y": 103.85,
       "angle": 0
-    }
+    },
+    "footprintCenter": {
+      "x": 0,
+      "y": -48.019999999999996
+    },
+    "footprintRadius": 49.09408620190419
   },
   "slice88": {
     "id": "slice88",
@@ -890,7 +1161,12 @@ export const VECTOR_MOTIF_GLYPHS = {
       "x": 55.5,
       "y": 97.08,
       "angle": 0
-    }
+    },
+    "footprintCenter": {
+      "x": 0,
+      "y": -41.25
+    },
+    "footprintRadius": 58.33630944789017
   },
   "slice9": {
     "id": "slice9",
@@ -907,7 +1183,12 @@ export const VECTOR_MOTIF_GLYPHS = {
       "x": 55.83,
       "y": 96.92,
       "angle": 0
-    }
+    },
+    "footprintCenter": {
+      "x": 0,
+      "y": -41.25
+    },
+    "footprintRadius": 58.33630944789017
   },
   "slice90": {
     "id": "slice90",
@@ -924,7 +1205,12 @@ export const VECTOR_MOTIF_GLYPHS = {
       "x": 55.144999999999996,
       "y": 103.96,
       "angle": 0
-    }
+    },
+    "footprintCenter": {
+      "x": 0,
+      "y": -48.125
+    },
+    "footprintRadius": 48.12572960485898
   },
   "slice91": {
     "id": "slice91",
@@ -941,7 +1227,12 @@ export const VECTOR_MOTIF_GLYPHS = {
       "x": 55,
       "y": 97.08,
       "angle": 0
-    }
+    },
+    "footprintCenter": {
+      "x": 0,
+      "y": -51.56250000000001
+    },
+    "footprintRadius": 51.56249999999999
   },
   "slice94": {
     "id": "slice94",
@@ -958,7 +1249,12 @@ export const VECTOR_MOTIF_GLYPHS = {
       "x": 55.650000000000006,
       "y": 103.79,
       "angle": 0
-    }
+    },
+    "footprintCenter": {
+      "x": -1.4210854715202004e-14,
+      "y": -48.12083830895806
+    },
+    "footprintRadius": 48.12919909039064
   },
   "slice95": {
     "id": "slice95",
@@ -975,7 +1271,12 @@ export const VECTOR_MOTIF_GLYPHS = {
       "x": 55.5,
       "y": 103.79,
       "angle": 0
-    }
+    },
+    "footprintCenter": {
+      "x": -0.01999999999999602,
+      "y": -48.125
+    },
+    "footprintRadius": 48.125004155843975
   },
   "slice96": {
     "id": "slice96",
@@ -992,6 +1293,11 @@ export const VECTOR_MOTIF_GLYPHS = {
       "x": 55.335,
       "y": 96.61,
       "angle": 0
-    }
+    },
+    "footprintCenter": {
+      "x": -7.105427357601002e-15,
+      "y": -47.65229404925226
+    },
+    "footprintRadius": 47.652294311569115
   }
 };

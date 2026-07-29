@@ -43,14 +43,47 @@ export function isMotifLayer(layer) {
 function normalizeBinding(binding) {
   const b = binding || {};
   if (Array.isArray(b.chain)) {
-    const out = { chain: b.chain, placement: b.placement || {} };
+    const out = { chain: b.chain, placement: withTightFootprint(b.placement) };
     if (b.overrides !== undefined) out.overrides = b.overrides;
     return out;
   }
   return {
     selection: b.selection || {},
-    placement: b.placement || {},
+    placement: withTightFootprint(b.placement),
   };
+}
+
+/**
+ * The placement tail of a NEW motif layer, stamped `sizing.footprint: 'tight'`
+ * (#207, decision 3 — spec of record `docs/motif-footprint-fix-decisions.md`).
+ *
+ * THIS IS A CREATE-TIME DEFAULT AND NOTHING ELSE. `createMotifParams` has exactly
+ * one production caller — `useLayers.addMotifLayer` — and it is an ADD path; no
+ * load, hydrate or re-normalize boundary funnels an existing layer back through
+ * here. That matters, because a saved layer arriving with no `footprint` is
+ * pinned to `'root'` by `migration.js` and must stay there: this function running
+ * over it would flip the very documents #199 exists to protect.
+ *
+ * NEVER OVERWRITES, mirroring `migrateLayer`'s `??`-style discipline. An explicit
+ * `'root'` — which is exactly what a pinned layer carries, and what a future
+ * "opt this layer back out" control would write — survives untouched, and a
+ * second pass returns the same value.
+ *
+ * The three create-time writers agree by construction: `starterChips.js` and
+ * `defaultBinding.js` state `'tight'` in their own tails and this is a no-op on
+ * them; a binding built by any other route (a bare `createMotifParams()`, a
+ * chain-form binding assembled by the rack) gets it here.
+ *
+ * @param {object|undefined} placement
+ * @returns {object}
+ */
+function withTightFootprint(placement) {
+  const p = placement || {};
+  const sizing = p.sizing;
+  if (sizing && typeof sizing === 'object' && !Array.isArray(sizing) && sizing.footprint != null) {
+    return p;
+  }
+  return { ...p, sizing: { ...(sizing || {}), footprint: 'tight' } };
 }
 
 /**

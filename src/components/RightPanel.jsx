@@ -1021,6 +1021,12 @@ export default function RightPanel({
           motifPick={motifPick}
           onTogglePickedPath={onTogglePickedPath}
           onFlushHistory={onFlushHistory}
+          // #207: the overlay re-runs the placement pipeline, and under the tight
+          // law that pipeline reads the glyph's measured footprint. Without the
+          // document's own glyphs it cannot resolve a CUSTOM one, the engine
+          // throws, and the overlay degrades to drawing no footprint rings at all
+          // — silently, on exactly the layers a user built from their own SVG.
+          customGlyphs={customGlyphs}
         />
         {/* Trace sweep marks (issue #91). Sibling of the p5 surface INSIDE the
             scaled box, so its canvas-coord rings inherit scale(finalScale)+pan and

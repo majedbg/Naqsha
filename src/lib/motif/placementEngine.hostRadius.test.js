@@ -123,12 +123,22 @@ describe('hostRadius — containment on the displaced centre', () => {
     // The rejection carries the ring the overlay draws (#191). Its post-jitter
     // centre comes from a SIBLING RUN with a container big enough to place: the
     // four RNG draws and the centre transform run entirely above every sizing
-    // decision, so widening the container leaves x/y byte-identical.
+    // decision, so widening the container leaves x/y byte-identical. `rotation`
+    // (#200) is resolved in that same upstream block, so the sibling run reports
+    // it too — a cell anchor's normal is HALF_PI, hence 90°.
     const centre = resolvePlacements([cellAnchor('a', 500, 500, 5000)], config, {
       boundary: BOUNDARY,
     }).placements[0];
+    expect(centre.rotation).toBe(90);
     expect(rejected).toEqual([
-      { anchorId: 'a', reason: 'no-fit', x: centre.x, y: centre.y, wantedRadius: 1000 },
+      {
+        anchorId: 'a',
+        reason: 'no-fit',
+        x: centre.x,
+        y: centre.y,
+        rotation: centre.rotation,
+        wantedRadius: 1000,
+      },
     ]);
   });
 
@@ -174,9 +184,10 @@ describe('hostRadius — containment on the displaced centre', () => {
     // No jitter ⇒ the centre the rejection reports (#191) is the anchor, and
     // `wantedRadius` is the NATURAL target — the layer size, not the 3.6 the
     // container clamped it to (which is the invisible speck the ring must not
-    // be drawn at).
+    // be drawn at). `rotation` (#200) is 90 — a cell anchor's normal is HALF_PI
+    // and nothing jitters it.
     expect(bare.rejected).toEqual([
-      { anchorId: 'tiny', reason: 'below-floor', x: 200, y: 500, wantedRadius: 1000 },
+      { anchorId: 'tiny', reason: 'below-floor', x: 200, y: 500, rotation: 90, wantedRadius: 1000 },
     ]);
 
     // Same run, now with a per-glyph scale override pinned on the rejected anchor.
@@ -189,8 +200,11 @@ describe('hostRadius — containment on the displaced centre', () => {
       { boundary: BOUNDARY }
     );
     expect(withOverride.placements.map((p) => p.anchorId)).toEqual(['roomy']);
+    // Byte-identical to `bare`, `rotation` included: overrides apply only to
+    // ACCEPTED placements, so a rejection's rotation is the PACK-TIME value and
+    // no override can move it (#200 / footprint decision 1b).
     expect(withOverride.rejected).toEqual([
-      { anchorId: 'tiny', reason: 'below-floor', x: 200, y: 500, wantedRadius: 1000 },
+      { anchorId: 'tiny', reason: 'below-floor', x: 200, y: 500, rotation: 90, wantedRadius: 1000 },
     ]);
   });
 
@@ -302,6 +316,15 @@ describe('hostRadius — the regression guard for every existing document', () =
     // drawnRadius === packedRadius === radius, capBy 'natural', not saturated,
     // no captor. `neighbourCap` is Infinity for the first placement (nothing
     // was in `placed` yet) and the real margin×clearance thereafter.
+    //
+    // #204 adds `footprintCenter`, the world centre of the reserved disc, on the
+    // same terms (§5f shape 1 / §6 "what deliberately moves"): always present, no
+    // conditional shape. This layer carries no `sizing.footprint`, so it runs the
+    // LEGACY arm, where the reserve is anchor-centred at every radius — hence
+    // `footprintCenter === {x, y}` on every entry, and every number above it
+    // unchanged to the bit. That is the byte-identity claim, restated: the key is
+    // new, the packing is not. Updated to the true new shape rather than loosened
+    // to a partial matcher, exactly as the #186 note above did.
     expect(placements).toEqual([
       {
         anchorId: 'a',
@@ -319,6 +342,7 @@ describe('hostRadius — the regression guard for every existing document', () =
         capBy: 'natural',
         saturated: false,
         capObstacle: null,
+        footprintCenter: { x: 98.7480694348009, y: 104.0471511721598 },
         seqId: 'A',
         flip: false,
       },
@@ -338,6 +362,7 @@ describe('hostRadius — the regression guard for every existing document', () =
         capBy: 'natural',
         saturated: false,
         capObstacle: null,
+        footprintCenter: { x: 160.78609189792627, y: 127.45877859798745 },
         seqId: 'A',
         flip: false,
       },
@@ -357,6 +382,7 @@ describe('hostRadius — the regression guard for every existing document', () =
         capBy: 'natural',
         saturated: false,
         capObstacle: null,
+        footprintCenter: { x: 299.63935459136263, y: 221.16586856242188 },
         seqId: 'A',
         flip: false,
       },

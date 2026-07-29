@@ -19,8 +19,13 @@
 // (that module is a sibling WI's sole-writer file — a hard import would couple
 // this slice to its landing).
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useMemo, useRef } from 'react';
 import { glyphUsedByLayerCount } from '../../lib/motif/glyphUsage';
+import {
+  measureFootprint,
+  isFiniteCloud,
+  glyphPointCloud,
+} from '../../lib/motif/measureFootprint.js';
 
 /** Default root for glyphs (e.g. built-ins) that carry none: origin, no angle. */
 export const DEFAULT_ROOT = { x: 0, y: 0, angle: 0 };
@@ -98,6 +103,51 @@ export function boundsFromWorkingCopy(working) {
 }
 
 /**
+ * THE working copy's point cloud — the one set of points every measurement in
+ * this module reduces (`recomputeViewRadius` and the footprint on save). One
+ * cloud, two reductions, exactly as `importMotif` does it: measuring the
+ * footprint over a second, differently-sampled pass would let the two numbers
+ * disagree about what the glyph is.
+ *
+ * Per path: the parsed anchor `model`'s anchors AND their in/out bezier handles
+ * when it has one — the control polygon is a convex hull of the cubic, so this
+ * can only OVER-estimate reach, never clip a curve that bulges past its anchors.
+ * A path with NO model (read-only preview before `parseD` is injected, or a `d`
+ * the parser rejected) falls back to `flattenPathD` — which is the cloud
+ * `importMotif` measured the glyph's stored numbers over, so an untouched
+ * open→save reproduces them exactly.
+ *
+ * Non-finite points are dropped EXPLICITLY (mirroring `boundsFromWorkingCopy`).
+ * That is not the same as ignoring them: #198 established that Welzl silently
+ * swallows an interior NaN and returns a plausible circle, so leaving one in
+ * would be an unnoticed wrong answer, while dropping it measures the part of the
+ * glyph that can actually be drawn.
+ *
+ * @param {{d?:string, model?:{subpaths?:{anchors?:object[]}[]}}[]} paths
+ * @returns {{x:number,y:number}[]}
+ */
+export function workingPointCloud(paths) {
+  const cloud = [];
+  const push = (pt) => {
+    if (pt && Number.isFinite(pt.x) && Number.isFinite(pt.y)) cloud.push({ x: pt.x, y: pt.y });
+  };
+  for (const p of paths || []) {
+    if (p?.model?.subpaths?.length) {
+      for (const sp of p.model.subpaths) {
+        for (const a of sp?.anchors || []) {
+          push(a);
+          push(a.in);
+          push(a.out);
+        }
+      }
+    } else {
+      for (const q of glyphPointCloud([p])) push(q);
+    }
+  }
+  return cloud;
+}
+
+/**
  * D7-reconcile: viewRadius = the max distance from `root` to any glyph point
  * across every subpath (the bounding circle centred at the sprout point, since
  * compose folds T(−root) in before scale). Includes anchor points AND their
@@ -116,19 +166,9 @@ export function recomputeViewRadius(paths, root) {
   const rx = root?.x ?? 0;
   const ry = root?.y ?? 0;
   let max = 0;
-  const consider = (pt) => {
-    if (!pt) return;
+  for (const pt of workingPointCloud(paths)) {
     const dist = Math.hypot(pt.x - rx, pt.y - ry);
     if (dist > max) max = dist;
-  };
-  for (const p of paths || []) {
-    for (const sp of p?.model?.subpaths || []) {
-      for (const a of sp?.anchors || []) {
-        consider(a);
-        consider(a.in);
-        consider(a.out);
-      }
-    }
   }
   return max;
 }
@@ -146,6 +186,12 @@ export function makeWorkingCopy(glyph, parseD) {
     name: glyph?.name ?? '',
     tradition: glyph?.tradition ?? 'custom',
     viewRadius: glyph?.viewRadius ?? 0,
+    // The INCOMING measurement, carried only so a glyph with nothing measurable
+    // (a blank `openNew` draft) doesn't LOSE one on save. It is never what a
+    // measurable glyph serializes: editing paths changes the art, so a carried
+    // value is stale by definition — see serializeWorkingCopy.
+    footprintCenter: glyph?.footprintCenter ?? null,
+    footprintRadius: glyph?.footprintRadius ?? null,
     root: { x: r.x ?? 0, y: r.y ?? 0, angle: r.angle ?? 0 },
     paths: (glyph?.paths ?? []).map((p) => ({
       d: p.d,
@@ -160,14 +206,51 @@ export function makeWorkingCopy(glyph, parseD) {
  * Serialize a working copy back to a persistable glyph (no `id` — the store
  * stamps that). Un-dirtied paths emit their verbatim `d`; dirtied paths
  * re-emit from the model via injected anchorsToD.
+ *
+ * THE FOOTPRINT IS RE-MEASURED HERE, NOT CARRIED (PR blocker 1). `useLayers`'s
+ * `updateCustomGlyph` does `{...glyph, id}` — a full replace — so whatever this
+ * function omits is DELETED from the document, and since #207 a motif layer born
+ * `sizing.footprint: 'tight'` throws without `footprintCenter`/`footprintRadius`
+ * (ruling 7d) and renders blank. Carrying the incoming fields through would fix
+ * the crash and ship a LIE: the editor exists to change the art, and `applyEdit`
+ * / `applyRoot` already recompute `viewRadius` on every commit while nothing
+ * re-measured the circle. So it is measured over `workingPointCloud` — the same
+ * cloud `recomputeViewRadius` reduces — through the shared `measureFootprint`,
+ * i.e. the same `minEnclosingCircle` the importer and the 62 built-ins used.
+ *
+ * `viewRadius` is deliberately NOT recomputed here: `applyEdit`/`applyRoot` own
+ * it, and recomputing on a rename-only save would silently resize a glyph nobody
+ * edited. When they own it, both numbers come from this same cloud, so
+ * `footprintRadius ≤ viewRadius` and `|footprintCenter| + footprintRadius ≥
+ * viewRadius` hold exactly. On an UNEDITED save the stored `viewRadius` was
+ * measured over the FLATTENED cloud while the model cloud adds bezier handles,
+ * so `footprintRadius` could in principle exceed it by the handle bulge.
+ * MEASURED over all 62 built-ins through this exact round-trip: 0 exceed, and
+ * every flattened art point lands inside the saved circle (pinned as a test).
+ * Were it ever to exceed, it is safe in that direction — a larger `f̂r` only
+ * makes the tight bound MORE restrictive, and §7z 5-rev's `max(R_root, R_tight)`
+ * takes the root bound when it does.
+ *
+ * When there is nothing to measure (a blank `openNew` draft), the carried
+ * measurement is emitted if the glyph had one, and otherwise the fields are
+ * OMITTED rather than faked — the engine failing loudly is ruling 7d's intent.
+ *
  * @param {ReturnType<typeof makeWorkingCopy>} working
  * @param {(model:any)=>string} [anchorsToD]
  */
 export function serializeWorkingCopy(working, anchorsToD) {
+  const cloud = workingPointCloud(working.paths);
+  const measured = isFiniteCloud(cloud) ? measureFootprint(cloud, working.root) : null;
+  const carried =
+    working.footprintCenter && Number.isFinite(working.footprintRadius)
+      ? { footprintCenter: working.footprintCenter, footprintRadius: working.footprintRadius }
+      : null;
+  const footprint = measured ?? carried;
   return {
     name: working.name,
     tradition: working.tradition,
     viewRadius: working.viewRadius,
+    ...(footprint ?? {}),
     root: { ...working.root },
     paths: working.paths.map((p) => ({
       d: p.dirty && anchorsToD ? anchorsToD(p.model) : p.d,
@@ -300,10 +383,16 @@ export default function useMotifEditor(glyph, ops = {}) {
     return nextWc;
   }, [redoStack, working]);
 
-  const serialize = useCallback(
+  // MEMOIZED on the working copy, not merely stable-by-identity: the modal calls
+  // `serialize()` DURING RENDER for the MiniPreview (MotifEditorModal.jsx:395),
+  // and serialize now runs Welzl over the whole point cloud — up to ~700 points
+  // for a dense import, on every render and every drag frame. One measurement
+  // per committed working copy is all the preview can actually observe.
+  const serialized = useMemo(
     () => serializeWorkingCopy(working, anchorsToD),
     [working, anchorsToD]
   );
+  const serialize = useCallback(() => serialized, [serialized]);
 
   return {
     working,

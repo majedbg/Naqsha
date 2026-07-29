@@ -28,7 +28,7 @@
 // argument.
 
 import { dealSlots } from '../../lib/motif/sequencer';
-import { MAX_PLACEMENTS } from '../../lib/motif/placementEngine';
+import { MAX_PLACEMENTS, PLACEMENT_DEFAULTS } from '../../lib/motif/placementEngine';
 
 /**
  * Index of the sequence Block the ENGINE will actually use, or -1.
@@ -370,6 +370,14 @@ export function rejectionsForScope(scope, ctx) {
  * identity had to be surfaced at all (#186) is the entire reason this field
  * exists; reconstructing it here would waste it.
  *
+ * ⚠️ AND "THE NEAREST DISC" IS NO LONGER EVEN THE RIGHT GUESS (#206, decision
+ * 6b). The root law's captor minimises `d − r`; the tight law's is the obstacle
+ * yielding the SMALLEST MAX-`R`, and once the reserve is offset those are
+ * different orderings — a disc FURTHER AWAY in the direction the art leans can
+ * bind harder than a nearer one behind the root. Nothing here changes, which is
+ * the point: this function already reads the recorded winner and never ranks
+ * anything itself.
+ *
  * The captor commonly belongs to a DIFFERENT slot, and that is the point: the
  * glyph capping yours is almost always another slot's, so an overlay confined
  * to the hovered slot's own circles would hide the actual cause. No filtering
@@ -413,4 +421,198 @@ export function captorDisc(placement, anchor) {
     return { kind: 'host', x: anchor.x, y: anchor.y, r: anchor.hostRadius };
   }
   return null;
+}
+
+/* ------------------------------------------------- the rings, as geometry */
+// #206 (PRD #197, spec `docs/motif-footprint-fix-decisions.md` §4a/§5h). The
+// rings move to the OFFSET centre, and that is arithmetic over the engine's
+// emitted record — so it lives here beside the selectors, headlessly testable,
+// rather than inline in the component. The PRD excludes the RENDERED SVG from
+// assertion; it does not excuse the numbers that go into it.
+//
+// THE ONE THING THE OVERLAY MUST NOT DO IS RE-DERIVE THE CENTRE. The engine
+// emits `Placement.footprintCenter` — the world centre of the disc it actually
+// committed to the packer, copied at the moment it committed (§5f shape 1).
+// Recomputing it here from `fc`, `viewRadius` and a rotation of our own is the
+// same mistake `captorDisc` records above: an overlay that disagrees with the
+// engine about where a glyph is draws a ring around the wrong thing, and does
+// it silently. Everything below is a homothety about the ANCHOR over that one
+// emitted point.
+
+const DEG_TO_RAD = Math.PI / 180;
+
+/**
+ * Is this placement config packed by the TIGHT law (#204, decision 7b)?
+ *
+ * THE DUPLICATE DEFAULT IS GONE (#207). This predicate used to carry its own
+ * copy of "absent ⇒ root", with a note that it must import the engine's default
+ * the moment #207 introduced one. It does now: `PLACEMENT_DEFAULTS.sizing` is
+ * exported and merged here exactly as `resolvePlacements` merges it, so the
+ * rings and the packer read one object. Two copies could not have been kept
+ * honest by any test that did not already know they had diverged — an overlay
+ * reading `root` while the engine packs `tight` draws anchor-centred rings
+ * around offset art, which is ruling 7f's failure mode in a quieter register.
+ *
+ * `fixed` NEVER reads tight. §5e leaves that branch untouched in both footprint
+ * modes, so its reserve is still `(P, R)` and `footprintCenter` comes back as
+ * the anchor — the rings must stay anchored and full-radius there. Only the
+ * exact string `'tight'` opts in, mirroring the engine's own dispatch.
+ *
+ * @param {{sizing?: {mode?:string, footprint?:string}}|null|undefined} placementConfig
+ * @returns {boolean}
+ */
+export function isTightFootprint(placementConfig) {
+  const sizing = { ...PLACEMENT_DEFAULTS.sizing, ...((placementConfig && placementConfig.sizing) || {}) };
+  if (sizing.footprint !== 'tight') return false;
+  return sizing.mode !== 'fixed';
+}
+
+/**
+ * A glyph's measured footprint, NORMALISED by `viewRadius` — `f̂c` and `f̂r`, in
+ * units of the radius being solved for, plus the `root.angle` the measurement
+ * was taken in. Null when the glyph carries no usable measurement.
+ *
+ * Mirrors `placementEngine.js`'s `normalisedFootprint` (ruling 7c: normalise at
+ * the glyph, so every length downstream is directly in `R`) with ONE difference,
+ * which is deliberate: the engine THROWS on an unmeasured glyph and is right to
+ * — it is about to reserve space on a machine that cuts material, and ruling 7d
+ * ruled loud over silently degrading. This overlay is a hover diagnostic. It
+ * returns null and draws the anchored ring, which is the same ring it drew
+ * yesterday; the render path reports the same document loudly on its own.
+ *
+ * @param {object|null|undefined} glyph
+ * @returns {{cx:number, cy:number, r:number, angle:number}|null}
+ */
+export function normalisedFootprint(glyph) {
+  if (!glyph || typeof glyph !== 'object') return null;
+  const fc = glyph.footprintCenter;
+  const fr = glyph.footprintRadius;
+  const viewRadius = glyph.viewRadius;
+  if (
+    !fc ||
+    typeof fc !== 'object' ||
+    !Number.isFinite(fc.x) ||
+    !Number.isFinite(fc.y) ||
+    !Number.isFinite(fr) ||
+    !Number.isFinite(viewRadius) ||
+    viewRadius <= 0
+  ) {
+    return null;
+  }
+  const root = glyph.root;
+  const angle = root && Number.isFinite(root.angle) ? root.angle : 0;
+  return { cx: fc.x / viewRadius, cy: fc.y / viewRadius, r: fr / viewRadius, angle };
+}
+
+/**
+ * ONE live ring: the disc this placement occupies at radius `R`.
+ *
+ * Both rings come through here — solid at `packedRadius` (what was RESERVED,
+ * the circle that pushes neighbours around) and dashed at `drawnRadius` (what
+ * actually inked). They are two members of ONE family, and that is the whole
+ * content of §4a:
+ *
+ *     centre(R) = P + (R / packedRadius) · (footprintCenter − P)
+ *     radius(R) = R · f̂r
+ *
+ * — centre and radius both scaling linearly from the anchor `P`, i.e. a
+ * HOMOTHETY about `P`. So the pair STOPS BEING CONCENTRIC with each other (a
+ * larger drawn radius also means a larger offset) and instead NESTS, packed
+ * inside drawn, whenever `|f̂c| ≤ f̂r` — 60 of the 62 built-ins, median 0.948 —
+ * and is internally TANGENT AT THE ANCHOR for the 4 degenerate ones, `leaf`
+ * among them, whose circles literally pass through the anchor and grow away
+ * from the line the glyph is rooted on. Truer than the old concentric pair.
+ *
+ * DECISION 14 SURVIVES INTACT. At `hold 0` the engine sets `drawnRadius` to
+ * `packedRadius` to the last bit, so both calls return the identical centre AND
+ * the identical radius — one ring — and their separation as the drag proceeds is
+ * still the feature. (An override SCALE moves `drawnRadius` and deliberately not
+ * `packedRadius`, so the two legitimately differ at `hold 0` on an overridden
+ * glyph. That is the truth, not a bug — the note in the overlay says so.)
+ *
+ * `footprint` NULL means the root law, and everything collapses: `f̂r` reads 1
+ * and `footprintCenter` IS the anchor, so this returns `{p.x, p.y, R}` — byte
+ * for byte the ring drawn before this ticket.
+ *
+ * ⚠️ `packedRadius === 0` IS REACHABLE, at `margin: 0`, and it is the divisor.
+ * The fallback is not a defensive guess: at a zero reserve the engine's own
+ * committed disc is `(P, 0)` and it emits `footprintCenter === {x, y}`, so the
+ * anchor is the same answer arrived at without the division.
+ *
+ * @param {object|null} placement  a Placement, carrying the always-present
+ *                                 `footprintCenter` (decision 15's precedent).
+ * @param {number} radius          the radius to state the ring at — `packedRadius`
+ *                                 or `drawnRadius`.
+ * @param {{cx:number,cy:number,r:number,angle:number}|null} footprint
+ *                                 the placement's glyph, normalised; null under
+ *                                 the root law.
+ * @returns {{cx:number, cy:number, r:number}|null}
+ */
+export function ringGeometry(placement, radius, footprint) {
+  if (!placement) return null;
+  const { x, y, packedRadius, footprintCenter } = placement;
+  const ratio = footprint ? footprint.r : 1;
+  const scaled = radius * ratio;
+  if (
+    !footprintCenter ||
+    !Number.isFinite(footprintCenter.x) ||
+    !Number.isFinite(footprintCenter.y) ||
+    !Number.isFinite(packedRadius) ||
+    packedRadius === 0
+  ) {
+    return { cx: x, cy: y, r: scaled };
+  }
+  const k = radius / packedRadius;
+  return { cx: x + k * (footprintCenter.x - x), cy: y + k * (footprintCenter.y - y), r: scaled };
+}
+
+/**
+ * The DOTTED ring for an anchor that never became a glyph (#191, decision 8).
+ *
+ * The rejected ring gets the offset too. Story 11: *"rejected anchors' rings
+ * offset too, so that the mark that exists to explain a mystery is not adding
+ * one"* — with every other ring on screen displaced, four rings left sitting on
+ * their anchors would overlap the survivors' territory and read as a fifth kind
+ * of thing.
+ *
+ * ⚠️ IT IS COMPUTED, NOT COPIED, AND THAT IS THE ASYMMETRY WITH `ringGeometry`
+ * ABOVE. A `Rejection` carries no `footprintCenter` — it is rejected before the
+ * reserve is committed — so #200 gave it `rotation` instead, COPIED from the
+ * same fully-resolved value a surviving placement reports, and the offset is
+ * rebuilt here from that plus the glyph's own `f̂c`. The composition is the
+ * engine's, derived and not guessed (ruling 7g): `placementMatrix` de-rotates by
+ * `root.angle` BEFORE the placement's rotation, so the offset direction is
+ * `Rot(θ − φ)·f̂c`, and `φ === 0` short-circuits to the bare rotation exactly as
+ * the engine and `placementMatrix` both do.
+ *
+ * ⚠️ FLIP IS NOT AVAILABLE and is therefore NOT APPLIED. The engine mirrors the
+ * reserve for a flipped glyph (`localX = flip ? -f.cx : f.cx`, because flip
+ * mirrors the ART), but `Rejection` carries no `flip` field — the same gap #200
+ * filled for `rotation`, one field along. A flipped rejected glyph's ring is
+ * mirrored about the anchor's growth axis. Reported, not invented: there is no
+ * honest source for it here.
+ *
+ * `wantedRadius` is the NATURAL TARGET — the size the glyph asked for, already
+ * multiplied by any per-glyph override scale by `drawableRejection` above — so
+ * the ring is the disc that glyph WOULD have occupied, in the same radius space
+ * as the two live rings beside it.
+ *
+ * @param {{x:number, y:number, rotation?:number, wantedRadius:number}|null} rejection
+ * @param {{cx:number,cy:number,r:number,angle:number}|null} footprint
+ * @returns {{cx:number, cy:number, r:number}|null}
+ */
+export function rejectedRing(rejection, footprint) {
+  if (!rejection) return null;
+  const { x, y, wantedRadius } = rejection;
+  if (!footprint) return { cx: x, cy: y, r: wantedRadius };
+  const rotation = Number.isFinite(rejection.rotation) ? rejection.rotation : 0;
+  const turned = footprint.angle === 0 ? rotation : rotation - footprint.angle;
+  const theta = turned * DEG_TO_RAD;
+  const cosT = Math.cos(theta);
+  const sinT = Math.sin(theta);
+  return {
+    cx: x + wantedRadius * (footprint.cx * cosT - footprint.cy * sinT),
+    cy: y + wantedRadius * (footprint.cx * sinT + footprint.cy * cosT),
+    r: wantedRadius * footprint.r,
+  };
 }

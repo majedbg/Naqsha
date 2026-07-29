@@ -213,6 +213,185 @@ describe('applyGlyphOverrides — angle', () => {
   });
 });
 
+// ── the world footprint centre follows the dial (#205, decision 1b) ─────────
+//
+// The reserve's world centre was computed at PACK TIME from the pack-time
+// rotation. An angle override is the last thing that decides that rotation, so
+// leaving `footprintCenter` where the packer put it misreports the glyph the
+// moment the dial is dragged — the same argument the file already records for
+// `drawnRadius` under a scale override.
+//
+// THE COMPOSITION, and why it needs no glyph. The engine emits
+//     footprintCenter = P + packedRadius · u
+//     u = R(θ − φ)·f̂c            unflipped
+//     u = R(θ + φ)·(−f̂c.x, f̂c.y)  flipped,   φ = root.angle
+// (`placementEngine.js:790`, ruling 7g). Replacing θ with θ′ gives
+// `R(θ′ ∓ φ)·… = R(θ′ − θ)·u` in BOTH cases — φ and the mirror are already baked
+// into the emitted vector and cancel out of the delta. So the recompute is a
+// plain rotation of a world vector about `(x, y)` by `angle − rotation`, not a
+// second copy of the 7g composition.
+describe('applyGlyphOverrides — an angle override recomputes the world footprint centre', () => {
+  // The reserve leans +x/−y off the anchor by (3, 4) — |offset| = 5, so a
+  // direction change is observable and a magnitude change would be too.
+  const base = {
+    anchorId: 'a0', role: 'edge', index: 0, x: 100, y: 200, rotation: 0, scale: 1, radius: 10,
+    packedRadius: 10, drawnRadius: 10, neighbourCap: 40, hardCap: 25,
+    capBy: 'neighbour', saturated: false, capObstacle: { x: 140, y: 200, r: 12 },
+    footprintCenter: { x: 103, y: 204 },
+    seqId: 'A', flip: false,
+  };
+
+  it('rotates the emitted vector about (x, y) by `angle − rotation`', () => {
+    const [out] = applyGlyphOverrides([base], byAnchor([['a0', { ref: 'a0', angle: 90 }]]));
+    // (3, 4) turned +90° in the engine's own convention
+    // (`x·cos − y·sin`, `x·sin + y·cos`) is (−4, 3).
+    expect(out.footprintCenter.x).toBeCloseTo(96, 10);
+    expect(out.footprintCenter.y).toBeCloseTo(203, 10);
+  });
+
+  it('the delta is `angle − rotation`, not the absolute bearing', () => {
+    // Pack-time rotation 30, dial to 120 ⇒ a +90° turn of the SAME offset.
+    const at30 = { ...base, rotation: 30, footprintCenter: { x: 103, y: 204 } };
+    const [out] = applyGlyphOverrides([at30], byAnchor([['a0', { ref: 'a0', angle: 120 }]]));
+    expect(out.footprintCenter.x).toBeCloseTo(96, 10);
+    expect(out.footprintCenter.y).toBeCloseTo(203, 10);
+  });
+
+  it('an angle changes DIRECTION only — the magnitude is preserved', () => {
+    const mag = (p) => Math.hypot(p.footprintCenter.x - p.x, p.footprintCenter.y - p.y);
+    for (const angle of [-137.5, -1, 0, 17, 90, 233.75, 360]) {
+      const [out] = applyGlyphOverrides([base], byAnchor([['a0', { ref: 'a0', angle }]]));
+      expect(mag(out)).toBeCloseTo(5, 10);
+    }
+  });
+
+  it('an angle equal to the pack-time rotation is a BIT-IDENTICAL no-op', () => {
+    const at30 = { ...base, rotation: 30 };
+    const [out] = applyGlyphOverrides([at30], byAnchor([['a0', { ref: 'a0', angle: 30 }]]));
+    // Not `toEqual` — the same object, so there is no float round-trip at all.
+    expect(out.footprintCenter).toBe(at30.footprintCenter);
+    expect(out.rotation).toBe(30);
+  });
+
+  it('leaves `packedRadius` and EVERY cap untouched — the reserve genuinely did not move', () => {
+    const [out] = applyGlyphOverrides([base], byAnchor([['a0', { ref: 'a0', angle: 90 }]]));
+    expect(out.packedRadius).toBe(10);
+    expect(out.neighbourCap).toBe(40);
+    expect(out.hardCap).toBe(25);
+    expect(out.capBy).toBe('neighbour');
+    expect(out.saturated).toBe(false);
+    expect(out.capObstacle).toEqual({ x: 140, y: 200, r: 12 });
+  });
+
+  it('a SCALE override does not move the centre — it is stated at `packedRadius`', () => {
+    // `placementEngine.js:220` rules this outright: a scale override leaves
+    // `packedRadius` alone, "so this key needs no rescale there, only the angle
+    // recompute #205 adds". The drawn ring is one homothety away
+    // (`P + (R/packedRadius)·(footprintCenter − P)`), so it tracks scale without
+    // the stored centre moving.
+    const [out] = applyGlyphOverrides([base], byAnchor([['a0', { ref: 'a0', scale: 2 }]]));
+    expect(out.footprintCenter).toBe(base.footprintCenter);
+    expect(out.drawnRadius).toBe(20);
+  });
+
+  it('a non-applied angle leaves the centre exactly where it was', () => {
+    for (const bad of [NaN, Infinity, '45', null]) {
+      const [out] = applyGlyphOverrides([base], byAnchor([['a0', { ref: 'a0', angle: bad }]]));
+      expect(out.footprintCenter).toBe(base.footprintCenter);
+    }
+  });
+
+  it('an ABSENT `footprintCenter` stays absent — no key is invented, nothing throws', () => {
+    // The engine always emits the key, but `applyGlyphOverrides` is also called
+    // with hand-built placements (the overlay's fixtures, footprintScope's).
+    // Adding `{x: NaN, y: NaN}` would break the same key-presence discipline the
+    // module already states for `glyphRef`.
+    const { footprintCenter: _omitted, ...bare } = base;
+    const [out] = applyGlyphOverrides([bare], byAnchor([['a0', { ref: 'a0', angle: 90, scale: 2 }]]));
+    expect('footprintCenter' in out).toBe(false);
+    expect(out.rotation).toBe(90);
+    expect(out.radius).toBe(20);
+  });
+
+  it('never mutates the input placement’s centre object', () => {
+    const input = [{ ...base, footprintCenter: { ...base.footprintCenter } }];
+    const snapshot = structuredClone(input);
+    applyGlyphOverrides(input, byAnchor([['a0', { ref: 'a0', angle: 90 }]]));
+    expect(input).toEqual(snapshot);
+  });
+});
+
+// ── the differential test: the recompute AGREES WITH THE ENGINE ─────────────
+//
+// A hand-written rotation test passes just as happily with an inverted sine,
+// because the fixture encodes the same sign the implementation does. So run the
+// engine's tight arm at θ, run it again at θ′, and assert the override of the
+// θ-run reproduces the θ′-run's emitted centre. A non-zero `root.angle` and a
+// flipped placement make it prove the φ/mirror cancellation empirically.
+describe('an angle override reproduces the engine’s own tight-arm centre', () => {
+  // Synthetic — every shipped glyph is `root.angle: 0`, which cannot exercise φ.
+  const SYNTH = {
+    id: 'synthHook',
+    name: 'synth hook',
+    tradition: 'test',
+    paths: [{ d: 'M 0 0 L 1 0', op: 'engrave' }],
+    viewRadius: 12,
+    footprintCenter: { x: 5, y: -3 },
+    footprintRadius: 8,
+    root: { x: 0, y: 0, angle: 37 },
+  };
+
+  const BOUNDARY = { type: 'rect', width: 1000, height: 1000 };
+  const PAGE = (offset) => ({ policy: 'page', useNormal: false, offset, perRole: {} });
+  const TIGHT = { mode: 'proportional', size: 20, min: 0, margin: 0.85, footprint: 'tight' };
+
+  // Two anchors 600 apart in a 1000×1000 boundary: neither the boundary nor the
+  // neighbour binds, so `packedRadius === naturalTarget` and is ROTATION-FREE.
+  // That matters — under the tight law the reserve turns, so a binding cap would
+  // itself move with θ and confound the comparison.
+  const anchors = [mkAnchor('a0', 'edge', 200, 500), mkAnchor('a1', 'edge', 800, 500)];
+
+  const runAt = (offset) =>
+    resolvePlacements(
+      anchors,
+      { orientation: PAGE(offset), sizing: TIGHT, flip: true, jitter: { seed: 1, lateral: 0, along: 0, rotation: 0, scale: 0 } },
+      { boundary: BOUNDARY, glyph: SYNTH },
+    ).placements;
+
+  it.each([
+    ['unflipped', 'a0', false],
+    ['flipped', 'a1', true],
+  ])('%s — overriding θ→θ′ lands on the engine’s θ′ centre', (_name, anchorId, expectFlip) => {
+    const from = runAt(0);
+    const to = runAt(55);
+    const p0 = findPlacement(from, anchorId);
+    const p1 = findPlacement(to, anchorId);
+
+    // Guard the scenario: the offset is real, flip is what the case claims, and
+    // the reserve did NOT resize between the two runs.
+    expect(p0.flip).toBe(expectFlip);
+    expect(p0.packedRadius).toBeCloseTo(p1.packedRadius, 12);
+    expect(Math.hypot(p0.footprintCenter.x - p0.x, p0.footprintCenter.y - p0.y)).toBeGreaterThan(1);
+
+    const [out] = applyGlyphOverrides([p0], byAnchor([[anchorId, { ref: anchorId, angle: 55 }]]));
+    expect(out.footprintCenter.x).toBeCloseTo(p1.footprintCenter.x, 10);
+    expect(out.footprintCenter.y).toBeCloseTo(p1.footprintCenter.y, 10);
+  });
+
+  it('the glyph’s growth turn is genuinely engaged (φ ≠ 0 changes the emitted centre)', () => {
+    // Without this, the differential above would pass on an implementation that
+    // silently ignored `root.angle` — because the recompute ignores it too.
+    const straight = resolvePlacements(
+      anchors,
+      { orientation: PAGE(0), sizing: TIGHT, jitter: { seed: 1, lateral: 0, along: 0, rotation: 0, scale: 0 } },
+      { boundary: BOUNDARY, glyph: { ...SYNTH, root: { x: 0, y: 0, angle: 0 } } },
+    ).placements;
+    const turned = findPlacement(runAt(0), 'a0');
+    const flat = findPlacement(straight, 'a0');
+    expect(turned.footprintCenter.x).not.toBeCloseTo(flat.footprintCenter.x, 3);
+  });
+});
+
 // ── resolvePlacements — the cascade, packing, and key-shape discipline ──────
 describe('resolvePlacements — per-glyph scale multiplies the FULL cascade', () => {
   const anchors = [mkAnchor('a0', 'edge', 0, 0), mkAnchor('a1', 'edge', 200, 0)];

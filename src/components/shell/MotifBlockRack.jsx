@@ -22,9 +22,10 @@
 // C4. sequence is a minimal shell — its slot strip is C3. A `field` block has no
 // source picker yet (deferred), so it is inert until C3/C4/a later slice wires one.
 
-import { useState, useMemo, useRef, useId, useEffect } from "react";
+import { useState, useMemo, useRef, useId } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import useGestureFlush from "./gestureFlush";
 import {
   DndContext,
   MouseSensor,
@@ -606,52 +607,11 @@ const SLOT_ICON_BTN =
 
 /* ------------------------------------------------------ gesture ↔ undo */
 
-// ONE undo entry per gesture, with the canvas following the drag.
-//
-// `updateLayer` coalesces by `${id}:params` for 400ms, so every chain write in
-// a burst already folds into one entry — including writes from a DIFFERENT
-// control, which carry an identical signature. The flush is what draws the
-// boundaries: once BEFORE a gesture's first write (so an Inspector burst on the
-// same layer cannot swallow it) and once when it commits.
-//
-// The pointerup listener is not belt-and-braces. `useDragValue` suppresses
-// `onCommit` when a gesture ends exactly where it started (useDragValue.js:120)
-// — but the intermediate frames DID write — so a latch cleared only by
-// `onCommit` would stay open and let the NEXT gesture join this entry. Closing
-// unconditionally on pointerup costs a redundant flush at worst (a no-op, the
-// same double-flush AnchorGhostOverlay already does around discrete actions).
-function useGestureFlush(onFlushHistory) {
-  const open = useRef(false);
-  // Detaches the pending pointerup, or null when none is armed. The listener
-  // MUST NOT outlive either the gesture or the chip: a slot deleted mid-drag
-  // would otherwise flush history from a component that no longer exists.
-  const detach = useRef(null);
-  useEffect(() => () => detach.current?.(), []);
-
-  const close = () => {
-    detach.current?.();
-    if (!open.current) return;
-    open.current = false;
-    onFlushHistory();
-  };
-
-  const begin = () => {
-    if (open.current) return;
-    open.current = true;
-    onFlushHistory();
-    const onUp = () => {
-      detach.current = null; // already removed by {once:true}
-      close();
-    };
-    window.addEventListener("pointerup", onUp, { once: true });
-    detach.current = () => {
-      window.removeEventListener("pointerup", onUp);
-      detach.current = null;
-    };
-  };
-
-  return { begin, end: close };
-}
+// ONE undo entry per gesture. Extracted to `./gestureFlush` when the
+// anchor-pitch control (PRD #184, PR 2) needed the identical boundary-drawing
+// around a DragNumber on a layer field — the listener lifecycle is subtle
+// enough that a second copy would drift. Its own module rather than an export
+// from here, because react-refresh lets a component file export components only.
 
 // One sortable Slot chip — the "gutter + inline spread" card (variant D,
 // verdict 2026-07-28; docs/motif-slot-card-decisions.md).

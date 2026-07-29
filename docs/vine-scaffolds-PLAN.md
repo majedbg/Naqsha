@@ -1,7 +1,7 @@
 # Vine Motif Scaffolds — Build Plan
 
 **Branch:** `feat/motif-lines-updates` (ported from `vine-motif-scaffolds`) · **Date:** 2026-07-26, updated 2026-07-29
-**Status:** T3 + T4 + T1 + S1 BUILT on this branch (suite-green); T2 + magnetscroll still in flight
+**Status:** ALL BUILT on this branch, suite-green (7779): T3 branch, T1 normal-offset+side, T2 rinceau, T4 order filter, S1 dendrite paths, + `magnetscroll` (supplement doc, supersedes-or-derisks T6 islimi). Remaining: T6 proper (islimi repeat modules) if magnetscroll doesn't cover it, R1 warp check, Majed eyeball on everything.
 **Companion to:** `docs/vine-scaffolds-RESEARCH.md` (candidates, sources, ranking)
 
 RESEARCH names the techniques and ranks them. This doc turns that ranking into

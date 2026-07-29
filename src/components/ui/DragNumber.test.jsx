@@ -23,6 +23,7 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import DragNumber from "./DragNumber";
+import { FLASH_MS } from "./dragNumberFlash.js";
 
 // Source path for the token guard below. Resolved off the vitest root rather
 // than `import.meta.url` — under the jsdom environment that is not a file: URL.
@@ -666,7 +667,11 @@ describe("DragNumber — flashSignal", () => {
     rerender(<DragNumber {...base} flashSignal="spacing" testId="dn" />);
     expect(flashes()).toBe(1);
     const [keyframes, options] = animateSpy.mock.calls[0];
-    expect(options).toMatchObject({ duration: 320, fill: "none" });
+    // Reference the constant, never a literal: a hardcoded duration here made a
+    // deliberate retune read as a regression (2026-07-29). The SHAPE is asserted
+    // in dragNumberFlash.test.js; all this needs to know is that the component
+    // passes whatever flashTiming() returns, with no fill mode.
+    expect(options).toMatchObject({ duration: FLASH_MS, fill: "none" });
     // Opacity only, and it returns to nothing — brightness, not bloom.
     expect(keyframes.at(-1)).toMatchObject({ offset: 1, opacity: 0 });
   });

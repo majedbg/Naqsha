@@ -8,6 +8,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   FLASH_ATTACK_MS,
+  FLASH_HOLD_MS,
   FLASH_EASE,
   FLASH_MS,
   FLASH_REDUCED_MS,
@@ -20,17 +21,28 @@ const peakOf = (kf) => Math.max(...kf.map((k) => k.opacity));
 describe('flashTiming — the unreduced flash', () => {
   const { duration, keyframes } = flashTiming(false);
 
-  it('sits inside the 240–360ms band principle 4 sets for a medium move', () => {
+  it('is one perceptible blink, not a medium move', () => {
+    // ⚠️ DELIBERATE DEVIATION, recorded rather than smuggled. Principle 4's
+    // 240–360ms band governs a MOVE — something travelling to a position and
+    // decelerating. This is a brightness envelope with a hold in the middle,
+    // and at 320 total it read as "barely perceivable, ~50ms" in the running
+    // app. The number is under review by eye; the guard is that it stays a
+    // single blink and never becomes a lingering state.
     expect(duration).toBe(FLASH_MS);
-    expect(duration).toBeGreaterThanOrEqual(240);
-    expect(duration).toBeLessThanOrEqual(360);
+    expect(duration).toBeGreaterThanOrEqual(300);
+    expect(duration).toBeLessThanOrEqual(700);
   });
 
-  it('is 80ms of attack and 240ms of decay', () => {
-    expect(FLASH_ATTACK_MS + 240).toBe(FLASH_MS);
-    const peak = keyframes.find((k) => k.opacity === 1);
-    expect(peak.offset).toBeCloseTo(FLASH_ATTACK_MS / FLASH_MS, 10);
-    expect(peak.offset).toBe(0.25);
+  it('is attack, then a HOLD at full, then the decay', () => {
+    // Retuned 2026-07-29. The original 80/240 with an ease-out decay read as
+    // "barely perceivable, ~50ms" in the running app: an ease-out on a value
+    // falling 1 → 0 plummets, so most of the decay was an invisible tail. The
+    // hold is what gives the eye something to catch.
+    expect(FLASH_ATTACK_MS + FLASH_HOLD_MS).toBeLessThan(FLASH_MS);
+    const full = keyframes.filter((k) => k.opacity === 1);
+    expect(full).toHaveLength(2); // a plateau, not a spike
+    expect(full[0].offset).toBeCloseTo(FLASH_ATTACK_MS / FLASH_MS, 10);
+    expect(full[1].offset).toBeCloseTo((FLASH_ATTACK_MS + FLASH_HOLD_MS) / FLASH_MS, 10);
   });
 
   it('arrives and withdraws — starts and ends fully transparent', () => {
@@ -41,35 +53,45 @@ describe('flashTiming — the unreduced flash', () => {
     expect(peakOf(keyframes)).toBe(1);
   });
 
-  it('puts LINEAR on the attack and the ease-out on the peak', () => {
-    // Per-keyframe easing governs the interval FOLLOWING that keyframe. An
-    // ease-out on the attack keyframe would ease INTO the accent — a smoulder
-    // rather than a filament, and the shape principle 4 rules out.
-    expect(keyframes[0].easing).toBe('linear');
-    expect(keyframes[1].easing).toBe(FLASH_EASE);
+  it('is LINEAR throughout — no curve front-loads the fade', () => {
+    // Every ease-out curve moves the value fast and then slowly. On a DECAY
+    // that means it plummets to near-invisible and spends the rest of its
+    // duration in a tail nobody sees — which is exactly the bug this retune
+    // fixed. A brightness envelope is not a move; linear luminance is the
+    // honest shape, and principle 4 governs motion, not light.
+    for (const k of keyframes.slice(0, -1)) expect(k.easing).toBe('linear');
   });
 
-  it('decays on an ease-out with no overshoot', () => {
-    // The bezier mirrors --ease-out-quint. Both control-point Y values are
-    // within [0,1], which is what rules out bounce/elastic/back curves.
-    const ys = FLASH_EASE.match(/-?[\d.]+/g).map(Number).filter((_, i) => i % 2 === 1);
-    expect(ys).toHaveLength(2);
-    for (const y of ys) expect(y).toBeLessThanOrEqual(1);
-    for (const y of ys) expect(y).toBeGreaterThanOrEqual(0);
-    // Ease-OUT: the curve leaves fast, so the first control point is already
-    // high relative to its x.
-    const [x1, y1] = FLASH_EASE.match(/-?[\d.]+/g).map(Number);
-    expect(y1).toBeGreaterThan(x1);
+  it('no easing anywhere is a bounce, elastic or back curve', () => {
+    // FLASH_EASE is retained for the token it mirrors even though the envelope
+    // no longer uses it. Whatever any keyframe carries, its control-point Y
+    // values must stay inside [0,1] — that is what rules out overshoot.
+    const beziers = [FLASH_EASE, ...keyframes.map((k) => k.easing)].filter(
+      (e) => typeof e === 'string' && e.startsWith('cubic-bezier'),
+    );
+    for (const b of beziers) {
+      const ys = b.match(/-?[\d.]+/g).map(Number).filter((_, i) => i % 2 === 1);
+      for (const y of ys) {
+        expect(y).toBeLessThanOrEqual(1);
+        expect(y).toBeGreaterThanOrEqual(0);
+      }
+    }
   });
 
-  it('rises monotonically then falls monotonically — one cycle, no flicker', () => {
+  it('rises, holds, then falls — one cycle, no flicker', () => {
     const offsets = keyframes.map((k) => k.offset);
     expect(offsets).toEqual([...offsets].sort((a, b) => a - b));
-    const peakAt = keyframes.findIndex((k) => k.opacity === peakOf(keyframes));
-    for (let i = 1; i <= peakAt; i++) {
+    const peak = peakOf(keyframes);
+    const first = keyframes.findIndex((k) => k.opacity === peak);
+    const last = keyframes.findLastIndex((k) => k.opacity === peak);
+    // Strictly up to the plateau, flat across it, strictly down after.
+    for (let i = 1; i <= first; i++) {
       expect(keyframes[i].opacity).toBeGreaterThan(keyframes[i - 1].opacity);
     }
-    for (let i = peakAt + 1; i < keyframes.length; i++) {
+    for (let i = first + 1; i <= last; i++) {
+      expect(keyframes[i].opacity).toBe(peak);
+    }
+    for (let i = last + 1; i < keyframes.length; i++) {
       expect(keyframes[i].opacity).toBeLessThan(keyframes[i - 1].opacity);
     }
   });

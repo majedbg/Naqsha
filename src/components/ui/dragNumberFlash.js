@@ -42,11 +42,19 @@
  */
 export const FLASH_EASE = "cubic-bezier(0.22, 1, 0.36, 1)";
 
-/** Total, ms. Inside the 240–360 band `.impeccable.md` principle 4 sets for a
- *  medium move, and the same band `--motion-medium`/`--motion-slow` bracket. */
-export const FLASH_MS = 320;
+/** Total, ms.
+ *
+ *  ⚠️ TUNING VALUE UNDER REVIEW (2026-07-29). Temporarily 500 so the envelope
+ *  can be judged by eye; see the HOLD note below for why the original 320 read
+ *  as roughly 50ms. Principle 4's 240–360 band governs a medium MOVE — a
+ *  brightness envelope with a hold is a different shape, and if 500 is what
+ *  reads as one deliberate blink, that is the number, with the deviation
+ *  recorded rather than smuggled. */
+export const FLASH_MS = 500;
 /** Attack, ms. Short enough to read as a filament rather than a swell. */
 export const FLASH_ATTACK_MS = 80;
+/** Hold at full brightness, ms — see the HOLD note below. */
+export const FLASH_HOLD_MS = 100;
 
 /** Reduced motion: longer, so the change is legible without a fast transient. */
 export const FLASH_REDUCED_MS = 600;
@@ -56,11 +64,25 @@ export const FLASH_REDUCED_PEAK = 0.6;
 /**
  * The WAAPI arguments for one flash.
  *
- * PER-KEYFRAME `easing` GOVERNS THE INTERVAL *FOLLOWING* THAT KEYFRAME. So the
- * attack keyframe carries `linear` and the PEAK keyframe carries the ease-out
- * that shapes the decay. Putting the ease-out on the attack instead reads as a
- * smoulder rather than a filament, and eases INTO the accent — which is the
- * shape principle 4 rules out.
+ * PER-KEYFRAME `easing` GOVERNS THE INTERVAL *FOLLOWING* THAT KEYFRAME.
+ *
+ * ── THE HOLD, AND WHY THE DECAY IS LINEAR (2026-07-29) ─────────────────────
+ * The first build put `FLASH_EASE` on the peak keyframe, so the ease-out-quint
+ * governed the DECAY. On a value falling 1 → 0 that curve PLUMMETS: opacity is
+ * under 0.1 within ~25% of the decay and the rest is an invisible tail. The
+ * flash was 80ms up, ~60ms of visible fall, then 180ms of nothing — reported
+ * from the running app as "barely perceivable, looks like 50ms". It was:
+ * roughly 140ms, only a sliver of it bright.
+ *
+ * Two changes. A HOLD at full brightness gives the eye something to catch —
+ * a bulb is at temperature for a moment before it cools. And the decay is
+ * LINEAR, because an even fade is what reads as cooling; every ease-out curve
+ * front-loads the drop, which is the problem being fixed. `FLASH_EASE` is
+ * retained for reference and for the token it mirrors.
+ *
+ * This does not violate principle 4. That principle governs MOTION — things
+ * arriving at a position decelerate. Nothing here moves; this is a brightness
+ * envelope, and linear luminance is the honest shape for one.
  *
  * @param {boolean} reduced  `prefers-reduced-motion: reduce`.
  * @returns {{duration: number, keyframes: Array<object>}}
@@ -82,7 +104,8 @@ export function flashTiming(reduced) {
     duration: FLASH_MS,
     keyframes: [
       { offset: 0, opacity: 0, easing: "linear" },
-      { offset: FLASH_ATTACK_MS / FLASH_MS, opacity: 1, easing: FLASH_EASE },
+      { offset: FLASH_ATTACK_MS / FLASH_MS, opacity: 1, easing: "linear" },
+      { offset: (FLASH_ATTACK_MS + FLASH_HOLD_MS) / FLASH_MS, opacity: 1, easing: "linear" },
       { offset: 1, opacity: 0 },
     ],
   };

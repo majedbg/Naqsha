@@ -713,6 +713,7 @@ function SortableSlotChip({
   const angleOn = !!rr;
   const weight = slot?.weight != null ? slot.weight : 1;
   const sizeScale = slot?.sizeScale != null ? slot.sizeScale : 1;
+  const hold = slot?.hold != null ? slot.hold : 0;
   const rotationOffset = slot?.rotationOffset != null ? slot.rotationOffset : 0;
   const flipState = slot?.flip === undefined ? "inherit" : slot.flip ? "on" : "off";
 
@@ -734,6 +735,12 @@ function SortableSlotChip({
     onPatch(patch);
     gesture.end();
   };
+
+  // ABSENT `hold` STAYS ABSENT. 0 is the default and the engine's "today's
+  // behaviour" (sequencer.js:149 reads absent ⇒ 0), so writing a literal 0 would
+  // grow a no-op key on every document a drag merely passes through 0. Same
+  // shape as `Reset settings` below, which clears by writing `undefined`.
+  const holdPatch = (v) => ({ hold: v > 0 ? v : undefined });
 
   // The eye writes the EFFECTIVE ref, never a bare `rest:true`. A slot that
   // never named a glyph still draws the layer's base one (`effectiveRef`), and
@@ -771,7 +778,11 @@ function SortableSlotChip({
       // disagree with the engine.
       data-slot-rest={slot?.rest === true ? "true" : "false"}
       data-slot-hidden={isHidden ? "true" : undefined}
-      className={`flex w-[124px] shrink-0 flex-col gap-0.5 self-start rounded-cell border border-hairline bg-paper p-1 ${
+      // 136px, up from the 124px the slot-card doc already flagged as snug
+      // (decision 9 / "still open"): `hold 100%` is 9 characters where Scale's
+      // widest readout is 4, and at 124px it collides with the gutter rule. The
+      // widen is the deferred note in that doc, taken.
+      className={`flex w-[136px] shrink-0 flex-col gap-0.5 self-start rounded-cell border border-hairline bg-paper p-1 ${
         isHidden ? "opacity-45" : ""
       }`}
     >
@@ -831,6 +842,7 @@ function SortableSlotChip({
                 onActivate: () =>
                   patchOnce({
                     sizeScale: undefined,
+                    hold: undefined,
                     rotationOffset: undefined,
                     flip: undefined,
                     rotationRandom: undefined,
@@ -946,6 +958,50 @@ function SortableSlotChip({
               testId="motif-slot-scale"
               onChange={(v) => patchLive({ sizeScale: v })}
               onCommit={(v) => patchCommit({ sizeScale: v })}
+            />
+            {/* hold (#186) — directly UNDER Scale because it modifies Scale, and
+                adjacency is the teaching: Scale is the size I want, `hold` is how
+                much packing is allowed to take it away. Same number machinery as
+                Scale (SCALE_FORMAT/SCALE_PARSE, percent over a 0…1 float) so the
+                two read as one system; the "hold " prefix rides the format the
+                way `wt ` does above, since two bare percentages stacked would be
+                indistinguishable.
+
+                THE COPY IS THE RISKY PART. `50%` is HALF THE GROUND PACKING TOOK,
+                GIVEN BACK — not half size. The same 50% measured 67% of natural
+                size on one leaf and 95% on another (packed 5.95 → 11.98 and
+                16.19 → 17.10, both against natural 18.00), so any wording that
+                reads as "% of full size" is simply false. And "given back" holds
+                only up to the HARD cap: where the page edge or `hostRadius` binds
+                tighter than natural size, 50% and 100% give back the same amount
+                and the number goes flat mid-drag (decision 2b), so nothing here
+                may promise 100% = full size.
+
+                LINEAR mapping, deliberately — Scale's `mapping="geometric"` is
+                right for Scale only because SCALE_MIN is 0.25; a geometric map
+                cannot represent 0, which is this field's default value. Linear
+                in RADIUS is also decision 10, matching what the overlay draws.
+
+                `fixed` sizing mode should disable this row with a stated reason
+                (§8a) — the lerp is identically a no-op there. NOT BUILT: the
+                motif's `placement.sizing` is written in Inspector.jsx and never
+                reaches this rack (no `sizing` prop on MotifBlockRack, SlotStrip
+                or this chip), and DragNumber has no `disabled` prop either. Both
+                would have to be invented for a state §8a records as currently
+                unreachable in-app. */}
+            <DragNumber
+              value={hold}
+              min={0}
+              max={1}
+              step={0.01}
+              format={(v) => `hold ${SCALE_FORMAT(v)}`}
+              parse={SCALE_PARSE}
+              label="Hold against packing"
+              title="Drag ↕ · gives back the size packing took away · stops at the page edge or host cell"
+              slotWidth="10ch"
+              testId="motif-slot-hold"
+              onChange={(v) => patchLive(holdPatch(v))}
+              onCommit={(v) => patchCommit(holdPatch(v))}
             />
             {/* Rotation — SIGNED, because this is an offset from each anchor's
                 base orientation, not a bearing. Stored 0..359 (the engine adds

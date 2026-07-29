@@ -281,6 +281,46 @@ describe("MotifBlockRack — type scale (typography pass)", () => {
   });
 });
 
+// ── #187: the slot card's `hold` row ─────────────────────────────────────────
+//
+// The ROW ITSELF is deliberately not asserted (PRD #184 excludes it — dedicated
+// presentation assertions would encode detail expected to move; it is verified
+// by eye at review). What IS pinned here is the storage contract, which is not
+// presentation and would regress silently: absent `hold` means absent, so a
+// value of 0 must be written as `undefined`. Writing a literal 0 would grow a
+// no-op key on every document a gesture merely passes through 0, and looks
+// identical on screen.
+describe("MotifBlockRack — `hold` writes absence, not a literal 0", () => {
+  const holdChain = [
+    {
+      type: "sequence",
+      mode: "cycle",
+      slots: [{ glyphRef: "leaf", hold: 0.5 }],
+    },
+  ];
+
+  // The patch this gesture pushed through the chain seam, applied to holdChain.
+  const slotAfter = (onEditChain) => {
+    const mutate = onEditChain.mock.calls.at(-1)[0];
+    return mutate(holdChain).find((b) => b.type === "sequence").slots[0];
+  };
+
+  it("commits a nonzero hold as the float, and 0 as `undefined`", () => {
+    const onEditChain = vi.fn();
+    render(<MotifBlockRack {...baseProps} chain={holdChain} onEditChain={onEditChain} />);
+    const row = screen.getByTestId("motif-slot-hold");
+
+    // Down one step from 0.5 — the field writes at all, on the 0…1 float scale.
+    fireEvent.keyDown(row, { key: "ArrowDown" });
+    expect(slotAfter(onEditChain).hold).toBeCloseTo(0.49, 5);
+
+    // Home snaps to min (0). That must clear the key, not store a zero.
+    onEditChain.mockClear();
+    fireEvent.keyDown(row, { key: "Home" });
+    expect(slotAfter(onEditChain).hold).toBeUndefined();
+  });
+});
+
 // ── Wave 3 (#79): zoned Sequencer sections (Apex / Stem) ──────────────────────
 describe("MotifBlockRack — zoned Sequencer sections", () => {
   // A chain-form motif whose terminal sequence is ZONED (apex + stem), seqIndex=1.

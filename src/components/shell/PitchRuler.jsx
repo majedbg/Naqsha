@@ -115,7 +115,11 @@ const markTransition = (reduced) => (reduced ? "none" : "opacity var(--motion-fa
  */
 export default function PitchRuler({ unit, spacing, stripWidth }) {
   const reduced = usePrefersReducedMotion();
-  const hatchId = `pitch-floor-hatch-${useId()}`;
+  // Unique per instance, because two motif rows draw two rulers and an SVG
+  // <pattern> is referenced by id. `useId` embeds ":" tokens, which are legal
+  // in an SVG IRI but not in a CSS selector — stripped so the same id stays
+  // usable from `querySelector` in a test or a future style rule.
+  const hatchId = `pitch-floor-hatch-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
 
   const width = Number.isFinite(stripWidth) ? stripWidth : 0;
   const geo = computeStripGeometry({ spacing, stripWidth: width });

@@ -28,8 +28,24 @@ import { VECTOR_MOTIF_GLYPHS } from './vectorMotifsGlyphs.js';
 
 /**
  * @typedef {{d:string, closed:boolean}} GlyphPath
- * @typedef {{id:string, name:string, tradition:string, paths:GlyphPath[], viewRadius:number}} Glyph
+ * @typedef {{id:string, name:string, tradition:string, paths:GlyphPath[], viewRadius:number, footprintCenter:{x:number,y:number}, footprintRadius:number}} Glyph
  */
+
+// `footprintCenter` / `footprintRadius` are the glyph's MINIMAL ENCLOSING CIRCLE
+// (Welzl, src/lib/motif/minEnclosingCircle.js), stored relative to `root` in the
+// same local units as `viewRadius`. They are DERIVED, never authored (decision 2
+// of docs/motif-footprint-fix-decisions.md): the 58 vector built-ins get theirs
+// from `scripts/enrichVectorMotifFootprints.mjs`, the four below are derived once
+// by hand with the derivation written down, and every value is re-measured and
+// compared exactly by `glyphFootprint.test.js`.
+//
+// ⚠️ `footprintRadius` is NOT a synonym for `viewRadius` and the two are never
+// substituted (decision 2b). `viewRadius` is the placementMatrix scale divisor
+// (instancing.js:77, `s = radius / viewRadius`) and is measured FROM THE ROOT;
+// `footprintRadius` is the packer's reserve and is measured from the tight
+// circle's own centre. They coincide on the four hand-authored glyphs only
+// because those straddle the origin — across the vector built-ins the root disc
+// is a median 3.42× the tight one in area.
 
 // 'leaf' — a leaf-blade that grows FROM the host line (design 2026-07). The
 // stem/base vertex sits at the ORIGIN (0,0), which the placement engine puts ON
@@ -97,6 +113,26 @@ export const MOTIF_GLYPHS = {
     // origin — the drawn footprint is still `placement.radius`, so this only
     // re-anchors the leaf at its base, it does not change placement sizing.
     viewRadius: 20.1,
+    // FOOTPRINT — the minimal enclosing circle of the same flattened outline,
+    // expressed RELATIVE TO ROOT. The leaf has no `root`, so its anchor IS the
+    // origin and these are plain local coordinates. Derived, not authored
+    // (decision 2): ran LEAF_D through flattenPathD(tol 0.05) and
+    // minEnclosingCircle, the same two calls
+    // scripts/enrichVectorMotifFootprints.mjs makes for the 58 vector records.
+    // The circle comes out as the DIAMETER circle on the blade's two extremes —
+    // the base (0,0) and the tip (20,-1) — because both flanks are single
+    // non-inflecting cubics that stay inside it: centre is their midpoint
+    // (10,-0.5) and the radius is |(20,-1)|/2 = sqrt(401)/2 ≈ 10.0125, half the
+    // 20.0250 the viewRadius note above measures. So the tight disc is HALF the
+    // root disc in radius and a quarter of it in area — the 4.00× ceiling of §1,
+    // hit exactly, because the anchor sits on its own enclosing circle with the
+    // farthest point antipodal. That also makes |fc| = fr to the bit, which is
+    // why `leaf` is one of §3's four exactly-degenerate glyphs. Full precision
+    // deliberately: rounding would move it out of the |A|/fr² < 1e-9 bucket the
+    // solver slice's property test is written against, and NOT rounded up the
+    // way viewRadius is — a reserve is not a safety margin, it is a measurement.
+    footprintCenter: { x: 10, y: -0.5 },
+    footprintRadius: 10.012492197250394,
   },
   dot: {
     id: 'dot',
@@ -106,6 +142,18 @@ export const MOTIF_GLYPHS = {
     // Every vertex is at radius exactly 3 (octagon inscribed in a
     // radius-3 circle); 3 is the bounding-circle radius.
     viewRadius: 3,
+    // FOOTPRINT — measured the same way as `leaf` above, and it lands on the
+    // opposite degeneracy. The octagon straddles the origin symmetrically, so
+    // the minimal enclosing circle IS the circumscribed radius-3 circle centred
+    // on the origin: the offset is zero and the tight disc equals the root disc.
+    // fc = (0,0) and fr = viewRadius here is a COINCIDENCE OF THIS SHAPE, not a
+    // default (decision 2b keeps the two numbers separate for exactly that
+    // reason) — and it is measured rather than assumed, because an absent field
+    // is not a safe default: a glyph without `footprintRadius` under
+    // sizing.footprint 'tight' falls to undefined and poisons the quadratic with
+    // NaN instead of degrading.
+    footprintCenter: { x: 0, y: 0 },
+    footprintRadius: 3,
   },
   diamond: {
     id: 'diamond',
@@ -116,6 +164,19 @@ export const MOTIF_GLYPHS = {
     // bounding-circle radius (covers every authored vertex, including
     // the narrower ±5 side points).
     viewRadius: 8,
+    // FOOTPRINT — ⚠️ `diamond` HAS NO `root`, so this is expressed relative to
+    // the ORIGIN, which is what the placement pipeline treats as its anchor
+    // (MotifPattern.js: `glyph.root || {x:0,y:0,angle:0}`). Same convention as
+    // the other three hand-authored glyphs and the same convention as the 58
+    // vector records, which do carry a root — "relative to root" and "relative
+    // to the origin" are the same statement whenever root is absent. Measured:
+    // the rhombus straddles the origin, its two ±8 tip vertices are antipodal
+    // and the ±5 side vertices sit well inside, so the minimal enclosing circle
+    // is the origin-centred radius-8 one. Offset zero, tight disc = root disc —
+    // and note this is the glyph §1 records as the single 1.00 in a library
+    // whose median root/tight AREA ratio is 3.42.
+    footprintCenter: { x: 0, y: 0 },
+    footprintRadius: 8,
   },
   rosette: {
     id: 'rosette',
@@ -125,6 +186,16 @@ export const MOTIF_GLYPHS = {
     // Max vertex distance from origin is the outer petal-tip radius, 10;
     // the inner valley vertices (radius 4) are well within that bound.
     viewRadius: 10,
+    // FOOTPRINT — measured, same two calls. The six petal tips sit at radius 10
+    // every 60°, so no half-plane through the origin is empty and the minimal
+    // enclosing circle cannot shrink off-centre: it is the origin-centred
+    // radius-10 one, and the valley vertices at radius 4 never bind. Offset
+    // zero, tight disc = root disc. Like `dot` and `diamond`, this glyph gains
+    // nothing from the footprint fix — it was already centred on its own ink;
+    // the 58 vector built-ins are the ones rooted at bbox bottom-center that pay
+    // the 4× (§1).
+    footprintCenter: { x: 0, y: 0 },
+    footprintRadius: 10,
   },
   // 58 flattened SVG motifs, ingested as built-ins (see import above).
   ...VECTOR_MOTIF_GLYPHS,

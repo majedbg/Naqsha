@@ -30,6 +30,8 @@ import { RecordingContext } from '../patterns/drawingContext.js';
 import { getSemanticAnchors } from './semanticAnchors.js';
 import { resolveSelection } from './compileSelectionToChain.js';
 import { resolvePlacements } from './placementEngine.js';
+import { getGlyph } from './glyphs.js';
+import { isSequenceBlock, sequenceSlots } from './sequencer.js';
 import { partitionZones } from './zones.js';
 import { dealSlots } from './sequencer.js';
 import { STARTER_CHIPS } from './starterChips.js';
@@ -45,6 +47,25 @@ function hostAnchors(PatternClass, patternType, params, seed = 7) {
   return getSemanticAnchors(patternType, params, W, H, inst.motifHostGeometry);
 }
 
+// #207 — the chips now write `sizing.footprint: 'tight'`, so the packer reads
+// each glyph's MEASURED footprint and throws without one. This mirrors the
+// render seam's resolution (`useCanvas` → `MotifPattern`): a BASE glyph plus a
+// map over every ref a Sequencer slot might stamp, read through `sequenceSlots`
+// so a Vine's ZONED slots (which live under `zones[].slots`, with no flat
+// `slots`) are not silently dropped — the whole subject of this file.
+function glyphSources(binding) {
+  const glyphMap = {};
+  for (const block of binding.chain || []) {
+    if (!isSequenceBlock(block)) continue;
+    for (const slot of sequenceSlots(block)) {
+      if (!slot || slot.glyphRef == null) continue;
+      const g = getGlyph(slot.glyphRef);
+      if (g) glyphMap[slot.glyphRef] = g;
+    }
+  }
+  return { glyph: getGlyph('leaf'), glyphMap };
+}
+
 /** The two real stages MotifPattern runs. Returns ACCEPTED placements. */
 function place(binding, anchors) {
   const { survivors, sequence, overrideRecords } = resolveSelection(binding, anchors, OPTS);
@@ -53,6 +74,7 @@ function place(binding, anchors) {
   const { placements } = resolvePlacements(survivors, placementConfig, {
     ...OPTS,
     overrideRecords,
+    ...glyphSources(binding),
   });
   return { survivors, placements };
 }

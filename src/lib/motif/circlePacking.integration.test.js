@@ -16,6 +16,7 @@ import { getSemanticAnchors } from './semanticAnchors.js';
 import { placeMotifs } from './placementEngine.js';
 import { resolveMotifHostParams } from './resolveMotifHost.js';
 import { defaultMotifAddOpts } from './defaultBinding.js';
+import { getGlyph } from './glyphs.js';
 import { rolesForHost } from './hostRoles.js';
 import { isMotifHost, isSemanticHost, defaultRolesForHost } from './hostKinds.js';
 
@@ -103,6 +104,10 @@ describe('Circle Packing places one glyph per circle', () => {
       canvasW: W,
       canvasH: H,
       boundary: BOUNDARY,
+      // #207: the default add-path binding now packs by the TIGHT law, which
+      // reads the glyph's measured footprint. The real path always has the glyph
+      // — it is what `defaultMotifAddOpts` was called with.
+      glyph: getGlyph('leaf'),
     });
     // ACCEPTED placements, one per circle — never placementStats.placed.
     expect(placements).toHaveLength(circles.length);
@@ -129,6 +134,7 @@ describe('Circle Packing places one glyph per circle', () => {
       canvasW: W,
       canvasH: H,
       boundary: BOUNDARY,
+      glyph: getGlyph('leaf'),
     });
     expect(circles.length).toBeGreaterThan(50);
     expect(placements.length).toBeGreaterThan(0);

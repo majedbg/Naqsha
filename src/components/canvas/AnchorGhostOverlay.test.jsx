@@ -24,6 +24,7 @@ import { MOTIF_TYPE, createMotifParams } from '../../lib/motif/motifLayer';
 import { getSemanticAnchors } from '../../lib/motif/semanticAnchors';
 import { resolveSelection } from '../../lib/motif/compileSelectionToChain';
 import { resolvePlacements } from '../../lib/motif/placementEngine';
+import { getGlyph } from '../../lib/motif/glyphs';
 import { sampleEdgeAnchors } from '../../lib/motif/anchors';
 
 const CANVAS_W = 800;
@@ -926,7 +927,13 @@ describe('AnchorGhostOverlay — per-glyph popover gesture (#139)', () => {
     const { placements } = resolvePlacements(
       survivors,
       { ...(m.params.binding.placement || {}), ...(sequence ? { sequence } : {}) },
-      { boundary: { type: 'rect', width: CANVAS_W, height: CANVAS_H } }
+      {
+        boundary: { type: 'rect', width: CANVAS_W, height: CANVAS_H },
+        // #207: `createMotifParams` builds this fixture, so its placement tail
+        // carries `sizing.footprint: 'tight'` and the packer needs the glyph —
+        // the same one the overlay resolves for itself from `params.glyphRef`.
+        glyph: getGlyph('leaf'),
+      }
     );
     const placement = placements.find((p) => p.anchorId === anchorId);
     expect(placement).toBeTruthy();

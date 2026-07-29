@@ -881,3 +881,55 @@ describe('MotifPattern B1 — chain-consuming multi-glyph dual-emit', () => {
     expect(inst.svgElements).toEqual(expected);
   });
 });
+
+// ── #207: THE RENDER PATH THREADS THE GLYPH ─────────────────────────────────
+//
+// The default flipped to `sizing.footprint: 'tight'` for new layers, and the
+// tight arm reads the glyph's MEASURED footprint — it throws without one
+// (ruling 7d, deliberately loud). `MotifPattern.generate` is the production
+// render path; before #207 it called `resolvePlacements` with only
+// `{boundary, overrideRecords}`, so the flip would have taken the canvas down
+// on the first motif layer a maker added.
+//
+// These are regression pins for that, not law tests: the law itself belongs to
+// placementEngine's own suite. What is asserted here is that the two injected
+// sources the draw loop already resolves reach the packer — the BASE glyph, and
+// the per-slot MAP a sequenced layer needs.
+describe('MotifPattern — the tight footprint reaches the packer (#207)', () => {
+  const TIGHT = { sizing: { mode: 'proportional', size: 18, min: 3, margin: 0.85, footprint: 'tight' } };
+
+  it('renders a tight layer instead of throwing, and places what root placed', () => {
+    const params = baseParams({ binding: { selection: {}, placement: TIGHT } });
+    const { inst } = run(params);
+    expect(inst.svgElements.length).toBe(2);
+    expect(inst.lastPlacementStats).toEqual({ total: 2, placed: 2 });
+  });
+
+  it('a SEQUENCED tight layer resolves each slot glyph through the injected map', () => {
+    // `dot` and `leaf` have different measured footprints, so a map that never
+    // arrived would either throw or silently reserve the base glyph's disc for
+    // both slots. Two glyphs in, two instances out, no throw.
+    const params = baseParams({
+      glyph: getGlyph('leaf'),
+      glyphs: { leaf: getGlyph('leaf'), dot: getGlyph('dot') },
+      binding: {
+        chain: [
+          { type: 'route', roles: null, pathScope: 'all' },
+          { type: 'sequence', mode: 'cycle', slots: [{ glyphRef: 'leaf' }, { glyphRef: 'dot' }] },
+        ],
+        placement: TIGHT,
+      },
+    });
+    const { inst } = run(params);
+    expect(inst.svgElements.length).toBe(2);
+    expect(inst.svgElements[0]).not.toEqual(inst.svgElements[1]);
+  });
+
+  it('throws — it does NOT silently fall back — when the glyph carries no measurement', () => {
+    // The failure mode ruling 7d chose over a silent degrade. A user SVG imported
+    // before importMotif learned to measure its own footprint reaches here.
+    const unmeasured = { ...getGlyph('leaf'), footprintCenter: undefined, footprintRadius: undefined };
+    const params = baseParams({ glyph: unmeasured, binding: { selection: {}, placement: TIGHT } });
+    expect(() => run(params)).toThrow(/measured footprint/);
+  });
+});

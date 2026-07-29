@@ -293,7 +293,21 @@ export function selectAnchors(anchors, rules = {}, opts = {}) {
 // truncation.
 export const MAX_PLACEMENTS = 2000;
 
-const PLACEMENT_DEFAULTS = {
+// EXPORTED (#207) so the overlay can ask rather than remember. `footprintScope`'s
+// `isTightFootprint` used to carry its own copy of "absent ⇒ root"; an overlay
+// that reads one law while the packer runs the other draws anchor-centred rings
+// around offset art, silently and greenly. One object, both readers.
+//
+// ⚠️ `sizing.footprint` is `'root'` HERE and `'tight'` at the layer CONSTRUCTORS
+// (`starterChips.js`, `defaultBinding.js`, `motifLayer.js`), and the asymmetry is
+// the whole of decision 3. The default a NEW layer is born with belongs to the
+// constructors, because it is written into the document and can be read back.
+// What the ENGINE does with an ABSENT field is a different question, and it is
+// answered by `migration.js:77`: `pinFootprint` leaves a v1 layer that never
+// carried a `sizing` object alone rather than inventing the path. Absent must
+// therefore keep meaning root, or exactly those documents repack on load through
+// the one hole the pin cannot cover.
+export const PLACEMENT_DEFAULTS = {
   sequence: ['A'],
   flip: false,
   orientation: { policy: 'path', useNormal: true, offset: 0, perRole: {} },
@@ -302,7 +316,7 @@ const PLACEMENT_DEFAULTS = {
     lateral: 0, along: 0, rotation: 0, scale: 0,
     lateralRange: 0, alongRange: 0, rotationRange: 0, scaleRange: 0,
   },
-  sizing: { mode: 'proportional', size: 10, min: 0, margin: 1.0 },
+  sizing: { mode: 'proportional', size: 10, min: 0, margin: 1.0, footprint: 'root' },
   junction: 'center',
 };
 

@@ -17,6 +17,7 @@ import { placeMotifs } from './placementEngine.js';
 import { resolveMotifHostParams } from './resolveMotifHost.js';
 import { resolveHostAnchors } from './hostAnchors.js';
 import { defaultMotifAddOpts } from './defaultBinding.js';
+import { getGlyph } from './glyphs.js';
 import { rolesForHost } from './hostRoles.js';
 import { hostAvailability } from './hostCapability.js';
 import {
@@ -109,6 +110,10 @@ describe('Module Grid is a motif host', () => {
       canvasW: W,
       canvasH: H,
       boundary: BOUNDARY,
+      // #207: the default add-path binding packs by the TIGHT law, which reads
+      // the glyph's measured footprint and throws without one. The real add path
+      // always has it — `opts.glyphRef` is what it was called with.
+      glyph: getGlyph(opts.glyphRef),
     });
     expect(placements).toHaveLength(N_CELLS);
   });

@@ -28,7 +28,7 @@
 // argument.
 
 import { dealSlots } from '../../lib/motif/sequencer';
-import { MAX_PLACEMENTS } from '../../lib/motif/placementEngine';
+import { MAX_PLACEMENTS, PLACEMENT_DEFAULTS } from '../../lib/motif/placementEngine';
 
 /**
  * Index of the sequence Block the ENGINE will actually use, or -1.
@@ -444,15 +444,14 @@ const DEG_TO_RAD = Math.PI / 180;
 /**
  * Is this placement config packed by the TIGHT law (#204, decision 7b)?
  *
- * ⚠️ THIS DUPLICATES A DEFAULT, and the duplication is the known weak point of
- * this slice. `placementEngine.js` merges `cfg.sizing` over its own
- * `PLACEMENT_DEFAULTS.sizing`, which is module-private and today carries NO
- * `footprint` key at all — so "absent ⇒ root" is the engine's behaviour exactly,
- * as of #204. When #207 adds a default, THIS PREDICATE MUST IMPORT IT rather
- * than keep its own copy: an overlay that reads `root` while the engine packs
- * `tight` draws anchor-centred rings around offset art, which is ruling 7f's
- * failure mode in a quieter register. §5g's migration stamps an explicit value
- * on every real layer, so the exposure is layers built in memory.
+ * THE DUPLICATE DEFAULT IS GONE (#207). This predicate used to carry its own
+ * copy of "absent ⇒ root", with a note that it must import the engine's default
+ * the moment #207 introduced one. It does now: `PLACEMENT_DEFAULTS.sizing` is
+ * exported and merged here exactly as `resolvePlacements` merges it, so the
+ * rings and the packer read one object. Two copies could not have been kept
+ * honest by any test that did not already know they had diverged — an overlay
+ * reading `root` while the engine packs `tight` draws anchor-centred rings
+ * around offset art, which is ruling 7f's failure mode in a quieter register.
  *
  * `fixed` NEVER reads tight. §5e leaves that branch untouched in both footprint
  * modes, so its reserve is still `(P, R)` and `footprintCenter` comes back as
@@ -463,8 +462,8 @@ const DEG_TO_RAD = Math.PI / 180;
  * @returns {boolean}
  */
 export function isTightFootprint(placementConfig) {
-  const sizing = placementConfig && placementConfig.sizing;
-  if (!sizing || sizing.footprint !== 'tight') return false;
+  const sizing = { ...PLACEMENT_DEFAULTS.sizing, ...((placementConfig && placementConfig.sizing) || {}) };
+  if (sizing.footprint !== 'tight') return false;
   return sizing.mode !== 'fixed';
 }
 

@@ -165,9 +165,22 @@ export default class MotifPattern extends Pattern {
     // it is a no-op for documents with no per-glyph scale/angle.
     const placementConfig = { ...(binding.placement || {}) };
     if (sequence) placementConfig.sequence = sequence;
+    //
+    // THE GLYPHS RIDE IN TOO (#207). Under `sizing.footprint: 'tight'` the engine
+    // reserves the glyph's MEASURED footprint rather than a disc of `viewRadius`
+    // about its root, so it needs the same two sources the draw loop below reads
+    // — the base glyph and the per-slot map — and THROWS without them (ruling
+    // 7d). Deliberately NOT wrapped in a try/catch, unlike the hover overlay: a
+    // layer must never be silently packed by the law the user opted out of on a
+    // machine that cuts material, and a render that swallowed the throw would be
+    // exactly that. `glyphMap` is null when nothing was injected, which the
+    // engine reads as "no map" and falls back to the base glyph — the same rule
+    // the per-placement resolution below applies.
     const { placements, placementStats } = resolvePlacements(survivors, placementConfig, {
       boundary,
       overrideRecords,
+      glyph: baseGlyph,
+      glyphMap,
     });
     // Surface the budget stats so useCanvas can read `instance.lastPlacementStats`
     // after generate() and mirror truncation up to the Inspector (etchBitmaps

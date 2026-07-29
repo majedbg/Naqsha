@@ -1,8 +1,32 @@
 # Footprint fix — overnight build handover (2026-07-29)
 
 Branch `feat/motif-tight-footprint`, off `feat/curved-leaf-glyph`. **Nothing pushed,
-no PR, `main` untouched.** Suite green at **7349 passed / 54 skipped / 535 files**
+no PR, `main` untouched.** Suite green at **7426 passed / 54 skipped / 537 files**
 (baseline was 7049 / 54 / 531).
+
+---
+
+## ✅ #207 — the default is ON for new layers
+
+`starterChips.js`, `defaultBinding.js` and `motifLayer.js`'s `normalizeBinding`
+all write `sizing.footprint: 'tight'` on a NEW motif layer; the last of the three
+never overwrites, so a pinned `'root'` survives it. `PLACEMENT_DEFAULTS` stays
+`'root'` and is EXPORTED, and `isTightFootprint` reads it rather than keeping a
+second copy. The production render path (`MotifPattern.js`) now threads the base
+glyph and the slot map into `resolvePlacements` — without it the flip took the
+canvas down on the first motif a maker added — and `RightPanel` passes
+`customGlyphs` so a custom-glyph layer still draws its rings.
+
+Measured, not assumed: **+42.4% total drawn area, 372 → 147 lossy rejections, 0
+unexplained shrinks** over the 62 built-ins × 4 packing scenarios. See §7z row
+`7e-built` — which also corrects `5e-obs`: greedy redistribution explains only
+1917 of the 2168 shrinks, and "per obstacle the tight limit is never worse" is
+false.
+
+⚠️ **Custom glyphs imported BEFORE `aee1d1a` carry no measurement**, and nothing
+re-measures a stored one on load. A NEW layer built on such a glyph throws
+(loudly, naming the glyph — ruling 7d). Reachable only from a dev localStorage
+predating today, since none of this has merged; worth its own ticket.
 
 ---
 

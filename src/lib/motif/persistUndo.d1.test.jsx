@@ -81,6 +81,24 @@ const LEGACY_BINDING = {
   placement: { sizing: { size: 18 } },
 };
 
+// Every motif fixture in this file is a SAVED, PRE-v2 DOCUMENT — that is the
+// whole subject of the round-trip: what a document written before the footprint
+// field existed does when it comes back through the load boundary. So the
+// create-time `sizing.footprint: 'tight'` stamp #207 added to `createMotifParams`
+// is removed again here, deliberately: leaving it in would build a document that
+// could not have been saved by the version under test, and `pinFootprint` never
+// overwrites an existing value, so the pin the tests below exist to observe would
+// simply never fire.
+function preV2(params) {
+  const placement = params.binding?.placement;
+  if (!placement?.sizing) return params;
+  const { footprint, ...sizing } = placement.sizing;
+  const nextPlacement = { ...placement };
+  if (Object.keys(sizing).length > 0) nextPlacement.sizing = sizing;
+  else delete nextPlacement.sizing;
+  return { ...params, binding: { ...params.binding, placement: nextPlacement } };
+}
+
 function motifLayerObj(id, hostId, binding) {
   return {
     id,
@@ -90,7 +108,9 @@ function motifLayerObj(id, hostId, binding) {
     visible: true,
     color: '#000000',
     opacity: 100,
-    params: createMotifParams({ hostLayerId: hostId, glyphRef: 'leaf', binding, anchorMode: 'edge' }),
+    params: preV2(
+      createMotifParams({ hostLayerId: hostId, glyphRef: 'leaf', binding, anchorMode: 'edge' })
+    ),
     randomizeKeys: [],
     paramsCache: {},
   };

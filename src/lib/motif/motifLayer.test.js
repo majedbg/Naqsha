@@ -19,6 +19,14 @@ import { compileSelectionToChain, resolveSelection } from './compileSelectionToC
 // source}. No cascade/cleanup logic lives here — dangling references are
 // tolerated and only resolved (or dropped) at adornGraph derivation time.
 
+// #207 — `createMotifParams` is a CREATE-TIME path, and a new motif layer is born
+// packing against its glyph's measured footprint. Every golden below therefore
+// carries `sizing.footprint: 'tight'` on the placement tail, stated in full
+// rather than relaxed to `objectContaining`: the shape of a created binding is
+// exactly what these tests exist to pin, and the one field that must NOT drift
+// silently is the one that decides how a machine cuts.
+const TIGHT = { footprint: 'tight' };
+
 describe('MOTIF_TYPE', () => {
   it('is the string "motif"', () => {
     expect(MOTIF_TYPE).toBe('motif');
@@ -71,7 +79,7 @@ describe('createMotifParams', () => {
     expect(params.source).toEqual({ kind: 'library', id: 'leaf-01' });
     expect(params.binding).toEqual({
       selection: { roles: ['crossing'] },
-      placement: { sizing: { mode: 'fixed' } },
+      placement: { sizing: { mode: 'fixed', ...TIGHT } },
     });
   });
 
@@ -90,17 +98,23 @@ describe('createMotifParams', () => {
     expect(params.source).toBeNull();
   });
 
-  it('defaults binding to { selection: {}, placement: {} } when omitted (so placeMotifs uses its own defaults)', () => {
+  it('defaults binding to { selection: {}, placement: { sizing: TIGHT } } when omitted (so placeMotifs uses its own defaults for the rest)', () => {
     const params = createMotifParams({ glyphRef: 'leaf-01', hostLayerId: 'layer-1' });
-    expect(params.binding).toEqual({ selection: {}, placement: {} });
+    expect(params.binding).toEqual({ selection: {}, placement: { sizing: TIGHT } });
   });
 
   it('normalizes a partial binding (missing selection or placement) by filling the missing half with {}', () => {
     const withSelectionOnly = createMotifParams({ binding: { selection: { roles: ['tip'] } } });
-    expect(withSelectionOnly.binding).toEqual({ selection: { roles: ['tip'] }, placement: {} });
+    expect(withSelectionOnly.binding).toEqual({
+      selection: { roles: ['tip'] },
+      placement: { sizing: TIGHT },
+    });
 
     const withPlacementOnly = createMotifParams({ binding: { placement: { flip: true } } });
-    expect(withPlacementOnly.binding).toEqual({ selection: {}, placement: { flip: true } });
+    expect(withPlacementOnly.binding).toEqual({
+      selection: {},
+      placement: { flip: true, sizing: TIGHT },
+    });
   });
 
   it('tolerates being called with no argument at all', () => {
@@ -108,7 +122,7 @@ describe('createMotifParams', () => {
     expect(params).toEqual({
       glyphRef: undefined,
       hostLayerId: undefined,
-      binding: { selection: {}, placement: {} },
+      binding: { selection: {}, placement: { sizing: TIGHT } },
       anchorMode: 'edge',
       edgeOpts: { spacing: 24 },
       source: null,
@@ -178,14 +192,14 @@ describe('createMotifParams — chain-form binding preservation (C1)', () => {
     expect(params.binding).toEqual({
       chain,
       overrides,
-      placement: { flip: true },
+      placement: { flip: true, sizing: TIGHT },
     });
   });
 
   it('preserves binding.chain without overrides when overrides is absent', () => {
     const chain = [{ type: 'everyN', n: 2, offset: 0, continuous: true }];
     const params = createMotifParams({ binding: { chain } });
-    expect(params.binding).toEqual({ chain, placement: {} });
+    expect(params.binding).toEqual({ chain, placement: { sizing: TIGHT } });
     expect(params.binding).not.toHaveProperty('overrides');
   });
 
@@ -201,15 +215,21 @@ describe('createMotifParams — chain-form binding preservation (C1)', () => {
     });
     expect(params.binding).toEqual({
       selection: { roles: ['crossing'] },
-      placement: { sizing: { mode: 'fixed' } },
+      placement: { sizing: { mode: 'fixed', ...TIGHT } },
     });
     expect(params.binding).not.toHaveProperty('chain');
     expect(params.binding).not.toHaveProperty('overrides');
   });
 
   it('an empty/omitted binding still defaults to legacy shape { selection: {}, placement: {} }', () => {
-    expect(createMotifParams({}).binding).toEqual({ selection: {}, placement: {} });
-    expect(createMotifParams().binding).toEqual({ selection: {}, placement: {} });
+    expect(createMotifParams({}).binding).toEqual({
+      selection: {},
+      placement: { sizing: TIGHT },
+    });
+    expect(createMotifParams().binding).toEqual({
+      selection: {},
+      placement: { sizing: TIGHT },
+    });
   });
 });
 

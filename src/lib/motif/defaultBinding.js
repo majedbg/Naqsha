@@ -27,7 +27,10 @@ export function defaultMotifAddOpts(hostPatternType, glyphRef, hostParams) {
         rate: { n: 1 },
       },
       placement: {
-        sizing: { mode: 'proportional', size: 18, min: 3, margin: 0.85 },
+        // `footprint: 'tight'` (#207, decision 3) — mirrors starterChips.js's
+        // shared tail, which is the invariant that file states out loud: a
+        // chip-created motif and a "+ Add Motif" one must size the same way.
+        sizing: { mode: 'proportional', size: 18, min: 3, margin: 0.85, footprint: 'tight' },
         orientation: { policy: 'path', useNormal: true },
         flip: false,
       },

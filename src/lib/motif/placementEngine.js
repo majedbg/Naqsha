@@ -23,7 +23,7 @@
 // See docs/motif-adorn-arch-brief.md §8/§9.
 
 import { mulberry32 } from '../patterns/rng.js';
-import { largestEmptyCircleRadius, fitsAt } from './emptyCircle.js';
+import { largestEmptyCircleParts, fitsAt } from './emptyCircle.js';
 import { applyOverrides, applyGlyphOverrides, resolveOverrideRecords } from './overrides.js';
 import { dealSlots, isSequenceBlock } from './sequencer.js';
 
@@ -204,8 +204,52 @@ export function selectAnchors(anchors, rules = {}, opts = {}) {
 // ---------------------------------------------------------------------------
 
 /**
- * @typedef {{anchorId:string, role:string, index:number, x:number, y:number, rotation:number, scale:number, radius:number, seqId:string|number, flip:boolean, glyphRef?:string}} Placement
- * @typedef {{anchorId:string, reason:'junction-skip'|'below-floor'|'no-fit'|'rest'}} Rejection
+ * @typedef {{anchorId:string, role:string, index:number, x:number, y:number, rotation:number,
+ *            scale:number, radius:number,
+ *            packedRadius:number, drawnRadius:number, neighbourCap:number, hardCap:number,
+ *            capBy:'natural'|'neighbour'|'boundary'|'host', saturated:boolean,
+ *            capObstacle:null|{x:number,y:number,r:number},
+ *            seqId:string|number, flip:boolean, glyphRef?:string}} Placement
+ *
+ *   SIZING DIAGNOSTICS (#186, decision 15/15b) — the seven keys from
+ *   `packedRadius` to `capObstacle`. **Always present, in every sizing mode,
+ *   with no opt-in flag and no conditional shape.** `Placement` is a TRANSIENT
+ *   render structure — nothing here is persisted, exported or drawn as geometry
+ *   — so the cost of carrying them unconditionally is test-golden churn, not
+ *   determinism, and in exchange there is one code path instead of two. They
+ *   are computed by the code that did the capping and are never re-derived from
+ *   geometry by a caller.
+ *
+ *   `capBy` names what bound **`drawnRadius`** — the radius the user SEES — not
+ *   what bound `packedRadius` (decision 15b). `capObstacle` is a COPIED
+ *   `{x,y,r}`, never a reference into the packer's growing obstacle list.
+ *
+ * @typedef {{anchorId:string, reason:'junction-skip'|'below-floor'|'no-fit'|'rest',
+ *            x?:number, y?:number, wantedRadius?:number}} Rejection
+ *
+ *   REJECTION GEOMETRY (#191) — `x`, `y` and `wantedRadius` are present on the
+ *   SIZING-STAGE reasons ONLY (`below-floor` and `no-fit`), because those are the
+ *   two the footprint overlay draws, as a dotted empty ring at the size the glyph
+ *   wanted. It cannot derive that ring from `{anchorId, reason}`: `x`/`y` are the
+ *   POST-JITTER centre and the radius depends on `placed`, `margin`,
+ *   `scaleFactor` and `sizeScale`, none of which a caller holds.
+ *
+ *   `wantedRadius` is the NATURAL TARGET (`size × scaleFactor × sizeScale`), never
+ *   the drawn radius. It is the one quantity BOTH modes and BOTH reasons agree on:
+ *   on the PROPORTIONAL path a `no-fit` at `R <= 0` returns before any cap is
+ *   computed, so no drawn radius exists there at all; in `fixed` mode a radius does
+ *   exist by then, but it IS this same expression, so the two modes report the same
+ *   thing under one name. Decision 7 defines naturalTarget as literally "the size I
+ *   want", and a `below-floor` glyph's drawn radius is by definition below
+ *   `sizing.min`, so a ring drawn there would be an invisible speck — the exact
+ *   failure the overlay exists to fix.
+ *
+ *   THE CONDITIONAL SHAPE IS CORRECT, not an oversight. `junction-skip` and `rest`
+ *   reject at the TOP of the loop, above the transform that computes the centre —
+ *   the fields DO NOT EXIST YET at those two sites — and neither is a rejection
+ *   the user needs explained, so the overlay draws nothing for them. Hoisting the
+ *   transform to make the shape uniform would buy nothing and cost the two early
+ *   returns their point.
  */
 
 // Placement budget (2026-07-19 post-crash hardening, docs §6). A motif-bearing
@@ -240,6 +284,21 @@ const PLACEMENT_DEFAULTS = {
 const MIN_SCALE_FACTOR = 1e-3;
 
 const toDegrees = (rad) => (rad * 180) / Math.PI;
+
+/**
+ * The `hold` weight, coerced to a usable `0…1` (#186).
+ *
+ * ANYTHING NON-FINITE READS AS 0 — which is the pre-#186 engine exactly. That
+ * covers an assignment predating the field, a hand-edited document carrying
+ * `null`/a string, and the legacy unsequenced path (no assignment at all). The
+ * clamp at the top matters just as much: `hold: 5` in a hand-edited document
+ * must not inflate a glyph past its natural target.
+ * @param {*} v @returns {number}
+ */
+function clamp01(v) {
+  if (!Number.isFinite(v)) return 0;
+  return v < 0 ? 0 : v > 1 ? 1 : v;
+}
 
 /**
  * HOST-SIZE CHANNEL (#146) — does this anchor declare the container it occupies?
@@ -347,6 +406,12 @@ export function resolvePlacements(survivors, config = {}, opts = {}) {
     const dScale = rand();
 
     // 1. Junction policy.
+    //
+    // BARE `{anchorId, reason}` — no rejection geometry (#191), and the same at
+    // the Rest below. Both reject HERE, above the transform at step 4, so `x`/`y`
+    // do not exist yet; and neither is a rejection the user needs a ring for (a
+    // skipped junction and a Rest are both things they asked for). Only the two
+    // SIZING-stage reasons carry geometry.
     if (anchor.meta && anchor.meta.junction === true && junction === 'skip') {
       rejected.push({ anchorId: anchor.id, reason: 'junction-skip' });
       return;
@@ -410,40 +475,111 @@ export function resolvePlacements(survivors, config = {}, opts = {}) {
     const center = { x, y };
 
     // 5. Sizing + test-before-place, against current `placed` + boundary.
+    //
+    // The two empty-circle terms come back APART (#185) because they are not
+    // the same kind of limit: the obstacle term is SOFT (a held glyph may
+    // overlap a neighbour) while the boundary term is HARD. `R` below is
+    // `Math.min` of the two, which is `largestEmptyCircleRadius` by definition
+    // and byte-identical to it — required under ADR-0005.
     const size = sizing.size;
     const min = sizing.min;
-    const R = largestEmptyCircleRadius(center, placed, boundary);
+    const parts = largestEmptyCircleParts(center, placed, boundary);
+    const R = Math.min(parts.boundary, parts.obstacles);
     let radius;
+
+    // The seven sizing diagnostics (#186, decisions 15/15b), ALWAYS emitted, in
+    // both sizing modes. Filled in by whichever branch below did the capping —
+    // never re-derived from geometry by a caller.
+    let packedRadius; // what was reserved into `placed`
+    let drawnRadius; // what was drawn (=== radius)
+    let neighbourCap; // the SOFT cap; `hold` negotiates this one
+    let hardCap; // the HARD cap; `hold` may never cross it
+    let capBy; // 'natural' | 'neighbour' | 'boundary' | 'host'
+    let saturated; // the drag hit the hard cap and further `hold` does nothing
+    let capObstacle; // a COPY of the capping disc, or null
 
     if (sizing.mode === 'fixed') {
       // sizeScale (slot modifier, default 1) grows the footprint BEFORE the
       // acceptance test so a bigger slot claims more space.
       radius = size * scaleFactor * sizeScale;
+      // Both rejections carry the ring the overlay draws (#191). In `fixed` mode
+      // the fixed radius IS the natural target — the very same expression — so
+      // `wantedRadius` is `radius` with nothing to hoist.
       if (R <= 0 || !fitsAt(center, radius, placed, boundary)) {
-        rejected.push({ anchorId: anchor.id, reason: 'no-fit' });
+        rejected.push({ anchorId: anchor.id, reason: 'no-fit', x, y, wantedRadius: radius });
         return;
       }
       if (radius < min) {
-        rejected.push({ anchorId: anchor.id, reason: 'below-floor' });
+        rejected.push({ anchorId: anchor.id, reason: 'below-floor', x, y, wantedRadius: radius });
         return;
       }
+      // `fixed` mode's CONTROL FLOW is untouched by #186 and `hold` is honestly
+      // inert here: the glyph is its natural target, nothing capped it, and the
+      // lerp would be identically a no-op because packedRadius === naturalTarget
+      // (decision 5). It still emits all seven keys — decision 15 says "always
+      // present, no conditional shape", and that includes this branch.
+      packedRadius = radius;
+      drawnRadius = radius;
+      hardCap = radius; // fixed mode's naturalTarget
+      // Infinity, not a number: `margin` is NOT applied in fixed mode, so there
+      // is no honest computed neighbour cap to report. "Nothing constrains me
+      // from that side" is the truthful value.
+      neighbourCap = Infinity;
+      capBy = 'natural';
+      saturated = false;
+      capObstacle = null;
     } else {
       // proportional: scale-to-context, but never larger than the natural size
       // (size*scaleFactor) and never larger than the empty circle it must fit
       // inside. `margin` (clamped to (0,1]) is the fraction of the empty circle
-      // to fill. radius = min(naturalTarget, margin*R) guarantees radius <= R,
-      // so accepted footprints never overlap and an unbounded region (R=Inf)
-      // simply falls back to the natural size — no Infinity leaks out.
+      // to fill. packedRadius <= R still holds, so accepted footprints never
+      // overlap and an unbounded region (R=Inf) simply falls back to the natural
+      // size — no Infinity leaks out.
+      //
+      // sizeScale grows only the NATURAL target, never the boundary/neighbour
+      // caps nor the host-container cap, so the no-overlap invariant is
+      // preserved and a Slot's size scale can never break containment.
+      // `sizeScale` is INSIDE naturalTarget (decision 7), which is what makes
+      // the pair read "Scale = the size I want; `hold` = how much packing is
+      // allowed to take it away".
+      //
+      // HOISTED ABOVE THE `R <= 0` RETURN (#191) so that rejection can report the
+      // radius it wanted — the only radius it will ever have, since it bails out
+      // before any cap is computed. The move is byte-identical: this is pure
+      // arithmetic over `size`, `scaleFactor` and `sizeScale`, all three fixed by
+      // now, and all four RNG draws were consumed at the top of the loop, so the
+      // determinism keystone ("exactly four draws per survivor, before any early
+      // return") is untouched.
+      const naturalTarget = size * scaleFactor * sizeScale;
+
+      // `no-fit` at R <= 0 means the centre is INSIDE an already-committed disc.
+      // That is not "capped by a neighbour", it is coincident with one, so it
+      // stays a hard drop at every value of `hold` (decision 5).
       if (R <= 0) {
-        rejected.push({ anchorId: anchor.id, reason: 'no-fit' });
+        rejected.push({ anchorId: anchor.id, reason: 'no-fit', x, y, wantedRadius: naturalTarget });
         return;
       }
       const margin = Math.min(1, Math.max(0, sizing.margin));
-      // sizeScale grows only the NATURAL target, never the margin*R cap nor the
-      // host-container cap, so radius <= R still holds, the no-overlap invariant
-      // is preserved, and a Slot's size scale can never break containment.
-      const naturalTarget = size * scaleFactor * sizeScale;
-      radius = Math.min(naturalTarget, margin * R);
+
+      // margin × one term, with the single IEEE754 product that would lie here:
+      // `0 * Infinity` is NaN, but an INFINITE term means "this side does not
+      // constrain at all", and scaling a non-constraint by any margin leaves it
+      // a non-constraint. The fused `margin * Math.min(boundary, obstacles)`
+      // this replaced never met that product unless BOTH terms were infinite,
+      // because the finite term won the min first; splitting the terms exposes
+      // it. Without the guard, `margin: 0` with a real boundary turns the FIRST
+      // placement of a run from radius 0 into NaN. (§4b's code sketch omits
+      // this — it is a gap in the sketch, not a liberty taken here.)
+      const capOf = (term) => (term === Infinity ? Infinity : margin * term);
+
+      // HARD TIER — the boundary and the host container, together. `hold` can
+      // NEVER relax this (decision 4): a cut outside the material and a glyph
+      // escaping its cell are not aesthetic choices, and #146 already declares
+      // containment inviolable.
+      const boundaryCap = capOf(parts.boundary);
+      hardCap = Math.min(naturalTarget, boundaryCap);
+      let hardCapBy = boundaryCap < naturalTarget ? 'boundary' : 'natural';
+
       // HOST-SIZE CHANNEL (#146). An anchor may declare the radius of the
       // CONTAINER it occupies as an optional TOP-LEVEL `hostRadius`. Containment
       // is a DISTANCE rule, not a radius cap: the four jitter draws above have
@@ -453,31 +589,113 @@ export function resolvePlacements(survivors, config = {}, opts = {}) {
       // DISPLACED centre, using the GEOMETRIC displacement (the two differ once
       // tangent and normal are not perpendicular):
       //     radius <= margin * max(0, hostRadius - d),  d = |centre - anchor|
-      // It enters as a THIRD argument to the SAME minimum, so it can only ever
-      // shrink a glyph — the empty-circle term and the no-overlap invariant are
+      // It enters as a further argument to the SAME minimum, so it can only ever
+      // shrink a glyph — the empty-circle terms and the no-overlap invariant are
       // untouched, and the layer's size stays a ceiling.
       //
       // A zero/negative cap (the centre was displaced clean out of its
-      // container) is a rejection, never a negative radius. The guard is gated
-      // STRICTLY inside this branch: a document with margin 0 and NO hostRadius
-      // still produces the accepted zero-radius placement it produces today.
+      // container) is a rejection, never a negative radius — and it is decided
+      // HERE, before any drawn radius exists, so `hold` cannot rescue it. The
+      // guard is gated STRICTLY inside this branch: a document with margin 0 and
+      // NO hostRadius still produces the accepted zero-radius placement it
+      // produces today.
       if (hasHostRadius(anchor)) {
         const d = Math.hypot(x - anchor.x, y - anchor.y);
         const hostCap = margin * Math.max(0, anchor.hostRadius - d);
         if (hostCap <= 0) {
-          rejected.push({ anchorId: anchor.id, reason: 'no-fit' });
+          rejected.push({
+            anchorId: anchor.id,
+            reason: 'no-fit',
+            x,
+            y,
+            wantedRadius: naturalTarget,
+          });
           return;
         }
-        if (hostCap < radius) radius = hostCap;
+        // TIE-BREAK, deliberate: at hostCap === boundaryCap we report 'host'.
+        // The region boundary is already visible on screen and decision 17
+        // forbids drawing it; the host container has no visual representation at
+        // all, so naming the host is the strictly more informative answer.
+        if (hostCap <= hardCap) {
+          hardCap = hostCap;
+          hardCapBy = 'host';
+        }
       }
-      if (radius < min) {
-        rejected.push({ anchorId: anchor.id, reason: 'below-floor' });
+
+      // SOFT TIER — the neighbour term, the only thing `hold` negotiates.
+      neighbourCap = capOf(parts.obstacles);
+
+      // The radius RESERVED into `placed`. This is exactly the radius the engine
+      // produced before #186, and it is what every following glyph sizes around
+      // (decision 1): a held glyph draws bigger but claims no extra space, so
+      // "who wins when two neighbours both refuse to shrink" dissolves — nobody
+      // claims, they simply overlap — and the change stays order-independent.
+      packedRadius = Math.min(hardCap, neighbourCap);
+
+      // ⚠️ POLARITY (decision 3): w = 1 is NEVER SHRINK, w = 0 is the pre-#186
+      // engine and the migration default. No inversion layer exists anywhere.
+      // `hold` draws NO RNG — it is read here, below all four jitter draws, so
+      // ADR-0005's "exactly four draws per survivor" keystone is untouched.
+      const w = clamp01(assignment ? assignment.hold : 0);
+      // Linear in RADIUS (decision 10), not area and not gamma — every size
+      // quantity in this engine is a radius and the overlay draws radii.
+      // At w = 0 this is `packedRadius + 0`, i.e. packedRadius EXACTLY, so
+      // drawnRadius === packedRadius to the last bit. That is the migration
+      // guarantee: absent hold ⇒ 0 ⇒ nothing below moves.
+      const lerp = packedRadius + (naturalTarget - packedRadius) * w;
+      drawnRadius = Math.min(hardCap, lerp);
+
+      // Decision 5: the floor tests the DRAWN radius, so `hold` can rescue a
+      // glyph that packing shrank out of existence.
+      if (drawnRadius < min) {
+        // `wantedRadius` is naturalTarget, NOT `drawnRadius` (#191): drawnRadius
+        // is by definition below the floor here, so a ring drawn at it would be
+        // the invisible speck the overlay exists to replace.
+        rejected.push({
+          anchorId: anchor.id,
+          reason: 'below-floor',
+          x,
+          y,
+          wantedRadius: naturalTarget,
+        });
         return;
       }
+
+      // `capBy` names what bound the radius the USER SEES (decision 15b).
+      // Defining it against the reserve would report 'neighbour' in the
+      // saturation case — true of the reserve, and useless to the person
+      // dragging, who needs to know why the drag stopped.
+      //   • 'natural' wins hardCap ties by the ordering, which is right: "you
+      //     got the size you asked for" beats "the page edge also happened to be
+      //     exactly there".
+      //   • the equality is EXACT, not approximate: drawnRadius is literally
+      //     Math.min(hardCap, lerp), so `=== hardCap` is exact when hardCap won.
+      //     No epsilon belongs here.
+      if (drawnRadius >= naturalTarget) capBy = 'natural';
+      else if (drawnRadius === hardCap) capBy = hardCapBy;
+      else capBy = 'neighbour';
+      // STRICT `>`: at w = 0 the lerp IS packedRadius (<= hardCap), so a
+      // document without `hold` is never reported as saturated.
+      saturated = lerp > hardCap;
+      // #185 reports the winning obstacle unconditionally; the reduction to
+      // null happens HERE, where capBy is derived. The three numbers are COPIED
+      // — a reference into `placed` would alias an array the loop keeps
+      // mutating, and the overlay must be able to draw the disc without
+      // reaching back into engine internals.
+      capObstacle =
+        capBy === 'neighbour' && parts.obstacle
+          ? { x: parts.obstacle.x, y: parts.obstacle.y, r: parts.obstacle.r }
+          : null;
+
+      radius = drawnRadius;
     }
 
     const scale = radius / size;
-    placed.push({ x, y, r: radius });
+    // Decisions 1 + 6: `placed` ALWAYS receives packedRadius, INCLUDING a glyph
+    // rescued from below the floor. There is no third "drawn but invisible to
+    // the packer" state, and the reserved-disc no-overlap invariant is exactly
+    // as strong as it was before #186.
+    placed.push({ x, y, r: packedRadius });
     const placement = {
       anchorId: anchor.id,
       role: anchor.role,
@@ -487,6 +705,13 @@ export function resolvePlacements(survivors, config = {}, opts = {}) {
       rotation,
       scale,
       radius,
+      packedRadius,
+      drawnRadius,
+      neighbourCap,
+      hardCap,
+      capBy,
+      saturated,
+      capObstacle,
       seqId,
       flip,
     };

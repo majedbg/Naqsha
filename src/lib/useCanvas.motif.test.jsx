@@ -114,7 +114,7 @@ describe('useCanvas — Voronoi motif placement is order-independent (seam fix)'
 // never appear in the output — so asserting BOTH built-in glyph `d` strings
 // appear proves the map was built AND consumed end-to-end.
 describe('useCanvas — motif chain injects the multi-glyph glyphs map', () => {
-  const LEAF_D = 'M0,0 L6,-6'; // base-at-origin leaf's distinctive opening (2026-07)
+  const LEAF_D = 'M0,0 C4,-9'; // base-at-origin leaf's distinctive opening (curved re-author, 2026-07-28)
   const DOT_D = 'M3,0 L2.1213';
 
   const chainMotif = {

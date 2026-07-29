@@ -7,12 +7,21 @@ import { MOTIF_GLYPHS } from '../../motif/glyphs.js';
 //
 // The whole feature rests on this: for ANY `d` containing only M / L / Z
 // commands, flattenPathD(d, tol) must return VERTICES IDENTICAL to
-// parsePathD(d) — same points, same order, same `closed`. The built-in motif
-// glyphs are all M/L/Z, so this guarantees zero output change when a consumer
-// later swaps parsePathD → flattenPathD.
+// parsePathD(d) — same points, same order, same `closed`. Three of the four
+// built-in motif glyphs (dot, diamond, rosette) are all M/L/Z, so this
+// guarantees zero output change when a consumer later swaps parsePathD →
+// flattenPathD for THEM.
 //
 // (flattenPathD's CURVE output is adaptive-tol and intentionally differs from
-// parsePathD's fixed-16 cubic sampling — no byte-identity is claimed there.)
+// parsePathD's fixed-16 cubic sampling — no byte-identity is claimed there.
+// 'leaf' moved to the curve side of that line on 2026-07-28 — re-authored
+// with two cubic Béziers instead of a straight-line polygon — so it's
+// EXCLUDED from this byte-identity loop below; see pathModel.test.js for the
+// project's existing curve-vs-curve shape-equivalence pattern (maxShapeGap /
+// directedHausdorff) if a future change needs to assert leaf's shape survives
+// some transform — no such assertion is added here to avoid pinning a
+// tolerance chosen by observing one run's output rather than derived
+// independently.)
 // ---------------------------------------------------------------------------
 
 // Mirror the exact M/L/Z fixtures pathOps.test.js pins for parsePathD, so any
@@ -37,12 +46,20 @@ describe('flattenPathD — M/L/Z byte-identity with parsePathD', () => {
     });
   }
 
-  it('matches parsePathD for the four built-in motif glyphs', () => {
-    for (const id of ['leaf', 'dot', 'diamond', 'rosette']) {
+  it('matches parsePathD for the three M/L/Z built-in motif glyphs', () => {
+    for (const id of ['dot', 'diamond', 'rosette']) {
       const { d } = MOTIF_GLYPHS[id].paths[0];
       expect(flattenPathD(d, 0.25)).toEqual(parsePathD(d));
     }
   });
+
+  // 'leaf' (curved re-author, 2026-07-28) is deliberately NOT in the loop
+  // above: it can't clear the byte-identity bar by construction — parsePathD
+  // fixed-samples each cubic at 16 steps (33 points total) while flattenPathD
+  // adaptively simplifies to whatever its 0.25px tolerance needs (17 points).
+  // Same shape, different point counts, so `toEqual` cannot pass and must not
+  // be asserted here (see file-header comment for the project's existing
+  // shape-equivalence pattern if a future change needs one for leaf).
 
   it('returns empty result for empty/null/non-string input', () => {
     expect(flattenPathD('', 0.25)).toEqual({ points: [], closed: false });

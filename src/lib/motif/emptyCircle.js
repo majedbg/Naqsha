@@ -88,24 +88,72 @@ function signedBoundaryDistance(center, boundary) {
 }
 
 /**
+ * The two terms of the largest-empty-circle radius, kept apart.
+ *
+ * The `hold` sizing law needs them separately because they are not the same
+ * kind of limit: the obstacle term is **soft** (a held glyph may overlap a
+ * neighbour) while the boundary term is **hard** (it may never be crossed).
+ * The footprint overlay additionally needs to draw *the specific obstacle*
+ * that capped a glyph, so the winning obstacle's identity comes back too.
+ *
+ * `largestEmptyCircleRadius` is exactly `Math.min` of the two terms; that
+ * reduction is byte-identical to the fused loop this replaced, and is required
+ * to stay so under ADR-0005.
+ *
+ * @param {{x:number,y:number}} center
+ * @param {{x:number,y:number,r:number}[]} obstacles
+ * @param {null|{type:'rect',width:number,height:number}|{type:'polygon',points:{x:number,y:number}[]}} boundary
+ * @returns {{boundary:number, obstacles:number, obstacle:null|{x:number,y:number,r:number}}}
+ *   `boundary` is the signed boundary distance, `Infinity` when boundary is
+ *   null. `obstacles` is the min clearance over the obstacle list, `Infinity`
+ *   when that list is empty. `obstacle` is whichever obstacle produced the
+ *   obstacle term — reported unconditionally, so it is still named when the
+ *   boundary term is the smaller of the two. Deciding which term won is the
+ *   caller's job. It is `null` when no obstacle ever bound the term (an empty
+ *   list, or a list whose every clearance is NaN — see below).
+ */
+export function largestEmptyCircleParts(center, obstacles = [], boundary = null) {
+  // Computed before the loop, exactly as the fused version did.
+  const boundaryTerm = signedBoundaryDistance(center, boundary);
+
+  // Seeded with Infinity rather than the boundary distance, so the two terms
+  // stay independent. The accumulation keeps the fused loop's `<` comparison
+  // rather than a per-iteration Math.min, and two behaviours ride on that:
+  // a NaN clearance never displaces anything (`NaN < x` is false, where
+  // Math.min would propagate the NaN instead), and exact ties between two
+  // obstacles select the first one encountered.
+  let obstacleTerm = Infinity;
+  let winner = null;
+
+  for (const obstacle of obstacles) {
+    const dist = Math.hypot(center.x - obstacle.x, center.y - obstacle.y);
+    const bound = dist - obstacle.r;
+    if (bound < obstacleTerm) {
+      obstacleTerm = bound;
+      winner = obstacle;
+    }
+  }
+
+  return { boundary: boundaryTerm, obstacles: obstacleTerm, obstacle: winner };
+}
+
+/**
  * Largest radius R of a circle centered at `center` that does not overlap
  * any obstacle and does not cross the boundary. A center inside an obstacle
  * or outside the boundary yields a value <= 0.
+ *
+ * A tie between the two terms resolves to the boundary, matching the fused
+ * loop it replaced (`bound < radius` was false at equality) — and since both
+ * terms hold the same value at a tie, `Math.min` selects that same value.
+ *
  * @param {{x:number,y:number}} center
  * @param {{x:number,y:number,r:number}[]} obstacles
  * @param {null|{type:'rect',width:number,height:number}|{type:'polygon',points:{x:number,y:number}[]}} boundary
  * @returns {number}
  */
 export function largestEmptyCircleRadius(center, obstacles = [], boundary = null) {
-  let radius = signedBoundaryDistance(center, boundary);
-
-  for (const obstacle of obstacles) {
-    const dist = Math.hypot(center.x - obstacle.x, center.y - obstacle.y);
-    const bound = dist - obstacle.r;
-    if (bound < radius) radius = bound;
-  }
-
-  return radius;
+  const p = largestEmptyCircleParts(center, obstacles, boundary);
+  return Math.min(p.boundary, p.obstacles);
 }
 
 /**

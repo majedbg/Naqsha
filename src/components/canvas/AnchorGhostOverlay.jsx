@@ -67,6 +67,13 @@ import { resolveSelection } from '../../lib/motif/compileSelectionToChain';
 import { coerceRoles } from '../../lib/motif/edgeRoles';
 import { resolvePlacements } from '../../lib/motif/placementEngine';
 import { isEdgeHost, hostHasPathStructure } from '../../lib/motif/hostKinds';
+import { useFootprintReveal } from '../shell/footprintRevealContext';
+import {
+  firstSequenceIndex,
+  placementsForScope,
+  rejectionsForScope,
+  captorDisc,
+} from './footprintScope';
 
 const ACCENT = '#7c3aed'; // violet — placed / included fill
 const EXCLUDE_STROKE = '#ef4444'; // red — force-excluded outline
@@ -77,6 +84,108 @@ const EXCLUDE_STROKE = '#ef4444'; // red — force-excluded outline
 // hidden; the dot says which glyph you are editing — but the filled-vs-hollow
 // SHAPE is left alone, so the state is still legible underneath.
 const SELECTED = 'var(--saffron)';
+
+// FOOTPRINT OVERLAY (#189, decision 14). Two rings per glyph on the hovered
+// slot: SOLID at `packedRadius` (what was RESERVED into the packer — the circle
+// that pushes neighbours around) and DASHED at `drawnRadius` (what was actually
+// DRAWN). They coincide at `hold 0`; their separation as the drag proceeds IS
+// the feature made visible, which is why one ring would not do — a single ring
+// draws the circle that is NOT the packing circle and teaches the wrong model at
+// exactly the moment the control is being learned.
+//
+// WHICH RING TAKES THE HEAVY STROKE is `capBy` read straight off the canvas, no
+// legend (decision 14). `capBy` names what bound `drawnRadius` — the radius the
+// user SEES (decision 15b) — so:
+//   'neighbour'          → the SOLID ring. The reserve is the lerp's floor, and
+//                          the neighbour is what set it.
+//   'boundary' | 'host'  → the DASHED ring, which is sitting exactly ON the hard
+//                          cap (`drawnRadius === hardCap`, an exact equality by
+//                          construction — placementEngine.js:617).
+//   'natural'            → NEITHER. Nothing is capping this glyph; two light
+//                          rings is the honest reading, and it is also the only
+//                          thing distinguishing "at hold 0, uncapped" from "at
+//                          hold 0, neighbour-capped", where the rings coincide
+//                          either way.
+// THAT MAPPING IS THE SATURATION ANSWER (story 25, decision 2b): as `hold`
+// climbs with `neighbourCap < hardCap < naturalTarget`, `capBy` is 'neighbour'
+// until `lerp > hardCap`, at which instant `drawnRadius` pins to `hardCap` and
+// `capBy` flips to the hard term — so the heavy stroke visibly JUMPS from the
+// solid ring to the dashed one at the moment the drag stops responding. The
+// canvas rect is deliberately NOT drawn (decision 17): the page edge is already
+// on screen, and drawing a second one over the artwork being judged buys
+// nothing.
+const RING_HEAVY = 3; // × the base stroke, on the binding ring
+
+// THE CAPTOR (#190, decisions 16/17). The rings above show THAT a glyph is
+// capped; one more circle per ringed glyph shows WHAT capped it — the specific
+// neighbour disc (`capObstacle`) or the host container (`anchor.hostRadius`),
+// selected in footprintScope.js and drawn here.
+//
+// DIMMER, and one only. It is the cause, not a second subject: the glyph's own
+// two rings stay the bright pair, and the captor sits behind them at a third of
+// the opacity. Drawn FIRST inside the same <g> so the glyph's rings paint over
+// it where they overlap — SVG has no z-index, document order is the whole
+// mechanism.
+//
+// WHAT LINKS IT TO THE GLYPH IS GEOMETRY, NOT A LEADER LINE. For 'neighbour'
+// the engine's own definition puts the two in contact: packedRadius =
+// margin × (d − r_obstacle), so at `margin: 1` the solid ring is EXACTLY
+// tangent to the captor and at the default 0.85 it stands off by 15% of the
+// gap — the captor is always the nearest disc, essentially touching the ring it
+// bound. For 'host' the glyph sits INSIDE the container and containment is the
+// link, with a leader line that would be near-zero long anyway. A second
+// element per glyph was the alternative and it doubles the mark count the
+// measurement below is about; the tangency is the cheaper answer and the one
+// to test by eye first.
+//
+// The captor usually belongs to a DIFFERENT slot than the hovered one. It is
+// drawn all the same — that is decision 16's point, not an exception to it.
+const CAPTOR_OPACITY = 0.3;
+
+// THE REJECTED RING (#191, §1b). At tight spacing glyphs do not shrink — they
+// are silently DELETED, and every survivor still reports 100%, so the layer
+// reads as deliberate and sparse. Two units of spacing separate "lose half your
+// work" from "keep all of it" and nothing anywhere says so. Every anchor the
+// engine rejected `below-floor` or `no-fit` therefore draws an empty ring AT THE
+// SIZE IT WANTED (`wantedRadius` = the natural target), turning four vanished
+// glyphs into four visible circles.
+//
+// A THIRD VISUAL CATEGORY, and it has to read as one at a glance: the reserved
+// ring is SOLID, the drawn ring is DASHED, this one is DOTTED — a genuinely
+// different pattern (a round dot on a wide gap, via strokeLinecap), not the
+// drawn ring's dash reused at another width.
+//
+// DIMMER THAN BOTH LIVE RINGS, because a rejection is an ABSENCE — the glyph is
+// not there. Above the captor (0.3), which is another glyph's business, and
+// below the two live rings (0.9), which are marks that actually inked.
+//
+// NO CAPTOR IS DRAWN, and that is a SHAPE fact, not a claim that nothing capped
+// these glyphs: a `Rejection` carries neither `capBy` nor `capObstacle`, so
+// there is nothing to select a captor from. It is emphatically NOT true that
+// they were "dropped uncapped" — `below-floor`, the headline case, is a glyph
+// capped so hard it fell through `sizing.min` (§1b: a neighbour cap of
+// 0.85 × (20 − 18) = 1.70 against a floor of 3), and that cap IS the causal
+// story. Only `no-fit` genuinely had no cap computed. Surfacing the captor for a
+// rejection is a real design question, deliberately left open here — do not read
+// this ring's plainness as it having been answered.
+const REJECTED_OPACITY = 0.55;
+
+// Stable identity for "nothing resolved", so the memos downstream of the
+// placement pipeline do not re-run on every render of an unresolvable overlay.
+const EMPTY_RESOLVED = Object.freeze({
+  placements: [],
+  survivors: [],
+  sequence: null,
+  rejected: [],
+  overrideRecords: null,
+});
+
+/** Which ring `capBy` marks as binding. null ⇒ nothing is capping this glyph. */
+const bindingRing = (capBy) => {
+  if (capBy === 'neighbour') return 'packed';
+  if (capBy === 'boundary' || capBy === 'host') return 'drawn';
+  return null; // 'natural', or an unrecognised value — mark nothing
+};
 
 // String-keyed record refs only (records may legally hold {x,y,role} refs too,
 // but this overlay only ever writes/reads id strings — spatial refs stay the
@@ -146,10 +255,16 @@ export default function AnchorGhostOverlay({
   const [openGlyph, setOpenGlyph] = useState(null); // { anchorId, rect } | null
   // Open across a gesture's live writes; see onFlushHistory above.
   const gestureOpen = useRef(false);
+  // THE FOOTPRINT REVEAL (#188/#189, decision 19). `scope` is null when nothing
+  // is revealed; it is an OPAQUE plain object — that file stores whatever a
+  // trigger passes and classifies none of it, so classification happens here
+  // (see footprintScope.js). Outside the provider this reads the frozen CLEARED
+  // value, so every existing standalone test of this overlay is unaffected.
+  const { scope: revealScope } = useFootprintReveal();
   // Every hook runs on every render (guards live INSIDE the memos, the single
   // early return is at the end). Mounting this overlay unconditionally means a
   // selection change must not change the hook count — Rules of Hooks.
-  const motif = useMemo(() => {
+  const selectedMotif = useMemo(() => {
     const list = layers || [];
     // PICK MODE takes precedence: the Route card's "Pick on canvas" arm lives in
     // the HOST's inspector, so the HOST (not the motif) is the selected layer
@@ -162,6 +277,31 @@ export default function AnchorGhostOverlay({
     }
     return list.find((l) => l.id === selectedLayerId && isMotifLayer(l)) || null;
   }, [layers, selectedLayerId, motifPick]);
+
+  // THE MOTIF A REVEAL NAMES — a SECOND selector, not a filter (#189).
+  //
+  // This is load-bearing and non-obvious: the slot card that raises the reveal
+  // lives in the MotifDevice, which the Inspector renders on the HOST layer and
+  // explicitly refuses to render on a motif layer (Inspector.jsx:1042). So while
+  // the user is hovering a `hold` row, the SELECTED layer is the host and
+  // `selectedMotif` is null — the render gate below would return null and the
+  // overlay would never draw. Exactly the fails-OFF signature the reveal context
+  // warns about, from a different cause. `scope.layerId` is what resolves it.
+  //
+  // Deliberately NOT folded into the memo above: the two answer different
+  // questions and only one of them may raise the ghost-dot field (see
+  // `ghostsVisible` at the render gate). One reveal ⇒ one extra memo pass, not
+  // one per drag frame — the context re-uses the stored scope object when a
+  // re-raise describes the same thing (`sameScope`).
+  const revealMotif = useMemo(() => {
+    const id = revealScope && revealScope.layerId;
+    if (!id) return null;
+    return (layers || []).find((l) => l.id === id && isMotifLayer(l)) || null;
+  }, [layers, revealScope]);
+
+  // Selection (or the pick arm) wins: a reveal must never silently retarget an
+  // overlay the user is already editing through.
+  const motif = selectedMotif || revealMotif;
 
   const host = useMemo(
     () => (motif ? (layers || []).find((l) => l.id === motifHostId(motif)) || null : null),
@@ -263,27 +403,120 @@ export default function AnchorGhostOverlay({
     [motif, host]
   );
 
-  const placements = useMemo(() => {
-    if (!anchors || !motif) return [];
+  const resolved = useMemo(() => {
+    if (!anchors || !motif) return EMPTY_RESOLVED;
     // EDGE hosts run the same pipeline (#141) — placed/candidate is what the
     // override dots are made of.
-    const { survivors, sequence } = resolveSelection(binding, anchors, {
+    const { survivors, sequence, overrideRecords } = resolveSelection(binding, anchors, {
       canvasW,
       canvasH,
       overrides: binding.overrides,
     });
     const placementConfig = { ...(binding.placement || {}) };
     if (sequence) placementConfig.sequence = sequence;
-    // `overrideRecords` (the post-placement per-glyph scale/angle map, #137) is
-    // deliberately NOT threaded here: this overlay reads only `anchorId` off the
-    // placements (to compute `placedIds` below), and per-glyph scale/angle change
-    // neither which anchors are placed nor their x/y. Thread it if this overlay
-    // ever starts drawing footprints at their real radius/rotation.
-    const { placements: p } = resolvePlacements(survivors, placementConfig, {
+    // `overrideRecords` (the post-placement per-glyph scale/angle map, #137) IS
+    // threaded now. It used to be deliberately omitted, on the recorded ground
+    // that this overlay read only `anchorId` off the placements — with the note
+    // "thread it if this overlay ever starts drawing footprints at their real
+    // radius/rotation". THAT PRECONDITION HAS FIRED (#189): the footprint rings
+    // below are drawn at `packedRadius` / `drawnRadius`, and per-glyph overrides
+    // apply AFTER packing (overrides.js `applyGlyphOverrides`), so without this
+    // the rings would not be the rings on screen.
+    //
+    // ⚠️ `applyGlyphOverrides` scales `drawnRadius` alongside `radius` and
+    // deliberately leaves `packedRadius` alone — the reserve genuinely did not
+    // move, packing never saw the override. So on an overridden glyph the two
+    // rings legitimately differ even at `hold 0`. That is the truth, not a bug.
+    //
+    // SURVIVORS AND SEQUENCE COME OUT TOO, for the slot→placement mapping the
+    // footprint overlay needs (footprintScope.js). `Placement` carries no slot
+    // field and must not gain one.
+    //
+    // `rejected` COMES OUT TOO (#191). Both callers of the resolver used to
+    // discard it, which is how the vanishing glyphs stayed invisible: the data
+    // explaining them already existed and nothing carried it to a mark.
+    //
+    // AND `overrideRecords` ITSELF, for the same reason it is threaded above: a
+    // REJECTED anchor never reached `applyGlyphOverrides` (that pass rewrites
+    // finished placements only), so its ring has to be scaled by the selector
+    // instead — see `rejectionsForSlotScope`. Without it the dotted ring and the
+    // dashed ring that replaces it on rescue would disagree by exactly the
+    // override's scale.
+    const { placements, rejected } = resolvePlacements(survivors, placementConfig, {
       boundary: { type: 'rect', width: canvasW, height: canvasH },
+      overrideRecords,
     });
-    return p;
+    return { placements, survivors, sequence, rejected, overrideRecords };
   }, [anchors, motif, binding, canvasW, canvasH]);
+  const placements = resolved.placements;
+
+  // THE REVEALED PLACEMENTS — whichever control raised the reveal (#192). The
+  // component asks ONE selector and draws ONE list; which kind of scope it is
+  // holding is `footprintScope.js`'s business and never leaks in here, because
+  // "one overlay, N triggers" has to stay true as PR 2 adds a fifth.
+  //
+  // A SLOT hover rings the hovered slot's glyphs only — decision 16: every
+  // placement on the layer stays legible on a sparse host and becomes a grey
+  // haze at MAX_PLACEMENTS. A LAYER trigger (Size) is outside what that decision
+  // answered and rings the whole layer; a GLYPH trigger rings exactly one. Each
+  // returns `null` when the scope names nothing here, `[]` when it names
+  // something that currently places nothing.
+  //
+  // Gated on the reveal naming the SAME motif the pipeline above resolved: with
+  // a motif layer selected AND a different motif's slot hovered, `motif` is the
+  // selected one and these placements would describe the wrong layer.
+  const footprintPlacements = useMemo(() => {
+    if (!motif || !revealMotif || revealMotif.id !== motif.id) return null;
+    return placementsForScope(revealScope, {
+      motifId: motif.id,
+      seqIndex: firstSequenceIndex(readChain(motif.params?.binding)),
+      survivors: resolved.survivors,
+      sequence: resolved.sequence,
+      placements: resolved.placements,
+    });
+  }, [motif, revealMotif, revealScope, resolved]);
+
+  // THE REVEALED LOSSES (#191) — the anchors the reveal names that never became
+  // glyphs. Gated EXACTLY like `footprintPlacements` above (same motif identity
+  // check, same scope), because it answers the same question about the same
+  // thing; only the list it reads differs. `null` when the scope names nothing
+  // here or the run rejected nothing at all.
+  const footprintRejections = useMemo(() => {
+    if (!motif || !revealMotif || revealMotif.id !== motif.id) return null;
+    return rejectionsForScope(revealScope, {
+      motifId: motif.id,
+      seqIndex: firstSequenceIndex(readChain(motif.params?.binding)),
+      survivors: resolved.survivors,
+      sequence: resolved.sequence,
+      rejected: resolved.rejected,
+      // The per-glyph scale a rejected anchor never got to apply (#137/#191).
+      overrideRecords: resolved.overrideRecords,
+    });
+  }, [motif, revealMotif, revealScope, resolved]);
+
+  // THE CAPTORS — anchorId → the one disc capping that glyph, or absent (#190).
+  // Keyed by anchorId rather than positionally so the render cannot drift out
+  // of alignment with the list it is drawing.
+  //
+  // The ANCHOR LOOKUP is built lazily, and only when some glyph on the hovered
+  // slot is actually 'host'-capped. `capObstacle` is self-contained, so on every
+  // host but the three that emit `hostRadius` (circlepacking, modulegrid,
+  // truchet cells) this pass never touches `survivors` at all — and this memo
+  // re-runs on every frame of a `hold` drag, since `resolved` does.
+  const footprintCaptors = useMemo(() => {
+    if (!footprintPlacements || footprintPlacements.length === 0) return null;
+    let anchorsById = null;
+    const out = new Map();
+    for (const p of footprintPlacements) {
+      if (p.capBy === 'host' && !anchorsById) {
+        anchorsById = new Map();
+        for (const a of resolved.survivors) if (a && a.id != null) anchorsById.set(a.id, a);
+      }
+      const disc = captorDisc(p, anchorsById ? anchorsById.get(p.anchorId) : null);
+      if (disc) out.set(p.anchorId, disc);
+    }
+    return out;
+  }, [footprintPlacements, resolved]);
 
   // Is THIS motif's Route card armed for path picking on an EDGE host? That is
   // the ONE thing that decides which of the two render paths runs — and it also
@@ -376,6 +609,148 @@ export default function AnchorGhostOverlay({
       </svg>
     );
   }
+
+  // ── FOOTPRINT OVERLAY (#189) ───────────────────────────────────────────────
+  // A THIRD, independent render path, and the only one that is not driven by
+  // selection: the reveal raises it while the user hovers or drags a `hold` row
+  // in the HOST's inspector, where no motif is selected at all. It is therefore
+  // computed here, ABOVE the override overlay's own machinery, and returned on
+  // its own when nothing is selected — so this overlay never grows a ghost-dot
+  // field the user did not ask for (decision 16 is about not drawing a
+  // population; a full dot field raised by a size drag is the same mistake in a
+  // different mark).
+  //
+  // Stroke widths are in CANVAS units like everything else here (the parent
+  // scales the box), floored so they survive a small canvas.
+  const ringW = Math.max(0.75, Math.min(canvasW, canvasH) * 0.0018);
+  // ⚠️ THE GATE IS PLACEMENTS **OR** REJECTIONS (#191). It used to be placements
+  // alone, and that silently switched this whole slice off in exactly the case
+  // it exists for: §1b's gap-20 slot, at the limit, places NOTHING and rejects
+  // everything — so the <svg> never rendered and the four dotted rings that
+  // explain the mystery had nowhere to live. A slot with both placed and
+  // rejected anchors hides the bug completely.
+  const hasFootprint =
+    (footprintPlacements && footprintPlacements.length > 0) ||
+    (footprintRejections && footprintRejections.length > 0);
+  const footprint =
+    hasFootprint ? (
+      <svg
+        data-testid="motif-footprint-overlay"
+        data-mode="footprint"
+        className="pointer-events-none absolute inset-0"
+        width={canvasW}
+        height={canvasH}
+        viewBox={`0 0 ${canvasW} ${canvasH}`}
+        aria-hidden="true"
+      >
+        {/* `|| []` because the gate above is now an OR: with an all-rejected
+            slot this list is legitimately null and the rings below are the
+            entire content of the overlay. */}
+        {(footprintPlacements || []).map((p) => {
+          const binds = bindingRing(p.capBy);
+          // Dash scaled to the ring it rides so it reads as "dashed" on a 4-unit
+          // glyph and on a 60-unit one alike.
+          const dash = Math.max(2, p.drawnRadius * 0.3);
+          const captor = footprintCaptors ? footprintCaptors.get(p.anchorId) : null;
+          return (
+            <g
+              key={p.anchorId}
+              data-anchor-id={p.anchorId}
+              data-cap-by={p.capBy}
+              data-saturated={p.saturated ? 'true' : undefined}
+            >
+              {/* THE CAPTOR — the neighbour disc or the host container. First,
+                  so the glyph's own rings paint over it, and dim, so it reads as
+                  the cause rather than a second subject. Absent for 'natural'
+                  (nothing capped this glyph) and for 'boundary' (decision 17 —
+                  the page edge is already on screen). */}
+              {captor ? (
+                <circle
+                  data-captor={captor.kind}
+                  cx={captor.x}
+                  cy={captor.y}
+                  r={captor.r}
+                  fill="none"
+                  stroke={ACCENT}
+                  strokeOpacity={CAPTOR_OPACITY}
+                  strokeWidth={ringW}
+                />
+              ) : null}
+              {/* RESERVED — what pushes neighbours around. */}
+              <circle
+                data-ring="packed"
+                cx={p.x}
+                cy={p.y}
+                r={p.packedRadius}
+                fill="none"
+                stroke={ACCENT}
+                strokeOpacity={0.9}
+                strokeWidth={binds === 'packed' ? ringW * RING_HEAVY : ringW}
+              />
+              {/* DRAWN — what actually inked. Coincident at `hold 0`. */}
+              <circle
+                data-ring="drawn"
+                cx={p.x}
+                cy={p.y}
+                r={p.drawnRadius}
+                fill="none"
+                stroke={ACCENT}
+                strokeOpacity={0.9}
+                strokeWidth={binds === 'drawn' ? ringW * RING_HEAVY : ringW}
+                strokeDasharray={`${dash} ${dash}`}
+              />
+            </g>
+          );
+        })}
+        {/* THE LOSSES (#191) — one DOTTED empty ring per anchor this slot was
+            dealt and never got to draw, at the size it wanted. Rendered AFTER
+            the placed glyphs so a ring that overlaps a real one reads as the
+            ghost behind it. No captor, because a `Rejection` carries no `capBy`
+            and no `capObstacle` to select one from — NOT because nothing capped
+            these glyphs. `below-floor` means capped clean through the floor; see
+            REJECTED_OPACITY above. */}
+        {(footprintRejections || []).map((r) => (
+          <g
+            key={`rejected:${r.anchorId}`}
+            data-rejected="true"
+            data-anchor-id={r.anchorId}
+            data-reason={r.reason}
+          >
+            <circle
+              data-ring="rejected"
+              cx={r.x}
+              cy={r.y}
+              r={r.wantedRadius}
+              fill="none"
+              stroke={ACCENT}
+              strokeOpacity={REJECTED_OPACITY}
+              strokeWidth={ringW}
+              // A ROUND DOT on a wide gap — a round cap over a dash far shorter
+              // than the stroke is thick, so each mark is a circle of diameter
+              // `ringW`. That is what makes this read as a THIRD category beside
+              // the solid and the dashed ring rather than as a variant of either
+              // (the drawn ring is a 50%-duty dash; this is a dot on air). The
+              // gap is scaled to the ring it rides, like that dash, so it reads
+              // as dotted on a 4-unit ring and on a 60-unit one alike.
+              //
+              // 0.01 and NOT 0: a zero-length dash with a round cap is specified
+              // to paint a dot, and does in every current browser, but it is
+              // also the exact case a renderer is most likely to drop — and this
+              // ring vanishing is the precise failure the feature exists to fix.
+              // The epsilon is geometrically invisible next to `ringW` and the
+              // cap still sizes the dot.
+              strokeLinecap="round"
+              strokeDasharray={`0.01 ${Math.max(3, r.wantedRadius * 0.22)}`}
+            />
+          </g>
+        ))}
+      </svg>
+    ) : null;
+
+  // REVEAL-ONLY: no layer is selected through this overlay, so there is no dot
+  // field and no popover to render. `footprint` is null when nothing is
+  // revealed, which is today's behaviour for an unselected motif exactly.
+  if (!selectedMotif) return footprint;
 
   // `binding` is the COERCED one resolved at hook level — the same value the
   // placement pipeline above ran on (#154 A2). Everything below reads role and
@@ -566,6 +941,15 @@ export default function AnchorGhostOverlay({
         (!placedIds.has(openGlyph.anchorId) && !includeIds.has(openGlyph.anchorId))}
       scale={resolvedScale}
       angle={resolvedAngle}
+      // THE FOOTPRINT REVEAL for this card's SCALE row (#192, decision 18).
+      // Passed down rather than built in the popover because this component is
+      // the one that knows both ids, and handed as an opaque scope so the card
+      // stays a control surface with no notion of what a footprint is. The
+      // popover scopes it to the scale row alone — the angle dial beside it
+      // moves no radius. Built inline: `sameScope` compares value-wise, so a
+      // fresh object per render re-uses the stored reveal rather than
+      // re-rendering the overlay every frame of a drag.
+      footprintScope={{ kind: 'glyph', layerId: motif.id, anchorId: openGlyph.anchorId }}
       label={motif.name || 'Glyph'}
       // Live frames: the canvas updates throughout, all folded into this
       // gesture's single undo entry.
@@ -658,8 +1042,11 @@ export default function AnchorGhostOverlay({
     </svg>
   );
 
+  // Footprint FIRST so the ghost dots paint over it: the dots are the clickable
+  // surface, and a heavy binding stroke passing through one must not hide it.
   return (
     <>
+      {footprint}
       {ghosts}
       {popover}
     </>

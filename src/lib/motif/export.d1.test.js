@@ -36,8 +36,9 @@ const DIAGONAL_HOST = [{ points: [{ x: 100, y: 100 }, { x: 300, y: 300 }], close
 // Verbatim built-in glyph `d` (mirrors glyphs.js) — asserting the RIGHT glyph
 // reached the RIGHT slot, which parity alone cannot catch.
 // Verbatim copy of the built-in leaf `d` (glyphs.js) used as an export oracle.
-// Updated for the base-at-origin hanging-blade leaf (2026-07).
-const LEAF_D = 'M0,0 L6,-6 L14,-5 L20,-0.5 L18,3 L11,4.5 L4,3 Z';
+// Updated for the curved re-author (2026-07-28): two cubic flanks sharing the
+// base (0,0) and tip (20,-1) endpoints, closed with Z.
+const LEAF_D = 'M0,0 C4,-9 14,-9 20,-1 C15,4 6,5 0,0 Z';
 const DOT_D =
   'M3,0 L2.1213,2.1213 L0,3 L-2.1213,2.1213 L-3,0 L-2.1213,-2.1213 L0,-3 L2.1213,-2.1213 Z';
 
@@ -156,7 +157,7 @@ describe('D1 — multi-glyph SVG export golden (buildAllLayersSVG)', () => {
     expect(det(insts[0].matrix)).toBeLessThan(0); // slot 0 flipped → mirror
     expect(det(insts[1].matrix)).toBeGreaterThan(0);
     expect(Math.abs(insts[0].matrix[1])).toBeGreaterThan(1e-6); // rotation manifested
-    expect(insts[0].paths[0].points.length).toBe(7); // leaf
+    expect(insts[0].paths[0].points.length).toBe(33); // leaf: 2 cubic flanks x 16-step sampling + base
     expect(insts[1].paths[0].points.length).toBe(8); // dot
 
     const canvasPolys = canvasPolylines(ctx.calls);

@@ -622,3 +622,114 @@ describe('sequenceSlots — "the slots of a block", flat or zoned', () => {
     expect(sequenceSlots([{ glyphRef: 'A' }])).toEqual([]); // an array is not a block
   });
 });
+
+// ── #186 — `hold` and `zoneId` on the Assignment ─────────────────────────────
+describe('makeAssignment — `hold` is carried from the Slot, absent meaning 0', () => {
+  it('carries the slot value verbatim', () => {
+    const assigns = dealSlots(row(2), seqBlock({ slots: [{ glyphRef: 'A', hold: 0.4 }] }));
+    expect(assigns.map((a) => a.hold)).toEqual([0.4, 0.4]);
+  });
+
+  it('a slot that OMITS `hold` yields 0 — never undefined, never NaN', () => {
+    const assigns = dealSlots(row(2), seqBlock({ slots: [{ glyphRef: 'A' }] }));
+    expect(assigns.map((a) => a.hold)).toEqual([0, 0]);
+    for (const a of assigns) expect(Number.isNaN(a.hold)).toBe(false);
+  });
+
+  it('`hold: null` reads as absent, `hold: 0` is the explicit default', () => {
+    const [nulled] = dealSlots(row(1), seqBlock({ slots: [{ glyphRef: 'A', hold: null }] }));
+    const [zeroed] = dealSlots(row(1), seqBlock({ slots: [{ glyphRef: 'A', hold: 0 }] }));
+    expect(nulled.hold).toBe(0);
+    expect(zeroed.hold).toBe(0);
+  });
+
+  it('a Rest placeholder carries `hold: 0` alongside its `sizeScale: 1`', () => {
+    const assigns = dealSlots(row(2), seqBlock({ slots: [{ rest: true, hold: 1 }] }));
+    expect(assigns.map((a) => a.rest)).toEqual([true, true]);
+    expect(assigns.map((a) => a.hold)).toEqual([0, 0]);
+    expect(assigns.map((a) => a.sizeScale)).toEqual([1, 1]);
+  });
+
+  it('rides through the zoned deal per zone', () => {
+    const survivors = [
+      mkZ('tip:0', { role: 'tip', pathIndex: 0 }),
+      mkZ('edge:0:a', { role: 'edge', pathIndex: 0 }),
+      mkZ('tip:1', { role: 'tip', pathIndex: 0, y: 10 }),
+    ];
+    const assigns = dealSlots(survivors, {
+      type: 'sequence',
+      seed: 1,
+      zones: [
+        { zone: 'apex', slots: [{ glyphRef: 'F', hold: 1 }] },
+        { zone: 'stem', slots: [{ glyphRef: 'L' }] },
+      ],
+    });
+    expect(assigns.map((a) => a.hold)).toEqual([1, 0, 1]);
+  });
+});
+
+describe('makeAssignment — `zoneId`, so a revealed slot can be mapped back', () => {
+  it('is null throughout the FLAT deal (a flat block has no zones)', () => {
+    const assigns = dealSlots(row(3), seqBlock({ slots: [{ glyphRef: 'A' }, { glyphRef: 'B' }] }));
+    expect(assigns.map((a) => a.zoneId)).toEqual([null, null, null]);
+  });
+
+  it('names the zone each survivor was dealt from', () => {
+    const survivors = [
+      mkZ('tip:0:hi', { role: 'tip', x: 0, y: 0, pathIndex: 0 }),
+      mkZ('edge:0:a', { role: 'edge', x: 0, y: 3, pathIndex: 0 }),
+      mkZ('cell:0', { role: 'cell', x: 0, y: 5, pathIndex: 0 }),
+      mkZ('tip:0:lo', { role: 'tip', x: 0, y: 10, pathIndex: 0 }),
+    ];
+    const assigns = dealSlots(survivors, {
+      type: 'sequence',
+      seed: 1,
+      zones: [
+        { zone: 'apex', slots: [{ glyphRef: 'F' }] },
+        { zone: 'stem', slots: [{ glyphRef: 'L' }] },
+        { zone: 'cell', slots: [{ glyphRef: 'R' }] },
+      ],
+    });
+    expect(assigns.map((a) => a.zoneId)).toEqual(['apex', 'stem', 'cell', 'apex']);
+  });
+
+  it('disambiguates a zone-local slotIndex — apex slot 1 is not stem slot 1', () => {
+    const survivors = [
+      mkZ('tip:0:hi', { role: 'tip', x: 0, y: 0, pathIndex: 0 }),
+      mkZ('tip:0:lo', { role: 'tip', x: 0, y: 10, pathIndex: 0 }),
+      mkZ('edge:0:a', { role: 'edge', x: 0, y: 3, pathIndex: 0 }),
+      mkZ('edge:0:b', { role: 'edge', x: 0, y: 7, pathIndex: 0 }),
+    ];
+    const assigns = dealSlots(survivors, {
+      type: 'sequence',
+      seed: 1,
+      zones: [
+        { zone: 'apex', slots: [{ glyphRef: 'F' }, { glyphRef: 'G' }] },
+        { zone: 'stem', slots: [{ glyphRef: 'L' }, { glyphRef: 'M' }] },
+      ],
+    });
+    const keyed = assigns.map((a) => `${a.zoneId}:${a.slotIndex}`);
+    expect(new Set(keyed).size).toBe(4); // all four are distinct slots
+    expect(keyed).toEqual(['apex:0', 'apex:1', 'stem:0', 'stem:1']);
+  });
+
+  it('a Rest placeholder carries no zone identity (it produces no placement)', () => {
+    // The cell is in no NAMED zone, and the stem zone has no slots at all.
+    const survivors = [
+      mkZ('tip:0:hi', { role: 'tip', x: 0, y: 0, pathIndex: 0 }),
+      mkZ('edge:0:a', { role: 'edge', x: 0, y: 3, pathIndex: 0 }),
+      mkZ('cell:0', { role: 'cell', x: 0, y: 5, pathIndex: 0 }),
+      mkZ('tip:0:lo', { role: 'tip', x: 0, y: 10, pathIndex: 0 }),
+    ];
+    const assigns = dealSlots(survivors, {
+      type: 'sequence',
+      seed: 1,
+      zones: [
+        { zone: 'apex', slots: [{ rest: true }] },
+        { zone: 'stem', slots: [] },
+      ],
+    });
+    expect(assigns.map((a) => a.rest)).toEqual([true, true, true, true]);
+    expect(assigns.map((a) => a.zoneId)).toEqual([null, null, null, null]);
+  });
+});

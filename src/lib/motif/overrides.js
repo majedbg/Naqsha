@@ -282,6 +282,19 @@ export function applyGlyphOverrides(placements, byAnchorId) {
     if (scale != null) {
       next.radius = placement.radius * scale;
       next.scale = placement.scale * scale;
+      // `drawnRadius` (#186) is "the radius that was drawn", and this step is
+      // the last thing that decides it — so it moves with `radius`. Leaving it
+      // stale would make the footprint overlay's dashed ring stop tracking the
+      // glyph the moment an override scale is dragged.
+      //
+      // `packedRadius` and the four cap/diagnostic fields are DELIBERATELY left
+      // alone: the reserve genuinely did not move. This pass runs outside the
+      // packing loop by design, so an override may push `drawnRadius` past
+      // `hardCap` — the `drawnRadius <= hardCap` invariant is scoped to `hold`
+      // and asserted inside the sizing branch. That is the same pre-existing
+      // #137 behaviour by which an overridden glyph may already exceed every
+      // cap and overlap its neighbours, not a new escape hatch.
+      next.drawnRadius = placement.drawnRadius * scale;
     }
     if (angle != null) next.rotation = angle;
     return next;

@@ -522,7 +522,10 @@ describe('resolvePlacements — sizing fixed', () => {
       sizing: { mode: 'fixed', size: 5 },
     });
     expect(placements.map((p) => p.anchorId)).toEqual(['a0']);
-    expect(rejected).toEqual([{ anchorId: 'a1', reason: 'no-fit' }]);
+    // Sizing-stage rejections carry their geometry (#191) — see the dedicated
+    // describe below. In `fixed` mode `wantedRadius` is the literal fixed
+    // radius, `size × scaleFactor × sizeScale`.
+    expect(rejected).toEqual([{ anchorId: 'a1', reason: 'no-fit', x: 3, y: 0, wantedRadius: 5 }]);
   });
 
   it("rejects 'below-floor' when radius < min", () => {
@@ -530,7 +533,93 @@ describe('resolvePlacements — sizing fixed', () => {
       sizing: { mode: 'fixed', size: 2, min: 5 },
     });
     expect(placements).toEqual([]);
-    expect(rejected).toEqual([{ anchorId: 'a0', reason: 'below-floor' }]);
+    expect(rejected).toEqual([
+      { anchorId: 'a0', reason: 'below-floor', x: 0, y: 0, wantedRadius: 2 },
+    ]);
+  });
+});
+
+// ── REJECTION GEOMETRY (#191, PRD #184) ────────────────────────────────────
+// The footprint overlay draws every SIZING-STAGE rejection as a dotted empty
+// ring at the size it wanted, so the four glyphs that silently vanish at gap 20
+// (§1b) become four visible circles. It cannot derive that ring on its own: the
+// centre is POST-JITTER and the wanted radius depends on `placed`, `margin`,
+// `scaleFactor` and `sizeScale`. So the engine reports it.
+//
+// `wantedRadius` is the NATURAL TARGET (`size × scaleFactor × sizeScale`), not
+// the drawn radius. It is the only value defined for BOTH reasons — a `no-fit`
+// at `R <= 0` never computes a radius at all — decision 7 defines naturalTarget
+// as literally "the size I want", and a below-floor glyph's drawn radius is by
+// definition below the floor, so a ring drawn there would be an invisible speck.
+//
+// The shape is deliberately NON-UNIFORM: `junction-skip` and `rest` reject
+// before the placement centre exists and stay bare `{anchorId, reason}`.
+describe('resolvePlacements — rejection geometry (#191)', () => {
+  const boundary = { type: 'rect', width: 100, height: 100 };
+
+  it('a below-floor rejection carries the post-jitter centre and the radius it wanted', () => {
+    // No jitter amounts ⇒ the centre IS the anchor and the natural target is
+    // the literal size; a floor above it rejects.
+    const { placements, rejected } = resolvePlacements(
+      [mkA('a0', 50, 50)],
+      { sizing: { mode: 'proportional', size: 10, min: 1000 } },
+      { boundary },
+    );
+    expect(placements).toEqual([]);
+    expect(rejected).toEqual([
+      { anchorId: 'a0', reason: 'below-floor', x: 50, y: 50, wantedRadius: 10 },
+    ]);
+  });
+
+  it('a no-fit rejection carries them too — the R <= 0 path rejects before any radius exists', () => {
+    // a1's centre sits INSIDE a0's committed disc, so the engine bails out of
+    // proportional sizing before computing a cap. `wantedRadius` is the only
+    // radius this rejection could ever report.
+    const { placements, rejected } = resolvePlacements(
+      [mkA('a0', 50, 50), mkA('a1', 52, 50)],
+      { sizing: { mode: 'proportional', size: 10, min: 0, margin: 1 } },
+      { boundary },
+    );
+    expect(placements.map((p) => p.anchorId)).toEqual(['a0']);
+    expect(rejected).toEqual([
+      { anchorId: 'a1', reason: 'no-fit', x: 52, y: 50, wantedRadius: 10 },
+    ]);
+  });
+
+  it('`wantedRadius` tracks `sizeScale` — decision 7 puts it INSIDE the natural target', () => {
+    const below = (sizeScale) =>
+      resolvePlacements(
+        [mkA('a0', 50, 50)],
+        {
+          sequence: { type: 'sequence', mode: 'cycle', slots: [{ glyphRef: 'g', sizeScale }] },
+          sizing: { mode: 'proportional', size: 10, min: 1000 },
+        },
+        { boundary },
+      ).rejected[0];
+    expect(below(1).wantedRadius).toBe(10);
+    expect(below(2).wantedRadius).toBe(20);
+  });
+
+  it('junction-skip and rest stay BARE — at those two sites the centre does not exist yet', () => {
+    // Not a uniformity bug. Both reject at the top of the loop, above the
+    // transform that computes x/y, and neither is a rejection the user needs
+    // explained — the overlay draws nothing for them.
+    const skip = resolvePlacements(
+      [mkA('a0', 50, 50, { junction: true })],
+      { sizing: { mode: 'fixed', size: 5 }, junction: 'skip' },
+      { boundary },
+    );
+    expect(skip.rejected).toEqual([{ anchorId: 'a0', reason: 'junction-skip' }]);
+
+    const rest = resolvePlacements(
+      [mkA('a0', 50, 50)],
+      {
+        sequence: { type: 'sequence', mode: 'cycle', slots: [{ rest: true }] },
+        sizing: { mode: 'fixed', size: 5 },
+      },
+      { boundary },
+    );
+    expect(rest.rejected).toEqual([{ anchorId: 'a0', reason: 'rest' }]);
   });
 });
 
@@ -822,7 +911,14 @@ describe('resolvePlacements — Sequencer Rest reserves no footprint', () => {
 
     // a2 is REJECTED when a1 is a glyph (footprint blocks it)...
     expect(byAnchorId(allGlyph.placements, 'a2')).toBeUndefined();
-    expect(allGlyph.rejected).toContainEqual({ anchorId: 'a2', reason: 'no-fit' });
+    // Rotation-only jitter ⇒ the centre is still exactly the anchor (#191).
+    expect(allGlyph.rejected).toContainEqual({
+      anchorId: 'a2',
+      reason: 'no-fit',
+      x: 9,
+      y: 0,
+      wantedRadius: 2.5,
+    });
     // ...but ACCEPTED when a1 is a rest (rest reserved no footprint).
     expect(byAnchorId(withRest.placements, 'a2')).toBeDefined();
     // The rest is surfaced as a disposition, not silently dropped.
@@ -859,7 +955,14 @@ describe('resolvePlacements — Sequencer sizeScale drives acceptance packing', 
     });
     expect(byAnchorId(bigger.placements, 'a0').radius).toBe(2);
     expect(bigger.placements.map((p) => p.anchorId)).toEqual(['a0']);
-    expect(bigger.rejected).toContainEqual({ anchorId: 'a1', reason: 'no-fit' });
+    // a1's own slot carries no sizeScale, so the ring it wanted is radius 1.
+    expect(bigger.rejected).toContainEqual({
+      anchorId: 'a1',
+      reason: 'no-fit',
+      x: 2.5,
+      y: 0,
+      wantedRadius: 1,
+    });
   });
 });
 

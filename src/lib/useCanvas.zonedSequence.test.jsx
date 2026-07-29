@@ -89,10 +89,11 @@ describe('useCanvas — ZONED sequence Block at the glyph-resolution seam (ADR 0
     await waitFor(() => {
       const els = result.current.patternInstances.mo.svgElements;
       expect(els.length).toBeGreaterThan(0);
-      // 'M0,0 L6,-6' is the base-at-origin leaf's distinctive opening (glyphs.js).
-      // A slot glyph that never made it into the injected map would be skipped,
-      // so its presence proves the ZONE's slots were collected.
-      expect(els.some((el) => el.includes('M0,0 L6,-6'))).toBe(true);
+      // 'M0,0 C4,-9' is the base-at-origin leaf's distinctive opening (glyphs.js,
+      // curved re-author 2026-07-28). A slot glyph that never made it into the
+      // injected map would be skipped, so its presence proves the ZONE's slots
+      // were collected.
+      expect(els.some((el) => el.includes('M0,0 C4,-9'))).toBe(true);
     });
   });
 });

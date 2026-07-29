@@ -8,6 +8,10 @@ import { render, screen, fireEvent, within } from "@testing-library/react";
 import Inspector from "./Inspector";
 import { InspectorDockProvider } from "./inspectorDockContext";
 import {
+  FootprintRevealProvider,
+  useFootprintReveal,
+} from "./footprintRevealContext";
+import {
   MOTIF_TYPE,
   createMotifParams,
   deepMergeBinding,
@@ -1896,5 +1900,89 @@ describe("Route role availability on the #144 edge hosts", () => {
     for (const role of ["crossing", "edge", "tip", "cell"]) {
       expect(screen.getByTestId(`motif-block-role-${role}`)).toBeTruthy();
     }
+  });
+});
+
+// ── LAYER SIZE RAISES THE FOOTPRINT REVEAL (#192, PRD #184) ─────────────────
+// Every control that moves a radius raises the same overlay, so the user never
+// has to learn which controls explain themselves. `hold` and slot Scale are
+// wired in the rack; Size is wired here, and it is the odd one out in two ways
+// that this block exists to pin.
+//
+// 1. IT HAS NO DRAG LIFECYCLE. Size is a bare `<input type="number">` — no
+//    useDragValue, no DragNumber — so hover and FOCUS are the whole gesture.
+//    Focus is not a nicety: a field reached by TAB never receives a
+//    `pointerenter`, and the control would explain itself to a mouse and stay
+//    silent to a keyboard.
+// 2. ITS SCOPE NAMES THE MOTIF, NOT THE HOST. This device renders on the HOST
+//    and is refused outright on a motif layer, so while Size is hoverable NO
+//    motif is selected — the canvas overlay finds the layer through
+//    `scope.layerId` alone, which makes it a SELECTOR rather than a filter.
+//    A scope carrying the host's id would ring nothing, silently.
+//
+// Asserted through the reveal context's own public `scope`, exactly as
+// footprintRevealContext.test.jsx does. The other half of the wire — that the
+// overlay actually draws when a layer scope arrives with no motif selected —
+// lives in AnchorGhostOverlay.footprintReveal.test.jsx.
+describe("layer Size — the footprint reveal (#192)", () => {
+  function Readout() {
+    const { scope } = useFootprintReveal();
+    return <div data-testid="reveal-scope">{scope ? JSON.stringify(scope) : "none"}</div>;
+  }
+
+  const LAYER_SCOPE = JSON.stringify({ kind: "layer", layerId: "m1" });
+
+  function mount(onUpdateLayer = () => {}) {
+    const motif = motifLayer("m1", "host1", defaultBinding);
+    render(
+      <FootprintRevealProvider>
+        <Readout />
+        <Inspector
+          layers={[hostLayer("host1", "grid"), motif]}
+          selectedLayerId="host1"
+          onUpdateLayer={onUpdateLayer}
+          onChangeLayerPattern={() => {}}
+        />
+      </FootprintRevealProvider>
+    );
+    fireEvent.click(screen.getByTestId("motif-toggle"));
+    const field = screen.getByTestId("motif-size");
+    return { field, row: field.parentElement };
+  }
+
+  const scope = () => screen.getByTestId("reveal-scope").textContent;
+
+  it("raises a LAYER scope naming the motif on hover, and releases on leave", () => {
+    const { row } = mount();
+    expect(scope()).toBe("none");
+    fireEvent.pointerEnter(row);
+    expect(scope()).toBe(LAYER_SCOPE);
+    fireEvent.pointerLeave(row);
+    expect(scope()).toBe("none");
+  });
+
+  it("raises it on FOCUS with no pointer at all, and releases on blur", () => {
+    const { field } = mount();
+    fireEvent.focus(field);
+    expect(scope()).toBe(LAYER_SCOPE);
+    fireEvent.blur(field);
+    expect(scope()).toBe("none");
+  });
+
+  it("still writes Size, and typing strands nothing", () => {
+    // THE TRAP: routing this field's own `onChange` through the trigger's
+    // `onChange` calls `beginDrag()`, which latches `dragging` and arms a
+    // once-only window `pointerup` guard. A keystroke fires no `pointerup`, so
+    // the latch never clears and every later `pointerleave` short-circuits —
+    // the overlay is left drawn over the artwork for the rest of the session.
+    const onUpdateLayer = vi.fn();
+    const { field, row } = mount(onUpdateLayer);
+    fireEvent.pointerEnter(row);
+    fireEvent.change(field, { target: { value: "42" } });
+    expect(onUpdateLayer).toHaveBeenCalledTimes(1);
+    const [, patch] = onUpdateLayer.mock.calls[0];
+    expect(patch.params.binding.placement.sizing.size).toBe(42);
+    fireEvent.pointerLeave(row);
+    expect(scope()).toBe("none");
   });
 });

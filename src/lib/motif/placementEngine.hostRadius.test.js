@@ -112,16 +112,24 @@ describe('hostRadius — containment on the displaced centre', () => {
 
   it('a displacement EXCEEDING the container yields rejection, never a negative radius', () => {
     // min is 0, so the pre-existing below-floor path cannot be what rejects this.
-    const { placements, rejected } = resolvePlacements(
-      [cellAnchor('a', 500, 500, 3)],
-      {
-        sizing: { mode: 'proportional', size: 1000, min: 0, margin: 1 },
-        jitter: { seed: 3, lateral: 1, lateralRange: 200 },
-      },
-      { boundary: BOUNDARY }
-    );
+    const config = {
+      sizing: { mode: 'proportional', size: 1000, min: 0, margin: 1 },
+      jitter: { seed: 3, lateral: 1, lateralRange: 200 },
+    };
+    const { placements, rejected } = resolvePlacements([cellAnchor('a', 500, 500, 3)], config, {
+      boundary: BOUNDARY,
+    });
     expect(placements).toHaveLength(0);
-    expect(rejected).toEqual([{ anchorId: 'a', reason: 'no-fit' }]);
+    // The rejection carries the ring the overlay draws (#191). Its post-jitter
+    // centre comes from a SIBLING RUN with a container big enough to place: the
+    // four RNG draws and the centre transform run entirely above every sizing
+    // decision, so widening the container leaves x/y byte-identical.
+    const centre = resolvePlacements([cellAnchor('a', 500, 500, 5000)], config, {
+      boundary: BOUNDARY,
+    }).placements[0];
+    expect(rejected).toEqual([
+      { anchorId: 'a', reason: 'no-fit', x: centre.x, y: centre.y, wantedRadius: 1000 },
+    ]);
   });
 
   it('the LAYER SIZE is still a ceiling — host radius never raises a glyph above it', () => {
@@ -163,7 +171,13 @@ describe('hostRadius — containment on the displaced centre', () => {
     };
     const bare = placeMotifs(anchors, binding, { boundary: BOUNDARY });
     expect(bare.placements.map((p) => p.anchorId)).toEqual(['roomy']);
-    expect(bare.rejected).toEqual([{ anchorId: 'tiny', reason: 'below-floor' }]);
+    // No jitter ⇒ the centre the rejection reports (#191) is the anchor, and
+    // `wantedRadius` is the NATURAL target — the layer size, not the 3.6 the
+    // container clamped it to (which is the invisible speck the ring must not
+    // be drawn at).
+    expect(bare.rejected).toEqual([
+      { anchorId: 'tiny', reason: 'below-floor', x: 200, y: 500, wantedRadius: 1000 },
+    ]);
 
     // Same run, now with a per-glyph scale override pinned on the rejected anchor.
     const withOverride = placeMotifs(
@@ -175,7 +189,9 @@ describe('hostRadius — containment on the displaced centre', () => {
       { boundary: BOUNDARY }
     );
     expect(withOverride.placements.map((p) => p.anchorId)).toEqual(['roomy']);
-    expect(withOverride.rejected).toEqual([{ anchorId: 'tiny', reason: 'below-floor' }]);
+    expect(withOverride.rejected).toEqual([
+      { anchorId: 'tiny', reason: 'below-floor', x: 200, y: 500, wantedRadius: 1000 },
+    ]);
   });
 
   it('the FIXED sizing mode ignores host radius entirely', () => {
@@ -277,6 +293,15 @@ describe('hostRadius — the regression guard for every existing document', () =
     // Exact values, captured from the engine on main @ 170f5a7 BEFORE the
     // hostRadius channel existed. Any drift here means an existing document
     // renders differently.
+    //
+    // #186 added the seven sizing diagnostics. Every pre-existing number below
+    // is UNTOUCHED — that is the migration guarantee, and this deep-equal is
+    // where it is pinned, so it is updated to the true new shape rather than
+    // loosened to a partial matcher. The new keys are all consistent with
+    // "nothing capped these glyphs": no `hold` anywhere ⇒ w = 0 ⇒
+    // drawnRadius === packedRadius === radius, capBy 'natural', not saturated,
+    // no captor. `neighbourCap` is Infinity for the first placement (nothing
+    // was in `placed` yet) and the real margin×clearance thereafter.
     expect(placements).toEqual([
       {
         anchorId: 'a',
@@ -287,6 +312,13 @@ describe('hostRadius — the regression guard for every existing document', () =
         rotation: 96.05544989049775,
         scale: 0.7491046119481326,
         radius: 13.483883015066386,
+        packedRadius: 13.483883015066386,
+        drawnRadius: 13.483883015066386,
+        neighbourCap: Infinity,
+        hardCap: 13.483883015066386,
+        capBy: 'natural',
+        saturated: false,
+        capObstacle: null,
         seqId: 'A',
         flip: false,
       },
@@ -299,6 +331,13 @@ describe('hostRadius — the regression guard for every existing document', () =
         rotation: 90.28439339302821,
         scale: 1.2843171523883938,
         radius: 23.117708742991088,
+        packedRadius: 23.117708742991088,
+        drawnRadius: 23.117708742991088,
+        neighbourCap: 44.90094595757797,
+        hardCap: 23.117708742991088,
+        capBy: 'natural',
+        saturated: false,
+        capObstacle: null,
         seqId: 'A',
         flip: false,
       },
@@ -311,6 +350,13 @@ describe('hostRadius — the regression guard for every existing document', () =
         rotation: 117.9145779465918,
         scale: 0.9214892063289882,
         radius: 16.586805713921787,
+        packedRadius: 16.586805713921787,
+        drawnRadius: 16.586805713921787,
+        neighbourCap: 122.73762664473993,
+        hardCap: 16.586805713921787,
+        capBy: 'natural',
+        saturated: false,
+        capObstacle: null,
         seqId: 'A',
         flip: false,
       },

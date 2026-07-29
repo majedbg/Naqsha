@@ -144,13 +144,28 @@ describe('leaf glyph — base-at-origin hanging blade (design 2026-07)', () => {
 
   it('has the base as its ONLY on-axis vertex — every other vertex hangs off one side (x>0)', () => {
     // The blade extends along +x (the off-line NORMAL direction). Exactly one
-    // vertex sits on the line (x==0, the base); all others are strictly x>0, so
-    // the whole blade hangs off a single side of the host line.
-    const onAxis = points.filter(([x]) => Math.abs(x) <= TOL);
-    expect(onAxis).toHaveLength(1);
-    for (const [x] of points.slice(1)) {
-      expect(x).toBeGreaterThan(TOL);
+    // DESIGN vertex sits on the line (x==0, the base). Curved re-author
+    // (2026-07-28): the leaf now closes with an explicit C back to (0,0)
+    // rather than an implicit L/Z close, so the FLATTENED point list may
+    // legitimately visit the base TWICE — once as the M start, once as the
+    // final curve's own endpoint (Z itself never adds a point; only an
+    // authored command does — see pathOps.js parsePathD). Both on-axis
+    // samples must be that SAME coordinate (not some other stray on-axis
+    // point), and every INTERIOR vertex must still be strictly x>0, so the
+    // blade still hangs off a single side of the host line.
+    const isBase = ([x, y]) => Math.abs(x) <= TOL && Math.abs(y) <= TOL;
+    const onAxisIdx = points.reduce((acc, p, i) => (isBase(p) ? [...acc, i] : acc), []);
+    // Only the very first point (the M start) and — if the closing command
+    // re-visits it — the very last point may be on-axis; never an interior one.
+    expect(onAxisIdx.length).toBeGreaterThanOrEqual(1);
+    expect(onAxisIdx.length).toBeLessThanOrEqual(2);
+    expect(onAxisIdx[0]).toBe(0);
+    if (onAxisIdx.length === 2) {
+      expect(onAxisIdx[1]).toBe(points.length - 1);
     }
+    points.forEach(([x], i) => {
+      if (!onAxisIdx.includes(i)) expect(x).toBeGreaterThan(TOL);
+    });
   });
 
   it('preserves a deliberate midrib asymmetry (NOT y-mirror-symmetric)', () => {

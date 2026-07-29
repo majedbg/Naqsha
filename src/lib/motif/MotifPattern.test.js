@@ -230,8 +230,8 @@ describe('MotifPattern dual-emit parity', () => {
     // WI-2's root pre-transform must default to a no-op ⇒ byte-identical output.
     const { inst } = run(baseParams());
     expect(inst.svgElements).toEqual([
-      '<g transform="matrix(-0.351794 0.351794 -0.351794 -0.351794 100 100)"><path d="M0,0 L6,-6 L14,-5 L20,-0.5 L18,3 L11,4.5 L4,3 Z" fill="none"/></g>',
-      '<g transform="matrix(-0.351794 0.351794 -0.351794 -0.351794 300 300)"><path d="M0,0 L6,-6 L14,-5 L20,-0.5 L18,3 L11,4.5 L4,3 Z" fill="none"/></g>',
+      '<g transform="matrix(-0.351794 0.351794 -0.351794 -0.351794 100 100)"><path d="M0,0 C4,-9 14,-9 20,-1 C15,4 6,5 0,0 Z" fill="none"/></g>',
+      '<g transform="matrix(-0.351794 0.351794 -0.351794 -0.351794 300 300)"><path d="M0,0 C4,-9 14,-9 20,-1 C15,4 6,5 0,0 Z" fill="none"/></g>',
     ]);
   });
 
@@ -633,8 +633,10 @@ describe('MotifPattern voronoi drawn-geometry (GEOMETRY-IN) semantic path', () =
 // glyph reached the RIGHT slot, which the canvas/SVG parity check alone cannot
 // catch (a wrong-glyph bug is identical on both emitters).
 // Verbatim copy of the built-in leaf `d` (glyphs.js) used as a render oracle.
-// Updated for the base-at-origin hanging-blade redesign (2026-07).
-const LEAF_D = 'M0,0 L6,-6 L14,-5 L20,-0.5 L18,3 L11,4.5 L4,3 Z';
+// Updated for the curved re-author (2026-07-28): two cubic flanks sharing the
+// base (0,0) and tip (20,-1) endpoints, closed with Z — see glyphs.js LEAF_D
+// comment for the full derivation.
+const LEAF_D = 'M0,0 C4,-9 14,-9 20,-1 C15,4 6,5 0,0 Z';
 const DOT_D =
   'M3,0 L2.1213,2.1213 L0,3 L-2.1213,2.1213 L-3,0 L-2.1213,-2.1213 L0,-3 L2.1213,-2.1213 Z';
 
@@ -759,8 +761,10 @@ describe('MotifPattern B1 — chain-consuming multi-glyph dual-emit', () => {
     expect(det(insts[1].matrix)).toBeGreaterThan(0);
     // The rotation genuinely manifested (off-axis), so parity has teeth.
     expect(Math.abs(insts[0].matrix[1])).toBeGreaterThan(1e-6);
-    // The two instances use DIFFERENT glyphs — leaf has 7 vertices, dot has 8.
-    expect(insts[0].paths[0].points.length).toBe(7);
+    // The two instances use DIFFERENT glyphs — leaf flattens to 33 points (2
+    // cubic flanks x 16-step sampling + the shared start/base point; see
+    // pathOps.js FLATTEN_STEPS), dot has 8 (an octagon, all M/L).
+    expect(insts[0].paths[0].points.length).toBe(33);
     expect(insts[1].paths[0].points.length).toBe(8);
 
     const canvasPolys = canvasPolylines(ctx.calls);
@@ -820,8 +824,9 @@ describe('MotifPattern B1 — chain-consuming multi-glyph dual-emit', () => {
     // slot 0 leaf resolves & renders; slot 1 'ghost' unresolved ⇒ skipped, no crash.
     expect(inst.svgElements.length).toBe(1);
     expect(inst.svgElements[0]).toContain(LEAF_D);
-    // The skipped instance drew NOTHING to canvas (7 leaf vertices, no more).
-    expect(ctx.calls.filter((c) => c.op === 'vertex').length).toBe(7);
+    // The skipped instance drew NOTHING to canvas (33 flattened leaf vertices —
+    // 2 cubic flanks x 16-step sampling + the shared base point — no more).
+    expect(ctx.calls.filter((c) => c.op === 'vertex').length).toBe(33);
   });
 
   it('modifier-only slot (no glyphRef) falls back to the base glyph', () => {

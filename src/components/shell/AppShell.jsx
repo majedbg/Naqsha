@@ -20,6 +20,7 @@ import usePanelHeight from '../../lib/hooks/usePanelHeight';
 import { useInspectorDock } from '../../lib/hooks/useInspectorDock';
 import { InspectorDockProvider } from './inspectorDockContext';
 import { RunPlanProvider, useRunPlan } from './runPlanContext';
+import { FootprintRevealProvider } from './footprintRevealContext';
 import {
   InspectorSlotProvider,
   MenuSlotProvider,
@@ -418,10 +419,19 @@ function AppShellInner({ children }) {
 // (a child) — so entries below can open the Run Plan and the shell can morph to
 // it. The provider renders no DOM, so the closed shell is byte-identical to
 // before.
+//
+// FootprintRevealProvider sits at the same level and for the same reason (#188):
+// the controls that raise a footprint reveal are in the Inspector (portaled, but
+// still a React descendant) while the overlay that draws it is on the canvas
+// inside the hosted Studio. One provider spanning both is what makes it ONE
+// piece of state. It renders no DOM either, and consumers below have a safe
+// cleared default when it is absent.
 export default function AppShell({ children }) {
   return (
     <RunPlanProvider>
-      <AppShellInner>{children}</AppShellInner>
+      <FootprintRevealProvider>
+        <AppShellInner>{children}</AppShellInner>
+      </FootprintRevealProvider>
     </RunPlanProvider>
   );
 }

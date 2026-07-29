@@ -566,3 +566,51 @@ describe("DragNumber — format/parse are a paired contract", () => {
     expect(warn).not.toHaveBeenCalled();
   });
 });
+
+// The `disabled` prop (#187). Its consumer is a control that is honestly INERT
+// under some upstream mode — the slot card's `hold` row in `fixed` sizing — and
+// the point is that it stays VISIBLE and keeps showing its value while refusing
+// every route to a write. A control that disappeared when it stopped applying
+// would teach nothing about the mode it disappeared under.
+describe("DragNumber — disabled", () => {
+  it("refuses the drag, the keyboard and click-to-type, but still reads its value", () => {
+    const onChange = vi.fn();
+    const onCommit = vi.fn();
+    render(<DragNumber {...base} disabled onChange={onChange} onCommit={onCommit} />);
+    const el = screen.getByTestId("drag-number");
+
+    // Drag: a full scrub emits nothing.
+    down(el, 100);
+    move(el, 60);
+    up(el, 60);
+
+    // Keyboard: every route, including the ones that jump to an end.
+    fireEvent.keyDown(el, { key: "ArrowUp" });
+    fireEvent.keyDown(el, { key: "End" });
+    fireEvent.keyDown(el, { key: "Enter" });
+
+    expect(onChange).not.toHaveBeenCalled();
+    expect(onCommit).not.toHaveBeenCalled();
+    // Enter must not have opened the type-in either.
+    expect(screen.queryByTestId("drag-number-input")).toBeNull();
+    // Still legible, still announced, and out of the tab order.
+    expect(screen.getByTestId("drag-number-readout").textContent).toBe("50");
+    expect(el.getAttribute("aria-disabled")).toBe("true");
+    expect(el.getAttribute("tabindex")).toBe("-1");
+  });
+
+  it("a press with no movement does not open the type-in", () => {
+    render(<DragNumber {...base} disabled />);
+    const el = screen.getByTestId("drag-number");
+    down(el, 40);
+    up(el, 40); // no movement — the click path
+    expect(screen.queryByTestId("drag-number-input")).toBeNull();
+  });
+
+  it("stays fully live when not disabled (the flag is opt-in)", () => {
+    const onCommit = vi.fn();
+    render(<DragNumber {...base} onCommit={onCommit} />);
+    fireEvent.keyDown(screen.getByTestId("drag-number"), { key: "ArrowUp" });
+    expect(onCommit).toHaveBeenCalledWith(51);
+  });
+});

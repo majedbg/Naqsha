@@ -17,7 +17,8 @@
 //       – `bypass:false` (engine: `if (block.bypass) skip` — false ⇔ absent);
 //       – a `sequence` block's `mode:'cycle'` / `continuous:false` / `seed:1`
 //         (sequencer.js defaults) the chip left implicit;
-//       – a slot's `sizeScale:1` / `rotationOffset:0` / `weight:1` (defaults);
+//       – a slot's `sizeScale:1` / `hold:0` / `rotationOffset:0` / `weight:1`
+//         (defaults);
 //       – key order (objects) and role order (engine reads roles as a Set).
 //   • `pickedPaths` is only read when `pathScope==='picked'`; otherwise inert.
 // So we canonicalize BOTH chains to a behavior-equivalent form — fill each
@@ -268,16 +269,25 @@ function canonicalBlock(block) {
  * 0008): a flat mode's identity is its rhythm, glyph-agnostic — swapping the
  * diamond for a dot keeps "Alternate x‑o". What still counts is the rhythm and
  * modifiers: `rest` (a rest vs a glyph is a different step; removing/adding a
- * slot is a count change), sizeScale/rotationOffset/weight/rotationRandom/flip.
+ * slot is a count change), sizeScale/hold/rotationOffset/weight/rotationRandom/flip.
  * `flip` is left AS-SPECIFIED (undefined ≠ false — the engine's flipSpecified
  * distinction), included only when present, so an unspecified flip on both sides
  * matches while specified-vs-unspecified differ.
+ *
+ * `hold` (#187) joins that list as the peer of `sizeScale`: it is a per-slot
+ * size modifier the maker set, so a slot carrying one is customised and the mode
+ * column must say Custom exactly as it does for Scale. Its default is 0 (absent
+ * ⇒ 0, the engine's own reading at sequencer.js), and because BOTH the stored
+ * chain and the chip's rebuilt chain run through this same function, absent
+ * canonicalizes to 0 on both sides — so every document authored before `hold`
+ * existed keeps matching its mode exactly as it did.
  */
 function canonicalSlot(slot) {
   const s = slot || {};
   const out = {
     rest: !!s.rest,
     sizeScale: s.sizeScale != null ? s.sizeScale : 1,
+    hold: s.hold != null ? s.hold : 0,
     rotationOffset: s.rotationOffset != null ? s.rotationOffset : 0,
     weight: s.weight != null ? s.weight : 1,
     rotationRandom: canonicalRotationRandom(s.rotationRandom),

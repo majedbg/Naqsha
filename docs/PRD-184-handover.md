@@ -1,12 +1,14 @@
-# PRD #184 build — handover (2026-07-28)
+# PRD #184 build — handover (2026-07-28, closed 2026-07-29)
 
 Branch: `feat/curved-leaf-glyph`. **Nothing merges to `main`** (decision 22 — PR 1 is the
 whole set: `hold` + the overlay together).
 
-**Six of eight slices are DONE and green. #191 and #192 remain.**
+**ALL EIGHT SLICES ARE DONE AND GREEN.** #191 and #192 landed 2026-07-29 as `ce4a471`
+and `9e264d9`; draft PR #194 now carries the whole set. What remains is Majed's, not a
+builder's: the human-verification queue below, and the two open questions at the end.
 
-Suite: **6984 passing / 54 skipped / 531 files**, zero failures.
-Baseline at PRD authoring was 6837; this build added 147 tests.
+Suite: **7049 passing / 54 skipped / 531 files**, zero failures.
+Baseline at PRD authoring was 6837; this build added 212 tests.
 
 ---
 
@@ -37,6 +39,8 @@ Put this table in every subagent prompt. Do not rely on agents reading the issue
 | #187 | `a9e9d65` `83c0d60` `f0978bc` `ba232e9` `f991bb1` | slot card `hold` row, `fixed`-mode disabled state, `canonicalSlot`, tooltip fixes |
 | #189 | `b97ea35` | footprint overlay v1 — reserved + drawn rings, binding stroke, `hold` trigger |
 | #190 | `9c73773` | the captor — neighbour disc from `capObstacle`, `hostRadius` container ring |
+| #191 | `ce4a471` | rejected anchors as dotted empty rings; `Rejection` gains `x`/`y`/`wantedRadius` on the two SIZING-stage reasons only |
+| #192 | `9e264d9` | the remaining three triggers + the two missing scope KINDS (`layer`, `glyph`) + `focusProps` |
 
 ### The contract later slices depend on
 
@@ -66,9 +70,24 @@ enforced nowhere: `{kind:'slot', layerId, seqIndex, zoneId, slotIndex}` and
 
 ---
 
-## REMAINING WORK
+## THE LAST TWO SLICES — BUILT 2026-07-29, kept as the design record
 
-### #191 — rejected anchors as dotted empty rings (do this first)
+⚠️ **Nothing below is a to-do.** Both slices shipped (`ce4a471`, `9e264d9`). The briefs are
+kept verbatim because every constraint in them is still true of the code, and because two
+of them were only discovered by building: the render gate that would have switched #191
+off entirely, and the two unclassified scope kinds that would have switched two of #192's
+three triggers off. What the build ADDED to these briefs:
+
+- **#191** — a `Rejection` had to GROW geometry (`x`, `y`, `wantedRadius` on `below-floor`
+  and `no-fit` only); plumbing the existing list was necessary but not sufficient.
+  `wantedRadius` is the NATURAL TARGET. The overlay's render gate was `placements.length`
+  and is now placements-OR-rejections. The dotted ring rides the per-glyph override scale.
+- **#192** — `footprintScope` classified `{kind:'slot'}` ONLY, so `{kind:'layer'}` and
+  `{kind:'glyph'}` resolved to null and would have drawn nothing. A LAYER scope draws
+  every placement on the layer — a judgment call outside decision 16, which answered the
+  SLOT case; it reinstates the full `MAX_PLACEMENTS` worst case and **wants a ruling**.
+
+### #191 — rejected anchors as dotted empty rings (was: do this first)
 
 Edits `AnchorGhostOverlay.jsx`, the same file #190 just touched — that is why #190 and #191
 are sequential, not parallel. **Do not use worktree isolation**; the sequencing already

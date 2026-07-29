@@ -931,7 +931,7 @@ function SortableSlotChip({
           max={5}
           step={0.5}
           label="Weight"
-          title="Drag \u2195 \u00b7 how often Random picks this slot"
+          title="Drag ↕ · how often Random picks this slot"
           format={(v) => `wt ${Number(v).toFixed(1)}`}
           parse={(t) => parseFloat(String(t).replace(/[^\d.]/g, ""))}
           slotWidth="6ch"
@@ -957,7 +957,7 @@ function SortableSlotChip({
               format={SCALE_FORMAT}
               parse={SCALE_PARSE}
               label="Glyph scale"
-              title="Drag \u2195 to size every instance \u00b7 neighbours repack"
+              title="Drag ↕ to size every instance · neighbours repack"
               slotWidth="5ch"
               testId="motif-slot-scale"
               onChange={(v) => patchLive({ sizeScale: v })}
@@ -1024,7 +1024,7 @@ function SortableSlotChip({
               max={359}
               step={1}
               label="Rotation offset"
-              title="Drag \u2195 \u00b7 degrees turned FROM the path direction"
+              title="Drag ↕ · degrees turned FROM the path direction"
               format={(v) => `${v > 180 ? v - 360 : v > 0 ? `+${v}` : v}\u00b0`}
               parse={(t) => {
                 const n = parseFloat(String(t).replace(/[^\d.+-]/g, ""));
@@ -1084,7 +1084,7 @@ function SortableSlotChip({
             max={180}
             step={1}
             label="Angle range"
-            title="Drag \u2195 \u00b7 \u00b1 degrees either side"
+            title="Drag ↕ · ± degrees either side"
             format={(v) => `\u00b1${Math.round(v)}\u00b0`}
             parse={(t) => parseFloat(String(t).replace(/[^\d.]/g, ""))}
             slotWidth="4ch"

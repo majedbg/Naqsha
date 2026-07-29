@@ -74,6 +74,8 @@ import { getSemanticAnchors } from "../../lib/motif/semanticAnchors";
 import { STARTER_CHIPS } from "../../lib/motif/starterChips";
 import { modeForMotif, applyModeChain } from "../../lib/motif/modeMatch";
 import MotifBlockRack from "./MotifBlockRack";
+import MotifPitchField from "./MotifPitchField";
+import { DEFAULT_SPACING } from "../../lib/motif/pitchUnits";
 import { useFootprintRevealTrigger } from "./footprintRevealContext";
 import GlyphPickerChip from "./GlyphPickerChip";
 import RoleBadge, { badgeKindForHost } from "../ui/RoleBadge";
@@ -1727,6 +1729,35 @@ function MotifDevice({
                     value={size}
                     onCommitSize={(next) =>
                       patchMotif(m, { placement: { sizing: { size: next } } })
+                    }
+                  />
+                  {/* ANCHOR PITCH (PRD #184, PR 2) — beside layer Size, because
+                  spacing shares the radius unit system with it (hold-doc §8b).
+                  Per-LAYER, unlike `hold`: `edgeOpts` is a property of the
+                  motif, not of a slot.
+
+                  ⚠️ NOT `patchMotif`. That deep-merges into `params.binding`;
+                  `edgeOpts` is a SIBLING of `binding` on `params`, so it is
+                  written directly. `?? DEFAULT_SPACING` because a legacy motif
+                  created before `motifLayer.js:80` defaulted it may carry none.
+
+                  ⚠️ KNOWN INCONSISTENCY, flagged rather than fixed here: layer
+                  Size above is a plain <input type="number">, not a DragNumber,
+                  so a drag-thumb control now lands beside a stepper and "shares
+                  the unit system with Size" reads visually false. Converting
+                  Size is its own change with its own blast radius — `motif-size`
+                  is a stable test id with existing assertions. */}
+                  <MotifPitchField
+                    spacing={m.params?.edgeOpts?.spacing ?? DEFAULT_SPACING}
+                    disabled={hostIsSemantic}
+                    onFlushHistory={onFlushHistory}
+                    onChangeSpacing={(next) =>
+                      onUpdateLayer(m.id, {
+                        params: {
+                          ...m.params,
+                          edgeOpts: { ...m.params?.edgeOpts, spacing: next },
+                        },
+                      })
                     }
                   />
                   <label className="flex items-center gap-1.5 text-xs text-ink-soft">

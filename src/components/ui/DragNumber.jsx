@@ -36,8 +36,9 @@
 // up/down pointers — the cell under the hand showing its two directions of
 // travel; saffron on drag with the trailing half dimmed so the leading half
 // reads direction; violet focus ring; tokens only, never a hex literal.
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import useDragValue, { DEFAULT_GAINS } from "./useDragValue";
+import { flashTiming } from "./dragNumberFlash";
 
 // Defaults stay module-private (react-refresh wants this file to export the
 // component and nothing else); each is overridable through a prop.
@@ -50,6 +51,10 @@ const SPLIT_GAP = 2.2; // px each diamond half parts by when the hand is on it
 // The reduced-motion crossfade cannot use --motion-medium: the motion tokens
 // collapse to 0ms under `prefers-reduced-motion` (tokens.css), which would
 // delete the fade rather than substitute it for the rotation.
+//
+// `flashSignal`'s timings follow this same precedent for the same reason, and
+// live in `./dragNumberFlash` — react-refresh lets this file export the
+// component and nothing else, so a testable `flashTiming` cannot live here.
 const REDUCED_FADE = "200ms";
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -120,6 +125,27 @@ export default function DragNumber({
    *  disappears when it stops applying teaches nothing about why. Pair it with a
    *  `title` that states the reason. */
   disabled = false,
+  /**
+   * Change this to make the thumb flash once — "the number changed for a reason
+   * you didn't cause". ANY changing primitive works, so pass the CAUSE itself
+   * and the parent needs no state and no effect:
+   *
+   *     <DragNumber value={shown} flashSignal={unit} … />   // 'density'|'spacing'
+   *
+   * `null`/`undefined` never flashes, and the overlay layer is not rendered at
+   * all — every existing consumer's DOM is byte-identical. The FIRST value is
+   * latched without flashing (mount is not a change). Suppressed while dragging
+   * (the user IS the cause), editing (the thumb subtree is unmounted) and
+   * disabled; THE LATCH STILL ADVANCES in all three, so a change absorbed
+   * during one of them never fires late — open the editor, flip the unit, close
+   * the editor, and there is no spurious flash for a change already caused.
+   *
+   * ⚠️ NOT gated on `value !== prevValue`, deliberately. At `spacing = 10` the
+   * reciprocal density is also 10: the numeral is byte-identical across the
+   * flip. That is the most confusing state the control can reach, so it is
+   * where the flash is most warranted, not least.
+   */
+  flashSignal = null,
   /** CSS width reserved for the readout, e.g. "4ch". Fixed-width and
    *  LEFT-anchored, so a value whose digit count changes (7% → 100%, 1° → 359°)
    *  cannot resize the row and slide the thumb sideways. Omit for intrinsic
@@ -182,6 +208,54 @@ export default function DragNumber({
     // returns before `onClick` — one flag turns off the scrub AND click-to-type.
     disabled: editing || disabled,
   });
+
+  /* ----------------------------------------------------------- the flash */
+  // TRIGGER, NOT FLOAT. The parent passes the CAUSE and this owns the motion:
+  // zero React re-renders per flash, and a component that needs no rAF loop
+  // from its host stays liftable.
+  //
+  // A dedicated overlay <g> animated with WAAPI, which makes the precedence
+  // rule STRUCTURAL rather than ordered. The flash never writes `fill` on
+  // anything, so `dragging ? saffron : ink` — React's sole property — cannot be
+  // fought. Two owners, two cascade origins, no overlap in time.
+  //
+  // The layer lives INSIDE `data-thumb-group`, so it inherits the 45° rest
+  // rotation and the split geometry for free: a flash while hovering shows a
+  // split saffron diamond. Correct, not a conflict.
+
+  const flashRef = useRef(null);
+  // Seeded with the mount value, so the first run compares equal and mount is
+  // not read as a change.
+  const flashPrev = useRef(flashSignal);
+
+  useEffect(() => {
+    const prev = flashPrev.current;
+    // ADVANCE THE LATCH FIRST AND UNCONDITIONALLY. Every early return below is
+    // a reason not to SHOW the flash, never a reason to forget that the signal
+    // moved — otherwise a change absorbed while editing fires the moment the
+    // editor closes, for something the user already caused.
+    flashPrev.current = flashSignal;
+    // A null signal is "this consumer does not use the flash"; a null
+    // PREDECESSOR is a consumer that has only just started to. Neither is a
+    // change worth announcing, and the overlay layer does not even exist for
+    // the first of them.
+    if (flashSignal == null || prev == null || Object.is(prev, flashSignal)) return undefined;
+    if (dragging || editing || disabled) return undefined;
+    const el = flashRef.current;
+    // jsdom has no Web Animations API; the test setup stubs it, and this guard
+    // keeps any other host without WAAPI silently un-flashed rather than broken.
+    if (!el || typeof el.animate !== "function") return undefined;
+    const { duration, keyframes } = flashTiming(reduced);
+    // NO `fill` MODE, so the resting inline `opacity: 0` reclaims the element
+    // the instant the animation finishes. No setTimeout anywhere.
+    const anim = el.animate(keyframes, { duration, fill: "none" });
+    // CANCELLING IN THE CLEANUP, not at the head of the next flash, is what
+    // collapses StrictMode's double-invoke to one visible flash — and it is
+    // also precedence rule 6: if `dragging` flips true mid-flash this effect
+    // re-runs, the cleanup cancels, and the glow disappears the moment the user
+    // takes over.
+    return () => anim.cancel();
+  }, [flashSignal, dragging, editing, disabled, reduced]);
 
   /* ------------------------------------------------------------ keyboard */
 
@@ -323,6 +397,36 @@ export default function DragNumber({
               transition,
             }}
           />
+          {/* THE FLASH LAYER. Rendered ONLY for a consumer that passes a
+              `flashSignal`, so every existing consumer's DOM is untouched.
+
+              BRIGHTNESS, NOT BLOOM: the same two cells, repainted saffron and
+              then unpainted. No drop-shadow, no blur, no larger translucent
+              shape behind the thumb — those are the glow principle 2 forbids.
+
+              Only the SQUARE glows. Not the numeral, not the focus ring: the
+              numeral is the thing that changed, the square is the marker
+              saying why.
+
+              `opacity: 0` is React's resting value and WAAPI's sole property
+              during a flash; because the animation carries no `fill` mode, this
+              inline style reclaims the element the moment it finishes. The two
+              halves mirror the base geometry above, so the layer parts and
+              rotates with the thumb rather than sitting flat over it. */}
+          {flashSignal != null && (
+            <g ref={flashRef} data-testid={`${testId}-flash`} style={{ opacity: 0 }}>
+              <polygon
+                points="9,5.4 15.6,12 2.4,12"
+                fill="var(--saffron)"
+                style={{ transform: `translateY(${-gap}px)`, transition }}
+              />
+              <polygon
+                points="2.4,12 15.6,12 9,18.6"
+                fill="var(--saffron)"
+                style={{ transform: `translateY(${gap}px)`, transition }}
+              />
+            </g>
+          )}
         </g>
       </svg>
       <span

@@ -29,3 +29,34 @@ if (typeof window !== 'undefined' && !window.matchMedia) {
     dispatchEvent: () => false,
   });
 }
+
+// jsdom implements no Web Animations API, so `element.animate` is simply absent
+// — the same situation as matchMedia above, handled the same way: an inert stub,
+// so a missing API never masquerades as a behavior bug.
+//
+// `DragNumber`'s `flashSignal` drives its glow through `element.animate()`
+// (PRD #184, PR 2 §3) precisely so the motion costs no React re-renders. The
+// component guards on `typeof el.animate === "function"` and simply does not
+// flash without one, which would make every flash assertion pass VACUOUSLY;
+// this stub is what lets a spy see the call at all. It returns the one method
+// the caller uses — `cancel`, for the effect's cleanup — plus the rest of the
+// Animation surface as no-ops, so a future consumer does not hit `undefined`.
+//
+// Only defined when absent, so a real implementation (a browser-mode run) always
+// wins. Guarded on `Element` because this file also loads under the node
+// environment, where there is no DOM at all.
+if (typeof Element !== 'undefined' && !Element.prototype.animate) {
+  Element.prototype.animate = function animate() {
+    return {
+      cancel: () => {},
+      finish: () => {},
+      play: () => {},
+      pause: () => {},
+      reverse: () => {},
+      currentTime: 0,
+      playState: 'finished',
+      onfinish: null,
+      oncancel: null,
+    };
+  };
+}

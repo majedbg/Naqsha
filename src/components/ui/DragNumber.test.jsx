@@ -23,6 +23,7 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import DragNumber from "./DragNumber";
+import { FLASH_MS } from "./dragNumberFlash.js";
 
 // Source path for the token guard below. Resolved off the vitest root rather
 // than `import.meta.url` — under the jsdom environment that is not a file: URL.
@@ -612,5 +613,228 @@ describe("DragNumber — disabled", () => {
     render(<DragNumber {...base} onCommit={onCommit} />);
     fireEvent.keyDown(screen.getByTestId("drag-number"), { key: "ArrowUp" });
     expect(onCommit).toHaveBeenCalledWith(51);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PRD #184 (PR 2): `flashSignal` — "the number changed for a reason you didn't
+// cause".
+//
+// The case it exists for is the anchor-pitch control's unit flip at
+// `spacing = 10`, where the reciprocal density is also 10 and the numeral is
+// BYTE-IDENTICAL across the flip. Same digits, different meaning. That is why
+// nothing here gates the flash on the value having changed.
+//
+// jsdom has no Web Animations API; `src/test/setup.js` stubs `element.animate`
+// so a spy can see the call at all. The TIMING is asserted in
+// `dragNumberFlash.test.js`, against numbers rather than against that stub.
+
+describe("DragNumber — flashSignal", () => {
+  let animateSpy;
+  let cancels;
+
+  beforeEach(() => {
+    cancels = [];
+    animateSpy = vi.spyOn(Element.prototype, "animate").mockImplementation(() => {
+      const cancel = vi.fn();
+      cancels.push(cancel);
+      return { cancel, finish: () => {}, play: () => {}, pause: () => {} };
+    });
+  });
+  afterEach(() => {
+    animateSpy.mockRestore();
+  });
+
+  const flashes = () => animateSpy.mock.calls.length;
+
+  it("changes nothing at all for a consumer that does not pass it", () => {
+    // The byte-identity requirement: GlyphPopover and MotifBlockRack must be
+    // untouched, so the overlay layer is not rendered when there is no signal.
+    const { container } = render(<DragNumber {...base} testId="dn" />);
+    expect(screen.queryByTestId("dn-flash")).toBeNull();
+    expect(container.querySelectorAll("[data-thumb-group] polygon")).toHaveLength(2);
+    expect(flashes()).toBe(0);
+  });
+
+  it("does not flash on mount — the first signal is latched, not announced", () => {
+    render(<DragNumber {...base} flashSignal="density" testId="dn" />);
+    expect(screen.getByTestId("dn-flash")).toBeInTheDocument();
+    expect(flashes()).toBe(0);
+  });
+
+  it("flashes ONCE when the signal changes", () => {
+    const { rerender } = render(<DragNumber {...base} flashSignal="density" testId="dn" />);
+    rerender(<DragNumber {...base} flashSignal="spacing" testId="dn" />);
+    expect(flashes()).toBe(1);
+    const [keyframes, options] = animateSpy.mock.calls[0];
+    // Reference the constant, never a literal: a hardcoded duration here made a
+    // deliberate retune read as a regression (2026-07-29). The SHAPE is asserted
+    // in dragNumberFlash.test.js; all this needs to know is that the component
+    // passes whatever flashTiming() returns, with no fill mode.
+    expect(options).toMatchObject({ duration: FLASH_MS, fill: "none" });
+    // Opacity only, and it returns to nothing — brightness, not bloom.
+    expect(keyframes.at(-1)).toMatchObject({ offset: 1, opacity: 0 });
+  });
+
+  it("flashes even when the DISPLAYED NUMBER IS IDENTICAL across the flip", () => {
+    // spacing 10 ⇒ density 100/10 = 10. The most confusing state the control
+    // can reach, and therefore where the flash is most warranted — which is why
+    // it must not be gated on `value !== prevValue`.
+    const { rerender } = render(
+      <DragNumber {...base} value={10} flashSignal="spacing" testId="dn" />,
+    );
+    rerender(<DragNumber {...base} value={10} flashSignal="density" testId="dn" />);
+    expect(flashes()).toBe(1);
+    expect(screen.getByTestId("dn-readout").textContent).toBe("10");
+  });
+
+  it("does not flash when the signal is re-rendered unchanged", () => {
+    const { rerender } = render(<DragNumber {...base} flashSignal="density" testId="dn" />);
+    rerender(<DragNumber {...base} value={51} flashSignal="density" testId="dn" />);
+    rerender(<DragNumber {...base} value={52} flashSignal="density" testId="dn" />);
+    // The VALUE moving is not a reason: this app modulates parameter values
+    // continuously, and self-detection would strobe. Causality lives one level
+    // up, which is the whole shape of this prop.
+    expect(flashes()).toBe(0);
+  });
+
+  it("never flashes for a null or undefined signal", () => {
+    const { rerender } = render(<DragNumber {...base} flashSignal={null} testId="dn" />);
+    rerender(<DragNumber {...base} flashSignal={undefined} testId="dn" />);
+    // …including the transition INTO a signal: a consumer that has only just
+    // started passing one has not had a change, it has had a first value.
+    rerender(<DragNumber {...base} flashSignal="density" testId="dn" />);
+    expect(flashes()).toBe(0);
+    // …and it flashes normally from there on.
+    rerender(<DragNumber {...base} flashSignal="spacing" testId="dn" />);
+    expect(flashes()).toBe(1);
+  });
+
+  it("is suppressed while DRAGGING — the user is the cause", () => {
+    const { rerender } = render(<DragNumber {...base} flashSignal="density" testId="dn" />);
+    const el = screen.getByTestId("dn");
+    down(el, 0);
+    move(el, -40);
+    expect(el).toHaveAttribute("data-dragging");
+    rerender(<DragNumber {...base} flashSignal="spacing" testId="dn" />);
+    expect(flashes()).toBe(0);
+  });
+
+  it("advances the latch while dragging, so the flash never fires LATE", () => {
+    const { rerender } = render(<DragNumber {...base} flashSignal="density" testId="dn" />);
+    const el = screen.getByTestId("dn");
+    down(el, 0);
+    move(el, -40);
+    rerender(<DragNumber {...base} flashSignal="spacing" testId="dn" />);
+    up(el, -40); // drag over; `dragging` goes false and the effect re-runs
+    rerender(<DragNumber {...base} flashSignal="spacing" testId="dn" />);
+    expect(flashes()).toBe(0);
+  });
+
+  it("cancels an in-flight flash the moment a drag takes over", () => {
+    const { rerender } = render(<DragNumber {...base} flashSignal="density" testId="dn" />);
+    rerender(<DragNumber {...base} flashSignal="spacing" testId="dn" />);
+    expect(flashes()).toBe(1);
+    expect(cancels[0]).not.toHaveBeenCalled();
+    const el = screen.getByTestId("dn");
+    down(el, 0);
+    move(el, -40);
+    expect(cancels[0]).toHaveBeenCalledTimes(1);
+  });
+
+  it("is suppressed while EDITING, and does not fire when the editor closes", () => {
+    // The thumb subtree is unmounted in the editor branch — the component
+    // returns a bare <input> — so there is nothing to flash. The bug this
+    // guards: open the editor, parent flips the unit, close the editor, and a
+    // spurious flash announces a change the user already caused.
+    const { rerender } = render(<DragNumber {...base} flashSignal="density" testId="dn" />);
+    const el = screen.getByTestId("dn");
+    down(el, 40);
+    up(el, 40); // click with no movement → type-in
+    expect(screen.getByTestId("dn-input")).toBeInTheDocument();
+    rerender(<DragNumber {...base} flashSignal="spacing" testId="dn" />);
+    expect(flashes()).toBe(0);
+    fireEvent.keyDown(screen.getByTestId("dn-input"), { key: "Escape" });
+    rerender(<DragNumber {...base} flashSignal="spacing" testId="dn" />);
+    expect(screen.getByTestId("dn")).toBeInTheDocument();
+    expect(flashes()).toBe(0);
+  });
+
+  it("is suppressed while DISABLED, and does not fire when it comes back", () => {
+    const { rerender } = render(
+      <DragNumber {...base} disabled flashSignal="density" testId="dn" />,
+    );
+    rerender(<DragNumber {...base} disabled flashSignal="spacing" testId="dn" />);
+    expect(flashes()).toBe(0);
+    rerender(<DragNumber {...base} flashSignal="spacing" testId="dn" />);
+    expect(flashes()).toBe(0);
+  });
+
+  it("glows only the SQUARE — never the numeral and never the focus ring", () => {
+    const { rerender } = render(<DragNumber {...base} flashSignal="density" testId="dn" />);
+    rerender(<DragNumber {...base} flashSignal="spacing" testId="dn" />);
+    // The animated element is the overlay group inside the thumb, nothing else.
+    expect(animateSpy.mock.instances[0]).toBe(screen.getByTestId("dn-flash"));
+    const flash = screen.getByTestId("dn-flash");
+    expect(flash.closest("[data-thumb-group]")).not.toBeNull();
+    expect(flash.contains(screen.getByTestId("dn-readout"))).toBe(false);
+  });
+
+  it("paints saffron and rests at nothing — no bloom, no shadow, no halo", () => {
+    render(<DragNumber {...base} flashSignal="density" testId="dn" />);
+    const flash = screen.getByTestId("dn-flash");
+    expect(flash.style.opacity).toBe("0");
+    const shapes = [...flash.querySelectorAll("polygon")];
+    expect(shapes).toHaveLength(2); // mirrors the two thumb halves, same geometry
+    for (const s of shapes) {
+      expect(s.getAttribute("fill")).toBe("var(--saffron)");
+      expect(s.style.filter).toBe("");
+    }
+    // The base fill stays React's alone — the flash never touches it.
+    const base2 = [...document.querySelectorAll("[data-thumb-group] > polygon")];
+    for (const s of base2) expect(s.getAttribute("fill")).toBe("var(--ink)");
+  });
+
+  it("substitutes a longer, gentler cycle under prefers-reduced-motion", () => {
+    const realMatchMedia = window.matchMedia;
+    window.matchMedia = (q) => ({
+      matches: true,
+      media: q,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    });
+    try {
+      const { rerender } = render(<DragNumber {...base} flashSignal="density" testId="dn" />);
+      rerender(<DragNumber {...base} flashSignal="spacing" testId="dn" />);
+      expect(flashes()).toBe(1);
+      const [keyframes, options] = animateSpy.mock.calls[0];
+      // Substituted, never removed: this flash is the only channel carrying
+      // "the number changed for a reason".
+      expect(options.duration).toBe(600);
+      expect(Math.max(...keyframes.map((k) => k.opacity))).toBe(0.6);
+    } finally {
+      window.matchMedia = realMatchMedia;
+    }
+  });
+
+  it("does nothing at all in a host with no Web Animations API", () => {
+    animateSpy.mockRestore();
+    const saved = Object.getOwnPropertyDescriptor(Element.prototype, "animate");
+    delete Element.prototype.animate;
+    try {
+      const { rerender } = render(<DragNumber {...base} flashSignal="density" testId="dn" />);
+      expect(() =>
+        rerender(<DragNumber {...base} flashSignal="spacing" testId="dn" />),
+      ).not.toThrow();
+    } finally {
+      if (saved) Object.defineProperty(Element.prototype, "animate", saved);
+      animateSpy = vi.spyOn(Element.prototype, "animate").mockImplementation(() => ({
+        cancel: () => {},
+      }));
+    }
   });
 });

@@ -46,6 +46,10 @@
 
 export const DEFAULT_TOLERANCE = 8;
 
+// Module-local, as in `placementEngine.js` and `instancing.js` — a shared export
+// would be a dependency between three modules for one literal.
+const DEG_TO_RAD = Math.PI / 180;
+
 /**
  * Resolve an override ref to a concrete anchor from the FULL input list.
  *
@@ -254,7 +258,8 @@ export function applyOverrides(survivorIds, list, byId, overrides, defaultTolera
  *   • `angle` — an ABSOLUTE screen-space bearing in degrees that REPLACES the
  *     resolved `baseDeg + offset + jitter + slotRotation`. Tested with
  *     `Number.isFinite` ONLY: `angle: 0` ("faces up") is a legitimate bearing
- *     that any truthiness check would silently drop.
+ *     that any truthiness check would silently drop. Carries `footprintCenter`
+ *     with it (#205, decision 1b), exactly as `scale` carries `drawnRadius`.
  *
  * Pure: never mutates the input placements. Returns the SAME array reference
  * when nothing was overridden, so a document with no scale/angle records is a
@@ -296,7 +301,56 @@ export function applyGlyphOverrides(placements, byAnchorId) {
       // cap and overlap its neighbours, not a new escape hatch.
       next.drawnRadius = placement.drawnRadius * scale;
     }
-    if (angle != null) next.rotation = angle;
+    if (angle != null) {
+      next.rotation = angle;
+      // Decision 1b (#205) — the SAME rule as `drawnRadius` above, for the same
+      // stated reason: this pass is the last thing that decides the glyph's
+      // ORIENTATION, and the reserve's world centre is a function of it. Leaving
+      // it stale would make the footprint overlay's rings stop tracking the glyph
+      // the moment the dial is dragged.
+      //
+      // `packedRadius` and the caps stay untouched, exactly as under `scale` —
+      // the reserve genuinely did not move, because the packer has already run.
+      // So an angle override can push art into space nobody reserved AND vacate
+      // space it did reserve. It relayouts nothing; it just overlaps, visibly.
+      // That is the same accepted #137 behaviour :16-21 already states, now
+      // reaching a control that changes no size. Do NOT "fix" it by re-packing.
+      //
+      // WHY THIS NEEDS NO GLYPH. The engine emits the world centre as
+      //     footprintCenter = P + packedRadius·u,  u = R(θ−φ)·f̂c   unflipped
+      //                                            u = R(θ+φ)·(−f̂c.x, f̂c.y) flipped
+      // with `φ = root.angle` (`placementEngine.js`, ruling 7g — `placementMatrix`
+      // de-rotates by the growth turn before the core scale/rotate, so the reserve
+      // must too). Substituting a new bearing θ′ gives `R(θ′∓φ)·… = R(θ′−θ)·u` in
+      // BOTH cases: φ and the mirror are already baked into the emitted vector and
+      // CANCEL out of the delta. So this is a plain rotation of a world vector
+      // about `(x, y)` by `angle − rotation` — not a second copy of the 7g
+      // composition, which is the divergence risk that shape (1) of §5f exists to
+      // avoid. Same sign convention as the engine: `x·cos − y·sin`, `x·sin + y·cos`.
+      const fc = placement.footprintCenter;
+      const delta = angle - placement.rotation;
+      // `delta === 0` short-circuits by NOT ASSIGNING — the spread above already
+      // carries the key, so the no-op is bit-identical for free rather than via
+      // `P + (fc − P)`, which is not an identity in IEEE754. Mirrors
+      // `placementMatrix`'s own default-root short-circuit.
+      //
+      // An ABSENT centre stays absent. The engine emits the key unconditionally
+      // in every sizing mode, but this function is also handed hand-built
+      // placements; inventing `{x: NaN, y: NaN}` would break the same key-presence
+      // discipline stated for `glyphRef` above, and would poison a downstream
+      // reader more quietly than the missing key does.
+      if (delta !== 0 && fc && Number.isFinite(fc.x) && Number.isFinite(fc.y)) {
+        const t = delta * DEG_TO_RAD;
+        const cos = Math.cos(t);
+        const sin = Math.sin(t);
+        const dx = fc.x - placement.x;
+        const dy = fc.y - placement.y;
+        next.footprintCenter = {
+          x: placement.x + (dx * cos - dy * sin),
+          y: placement.y + (dx * sin + dy * cos),
+        };
+      }
+    }
     return next;
   });
 

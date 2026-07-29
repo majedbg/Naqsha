@@ -124,7 +124,13 @@ function PitchNumeral({ unit, spacing, disabled, onLive, onCommit }) {
       // parent snap it to another, and the readout show a third.
       step={DENSITY_STEP}
       mapping="geometric"
-      label="Anchor density, anchors per 100 units"
+      // ⚠️ THE FLOOR MUST BE ANNOUNCED IN THIS STATE TOO. It is a SPACING
+      // limit, so in density state the numeral simply stops at 25.0 with no
+      // reason given. The graphic says "at min gap 4 u" — but the graphic is
+      // `aria-hidden`, so without this suffix the control clamps silently for
+      // anyone not looking at it, which is the "let the number lie" failure
+      // hold-doc §4e forbids, arriving through the a11y channel instead.
+      label={`Anchor density, anchors per 100 units${atFloor ? ", at maximum — the 4 unit minimum gap" : ""}`}
       format={(v) => `${formatDensity(v)} /100u`}
       parse={parseLeading}
       // THE ONLY ROUNDING. Every drag frame lands on the spacing grid here.

@@ -338,6 +338,52 @@ describe("MotifPitchField — the graphic", () => {
     expect(screen.getByTestId("motif-pitch-density-mark").textContent).toMatch(/at min gap 4 u/);
   });
 
+  it("announces the floor in BOTH states, not only on the aria-hidden graphic", () => {
+    // The graphic carries the floor visually, but it is aria-hidden, so the
+    // numeral's own label is the only channel a screen reader has. Without it
+    // the control clamps in silence for exactly the user who cannot see the
+    // hatched ghost dimension explaining why.
+    const { rerenderWith } = setup();
+    expect(numeral().getAttribute("aria-label")).not.toMatch(/minimum|min/i);
+    rerenderWith({ spacing: MIN_SPACING });
+    expect(numeral().getAttribute("aria-label")).toMatch(/at minimum/);
+    pickUnit("Density");
+    expect(readout().textContent).toBe("25.0 /100u"); // the number has stopped…
+    expect(numeral().getAttribute("aria-label")).toMatch(/at maximum/); // …and says why
+    expect(numeral().getAttribute("aria-label")).toMatch(/minimum gap/);
+  });
+
+  it("keeps the dots still under reduced motion, and the reading with them", () => {
+    // Decision 11, both halves: the dots JUMP with no tween, and the live
+    // numeral sits ON the mark — so the information never lives in the motion.
+    // Not a disabled graphic.
+    const realMatchMedia = window.matchMedia;
+    window.matchMedia = (q) => ({
+      matches: true,
+      media: q,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    });
+    try {
+      setup();
+      const g = screen.getByTestId("motif-pitch-graphic");
+      expect(g).toHaveAttribute("data-reduced-motion", "true");
+      const dotGroups = [...g.querySelectorAll("circle")].map((c) => c.parentElement);
+      expect(dotGroups.length).toBeGreaterThan(0);
+      for (const el of dotGroups) expect(el.style.transition).toBe("none");
+      // The marks stop cross-fading too, and the numerals are still there.
+      expect(screen.getByTestId("motif-pitch-spacing-mark").style.transition).toBe("none");
+      expect(screen.getByTestId("motif-pitch-spacing-numeral").textContent).toBe("24 u");
+      expect(screen.getByTestId("motif-pitch-density-numeral").textContent).toBe("4.2");
+    } finally {
+      window.matchMedia = realMatchMedia;
+    }
+  });
+
   it("keeps the window literally 100 units at the sparse end, and empties it", () => {
     // Decision 14, accepted with no mitigation: the honest answer above spacing
     // ~100 genuinely IS "fewer than one per 100 units", and the numeral on the

@@ -689,6 +689,22 @@ describe('ringGeometry — the two live rings', () => {
     expect(drawn).toEqual(packed);
   });
 
+  it('tracks an override SCALE through `drawnRadius`, not through the centre', () => {
+    // THE CONTRACT WITH `overrides.js`, pinned from this side. A per-glyph scale
+    // multiplies `drawnRadius` and deliberately leaves `packedRadius` alone —
+    // the reserve genuinely did not move, packing never saw the override — and
+    // an ANGLE override recomputes `footprintCenter` AT `packedRadius` (#205).
+    // Both make this homothety correct only while the stored centre stays
+    // stated at the packed radius: a centre restated at `drawnRadius` would be
+    // scaled a second time here and the ring would fly off the glyph.
+    const scaled = { ...tight, drawnRadius: tight.packedRadius * 2 };
+    const ring = ringGeometry(scaled, scaled.drawnRadius, fp);
+    // Offset doubles with the radius, because the art really did grow that far
+    // out from the anchor.
+    expect(ring.cx - scaled.x).toBe(2 * (tight.footprintCenter.x - tight.x));
+    expect(ring.r).toBe(scaled.drawnRadius * fp.r);
+  });
+
   it('falls back to the anchor at packedRadius 0, reachable at `margin: 0`', () => {
     // The homothety divides by packedRadius. At 0 the engine's own reserve is
     // `(P, 0)` and `footprintCenter` IS the anchor, so the anchor is not a

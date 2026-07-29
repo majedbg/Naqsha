@@ -779,10 +779,12 @@ export default function AnchorGhostOverlay({
   // per-placement resolution rule (`glyphRef` present ⇒ look it up, anything
   // else ⇒ the base glyph), so a ring can never describe a different glyph from
   // the one that was packed. Null throughout under the root law.
+  // The `||` is the engine's own expression, not a convenience: an unresolved
+  // ref falls back to the base glyph there rather than being skipped, because
+  // the engine cannot draw nothing — it can only reserve space.
   const footprintFor = (glyphRef) => {
     if (!footprints) return null;
-    if (glyphRef != null && footprints.byRef.has(glyphRef)) return footprints.byRef.get(glyphRef);
-    return footprints.base;
+    return (glyphRef != null ? footprints.byRef.get(glyphRef) : null) || footprints.base;
   };
   // ⚠️ THE GATE IS PLACEMENTS **OR** REJECTIONS (#191). It used to be placements
   // alone, and that silently switched this whole slice off in exactly the case

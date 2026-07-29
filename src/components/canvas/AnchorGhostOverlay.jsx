@@ -68,7 +68,7 @@ import { coerceRoles } from '../../lib/motif/edgeRoles';
 import { resolvePlacements } from '../../lib/motif/placementEngine';
 import { isEdgeHost, hostHasPathStructure } from '../../lib/motif/hostKinds';
 import { useFootprintReveal } from '../shell/footprintRevealContext';
-import { firstSequenceIndex, placementsForSlotScope } from './footprintScope';
+import { firstSequenceIndex, placementsForSlotScope, captorDisc } from './footprintScope';
 
 const ACCENT = '#7c3aed'; // violet — placed / included fill
 const EXCLUDE_STROKE = '#ef4444'; // red — force-excluded outline
@@ -110,6 +110,32 @@ const SELECTED = 'var(--saffron)';
 // on screen, and drawing a second one over the artwork being judged buys
 // nothing.
 const RING_HEAVY = 3; // × the base stroke, on the binding ring
+
+// THE CAPTOR (#190, decisions 16/17). The rings above show THAT a glyph is
+// capped; one more circle per ringed glyph shows WHAT capped it — the specific
+// neighbour disc (`capObstacle`) or the host container (`anchor.hostRadius`),
+// selected in footprintScope.js and drawn here.
+//
+// DIMMER, and one only. It is the cause, not a second subject: the glyph's own
+// two rings stay the bright pair, and the captor sits behind them at a third of
+// the opacity. Drawn FIRST inside the same <g> so the glyph's rings paint over
+// it where they overlap — SVG has no z-index, document order is the whole
+// mechanism.
+//
+// WHAT LINKS IT TO THE GLYPH IS GEOMETRY, NOT A LEADER LINE. For 'neighbour'
+// the engine's own definition puts the two in contact: packedRadius =
+// margin × (d − r_obstacle), so at `margin: 1` the solid ring is EXACTLY
+// tangent to the captor and at the default 0.85 it stands off by 15% of the
+// gap — the captor is always the nearest disc, essentially touching the ring it
+// bound. For 'host' the glyph sits INSIDE the container and containment is the
+// link, with a leader line that would be near-zero long anyway. A second
+// element per glyph was the alternative and it doubles the mark count the
+// measurement below is about; the tangency is the cheaper answer and the one
+// to test by eye first.
+//
+// The captor usually belongs to a DIFFERENT slot than the hovered one. It is
+// drawn all the same — that is decision 16's point, not an exception to it.
+const CAPTOR_OPACITY = 0.3;
 
 // Stable identity for "nothing resolved", so the memos downstream of the
 // placement pipeline do not re-run on every render of an unresolvable overlay.
@@ -393,6 +419,30 @@ export default function AnchorGhostOverlay({
     });
   }, [motif, revealMotif, revealScope, resolved]);
 
+  // THE CAPTORS — anchorId → the one disc capping that glyph, or absent (#190).
+  // Keyed by anchorId rather than positionally so the render cannot drift out
+  // of alignment with the list it is drawing.
+  //
+  // The ANCHOR LOOKUP is built lazily, and only when some glyph on the hovered
+  // slot is actually 'host'-capped. `capObstacle` is self-contained, so on every
+  // host but the three that emit `hostRadius` (circlepacking, modulegrid,
+  // truchet cells) this pass never touches `survivors` at all — and this memo
+  // re-runs on every frame of a `hold` drag, since `resolved` does.
+  const footprintCaptors = useMemo(() => {
+    if (!footprintPlacements || footprintPlacements.length === 0) return null;
+    let anchorsById = null;
+    const out = new Map();
+    for (const p of footprintPlacements) {
+      if (p.capBy === 'host' && !anchorsById) {
+        anchorsById = new Map();
+        for (const a of resolved.survivors) if (a && a.id != null) anchorsById.set(a.id, a);
+      }
+      const disc = captorDisc(p, anchorsById ? anchorsById.get(p.anchorId) : null);
+      if (disc) out.set(p.anchorId, disc);
+    }
+    return out;
+  }, [footprintPlacements, resolved]);
+
   // Is THIS motif's Route card armed for path picking on an EDGE host? That is
   // the ONE thing that decides which of the two render paths runs — and it also
   // has to close an open glyph popover, so it is computed at hook level rather
@@ -514,6 +564,7 @@ export default function AnchorGhostOverlay({
           // Dash scaled to the ring it rides so it reads as "dashed" on a 4-unit
           // glyph and on a 60-unit one alike.
           const dash = Math.max(2, p.drawnRadius * 0.3);
+          const captor = footprintCaptors ? footprintCaptors.get(p.anchorId) : null;
           return (
             <g
               key={p.anchorId}
@@ -521,6 +572,23 @@ export default function AnchorGhostOverlay({
               data-cap-by={p.capBy}
               data-saturated={p.saturated ? 'true' : undefined}
             >
+              {/* THE CAPTOR — the neighbour disc or the host container. First,
+                  so the glyph's own rings paint over it, and dim, so it reads as
+                  the cause rather than a second subject. Absent for 'natural'
+                  (nothing capped this glyph) and for 'boundary' (decision 17 —
+                  the page edge is already on screen). */}
+              {captor ? (
+                <circle
+                  data-captor={captor.kind}
+                  cx={captor.x}
+                  cy={captor.y}
+                  r={captor.r}
+                  fill="none"
+                  stroke={ACCENT}
+                  strokeOpacity={CAPTOR_OPACITY}
+                  strokeWidth={ringW}
+                />
+              ) : null}
               {/* RESERVED — what pushes neighbours around. */}
               <circle
                 data-ring="packed"

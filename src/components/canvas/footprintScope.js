@@ -92,3 +92,65 @@ export function placementsForSlotScope(scope, ctx) {
     return !!a && !a.rest && a.slotIndex === slotIndex && (a.zoneId ?? null) === zoneId;
   });
 }
+
+/**
+ * The ONE thing capping a placement, as a disc to draw — or null (#190,
+ * decisions 16/17).
+ *
+ * The second non-presentational step of the overlay, and here for the same
+ * reason as the first: "which placements have a captor, and of which kind" is
+ * logic, testable without rendering. Where the disc is *drawn* — how dim, in
+ * what order — is not, and stays in the component.
+ *
+ * ⚠️ NEVER RE-DERIVED FROM GEOMETRY. `capObstacle` is the disc the engine
+ * actually lost to, recorded at the moment it lost (placementEngine.js:627),
+ * and it is a COPY — the packer's own array keeps mutating after, so searching
+ * `placed` for "the nearest disc" would be a guess that disagrees with the
+ * engine whenever two discs tie or `margin < 1` moves the tangency. That the
+ * identity had to be surfaced at all (#186) is the entire reason this field
+ * exists; reconstructing it here would waste it.
+ *
+ * The captor commonly belongs to a DIFFERENT slot, and that is the point: the
+ * glyph capping yours is almost always another slot's, so an overlay confined
+ * to the hovered slot's own circles would hide the actual cause. No filtering
+ * happens here — the caller draws whatever comes back.
+ *
+ * 'boundary' returns null BY DESIGN (decision 17): the canvas rect is already
+ * on screen and drawing a second one over the artwork being judged buys
+ * nothing. 'natural' returns null because nothing capped that glyph at all.
+ *
+ * @param {object|null} placement  a Placement, carrying the always-present
+ *                                 sizing diagnostics (decision 15).
+ * @param {object|null} [anchor]   the RUNTIME anchor this placement sits on.
+ *                                 Read for `capBy === 'host'` only — the host
+ *                                 container's radius is a top-level field on
+ *                                 the anchor and appears on no placement.
+ * @returns {{kind:'neighbour'|'host', x:number, y:number, r:number}|null}
+ */
+export function captorDisc(placement, anchor) {
+  if (!placement) return null;
+  if (placement.capBy === 'neighbour') {
+    const o = placement.capObstacle;
+    // The engine populates `capObstacle` exactly when `capBy === 'neighbour'`,
+    // so null here should be unreachable — one condition, and it turns a
+    // hypothetical contract drift into "no captor drawn" rather than a throw
+    // inside the render.
+    if (!o) return null;
+    return { kind: 'neighbour', x: o.x, y: o.y, r: o.r };
+  }
+  if (placement.capBy === 'host') {
+    // The SAME validity test the engine gated the cap on
+    // (placementEngine.js:294 `hasHostRadius`), replicated rather than
+    // approximated: an overlay that disagrees about whether an anchor declares
+    // a container draws a ring where nothing capped, or omits one where
+    // something did.
+    if (!anchor || !Number.isFinite(anchor.hostRadius) || !(anchor.hostRadius > 0)) return null;
+    // Centred on the ANCHOR, not on the glyph. The container never moved; the
+    // four jitter draws displaced the glyph INSIDE it, which is precisely why
+    // the engine's host rule is a distance rule (`hostRadius - d`) rather than
+    // a radius cap — and drawing the ring off-centre from the glyph is what
+    // makes that visible.
+    return { kind: 'host', x: anchor.x, y: anchor.y, r: anchor.hostRadius };
+  }
+  return null;
+}

@@ -16,7 +16,7 @@
 // it lives (overrides.test.js), and the threading is one argument on one call.
 
 import { describe, it, expect } from 'vitest';
-import { firstSequenceIndex, placementsForSlotScope } from './footprintScope';
+import { firstSequenceIndex, placementsForSlotScope, captorDisc } from './footprintScope';
 
 /** A minimal Anchor. `s` orders samples along a path; `meta.pathIndex` groups. */
 const anchor = (id, role, s, pathIndex = 0) => ({
@@ -186,5 +186,63 @@ describe('placementsForSlotScope — scopes that name nothing here', () => {
 
   it('returns null for a degenerate sequence block with no slots', () => {
     expect(placementsForSlotScope(slotScope(), ctx({ type: 'sequence', slots: [] }))).toBeNull();
+  });
+});
+
+// CAPTOR SELECTION (#190) — the second non-presentational step. Same posture as
+// above: WHICH placements yield a captor and OF WHICH KIND is logic; how dim it
+// is drawn, in what order, and whether it reads as a container are presentation
+// the PRD excludes and Majed judges by eye. So there is nothing here about
+// opacity, stroke or element counts — only the selection, and in particular the
+// two `null` answers that are DESIGN rather than absence of data:
+// 'boundary' (decision 17 — the page edge is already on screen) and 'natural'
+// (nothing capped that glyph at all).
+describe('captorDisc — the one thing capping a glyph', () => {
+  /** A cell anchor declaring a container. */
+  const cell = (hostRadius) => ({ id: 'cell:0', role: 'cell', x: 100, y: 200, hostRadius });
+
+  it("reads the neighbour's disc STRAIGHT off `capObstacle`, all three numbers", () => {
+    // The point of the field: the engine recorded the disc it actually lost to.
+    // Nothing here may be recomputed from the placement's own geometry.
+    const p = { anchorId: 'a', x: 5, y: 5, capBy: 'neighbour', capObstacle: { x: 40, y: 7, r: 12 } };
+    expect(captorDisc(p, null)).toEqual({ kind: 'neighbour', x: 40, y: 7, r: 12 });
+  });
+
+  it('draws NOTHING for a boundary cap — decision 17, the canvas rect stays undrawn', () => {
+    expect(captorDisc({ capBy: 'boundary', capObstacle: null }, cell(30))).toBeNull();
+  });
+
+  it('draws nothing for an uncapped glyph', () => {
+    expect(captorDisc({ capBy: 'natural', capObstacle: null }, cell(30))).toBeNull();
+  });
+
+  it("draws the host container at the ANCHOR's centre, not the glyph's", () => {
+    // The container never moved; the jitter draws displaced the glyph INSIDE
+    // it, which is why the engine's host rule is a distance rule.
+    const p = { anchorId: 'cell:0', x: 104, y: 197, capBy: 'host', capObstacle: null };
+    expect(captorDisc(p, cell(30))).toEqual({ kind: 'host', x: 100, y: 200, r: 30 });
+  });
+
+  it('draws no host ring when the anchor declares no usable container', () => {
+    // The engine's own `hasHostRadius` gate, replicated: an overlay that
+    // disagrees rings a container the engine never capped against.
+    const p = { anchorId: 'cell:0', capBy: 'host', capObstacle: null };
+    expect(captorDisc(p, { id: 'cell:0', x: 1, y: 2 })).toBeNull();
+    expect(captorDisc(p, cell(0))).toBeNull();
+    expect(captorDisc(p, cell(-4))).toBeNull();
+    expect(captorDisc(p, cell(Infinity))).toBeNull();
+    expect(captorDisc(p, cell(NaN))).toBeNull();
+    expect(captorDisc(p, undefined)).toBeNull();
+  });
+
+  it('survives a neighbour cap with no obstacle recorded rather than throwing', () => {
+    // Unreachable from the engine, which populates the two together. One
+    // condition, and it degrades to "no captor" inside a render that has no
+    // error boundary of its own.
+    expect(captorDisc({ capBy: 'neighbour', capObstacle: null }, null)).toBeNull();
+  });
+
+  it('is null-safe on a missing placement', () => {
+    expect(captorDisc(null, cell(30))).toBeNull();
   });
 });

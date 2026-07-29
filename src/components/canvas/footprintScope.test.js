@@ -23,7 +23,12 @@ import {
   rejectionsForScope,
   rejectionsForSlotScope,
   captorDisc,
+  isTightFootprint,
+  normalisedFootprint,
+  ringGeometry,
+  rejectedRing,
 } from './footprintScope';
+import { getGlyph } from '../../lib/motif/glyphs';
 
 /** A minimal Anchor. `s` orders samples along a path; `meta.pathIndex` groups. */
 const anchor = (id, role, s, pathIndex = 0) => ({
@@ -586,5 +591,183 @@ describe('captorDisc — the one thing capping a glyph', () => {
 
   it('is null-safe on a missing placement', () => {
     expect(captorDisc(null, cell(30))).toBeNull();
+  });
+});
+
+/* ------------------------------------------------ the rings, as geometry */
+// #206. The rings move to the OFFSET centre, and that is arithmetic over the
+// engine's emitted record — so it is asserted here, headlessly, rather than off
+// rendered SVG attributes the PRD excludes. §4a's nesting/tangency property is
+// a claim about this function's output, not about the DOM.
+
+describe('isTightFootprint — which packing law the rings describe', () => {
+  it('reads root whenever the layer does not opt in explicitly', () => {
+    expect(isTightFootprint(undefined)).toBe(false);
+    expect(isTightFootprint({})).toBe(false);
+    expect(isTightFootprint({ sizing: {} })).toBe(false);
+    expect(isTightFootprint({ sizing: { footprint: 'root' } })).toBe(false);
+    // Only the exact string opts in — the engine's own dispatch rule.
+    expect(isTightFootprint({ sizing: { footprint: 'TIGHT' } })).toBe(false);
+  });
+
+  it('reads tight only in PROPORTIONAL mode — `fixed` keeps the anchored disc', () => {
+    expect(isTightFootprint({ sizing: { footprint: 'tight' } })).toBe(true);
+    expect(isTightFootprint({ sizing: { mode: 'proportional', footprint: 'tight' } })).toBe(true);
+    // §5e leaves `fixed` untouched in BOTH footprint modes, so its reserve is
+    // still `(P, R)` and the rings must stay anchor-centred at full radius.
+    expect(isTightFootprint({ sizing: { mode: 'fixed', footprint: 'tight' } })).toBe(false);
+  });
+});
+
+describe('normalisedFootprint — `f̂c` and `f̂r`, in units of R', () => {
+  it('divides the measured footprint by viewRadius, as the engine does', () => {
+    const f = normalisedFootprint({ footprintCenter: { x: 5, y: -2 }, footprintRadius: 8, viewRadius: 10 });
+    expect(f).toEqual({ cx: 0.5, cy: -0.2, r: 0.8, angle: 0 });
+  });
+
+  it('carries `root.angle`, the frame `fc` was measured in', () => {
+    const f = normalisedFootprint({
+      footprintCenter: { x: 0, y: 4 },
+      footprintRadius: 4,
+      viewRadius: 4,
+      root: { x: 0, y: 0, angle: 30 },
+    });
+    expect(f.angle).toBe(30);
+  });
+
+  it('returns null rather than throwing on an unmeasured glyph', () => {
+    // The ENGINE throws here (ruling 7d) because it is about to pack material.
+    // This overlay is a hover diagnostic: it degrades to "no offset" instead of
+    // taking the canvas down with it.
+    expect(normalisedFootprint(null)).toBeNull();
+    expect(normalisedFootprint({ viewRadius: 10 })).toBeNull();
+    expect(normalisedFootprint({ footprintCenter: { x: 1, y: 1 }, footprintRadius: 2 })).toBeNull();
+    expect(
+      normalisedFootprint({ footprintCenter: { x: 1, y: 1 }, footprintRadius: 2, viewRadius: 0 })
+    ).toBeNull();
+    expect(
+      normalisedFootprint({ footprintCenter: { x: NaN, y: 1 }, footprintRadius: 2, viewRadius: 4 })
+    ).toBeNull();
+  });
+});
+
+describe('ringGeometry — the two live rings', () => {
+  // A tight-law placement: the engine emitted `footprintCenter` AT packedRadius.
+  const fp = { cx: 0.6, cy: 0, r: 0.5, angle: 0 };
+  const tight = {
+    x: 100,
+    y: 200,
+    packedRadius: 10,
+    drawnRadius: 20,
+    // P + packedRadius·f̂c
+    footprintCenter: { x: 106, y: 200 },
+  };
+
+  it('is byte-identical to the anchored ring under the root law', () => {
+    // Root emits `footprintCenter === {x, y}` and reserves the full radius, so
+    // passing no footprint must reproduce exactly what the overlay drew before.
+    const p = { x: 100, y: 200, packedRadius: 10, drawnRadius: 20, footprintCenter: { x: 100, y: 200 } };
+    expect(ringGeometry(p, p.packedRadius, null)).toEqual({ cx: 100, cy: 200, r: 10 });
+    expect(ringGeometry(p, p.drawnRadius, null)).toEqual({ cx: 100, cy: 200, r: 20 });
+  });
+
+  it('takes the emitted centre verbatim at packedRadius — never re-derived', () => {
+    expect(ringGeometry(tight, tight.packedRadius, fp)).toEqual({ cx: 106, cy: 200, r: 5 });
+  });
+
+  it('puts the drawn ring one HOMOTHETY out from the anchor', () => {
+    // P + (drawn/packed)·(footprintCenter − P), radius scaling from the same
+    // point — which is what makes the pair nest instead of being concentric.
+    expect(ringGeometry(tight, tight.drawnRadius, fp)).toEqual({ cx: 112, cy: 200, r: 10 });
+  });
+
+  it('coincides EXACTLY at `hold 0`, where drawnRadius === packedRadius', () => {
+    // Decision 14's core property, and the migration guarantee: absent hold, the
+    // two rings are one ring — same centre AND same radius, to the last bit.
+    const packed = ringGeometry(tight, tight.packedRadius, fp);
+    const drawn = ringGeometry(tight, tight.packedRadius, fp);
+    expect(drawn).toEqual(packed);
+  });
+
+  it('falls back to the anchor at packedRadius 0, reachable at `margin: 0`', () => {
+    // The homothety divides by packedRadius. At 0 the engine's own reserve is
+    // `(P, 0)` and `footprintCenter` IS the anchor, so the anchor is not a
+    // defensive guess — it is the same answer, without the division.
+    const p = { x: 100, y: 200, packedRadius: 0, drawnRadius: 6, footprintCenter: { x: 100, y: 200 } };
+    expect(ringGeometry(p, 0, fp)).toEqual({ cx: 100, cy: 200, r: 0 });
+    expect(ringGeometry(p, 6, fp)).toEqual({ cx: 100, cy: 200, r: 3 });
+  });
+
+  it('nests the packed ring inside the drawn one whenever |f̂c| <= f̂r', () => {
+    // §4a, as a property rather than a number. 60 of the 62 built-ins.
+    const f = { cx: 0.3, cy: 0, r: 0.5, angle: 0 };
+    const p = { ...tight, footprintCenter: { x: tight.x + tight.packedRadius * f.cx, y: tight.y } };
+    const inner = ringGeometry(p, p.packedRadius, f);
+    const outer = ringGeometry(p, p.drawnRadius, f);
+    const d = Math.hypot(outer.cx - inner.cx, outer.cy - inner.cy);
+    expect(d).toBeLessThanOrEqual(outer.r - inner.r + 1e-12);
+  });
+
+  it('passes BOTH rings through the anchor for `leaf`, a degenerate glyph', () => {
+    // |f̂c| === f̂r: the two circles are internally tangent AT the anchor and
+    // grow away from the line the glyph is rooted on. The by-eye acceptance
+    // criterion, stated as arithmetic.
+    const leaf = normalisedFootprint(getGlyph('leaf'));
+    expect(Math.hypot(leaf.cx, leaf.cy)).toBeCloseTo(leaf.r, 12);
+    const P = { x: 100, y: 200 };
+    const R = 30;
+    const p = {
+      ...P,
+      packedRadius: R,
+      drawnRadius: R * 2,
+      footprintCenter: { x: P.x + R * leaf.cx, y: P.y + R * leaf.cy },
+    };
+    for (const radius of [p.packedRadius, p.drawnRadius]) {
+      const ring = ringGeometry(p, radius, leaf);
+      expect(Math.hypot(ring.cx - P.x, ring.cy - P.y)).toBeCloseTo(ring.r, 9);
+    }
+  });
+
+  it('degrades to the anchor when the engine emitted no centre', () => {
+    const p = { x: 7, y: 9, packedRadius: 4, drawnRadius: 4 };
+    expect(ringGeometry(p, 4, null)).toEqual({ cx: 7, cy: 9, r: 4 });
+    expect(ringGeometry(null, 4, null)).toBeNull();
+  });
+});
+
+describe('rejectedRing — the ring for a glyph that never drew', () => {
+  const rejection = { anchorId: 'a1', reason: 'below-floor', x: 50, y: 60, rotation: 0, wantedRadius: 10 };
+
+  it('stays anchor-centred under the root law', () => {
+    expect(rejectedRing(rejection, null)).toEqual({ cx: 50, cy: 60, r: 10 });
+  });
+
+  it('offsets by the ROTATED footprint centre, at the size it wanted', () => {
+    // Decision 8 / story 11: the mark that exists to explain a mystery must not
+    // be the one ring on screen still drawn where the glyph was not.
+    const fp = { cx: 0.5, cy: 0, r: 0.5, angle: 0 };
+    expect(rejectedRing(rejection, fp)).toEqual({ cx: 55, cy: 60, r: 5 });
+    const turned = rejectedRing({ ...rejection, rotation: 90 }, fp);
+    expect(turned.cx).toBeCloseTo(50, 9);
+    expect(turned.cy).toBeCloseTo(65, 9);
+    expect(turned.r).toBe(5);
+  });
+
+  it("de-rotates by the glyph's own growth turn, as the reserve does", () => {
+    // `placementMatrix` de-rotates by `root.angle` BEFORE the placement's own
+    // rotation, so the reserve offset is `Rot(θ − φ)·f̂c`.
+    const fp = { cx: 0.5, cy: 0, r: 0.5, angle: 90 };
+    const ring = rejectedRing({ ...rejection, rotation: 90 }, fp);
+    expect(ring.cx).toBeCloseTo(55, 9);
+    expect(ring.cy).toBeCloseTo(60, 9);
+  });
+
+  it('reads a missing rotation as 0 rather than emitting NaN', () => {
+    const fp = { cx: 0.5, cy: 0, r: 0.5, angle: 0 };
+    expect(rejectedRing({ ...rejection, rotation: undefined }, fp)).toEqual({ cx: 55, cy: 60, r: 5 });
+  });
+
+  it('is null-safe', () => {
+    expect(rejectedRing(null, null)).toBeNull();
   });
 });

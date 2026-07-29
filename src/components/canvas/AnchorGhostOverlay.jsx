@@ -67,12 +67,18 @@ import { resolveSelection } from '../../lib/motif/compileSelectionToChain';
 import { coerceRoles } from '../../lib/motif/edgeRoles';
 import { resolvePlacements } from '../../lib/motif/placementEngine';
 import { isEdgeHost, hostHasPathStructure } from '../../lib/motif/hostKinds';
+import { getGlyph } from '../../lib/motif/glyphs';
+import { isSequenceBlock, sequenceSlots } from '../../lib/motif/sequencer';
 import { useFootprintReveal } from '../shell/footprintRevealContext';
 import {
   firstSequenceIndex,
   placementsForScope,
   rejectionsForScope,
   captorDisc,
+  isTightFootprint,
+  normalisedFootprint,
+  ringGeometry,
+  rejectedRing,
 } from './footprintScope';
 
 const ACCENT = '#7c3aed'; // violet — placed / included fill
@@ -92,6 +98,24 @@ const SELECTED = 'var(--saffron)';
 // the feature made visible, which is why one ring would not do — a single ring
 // draws the circle that is NOT the packing circle and teaches the wrong model at
 // exactly the moment the control is being learned.
+//
+// ⚠️ THE TWO RINGS ARE NOT CONCENTRIC WITH EACH OTHER (#206, §4a). They were
+// until the per-glyph footprint landed, and every sentence below that assumed a
+// shared centre has been rewritten rather than deleted. Under the TIGHT law
+// (#204) a glyph reserves its own minimal enclosing circle carried into the
+// world — centre `P + R·f̂c`, radius `R·f̂r` — so BOTH the centre and the radius
+// scale with the radius being solved for. The two rings are therefore two
+// members of one HOMOTHETY about the anchor `P`, and a larger drawn radius also
+// means a larger offset. They NEST, packed inside drawn, whenever `|f̂c| ≤ f̂r`
+// (60 of the 62 built-ins), and are internally TANGENT AT THE ANCHOR for the 4
+// degenerate ones — `leaf` among them — whose circles pass through the anchor
+// and grow away from the line the glyph is rooted on. That is truer than the
+// concentric pair it replaces: the glyph really does grow away from its root.
+// The arithmetic and the `packedRadius === 0` guard live in
+// `footprintScope.ringGeometry`; nothing here re-derives a centre. Under the
+// ROOT law (and in `fixed` mode, §5e) the family collapses — `footprintCenter`
+// IS the anchor and `f̂r` reads 1 — so a root layer's rings are unchanged to the
+// float.
 //
 // WHICH RING TAKES THE HEAVY STROKE is `capBy` read straight off the canvas, no
 // legend (decision 14). `capBy` names what bound `drawnRadius` — the radius the
@@ -127,16 +151,41 @@ const RING_HEAVY = 3; // × the base stroke, on the binding ring
 // it where they overlap — SVG has no z-index, document order is the whole
 // mechanism.
 //
-// WHAT LINKS IT TO THE GLYPH IS GEOMETRY, NOT A LEADER LINE. For 'neighbour'
-// the engine's own definition puts the two in contact: packedRadius =
-// margin × (d − r_obstacle), so at `margin: 1` the solid ring is EXACTLY
-// tangent to the captor and at the default 0.85 it stands off by 15% of the
-// gap — the captor is always the nearest disc, essentially touching the ring it
-// bound. For 'host' the glyph sits INSIDE the container and containment is the
-// link, with a leader line that would be near-zero long anyway. A second
-// element per glyph was the alternative and it doubles the mark count the
-// measurement below is about; the tangency is the cheaper answer and the one
-// to test by eye first.
+// WHAT LINKS IT TO THE GLYPH IS GEOMETRY, NOT A LEADER LINE — and #206 did not
+// break that, though it did falsify the formula this block used to quote.
+//
+// THE FORMULA WAS `packedRadius = margin × (d − r_obstacle)`. That is the
+// ROOT-centred law, and under the tight law it is simply false: the reserve is
+// an offset disc that inflates and drifts at once, so there is no distance to
+// subtract from. THE TANGENCY PROPERTY SURVIVES UNTOUCHED (decision 6c). What
+// the engine now solves per obstacle is
+//
+//     |a + R·u| = R·f̂r + rⱼ
+//
+// — distance between centres equal to the sum of the radii, which IS external
+// tangency by definition. So at `margin: 1` the solid ring is still EXACTLY
+// tangent to the captor disc, and at the default 0.85 it still stands off by
+// 15% of the gap. Decision 16's mechanism is preserved verbatim and reads
+// BETTER than before, because the captor disc now hugs the ink it belongs to
+// rather than a circle twice its size — which is decision 6's whole argument
+// for not adding an `anchorId` to `placed`. (It is also why the solid ring is
+// drawn at `R·f̂r` rather than at `R`: a ring at the bare radius would sit
+// visibly clear of the disc it is tangent to, and the link would be a claim the
+// pixels contradict.)
+//
+// THE CAPTOR IS NOT NECESSARILY THE NEAREST DISC. It was under the root law,
+// where the winner minimised `d − r`; the tight law's winner is the obstacle
+// yielding the SMALLEST MAX-`R` (decision 6b), and those are different
+// orderings once the reserve is offset — a disc FURTHER AWAY in the direction
+// the art leans can bind harder than a nearer one sitting behind the root. What
+// is unchanged is that the winner is RECORDED by the code that lost to it and
+// never re-derived here (see `captorDisc`), so the ring drawn is the disc the
+// engine actually lost to whichever ordering produced it.
+//
+// For 'host' the glyph sits INSIDE the container and containment is the link,
+// with a leader line that would be near-zero long anyway. A second element per
+// glyph was the alternative and it doubles the mark count the measurement below
+// is about; the tangency is the cheaper answer and the one to test by eye first.
 //
 // The captor usually belongs to a DIFFERENT slot than the hovered one. It is
 // drawn all the same — that is decision 16's point, not an exception to it.
@@ -149,6 +198,14 @@ const CAPTOR_OPACITY = 0.3;
 // engine rejected `below-floor` or `no-fit` therefore draws an empty ring AT THE
 // SIZE IT WANTED (`wantedRadius` = the natural target), turning four vanished
 // glyphs into four visible circles.
+//
+// AND WHERE IT WANTED TO BE (#206, decision 8). The ring is the disc that glyph
+// would have occupied, so under the tight law it takes the same offset and the
+// same `f̂r` as a survivor's — rebuilt from the `rotation` #200 added, since a
+// rejection is dropped before any reserve is committed and so carries no
+// `footprintCenter` of its own. Story 11: with every other ring on screen
+// displaced, leaving these four on their anchors would overlap the survivors'
+// territory, and the mark that exists to explain a mystery would be adding one.
 //
 // A THIRD VISUAL CATEGORY, and it has to read as one at a glance: the reserved
 // ring is SOLID, the drawn ring is DASHED, this one is DOTTED — a genuinely
@@ -169,6 +226,12 @@ const CAPTOR_OPACITY = 0.3;
 // rejection is a real design question, deliberately left open here — do not read
 // this ring's plainness as it having been answered.
 const REJECTED_OPACITY = 0.55;
+
+// Stable identity for "this document has no custom glyphs", for the same reason
+// as EMPTY_RESOLVED below: a bare `= {}` default parameter mints a NEW object
+// every render, which would invalidate the glyph memo — and, through it, the
+// whole placement re-resolution — on every frame of a `hold` drag.
+const EMPTY_GLYPHS = Object.freeze({});
 
 // Stable identity for "nothing resolved", so the memos downstream of the
 // placement pipeline do not re-run on every render of an unresolvable overlay.
@@ -246,6 +309,19 @@ export default function AnchorGhostOverlay({
   // when the gesture commits. Defaults to a no-op so every existing test and
   // caller keeps working unchanged.
   onFlushHistory = () => {},
+  // The document's custom-glyph store, `{ [id]: glyph }` — the SAME map
+  // `useCanvas` resolves the render's glyphs against (#206). It became load-
+  // bearing here the moment the placement engine started reading the glyph: a
+  // `'tight'` layer whose glyph this overlay cannot resolve THROWS inside
+  // `resolvePlacements` (ruling 7d), and every user-imported glyph lives in this
+  // store rather than in the built-in library.
+  //
+  // ⚠️ NOT WIRED BY THE PARENT YET. `RightPanel.jsx` holds the store (it passes
+  // it to `useCanvas`) and does not pass it here, so a custom-glyph layer under
+  // the tight law currently resolves `undefined` and this overlay degrades to
+  // drawing no rings (see the try/catch below) instead of showing them. The
+  // default keeps every existing caller and test byte-identical.
+  customGlyphs = EMPTY_GLYPHS,
 }) {
   // ── HOOKS FIRST ──────────────────────────────────────────────────────────
   // The per-glyph popover's open anchor, and the screen rect of the dot it
@@ -403,6 +479,42 @@ export default function AnchorGhostOverlay({
     [motif, host]
   );
 
+  // THE LAYER'S GLYPHS, resolved the way the RENDER SEAM resolves them (#206).
+  //
+  // This overlay never needed a glyph before: it re-ran the placement pipeline
+  // for anchor ids and radii, and the engine sized every glyph as a disc of
+  // `viewRadius` about its root. The tight law (#204) reads the glyph's MEASURED
+  // footprint, so `resolvePlacements` now needs the same two injected sources
+  // `useCanvas` builds for `MotifPattern` — a BASE glyph and a MAP over every
+  // ref a Sequencer slot might stamp — and THROWS in `'tight'` mode without
+  // them (ruling 7f: the landmine this ticket exists to defuse).
+  //
+  // Mirrors `useCanvas.js`'s resolution deliberately, including the ZONED read
+  // through `sequenceSlots`: a Vine's slots live under `zones[].slots` with no
+  // flat `slots`, and reading `block.slots` directly would drop every zone glyph
+  // from the map — the exact bug that class has produced twice already.
+  const glyphSources = useMemo(() => {
+    const glyphRef = motif?.params?.glyphRef;
+    const base = getGlyph(glyphRef, customGlyphs) ?? null;
+    const refs = new Set();
+    if (glyphRef != null) refs.add(glyphRef);
+    const chain = motif?.params?.binding?.chain;
+    if (Array.isArray(chain)) {
+      for (const block of chain) {
+        if (!isSequenceBlock(block)) continue;
+        for (const slot of sequenceSlots(block)) {
+          if (slot && slot.glyphRef != null) refs.add(slot.glyphRef);
+        }
+      }
+    }
+    const map = {};
+    for (const ref of refs) {
+      const g = getGlyph(ref, customGlyphs);
+      if (g) map[ref] = g; // an unresolved ref stays absent, as it does downstream
+    }
+    return { base, map };
+  }, [motif, customGlyphs]);
+
   const resolved = useMemo(() => {
     if (!anchors || !motif) return EMPTY_RESOLVED;
     // EDGE hosts run the same pipeline (#141) — placed/candidate is what the
@@ -442,12 +554,32 @@ export default function AnchorGhostOverlay({
     // instead — see `rejectionsForSlotScope`. Without it the dotted ring and the
     // dashed ring that replaces it on rescue would disagree by exactly the
     // override's scale.
-    const { placements, rejected } = resolvePlacements(survivors, placementConfig, {
-      boundary: { type: 'rect', width: canvasW, height: canvasH },
-      overrideRecords,
-    });
-    return { placements, survivors, sequence, rejected, overrideRecords };
-  }, [anchors, motif, binding, canvasW, canvasH]);
+    // ⚠️ THE GLYPH IS THREADED, AND THE THROW IS CAUGHT. Under `sizing.footprint:
+    // 'tight'` the engine reads the glyph's measured footprint and THROWS when it
+    // is missing or unmeasured (ruling 7d — a layer must never be silently packed
+    // by the law the user opted out of, on a machine that cuts material). That
+    // ruling is about the RENDER, which reports the same document loudly on its
+    // own; this overlay is a hover diagnostic, and a diagnostic that takes the
+    // canvas down when a glyph is unmeasured is worse than one that draws
+    // nothing. Two ways in, both live: a custom glyph this overlay cannot
+    // resolve (`customGlyphs` is not wired by the parent yet — see the prop), and
+    // an SVG imported before #202 taught `importMotif` to measure a footprint.
+    //
+    // The degrade is scoped to the RINGS. `EMPTY_RESOLVED` costs the footprint
+    // overlay its content and leaves the editable ghost-dot field — the surface
+    // the user is actually working through — untouched.
+    try {
+      const { placements, rejected } = resolvePlacements(survivors, placementConfig, {
+        boundary: { type: 'rect', width: canvasW, height: canvasH },
+        overrideRecords,
+        glyph: glyphSources.base,
+        glyphMap: glyphSources.map,
+      });
+      return { placements, survivors, sequence, rejected, overrideRecords };
+    } catch {
+      return EMPTY_RESOLVED;
+    }
+  }, [anchors, motif, binding, canvasW, canvasH, glyphSources]);
   const placements = resolved.placements;
 
   // THE REVEALED PLACEMENTS — whichever control raised the reveal (#192). The
@@ -493,6 +625,26 @@ export default function AnchorGhostOverlay({
       overrideRecords: resolved.overrideRecords,
     });
   }, [motif, revealMotif, revealScope, resolved]);
+
+  // THE FOOTPRINT THE RINGS ARE STATED IN (#206). Null under the ROOT law, and
+  // then every ring below collapses to the anchored circle it has always been —
+  // the engine emits `footprintCenter === {x, y}` there and reserves the full
+  // radius, so nothing about a root layer moves by so much as a float.
+  //
+  // Under the TIGHT law the rings are the glyph's minimal enclosing circle
+  // carried into the world, so they need `f̂r` — the one quantity the placement
+  // does NOT carry (`footprintCenter` is emitted; the reserve's radius is not).
+  // Resolved PER GLYPH, not per layer: a sequenced slot stamps its own glyph with
+  // its own footprint, and one ratio for the layer would draw the base glyph's
+  // circle around every other slot's ink.
+  const footprints = useMemo(() => {
+    if (!isTightFootprint(binding.placement)) return null;
+    const byRef = new Map();
+    for (const ref of Object.keys(glyphSources.map)) {
+      byRef.set(ref, normalisedFootprint(glyphSources.map[ref]));
+    }
+    return { base: normalisedFootprint(glyphSources.base), byRef };
+  }, [binding, glyphSources]);
 
   // THE CAPTORS — anchorId → the one disc capping that glyph, or absent (#190).
   // Keyed by anchorId rather than positionally so the render cannot drift out
@@ -623,6 +775,15 @@ export default function AnchorGhostOverlay({
   // Stroke widths are in CANVAS units like everything else here (the parent
   // scales the box), floored so they survive a small canvas.
   const ringW = Math.max(0.75, Math.min(canvasW, canvasH) * 0.0018);
+  // The glyph a placement stamped, as a normalised footprint — the ENGINE's own
+  // per-placement resolution rule (`glyphRef` present ⇒ look it up, anything
+  // else ⇒ the base glyph), so a ring can never describe a different glyph from
+  // the one that was packed. Null throughout under the root law.
+  const footprintFor = (glyphRef) => {
+    if (!footprints) return null;
+    if (glyphRef != null && footprints.byRef.has(glyphRef)) return footprints.byRef.get(glyphRef);
+    return footprints.base;
+  };
   // ⚠️ THE GATE IS PLACEMENTS **OR** REJECTIONS (#191). It used to be placements
   // alone, and that silently switched this whole slice off in exactly the case
   // it exists for: §1b's gap-20 slot, at the limit, places NOTHING and rejects
@@ -648,10 +809,19 @@ export default function AnchorGhostOverlay({
             entire content of the overlay. */}
         {(footprintPlacements || []).map((p) => {
           const binds = bindingRing(p.capBy);
-          // Dash scaled to the ring it rides so it reads as "dashed" on a 4-unit
-          // glyph and on a 60-unit one alike.
-          const dash = Math.max(2, p.drawnRadius * 0.3);
           const captor = footprintCaptors ? footprintCaptors.get(p.anchorId) : null;
+          // TWO MEMBERS OF ONE HOMOTHETY about the anchor (#206, §4a) — no
+          // longer concentric with each other, because a larger drawn radius
+          // also means a larger offset. `footprintScope.ringGeometry` owns the
+          // arithmetic and the reasoning; it is not re-derived here.
+          const fp = footprintFor(p.glyphRef);
+          const packedRing = ringGeometry(p, p.packedRadius, fp);
+          const drawnRing = ringGeometry(p, p.drawnRadius, fp);
+          // Dash scaled to the ring it rides so it reads as "dashed" on a 4-unit
+          // glyph and on a 60-unit one alike — off the radius actually DRAWN, so
+          // it keeps reading as dashed once the tight law shrinks the circle to
+          // the glyph's own footprint.
+          const dash = Math.max(2, drawnRing.r * 0.3);
           return (
             <g
               key={p.anchorId}
@@ -676,12 +846,13 @@ export default function AnchorGhostOverlay({
                   strokeWidth={ringW}
                 />
               ) : null}
-              {/* RESERVED — what pushes neighbours around. */}
+              {/* RESERVED — what pushes neighbours around, where it actually
+                  sits. */}
               <circle
                 data-ring="packed"
-                cx={p.x}
-                cy={p.y}
-                r={p.packedRadius}
+                cx={packedRing.cx}
+                cy={packedRing.cy}
+                r={packedRing.r}
                 fill="none"
                 stroke={ACCENT}
                 strokeOpacity={0.9}
@@ -690,9 +861,9 @@ export default function AnchorGhostOverlay({
               {/* DRAWN — what actually inked. Coincident at `hold 0`. */}
               <circle
                 data-ring="drawn"
-                cx={p.x}
-                cy={p.y}
-                r={p.drawnRadius}
+                cx={drawnRing.cx}
+                cy={drawnRing.cy}
+                r={drawnRing.r}
                 fill="none"
                 stroke={ACCENT}
                 strokeOpacity={0.9}
@@ -709,41 +880,54 @@ export default function AnchorGhostOverlay({
             and no `capObstacle` to select one from — NOT because nothing capped
             these glyphs. `below-floor` means capped clean through the floor; see
             REJECTED_OPACITY above. */}
-        {(footprintRejections || []).map((r) => (
-          <g
-            key={`rejected:${r.anchorId}`}
-            data-rejected="true"
-            data-anchor-id={r.anchorId}
-            data-reason={r.reason}
-          >
-            <circle
-              data-ring="rejected"
-              cx={r.x}
-              cy={r.y}
-              r={r.wantedRadius}
-              fill="none"
-              stroke={ACCENT}
-              strokeOpacity={REJECTED_OPACITY}
-              strokeWidth={ringW}
-              // A ROUND DOT on a wide gap — a round cap over a dash far shorter
-              // than the stroke is thick, so each mark is a circle of diameter
-              // `ringW`. That is what makes this read as a THIRD category beside
-              // the solid and the dashed ring rather than as a variant of either
-              // (the drawn ring is a 50%-duty dash; this is a dot on air). The
-              // gap is scaled to the ring it rides, like that dash, so it reads
-              // as dotted on a 4-unit ring and on a 60-unit one alike.
-              //
-              // 0.01 and NOT 0: a zero-length dash with a round cap is specified
-              // to paint a dot, and does in every current browser, but it is
-              // also the exact case a renderer is most likely to drop — and this
-              // ring vanishing is the precise failure the feature exists to fix.
-              // The epsilon is geometrically invisible next to `ringW` and the
-              // cap still sizes the dot.
-              strokeLinecap="round"
-              strokeDasharray={`0.01 ${Math.max(3, r.wantedRadius * 0.22)}`}
-            />
-          </g>
-        ))}
+        {(footprintRejections || []).map((r) => {
+          // OFFSET TOO (#206, decision 8). A `Rejection` carries no
+          // `footprintCenter` — it is rejected before any reserve is committed —
+          // so #200 gave it the `rotation` this rebuilds the offset from. Its
+          // glyph is the BASE one: a rejection carries no `glyphRef` either, so
+          // on a sequenced layer whose slots stamp different glyphs this ring
+          // uses the layer's own footprint. Reported; there is no honest source
+          // for the slot's glyph here.
+          const ring = rejectedRing(r, footprints ? footprints.base : null);
+          return (
+            <g
+              key={`rejected:${r.anchorId}`}
+              data-rejected="true"
+              data-anchor-id={r.anchorId}
+              data-reason={r.reason}
+            >
+              <circle
+                data-ring="rejected"
+                cx={ring.cx}
+                cy={ring.cy}
+                r={ring.r}
+                fill="none"
+                stroke={ACCENT}
+                strokeOpacity={REJECTED_OPACITY}
+                strokeWidth={ringW}
+                // A ROUND DOT on a wide gap — a round cap over a dash far shorter
+                // than the stroke is thick, so each mark is a circle of diameter
+                // `ringW`. That is what makes this read as a THIRD category
+                // beside the solid and the dashed ring rather than as a variant
+                // of either (the drawn ring is a 50%-duty dash; this is a dot on
+                // air). The gap is scaled to the ring it rides, like that dash,
+                // so it reads as dotted on a 4-unit ring and on a 60-unit one
+                // alike — off `ring.r`, the radius actually drawn, so it keeps
+                // reading as dotted once the tight law shrinks the circle to the
+                // glyph's own footprint.
+                //
+                // 0.01 and NOT 0: a zero-length dash with a round cap is
+                // specified to paint a dot, and does in every current browser,
+                // but it is also the exact case a renderer is most likely to
+                // drop — and this ring vanishing is the precise failure the
+                // feature exists to fix. The epsilon is geometrically invisible
+                // next to `ringW` and the cap still sizes the dot.
+                strokeLinecap="round"
+                strokeDasharray={`0.01 ${Math.max(3, ring.r * 0.22)}`}
+              />
+            </g>
+          );
+        })}
       </svg>
     ) : null;
 

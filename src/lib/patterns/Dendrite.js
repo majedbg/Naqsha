@@ -6,8 +6,10 @@ import { applySymmetryDraw } from './symmetryUtils';
  *
  * Particles random-walk until they stick to a growing cluster, forming a
  * branching dendrite (frost / coral / lightning). We do NOT fill the mass — we
- * emit one <line> per bond (a stuck particle → the particle it attached to), so
- * the output is a vector branch tree suitable for a pen-plotter / vinyl-cutter.
+ * emit one CONNECTED root→tip <polyline> per decomposed branch (S1,
+ * docs/vine-scaffolds-PLAN.md), not one <line> per stuck-particle bond, so the
+ * output reads as a vector branch tree — and a walkable one, usable as a vine
+ * host — suitable for a pen-plotter / vinyl-cutter.
  *
  * Why it BRANCHES instead of clumping (the DLA "screening" effect):
  *   - A new node is placed at the WALKER's actual arrival position, not snapped
@@ -29,10 +31,27 @@ import { applySymmetryDraw } from './symmetryUtils';
  * regenerate finishes well under ~1s.
  *
  * The whole simulation runs off `ctx.random` (seeded) so it is deterministic.
- * `drawBase` replays the bonds via `ctx`; the SVG <line>/<circle> strings are
- * built from the SAME arrays, so canvas == SVG. Like DifferentialGrowth, this
- * pattern KEEPS the real radial-symmetry control (we override only `contentFor`,
- * never `toSVGGroup`, so the real `symmetry` param flows through wrapSVGSymmetry).
+ * `drawBase` replays the decomposed paths via `ctx.beginShape`/`vertex`/
+ * `endShape`; the SVG <polyline>/<circle> strings are built from the SAME
+ * arrays, so canvas == SVG. Like DifferentialGrowth, this pattern KEEPS the
+ * real radial-symmetry control (we override only `contentFor`, never
+ * `toSVGGroup`, so the real `symmetry` param flows through wrapSVGSymmetry).
+ *
+ * PATH DECOMPOSITION (S1). Bonds are stored `{ p, c }` parent-index →
+ * child-index, and — because a node is only ever added to the cluster once it
+ * has a parent already in it — `p < c` always, and `bonds` is naturally sorted
+ * ascending by `c` (each stuck node's one incoming bond is pushed the instant
+ * that node is added). `decomposeIntoPaths` (below) exploits both facts to
+ * fold the bond forest into CONNECTED root→tip node-index paths, using the
+ * main-branch-continuation rule the vine-scaffolds plan froze for T3's
+ * `buildSkeleton` (docs/vine-scaffolds-PLAN.md, "T3 CONTRACT"): at each
+ * junction, the child leading to the DEEPEST subtree continues the CURRENT
+ * path; every other child STARTS a new path (from the junction, so the bond
+ * to that junction is still emitted, just as the first segment of a new
+ * path). That puts every bond in EXACTLY ONE path. The alternative — walking
+ * every tip back to the root — would stamp shared trunk bonds once per
+ * descendant tip, so a motif arc-length-sampling the result would pile glyphs
+ * on the trunk in proportion to how bushy the tree is above it.
  */
 export default class Dendrite extends Pattern {
   generate(ctx, seed, params, canvasW, canvasH, color, opacity) {
@@ -235,14 +254,19 @@ export default class Dendrite extends Pattern {
       void stuck;
     }
 
-    // --- emit: one <line> per bond (the branch skeleton) --------------------
+    // --- decompose bonds into CONNECTED root→tip paths (S1) -----------------
+    // Pure/topological — see decomposeIntoPaths' docstring for the rule.
+    const paths = decomposeIntoPaths(bonds, nx.length);
+
+    // --- emit: one <polyline> per decomposed path ----------------------------
     const fmt = (v) => (Math.round(v * 100) / 100).toString();
     const nodesAlso = render === 'nodesBonds';
     const nodeR = Math.max(0.3, strokeWeight * 1.5);
 
-    for (const b of bonds) {
+    for (const path of paths) {
+      const pts = path.map((idx) => `${fmt(nx[idx])},${fmt(ny[idx])}`).join(' ');
       this.svgElements.push(
-        `<line x1="${fmt(nx[b.p])}" y1="${fmt(ny[b.p])}" x2="${fmt(nx[b.c])}" y2="${fmt(ny[b.c])}" stroke="${color}" stroke-width="${strokeWeight}" stroke-linecap="round"/>`
+        `<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="${strokeWeight}" stroke-linecap="round"/>`
       );
     }
     if (nodesAlso) {
@@ -260,8 +284,10 @@ export default class Dendrite extends Pattern {
       ctx.stroke(c);
       ctx.strokeWeight(strokeWeight);
       ctx.strokeCap(ctx.ROUND);
-      for (const b of bonds) {
-        ctx.line(nx[b.p], ny[b.p], nx[b.c], ny[b.c]);
+      for (const path of paths) {
+        ctx.beginShape();
+        for (const idx of path) ctx.vertex(nx[idx], ny[idx]);
+        ctx.endShape(); // open — no CLOSE, root end to tip end
       }
       if (nodesAlso) {
         ctx.noStroke();
@@ -276,11 +302,99 @@ export default class Dendrite extends Pattern {
     applySymmetryDraw(ctx, symmetry, cx, cy, drawBase, startAngle * Math.PI / 180, offsetX, offsetY);
   }
 
-  // One element per bond (+ optional node circles), joined plainly. toSVGGroup
-  // is INHERITED: it reads this._lastParams.symmetry, so the real symmetry param
-  // flows through wrapSVGSymmetry for free. We deliberately do NOT override
-  // toSVGGroup (that would risk re-hardcoding symmetry to 1).
+  // One element per decomposed path (+ optional node circles), joined plainly.
+  // toSVGGroup is INHERITED: it reads this._lastParams.symmetry, so the real
+  // symmetry param flows through wrapSVGSymmetry for free. We deliberately do
+  // NOT override toSVGGroup (that would risk re-hardcoding symmetry to 1).
   contentFor() {
     return this.svgElements.join('\n');
   }
+}
+
+/**
+ * Decompose a bond forest (`{p,c}` parent-index → child-index pairs, in
+ * CHILD-ASCENDING creation order — see the file header for why Dendrite's
+ * `bonds` array always satisfies that) into CONNECTED root→tip node-index
+ * paths, using main-branch continuation: at each junction, the child leading
+ * to the DEEPEST subtree continues the current path; every other child starts
+ * a NEW path (from the junction, so its bond to that junction is still
+ * emitted, as that new path's first segment). Every bond therefore appears in
+ * EXACTLY ONE returned path.
+ *
+ * Pure and coordinate-free — no p5, no `ctx`, unit-testable with hand-built
+ * synthetic trees. A "root" is any node index in `[0, nodeCount)` that never
+ * appears as a `c` in `bonds` (a DLA seed node, or any forest root generally —
+ * `seedMode: 'ground'`/`'ring'` seed multiple disconnected roots).
+ *
+ * @param {{p:number,c:number}[]} bonds
+ * @param {number} nodeCount total node count (seeds + stuck particles)
+ * @returns {number[][]} paths, each of length >= 2 (>= 1 bond); root/junction → tip
+ */
+export function decomposeIntoPaths(bonds, nodeCount) {
+  const children = new Array(nodeCount);
+  for (let i = 0; i < nodeCount; i++) children[i] = [];
+  const parentOf = new Int32Array(nodeCount).fill(-1);
+  for (const b of bonds) {
+    children[b.p].push(b.c);
+    parentOf[b.c] = b.p;
+  }
+
+  // subtreeDepth[i] = length (in edges) of the longest downward chain rooted
+  // at node i. One REVERSE pass over `bonds` suffices — no recursion needed,
+  // and no explicit stack — because bonds are child-ascending and a parent
+  // index is always < its own child's index: every bond rooted AT a given
+  // child c (i.e. every bond with p===c) has a strictly higher child index
+  // than c, so it was already folded into subtreeDepth[c] by the time this
+  // reverse scan reaches the bond that made c itself a child.
+  const subtreeDepth = new Float64Array(nodeCount); // 0 default = leaf
+  for (let i = bonds.length - 1; i >= 0; i--) {
+    const { p, c } = bonds[i];
+    const d = subtreeDepth[c] + 1;
+    if (d > subtreeDepth[p]) subtreeDepth[p] = d;
+  }
+
+  // Deepest-subtree child continues; ties broken toward the lower (earlier-
+  // stuck) child index, for determinism.
+  const deepestChild = (node) => {
+    const kids = children[node];
+    let best = kids[0];
+    for (let k = 1; k < kids.length; k++) {
+      if (subtreeDepth[kids[k]] > subtreeDepth[best]) best = kids[k];
+    }
+    return best;
+  };
+
+  const paths = [];
+  // {node, viaChild}: viaChild=-1 marks a forest root (no forced first move).
+  const starts = [];
+  for (let i = 0; i < nodeCount; i++) {
+    if (parentOf[i] === -1) starts.push({ node: i, viaChild: -1 });
+  }
+  while (starts.length) {
+    const { node: startNode, viaChild } = starts.pop();
+    const path = [startNode];
+    let node = startNode;
+    if (viaChild !== -1) {
+      // Resume at the child the ORIGINATING path branched away from — do NOT
+      // re-derive startNode's other children here, that already happened
+      // once, at the point this marker was created below.
+      path.push(viaChild);
+      node = viaChild;
+    }
+    // Every node is entered into this loop body exactly once across the
+    // WHOLE decomposition (as a root, as a `chosen` continuation, or as a
+    // `viaChild` jump target) — so this enumerates every bond exactly once.
+    for (;;) {
+      const kids = children[node];
+      if (kids.length === 0) break; // tip — no children, path ends here
+      const chosen = deepestChild(node);
+      for (const kid of kids) {
+        if (kid !== chosen) starts.push({ node, viaChild: kid });
+      }
+      path.push(chosen);
+      node = chosen;
+    }
+    if (path.length >= 2) paths.push(path); // >=2 nodes ⇒ at least one bond
+  }
+  return paths;
 }

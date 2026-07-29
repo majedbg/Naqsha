@@ -122,7 +122,7 @@ export const EDGE_MOTIF_HOSTS = Object.freeze(
     'topographic', // TopographicContours — iso-contour beginShape/vertex polylines
     'phyllodash', // PhyllotaxisDash — ctx.line dash segments
     'diffgrowth', // DifferentialGrowth — grown-blob beginShape/vertex polyline
-    'dendrite', // Dendrite — ctx.line branch segments (node ellipses ignored)
+    'dendrite', // Dendrite — beginShape/vertex root→tip branch polylines (S1, node ellipses ignored)
     // ── #144 (PRD #143) ──────────────────────────────────────────────────────
     // Each verified against BOTH membership conditions in the module header, in
     // the pattern source, before inclusion:

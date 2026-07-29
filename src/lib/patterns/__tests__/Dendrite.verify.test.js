@@ -86,13 +86,21 @@ function drawLine(buf, w, h, x0, y0, x1, y1, c) {
   }
 }
 
-// Parse the bonds out of svgElements (origin-centered coords).
+// Parse the bond segments out of svgElements (origin-centered coords). Since
+// S1, Dendrite emits one <polyline> per decomposed root→tip path rather than
+// one <line> per bond — decompose each polyline's point list back into its
+// consecutive-pair segments, which together are exactly the cluster's bonds
+// (S1 guarantees each bond appears in exactly one path).
 function bondsFrom(inst) {
   const out = [];
   for (const el of inst.svgElements) {
-    if (!el.startsWith('<line')) continue;
-    const m = el.match(/x1="(-?[\d.]+)" y1="(-?[\d.]+)" x2="(-?[\d.]+)" y2="(-?[\d.]+)"/);
-    if (m) out.push([+m[1], +m[2], +m[3], +m[4]]);
+    if (!el.startsWith('<polyline')) continue;
+    const m = el.match(/points="([^"]*)"/);
+    if (!m) continue;
+    const pts = m[1].trim().split(/\s+/).map((pair) => pair.split(',').map(Number));
+    for (let i = 0; i + 1 < pts.length; i++) {
+      out.push([pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1]]);
+    }
   }
   return out;
 }

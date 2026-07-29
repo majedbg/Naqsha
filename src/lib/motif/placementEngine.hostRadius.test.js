@@ -316,6 +316,15 @@ describe('hostRadius — the regression guard for every existing document', () =
     // drawnRadius === packedRadius === radius, capBy 'natural', not saturated,
     // no captor. `neighbourCap` is Infinity for the first placement (nothing
     // was in `placed` yet) and the real margin×clearance thereafter.
+    //
+    // #204 adds `footprintCenter`, the world centre of the reserved disc, on the
+    // same terms (§5f shape 1 / §6 "what deliberately moves"): always present, no
+    // conditional shape. This layer carries no `sizing.footprint`, so it runs the
+    // LEGACY arm, where the reserve is anchor-centred at every radius — hence
+    // `footprintCenter === {x, y}` on every entry, and every number above it
+    // unchanged to the bit. That is the byte-identity claim, restated: the key is
+    // new, the packing is not. Updated to the true new shape rather than loosened
+    // to a partial matcher, exactly as the #186 note above did.
     expect(placements).toEqual([
       {
         anchorId: 'a',
@@ -333,6 +342,7 @@ describe('hostRadius — the regression guard for every existing document', () =
         capBy: 'natural',
         saturated: false,
         capObstacle: null,
+        footprintCenter: { x: 98.7480694348009, y: 104.0471511721598 },
         seqId: 'A',
         flip: false,
       },
@@ -352,6 +362,7 @@ describe('hostRadius — the regression guard for every existing document', () =
         capBy: 'natural',
         saturated: false,
         capObstacle: null,
+        footprintCenter: { x: 160.78609189792627, y: 127.45877859798745 },
         seqId: 'A',
         flip: false,
       },
@@ -371,6 +382,7 @@ describe('hostRadius — the regression guard for every existing document', () =
         capBy: 'natural',
         saturated: false,
         capObstacle: null,
+        footprintCenter: { x: 299.63935459136263, y: 221.16586856242188 },
         seqId: 'A',
         flip: false,
       },

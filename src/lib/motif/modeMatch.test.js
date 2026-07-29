@@ -110,6 +110,28 @@ describe('modeForMotif — one-field mutations ⇒ custom', () => {
     binding.chain.push({ type: 'everyN', n: 2, offset: 0 });
     expect(modeForMotif(binding, EDGE_HOST)).toBe('custom');
   });
+
+  // `hold` (#187) is a per-slot size modifier, the peer of sizeScale — setting
+  // one is a customisation and the mode column must say so, or it silently
+  // reports a preset the canvas is no longer drawing.
+  it('a slot hold ⇒ custom (alternate-xo), exactly as sizeScale does', () => {
+    const { binding } = STARTER_CHIPS.find((c) => c.id === 'alternate-xo').build(SEMANTIC_HOST);
+    binding.chain[1].slots[0].hold = 0.5;
+    expect(modeForMotif(binding, SEMANTIC_HOST)).toBe('custom');
+  });
+
+  // The migration guarantee. Both sides run through the same canonicalSlot, so
+  // absent and an explicit 0 collapse to the same canonical form — no document
+  // authored before `hold` existed changes its mode, and a slider dragged back
+  // to 0 returns to the preset rather than sticking on Custom.
+  it('hold 0 — absent or explicit — HOLDS the mode (no document rewritten by #187)', () => {
+    const { binding } = STARTER_CHIPS.find((c) => c.id === 'alternate-xo').build(SEMANTIC_HOST);
+    expect(modeForMotif(binding, SEMANTIC_HOST)).toBe('alternate-xo'); // absent
+    binding.chain[1].slots[0].hold = 0;
+    expect(modeForMotif(binding, SEMANTIC_HOST)).toBe('alternate-xo'); // explicit 0
+    binding.chain[1].slots[0].hold = undefined; // what the card writes to clear
+    expect(modeForMotif(binding, SEMANTIC_HOST)).toBe('alternate-xo');
+  });
 });
 
 describe('modeForMotif — ZONED identity is the Zone skeleton (Vine; ADR 0008)', () => {

@@ -254,11 +254,20 @@ The values are stored relative to `root`, so `placementMatrix`'s trailing
 the reserve is computed in:
 
 ```jsonc
+// slice100, as actually committed by #201 — measured, not illustrative.
 "viewRadius": 64.56422693721346,
 "root": { "x": 55.82, "y": 84.38, "angle": 0 },
-"footprintCenter": { "x": 0.0, "y": -32.28 },   // MEC centre MINUS root
-"footprintRadius": 32.28                        // MEC radius
+"footprintCenter": { "x": 0, "y": -28.754999999999995 },  // MEC centre MINUS root
+"footprintRadius": 49.096837219926904                     // MEC radius
 ```
+
+> ⚠️ **An earlier draft of this block carried `fc.y = −32.28` / `fr = 32.28`.**
+> Those are just `viewRadius / 2` — the write-up pass assumed the 4.00× ceiling
+> case instead of measuring. `slice100` is a wide staircase at `|fc|/fr = 0.586`,
+> nowhere near the ceiling. The wrong numbers also reached ticket #201's body.
+> **Do not sanity-check a solve against them.** Real values above, verified
+> against the committed glyph record; `scripts/measureGlyphFootprints.mjs` is the
+> authority for any other glyph.
 
 **The 4 hand-authored ones** are literal objects in `glyphs.js` and get the same
 two fields written by hand, each with the same style of measurement comment the

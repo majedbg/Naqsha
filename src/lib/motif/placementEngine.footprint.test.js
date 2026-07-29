@@ -704,6 +704,34 @@ describe('the HARD tier takes max(R_root, R_tight) — decision 5-rev', () => {
       expect(tightCell.radius).toBeGreaterThanOrEqual(rootCell.radius);
       if (tightCell.radius > rootCell.radius) tightEverWins += 1;
 
+      // ⚠️ THE NEW DEPENDENCY 5-rev CREATES, and a DATA FINDING it exposes.
+      //
+      // Before 5-rev the tight arm never rested on the root certificate; now,
+      // whenever the root bound wins, containment rests entirely on
+      // `viewRadius ≥ max|p − root|` — a MEASURED field, recomputed for
+      // `footprintCenter`/`footprintRadius` by `glyphFootprint.test.js` but never
+      // for `viewRadius` itself. Measured here: SIX of the 62 understate their
+      // own reach at `flattenPathD` tol 0.05, worst `slice85` at 5.3e-4 relative,
+      // so their ink crosses the cell wall by a fraction of a thousandth.
+      //
+      // That is PRE-EXISTING DATA SLACK, not a consequence of this change — the
+      // root arm has always reserved `packedRadius` and drawn ink out to
+      // `reach × packedRadius`. So the invariant asserted is the honest one:
+      // taking the root bound never puts ink further out than the root LAW
+      // already does, and the absolute slack stays under a thousandth of the
+      // container so it cannot silently grow.
+      const outside = (pl) => {
+        let worst = 0;
+        for (const q of inkPoints(pl, glyph)) {
+          const over = Math.hypot(q.x - 500, q.y - 500) - HOST;
+          if (over > worst) worst = over;
+        }
+        return worst;
+      };
+      const tightOut = outside(tightCell);
+      expect(tightOut).toBeLessThanOrEqual(outside(rootCell) + 1e-9);
+      expect(tightOut).toBeLessThan(HOST * 1e-3);
+
       const edge = (footprint) =>
         resolvePlacements(
           [anchor('e', 500, 30)],

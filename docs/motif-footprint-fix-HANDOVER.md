@@ -6,9 +6,14 @@ no PR, `main` untouched.** Suite green at **7349 passed / 54 skipped / 535 files
 
 ---
 
-## 🔴 BLOCKING — decision 5 is wrong, and it needs Majed
+## ✅ RULED AND BUILT — decision 5 is wrong, and Majed reversed it
 
-**Do not build #207 (turn it on) until this is ruled.**
+**Ruled 2026-07-29 (option b) and BUILT in `2aa964c`.** The hard tier takes
+`max(R_root, R_tight)` on both channels; the neighbour term is untouched.
+`slice100` in a cell is back to `1.000×` bit-identically, 0 of 62 shrink, and a
+jittered `slice100` measures `6.14 → 14.81` with the tight bound winning. See
+`docs/motif-footprint-fix-decisions.md` §7z rows `5-rev` and `5-rev-built`. The
+section below is kept verbatim as the record of what was found.
 
 Decision 5 restated `hostRadius` and boundary containment against the tight disc,
 justified as *"the same guarantee with less waste — glyphs inside cells get up to
@@ -52,7 +57,13 @@ running amendment log.
 
 ---
 
-## 🔴 A real bug in `5f7a640`, currently latent
+## ✅ FIXED in `2aa964c` — a real bug in `5f7a640`, then latent
+
+The composition was derived from `placementMatrix`'s compose order, not guessed:
+the reserve offset is `R(θ−φ)·f̂c`, and `R(θ+φ)·(−f̂c.x, f̂c.y)` when flipped, with
+`φ = root.angle`. `φ = 0` short-circuits, so no shipped glyph moved; the
+regression tests use synthetic glyphs. §7z row `7g` has the derivation and the
+before/after numbers. The description below is kept verbatim.
 
 `placementEngine.js:759` computes the reserve offset as `u = Rot(θ)·f̂c`, but
 `instancing.js:62` applies `R(−root.angle)` **before** the core transform. When a
@@ -129,7 +140,7 @@ Every one was a plausible number that had not been measured. Treat any figure in
 
 ## Suggested order when resuming
 
-1. Rule decision 5 (blocking).
-2. Fix the `root.angle` bug.
+1. ~~Rule decision 5 (blocking).~~ Ruled and built — `2aa964c`.
+2. ~~Fix the `root.angle` bug.~~ Built — `2aa964c`.
 3. #206 including the crash blocker, then #205, #202.
 4. #207 last, against the replaced criterion.

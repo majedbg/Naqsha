@@ -17,21 +17,32 @@ All 62 built-in glyphs, flattened through `flattenPathD` (the same tokenizer
 `glyphBounds.js` uses, so curves contribute their true swept extent).
 `scripts/measureGlyphFootprints.mjs`.
 
-| ratio | median over 62 glyphs |
+| ratio | over 62 glyphs |
 |---|---|
-| **root disc / tight circle** | **3.42** — and exactly **4.00** for all 59 vector built-ins |
-| **tight circle / convex hull** | **1.38** |
-| min-area OBB / convex hull | 1.21 |
-| aspect ratio (min-area OBB) | **1.00** |
-| hull vertices | 39 (max 130), from 171 raw points (max 728) |
+| **root disc / tight circle** | median **3.42**, p75 **4.00**, max **4.00** (min 1.00) |
+| **tight circle / convex hull** | median **1.38** |
+| min-area OBB / convex hull | median 1.21 |
+| aspect ratio (min-area OBB) | median **1.00** |
+| hull vertices | median 39 (max 130), from 171 raw points (max 728) |
 
 Two findings decide most of this document.
 
-**The 4.00 is structural, not a leaf quirk.** Every vector built-in carries
-`root` = bbox bottom-center, so `rootRadius = 2 × tightRadius` for anything
-roughly centred in its box, so the area ratio is exactly 4. §1a of the `hold`
-doc measured this on the leaf; it is the universal case across the whole
-imported library.
+**4.00 is a structural ceiling, and a quarter of the library sits on it.**
+`rootRadius / tightRadius` cannot exceed 2 (triangle inequality), so the area
+ratio cannot exceed 4 — and it *equals* 4 exactly when the root lies **on** its
+own minimal enclosing circle with the farthest point antipodal. The 58 vector
+built-ins root at bbox bottom-center, which puts them at or near that
+configuration by construction. **24 of 62 glyphs are at 4.00 to within 0.005**;
+the whole top quartile is pinned there; the median is 3.42.
+
+> ⚠️ **This corrects an earlier reading.** The first pass reported "exactly 4.00
+> for all 59 vector built-ins", taken off a top-12 table that was **sorted
+> descending by that very ratio** — so it showed the ceiling and was read as the
+> population. Independently re-derived above. Also: there are **58** vector
+> built-ins, not 59; the 62nd is hand-authored `diamond`, which has no `root` and
+> sits at 1.00. No decision moves — decisions 2 and 4 rest on MEC/hull 1.38 and
+> aspect 1.00, decision 5's "2× in radius" was always a ceiling claim, and §3's
+> degeneracy table is independent and reproduces verbatim.
 
 **The glyphs are round.** Median aspect 1.00; only 5 of 62 exceed 2.0× on
 circle-vs-hull (`slice43` 3.00, `diamond` 2.51, `slice42` 2.32, `leaf` 2.23,
@@ -856,6 +867,22 @@ geometric claim rather than a rendering one.
   rather than a crash. Diff the emitted `paths`, `viewRadius` and `root` fields
   and assert they are **unchanged**, byte for byte, before looking at the two
   new keys at all.
+
+---
+
+## 7z. Rulings on the write-up findings (2026-07-29, orchestrator)
+
+§8 below was written by the write-up pass and is kept verbatim as the record of
+what it found. Three of its four items needed a ruling before the build could
+start; the user was unavailable, and all three are **forced by decisions already
+locked** rather than genuine new choices. Ruled here.
+
+| # | Ruling |
+|---|---|
+| 6e | **`placed` receives the OFFSET disc** — resolves 8c. `{x, y}` becomes the tight-disc world centre `P + (R/viewRadius)·Rot(θ)·fc` and `r` becomes `R·fr/viewRadius`, where `R = packedRadius`. Not a choice: keeping obstacles anchor-centred would size tight discs against root-centred ones, which is precisely the mixed model decision 5b rejects, and it would make the whole fix inert — the reserve the *neighbours* see is the only reserve that matters. Decision 6 (`placed` stays a bare `{x, y, r}`, no identity field) is unaffected and still holds. |
+| 1c | **`straddleCheck` is OUT OF SCOPE** — resolves 8b. Verified: nothing outside its own module and test file imports it, so the "warn-only fabrication check" it was built for was never wired up. Decision 1b's mention of it was aspirational; there is no live consumer to keep honest. It gains the offset disc **when someone wires it**, and whoever does that must give it `rotation` + the glyph's `fc`/`fr`, which its current typedef (`straddleCheck.js:9`) cannot carry. Do **not** grow its signature speculatively in this PR. |
+| 1a-fix | **§1's headline is corrected in place** — resolves 8a. See the ⚠️ block in §1. The error was mine (orchestrator), not the write-up pass's; it was caught by re-deriving rather than trusting. No decision moves. |
+| 8d | **Citation drift: fix the ones in this document, leave the shipped code comments alone.** Correcting stale line references inside `placementEngine.js` / `AnchorGhostOverlay.jsx` comments is unrelated churn in files this PR already touches heavily, and it would bury the real diff. Worth its own tidy-up ticket. |
 
 ---
 

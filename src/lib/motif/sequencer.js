@@ -44,6 +44,7 @@ import { partitionZones, applyEnds, ZONE_IDS } from './zones.js';
 
 /**
  * @typedef {{glyphRef?:string, sizeScale?:number, rotationOffset?:number, flip?:boolean,
+ *            side?:number,
  *            rotationRandom?:{range:number, spread:'flat'|'bell'}, weight?:number, rest?:boolean,
  *            hold?:number}} Slot
  *   `hold` (#186) is the per-slot "how much may packing shrink me" weight, a
@@ -51,6 +52,21 @@ import { partitionZones, applyEnds, ZONE_IDS } from './zones.js';
  *   polarity is `1 = NEVER SHRINK` (decision 3) — the original feature request
  *   said the opposite and was reversed mid-grill. There is no inversion layer
  *   anywhere: stored, engine and displayed polarity all agree.
+ *
+ *   `side` (T1) is WHICH SIDE OF THE SPINE this slot sits on — the SIGN applied
+ *   to `orientation.normalOffset`, the positional displacement along
+ *   `anchor.normal`. `+1` / `-1` / `0` (on the spine); anything non-finite reads
+ *   as UNSPECIFIED and the engine's legacy `sideAlternate` 2-cycle runs instead,
+ *   exactly as `flip` behaves.
+ *
+ *   ⚠️ `side` IS NOT `flip`, AND IS DELIBERATELY NOT DERIVED FROM IT (vine plan
+ *   T1). `flip` mirrors the glyph TEMPLATE; `side` picks which side of the host
+ *   line the glyph is DISPLACED to. Deriving one from the other makes
+ *   "alternating sides, same orientation" and "same side, mirrored glyphs" both
+ *   inexpressible — and because a specified slot `flip` REPLACES the legacy
+ *   2-cycle, a 2-slot rinceau sequence stating `flip:false` on both slots would
+ *   have silently killed the alternation it exists to produce. Two fields, two
+ *   `*Specified` gates, no coupling.
  * @typedef {{zone:'apex'|'stem'|'cell', mode?:'cycle'|'random', continuous?:boolean, ends?:'both'|'up'|'down', slots:Slot[]}} Zone
  * FLAT form: `slots` at top level. ZONED form (ADR 0008): a `zones` array (its
  * presence marks the block zoned; the flat `slots`/`mode`/`continuous` fields are
@@ -61,6 +77,7 @@ import { partitionZones, applyEnds, ZONE_IDS } from './zones.js';
  *   zoneId:'apex'|'stem'|'cell'|null,
  *   sizeScale:number, rotationOffset:number, rotationRandomDelta:number,
  *   flip:boolean|undefined, flipSpecified:boolean, hold:number,
+ *   side:number|undefined, sideSpecified:boolean,
  * }} Assignment
  *   `zoneId` (#186) names the Zone the slot was dealt from, `null` in the FLAT
  *   deal and for every Rest. It exists because `slotIndex` is ZONE-LOCAL in the
@@ -96,6 +113,33 @@ function rotationRandomDelta(slot, seed, anchorId) {
 }
 
 /**
+ * A slot's `side` reduced to the SIGN the engine multiplies
+ * `orientation.normalOffset` by (T1).
+ *
+ * THREE STATES, NOT TWO. `-1` and `+1` are the two sides of the spine; `0` is a
+ * third, useful one — a slot that sits ON the line while its neighbours swing off
+ * it (a bud at the inflection point, RESEARCH §2 step 5). Magnitude is NOT read
+ * here: how FAR off the spine a glyph sits is one layer-level distance
+ * (`orientation.normalOffset`, in canvas px), not a per-slot one, so `side: 0.5`
+ * means the same as `side: 1` rather than half the offset.
+ *
+ * ANYTHING NON-FINITE (absent, `null`, a string from a hand-edited document)
+ * returns `undefined` — the UNSPECIFIED signal that makes the engine fall back to
+ * its legacy `sideAlternate` 2-cycle. This is the exact `flip` rule, in the exact
+ * shape, so the two controls stay symmetrical.
+ *
+ * EXPORTED because `modeMatch.js`'s `canonicalSlot` must canonicalize `side` by
+ * the SAME rule the engine reads it by; two copies of a three-way sign reduction
+ * is how a mode column starts saying "Custom" for a slot the engine treats as
+ * default.
+ * @param {*} v @returns {-1|0|1|undefined}
+ */
+export function resolveSlotSide(v) {
+  if (!Number.isFinite(v)) return undefined;
+  return v < 0 ? -1 : v > 0 ? 1 : 0;
+}
+
+/**
  * Turn a resolved Slot into an Assignment, folding in the per-anchor rotation
  * jitter. A Rest yields a placeholder assignment (rest:true, no glyphRef).
  *
@@ -105,10 +149,10 @@ function rotationRandomDelta(slot, seed, anchorId) {
  * NaN radius would leak silently into every placement. Defaulting here — rather
  * than at the read site — keeps the guarantee at one site instead of two.
  *
- * A REST NEUTRALISES EVERYTHING: `hold: 0` and `zoneId: null` join the existing
- * `sizeScale: 1` / `rotationOffset: 0` / `flip: undefined`. A Rest emits no
- * placement at all, so it has no size to hold and no glyph for the overlay to
- * map back to a zone.
+ * A REST NEUTRALISES EVERYTHING: `hold: 0`, `zoneId: null` and `side: undefined`
+ * join the existing `sizeScale: 1` / `rotationOffset: 0` / `flip: undefined`. A
+ * Rest emits no placement at all, so it has no size to hold, no side of the spine
+ * to sit on and no glyph for the overlay to map back to a zone.
  *
  * @param {Slot} slot
  * @param {number} slotIndex
@@ -131,10 +175,16 @@ function makeAssignment(slot, slotIndex, seed, anchorId, zoneId = null) {
       rotationRandomDelta: 0,
       flip: undefined,
       flipSpecified: false,
+      side: undefined,
+      sideSpecified: false,
       hold: 0,
     };
   }
   const flipSpecified = slot != null && slot.flip !== undefined;
+  // `side` is resolved (not merely presence-tested) because a non-finite value is
+  // UNSPECIFIED, not "side 0" — `resolveSlotSide` owns that reduction, and
+  // `sideSpecified` is exactly "it survived it".
+  const side = slot != null ? resolveSlotSide(slot.side) : undefined;
   return {
     rest: false,
     glyphRef: slot ? slot.glyphRef : undefined,
@@ -146,6 +196,8 @@ function makeAssignment(slot, slotIndex, seed, anchorId, zoneId = null) {
     rotationRandomDelta: rotationRandomDelta(slot, seed, anchorId),
     flip: flipSpecified ? !!slot.flip : undefined,
     flipSpecified,
+    side,
+    sideSpecified: side !== undefined,
     hold: slot && slot.hold != null ? slot.hold : 0,
   };
 }

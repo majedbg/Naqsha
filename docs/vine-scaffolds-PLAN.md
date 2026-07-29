@@ -1,7 +1,7 @@
 # Vine Motif Scaffolds — Build Plan
 
 **Branch:** `feat/motif-lines-updates` (ported from `vine-motif-scaffolds`) · **Date:** 2026-07-26, updated 2026-07-29
-**Status:** T3 + T4 BUILT on this branch (suite-green); T1/T2/S1 still in flight
+**Status:** T3 + T4 + T1 + S1 BUILT on this branch (suite-green); T2 + magnetscroll still in flight
 **Companion to:** `docs/vine-scaffolds-RESEARCH.md` (candidates, sources, ranking)
 
 RESEARCH names the techniques and ranks them. This doc turns that ranking into
@@ -245,6 +245,29 @@ silently kill side-alternation too. Give the side its own 2-cycle / slot field.
   settable, and all four combinations are covered by tests.
 - **Why first:** benefits every edge host, and T2 is a much smaller ticket once
   it lands.
+
+#### T1 SHIPPED — 2026-07-29
+
+`orientation.normalOffset` (magnitude, **canvas px**, per-role overridable) ×
+`side` (sign). Side has its own layer 2-cycle `placement.sideAlternate` and its
+own per-slot `slot.side` (`+1`/`-1`/`0`, non-finite ⇒ unspecified), gated by its
+own `sideSpecified` flag — no coupling to `flip` anywhere.
+
+Three things worth carrying into T2:
+
+- **Units are canvas px because the rule is.** RESEARCH §2 step 4 writes the
+  displacement as `0.02–0.08·W` — a fraction of the strip WIDTH. A glyph-relative
+  unit would also be unavailable: the drawn radius is not known until the
+  empty-circle solve, and that solve consumes the displaced centre.
+- **The offset folds into the LATERAL JITTER's coefficient**, not a third term in
+  `x`/`y` — same axis (`anchor.normal`), so downstream (packing, `hostRadius`
+  containment, `footprintCenter`, SVG export) sees the move for free, and the
+  zero case takes the legacy expression literally (`-0 + 0` is `+0`, and
+  `lateralDisp` genuinely IS `-0` at default settings).
+- **`sideAlternate` indexes the GLOBAL survivor index**, while the sequencer's
+  cycle counter restarts per `meta.pathIndex`. On a 1-path rinceau spine they
+  coincide; on a multi-path host only the slot route gives per-path x-o-x-o.
+  Identical to `flip`'s existing limitation.
 
 ### T2 — Rinceau spine pattern · **low · EDGE host · the tracer bullet**
 The serpentine spine from RESEARCH §2. A single open path — no junctions — so it

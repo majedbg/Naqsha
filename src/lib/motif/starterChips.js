@@ -42,7 +42,7 @@ import { rolesForHost, defaultRolesFor } from './hostRoles.js';
 
 /**
  * @typedef {{glyphRef?:string, sizeScale?:number, rotationOffset?:number,
- *   flip?:boolean, rotationRandom?:{range:number, spread:'flat'|'bell'},
+ *   flip?:boolean, side?:number, rotationRandom?:{range:number, spread:'flat'|'bell'},
  *   weight?:number, rest?:boolean}} Slot
  * @typedef {{id:string, label:string, build:(patternType:string) =>
  *   {glyphRef:string, anchorMode:'semantic'|'edge', binding:{chain:Array<object>, placement:object}}}} StarterChip

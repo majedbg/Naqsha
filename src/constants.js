@@ -66,6 +66,7 @@ export const PATTERN_TYPES = [
   { id: 'circlepacking', label: 'Circle Packing' },
   { id: 'dendrite', label: 'Dendrite' },
   { id: 'branch', label: 'Branch' },
+  { id: 'rinceau', label: 'Rinceau' },
 ];
 
 // Absolute DOCUMENT layer bound — the hard backstop every layer creator
@@ -429,6 +430,31 @@ export const DEFAULT_PARAMS = {
     stickiness: 0.8,
     nodeSpacing: 6,
     strokeWeight: 0.7,
+    symmetry: 1,
+    startAngle: 0,
+    offsetX: 0,
+    offsetY: 0,
+  },
+  // Rinceau — the running-scroll border. `amplitude`, `rowSpread` and
+  // `stripOffset` are FRACTIONS of the cross-axis canvas extent (canvasH for a
+  // horizontal strip, canvasW for a vertical one). amplitude 0.045 at 5 scrolls
+  // puts the wave height at roughly half the wavelength, which is what makes the
+  // spine read as an ornamental scroll rather than a coiled spring — see the
+  // Rinceau.js header. `jitter: 0` keeps the default a pure function of its params.
+  rinceau: {
+    waveform: 'scroll',
+    orientation: 'horizontal',
+    waveCount: 5,
+    amplitude: 0.045,
+    phase: 0,
+    tension: 0.85,
+    rows: 3,
+    rowSpread: 0.62,
+    rowPhase: 180,
+    stripOffset: 0,
+    jitter: 0,
+    margin: 60,
+    strokeWeight: 0.8,
     symmetry: 1,
     startAngle: 0,
     offsetX: 0,
@@ -988,6 +1014,34 @@ export const PATTERN_PARAM_DEFS = {
     START_ANGLE_PARAM,
     OFFSET_PAD_PARAM,
   ],
+  // Rinceau (running scroll). Every fractional knob below is a fraction of the
+  // CROSS-AXIS canvas extent — canvasH for a horizontal strip, canvasW for a
+  // vertical one. `tension` only bites on the scroll waveform (the sine has no
+  // Bézier handles), so it is showIf-gated the way girih gates bandWidth.
+  rinceau: [
+    { key: 'waveform', label: 'Waveform', type: 'select', options: [
+      { value: 'scroll', label: 'Scroll Modules' },
+      { value: 'sine', label: 'Sine' },
+    ], tooltip: 'Bézier S-modules (the ornamental running scroll) vs a pure sine' },
+    { key: 'orientation', label: 'Strip Axis', type: 'select', options: [
+      { value: 'horizontal', label: 'Horizontal' },
+      { value: 'vertical', label: 'Vertical' },
+    ], tooltip: 'Which way the border band runs across the sheet' },
+    { key: 'waveCount', label: 'Scrolls', min: 1, max: 16, step: 1, tooltip: 'Full undulations along the strip — the repeat count' },
+    { key: 'amplitude', label: 'Amplitude', min: 0.01, max: 0.3, step: 0.005, tooltip: 'Wave height, as a fraction of the sheet across the strip. Keep it near half the wavelength or the scroll coils up.' },
+    { key: 'phase', label: 'Phase', type: 'dial', wrap: true, min: 0, max: 360, step: 1, tooltip: 'Slides the scroll along the strip without moving its ends' },
+    { key: 'tension', label: 'Scroll Tension', min: 0.05, max: 1, step: 0.05, showIf: (p) => (p.waveform ?? 'scroll') !== 'sine', tooltip: 'Bézier handle length — low = pinched zigzag, high = flat crests with steep risers' },
+    { key: 'rows', label: 'Strip Rows', min: 1, max: 8, step: 1, tooltip: 'Parallel border strips — each is its own open spine' },
+    { key: 'rowSpread', label: 'Row Spread', min: 0, max: 1, step: 0.01, showIf: (p) => (p.rows ?? 1) > 1, tooltip: 'How far apart the rows sit, as a fraction of the strip width' },
+    { key: 'rowPhase', label: 'Row Phase Step', type: 'dial', wrap: true, min: 0, max: 360, step: 1, showIf: (p) => (p.rows ?? 1) > 1, tooltip: 'Phase added per row — 180° braids adjacent strips against each other' },
+    { key: 'stripOffset', label: 'Strip Position', min: -0.5, max: 0.5, step: 0.01, tooltip: 'Shifts the whole band across the sheet, as a fraction of the strip width' },
+    { key: 'jitter', label: 'Hand Wobble', min: 0, max: 1, step: 0.05, tooltip: 'Seeded organic drift — 0 = drafted, higher = drawn by hand' },
+    { key: 'margin', label: 'End Inset', min: 0, max: 200, step: 5, tooltip: 'Pulls the spine ends back from the canvas edge' },
+    { key: 'strokeWeight', label: 'Stroke Weight', min: 0.3, max: 3, step: 0.1, tooltip: 'Line thickness' },
+    SYMMETRY_PARAM,
+    START_ANGLE_PARAM,
+    OFFSET_PAD_PARAM,
+  ],
 };
 
 export const DEFAULT_COLORS = ['#00c9b1', '#ff6b6b', '#4ecdc4', '#45b7d1', '#f7dc6f', '#bb8fce'];
@@ -1071,6 +1125,12 @@ export const PARAM_GROUP_MAP = {
   // knobs (render mode / capture probability / branch spacing) are variation.
   seedMode: 'structure',
   stickiness: 'variation', nodeSpacing: 'variation',
+  // Rinceau: the spine's skeleton (waveform / axis / row count) is structural;
+  // where the band SITS is scale; the character knobs are variation. waveCount,
+  // amplitude, margin, rows and jitter are already mapped above.
+  waveform: 'structure', orientation: 'structure',
+  rowSpread: 'scale', stripOffset: 'scale',
+  phase: 'variation', rowPhase: 'variation', tension: 'variation',
 
   // Scale — size, extent, radii, lengths
   scale: 'scale', scaleMode: 'scale',
@@ -1197,6 +1257,10 @@ export const PATTERN_TAXONOMY = {
   // ── Waves & Interference ─────────────────────────────────────────────────
   wave:       { family: 'W', geom: 0, form: 'wave', det: 'deterministic', mark: 'line', sym: true, blurb: 'Stacked, interfering sine waves.' },
   moire:      { family: 'W', geom: 0, form: 'wave', det: 'deterministic', mark: 'line', sym: false, pickerHidden: true, blurb: 'Two-surface interference fringes (added by switching a layer).' },
+  // `det: 'deterministic'` is the VISUAL classification (a drafted, symmetric
+  // border), matching girih — whose `irregularity` likewise consumes the seed.
+  // Seed-usage lives in patterns/index.js SEEDLESS_PATTERN_IDS, not here.
+  rinceau:    { family: 'W', geom: 0, form: 'wave', det: 'deterministic', mark: 'line', sym: true, blurb: 'Running-scroll border — the serpentine rinceau spine.' },
 
   // ── Lattices & Tilings ───────────────────────────────────────────────────
   grid:       { family: 'T', geom: 0, form: 'grid', det: 'deterministic', mark: 'line', sym: true, blurb: 'Lattice of eased horizontal / vertical lines.' },
@@ -1240,6 +1304,6 @@ export const PATTERN_SYMBOLS = {
   grid: 'Gr', modulegrid: 'Mg', girih: 'Gi', recursive: 'Re',
   topographic: 'To', radialetch: 'Ra', flowfield: 'Ff', flowhatch: 'Fh',
   grainfield: 'Gn', voronoi: 'Vo', circlepacking: 'Cp', diffgrowth: 'Dg',
-  dendrite: 'De', branch: 'Bn',
+  dendrite: 'De', branch: 'Bn', rinceau: 'Ri',
   turing: 'Tu', lissajous: 'Ls', chladni: 'Ch', truchet: 'Tr', hilbert: 'Hi',
 };

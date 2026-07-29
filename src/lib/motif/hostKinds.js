@@ -140,6 +140,16 @@ export const EDGE_MOTIF_HOSTS = Object.freeze(
     // hostCapability.js, which rolesForHost consults — an unavailable host emits
     // no roles at all. That is where every capability conditional belongs.
     'chladni',
+    // ── T2 (docs/vine-scaffolds-PLAN.md) ─────────────────────────────────────
+    // Rinceau — the running-scroll spine, built expressly to be ridden. Verified
+    // against BOTH membership conditions in the module header, in the source:
+    //   (1) generate() emits ONE beginShape/vertex/endShape run per strip row
+    //       with NO CLOSE, so every row captures as an OPEN polyline and a vine
+    //       rides it root→tip (Rinceau.js drawBase);
+    //   (2) it calls ctx.randomSeed(seed) + ctx.noiseSeed(seed) as its first two
+    //       statements, so the capture probe cannot shift the painted output.
+    //       The seed is read only by the `jitter` param, which defaults to 0.
+    'rinceau',
     // DELIBERATELY ABSENT — do not add by reflex:
     //   truchet — emits CELLS as well as edges. The probe is a single boolean
     //     (record the draw stream OR read the stash, never both), so listing it

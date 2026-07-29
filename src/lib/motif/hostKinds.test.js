@@ -202,8 +202,9 @@ describe('hostKinds', () => {
       ]) {
         expect(EDGE_MOTIF_HOSTS.has(type), `lost edge host "${type}"`).toBe(true);
       }
-      // …and adds nothing beyond the three of #144 plus chladni (#145).
-      expect(EDGE_MOTIF_HOSTS.size).toBe(11);
+      // …and adds nothing beyond the three of #144, chladni (#145) and the
+      // rinceau running-scroll spine (T2, docs/vine-scaffolds-PLAN.md).
+      expect(EDGE_MOTIF_HOSTS.size).toBe(12);
     });
   });
 

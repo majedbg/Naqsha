@@ -33,6 +33,7 @@ import Moire from './Moire';
 import CirclePacking from './CirclePacking';
 import Dendrite from './Dendrite';
 import Branch from './Branch';
+import Rinceau from './Rinceau';
 import MotifPattern from '../motif/MotifPattern';
 
 export const PATTERN_CLASSES = {
@@ -59,6 +60,7 @@ export const PATTERN_CLASSES = {
   circlepacking: CirclePacking,
   dendrite: Dendrite,
   branch: Branch,
+  rinceau: Rinceau,
   motif: MotifPattern,
 };
 

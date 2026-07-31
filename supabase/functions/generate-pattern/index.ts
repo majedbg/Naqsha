@@ -1,12 +1,43 @@
 // Supabase Edge Function: generate-pattern
-// Proxies pattern generation requests to Claude API.
+// Proxies pattern generation requests to Claude API, and owns the AI-credit
+// deduction and refund for that request (issue #216, adversarial review §B1).
+//
+// The browser can no longer call deduct_ai_credits / add_ai_credits at all —
+// migration 016 revokes EXECUTE from PUBLIC, anon and authenticated. This
+// function resolves the caller from their JWT, prices the request server-side,
+// deducts before generating, and refunds if the generation does not produce a
+// usable pattern. The client learns its remaining balance from the response.
+//
+// ⚠️  Requires migration 20250101000016_privilege_hardening.sql to be applied
+//     FIRST — deduct_ai_credits_for / refund_ai_credits_for are created there.
+//
 // Deploy: supabase functions deploy generate-pattern
 // Set secret: supabase secrets set ANTHROPIC_API_KEY=sk-ant-...
+// SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are injected by the platform.
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.7'
+import {
+  creditCostFor,
+  deductCredits,
+  refundCredits,
+  looksLikePatternSource,
+  INSUFFICIENT_CREDITS,
+} from './credits.ts'
 
 const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY')
+const SUPABASE_URL = Deno.env.get('SUPABASE_URL')
+const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
 const MODEL = 'claude-sonnet-4-20250514'
+
+const CORS_HEADERS = {
+  'Content-Type': 'application/json',
+  'Access-Control-Allow-Origin': '*',
+}
+
+function jsonResponse(status: number, body: Record<string, unknown>) {
+  return new Response(JSON.stringify(body), { status, headers: CORS_HEADERS })
+}
 
 const SYSTEM_PROMPT = `You are an expert generative art pattern developer. You create JavaScript pattern classes for a p5.js-based generative art studio.
 
@@ -106,15 +137,69 @@ serve(async (req) => {
     })
   }
 
+  // Declared out here so the catch-all below can refund a deduction made
+  // inside the try. `deducted` is only ever the server-computed cost.
+  let admin: ReturnType<typeof createClient> | null = null
+  let userId = ''
+  let deducted = 0
+
   try {
+    // Configuration failures happen before any credit is touched.
     if (!ANTHROPIC_API_KEY) {
-      return new Response(JSON.stringify({ error: 'ANTHROPIC_API_KEY not set' }), {
-        status: 500,
-        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
-      })
+      return jsonResponse(500, { error: 'ANTHROPIC_API_KEY not set' })
+    }
+    if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
+      return jsonResponse(500, { error: 'Supabase service credentials not set' })
+    }
+
+    // ── Identify the caller ────────────────────────────────────────────────
+    // verify_jwt only proves *a* JWT was presented, and the anon key is a
+    // valid JWT — so resolve an actual user and refuse if there isn't one.
+    const token = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '').trim()
+    if (!token) {
+      return jsonResponse(401, { error: 'unauthorized', message: 'Sign in required' })
+    }
+
+    admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    })
+
+    const { data: userData, error: userErr } = await admin.auth.getUser(token)
+    userId = userData?.user?.id ?? ''
+    if (userErr || !userId) {
+      return jsonResponse(401, { error: 'unauthorized', message: 'Sign in required' })
     }
 
     const { prompt, mode, existingSource, existingName, chatHistory } = await req.json()
+
+    // ── Charge, at the server's price ──────────────────────────────────────
+    // The request body's `mode` selects a price from a fixed table; it can
+    // never supply an amount.
+    const cost = creditCostFor(mode)
+    const deduction = await deductCredits(admin, userId, cost)
+
+    if (!deduction.ok) {
+      if (deduction.reason === INSUFFICIENT_CREDITS) {
+        // 402 so the client can distinguish this from a generation failure.
+        return jsonResponse(402, {
+          error: INSUFFICIENT_CREDITS,
+          message: 'Insufficient credits',
+        })
+      }
+      console.error('Credit deduction failed:', deduction.message)
+      return jsonResponse(500, { error: 'credit_check_failed', message: 'Failed to check credits' })
+    }
+
+    const creditsRemaining = deduction.remaining
+    deducted = cost
+
+    /** Refund the deduction, then build the error response. */
+    const failWithRefund = async (status: number, body: Record<string, unknown>) => {
+      const refund = await refundCredits(admin!, userId, deducted)
+      if (!refund.ok) console.error('Credit refund failed:', refund.message)
+      deducted = 0 // refunded (or permanently failed) — the catch must not retry
+      return jsonResponse(status, body)
+    }
 
     const messages: Array<{ role: string; content: string }> = []
 
@@ -162,10 +247,7 @@ Generate the complete revised pattern class with updated parameters.`
     if (!response.ok) {
       const errText = await response.text()
       console.error('Claude API error:', errText)
-      return new Response(JSON.stringify({ error: 'AI generation failed' }), {
-        status: 502,
-        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
-      })
+      return await failWithRefund(502, { error: 'AI generation failed' })
     }
 
     const result = await response.json()
@@ -177,19 +259,23 @@ Generate the complete revised pattern class with updated parameters.`
       const jsonMatch = text.match(/\{[\s\S]*\}/)
       parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : JSON.parse(text)
     } catch {
-      return new Response(JSON.stringify({ error: 'Failed to parse AI response', raw: text }), {
-        status: 502,
-        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
-      })
+      return await failWithRefund(502, { error: 'Failed to parse AI response', raw: text })
     }
 
-    return new Response(JSON.stringify(parsed), {
-      headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
-    })
+    // The user paid for a pattern, not for a response. Obvious garbage is
+    // refunded here — the browser's compile gate is the final check.
+    if (!looksLikePatternSource(parsed?.sourceCode)) {
+      return await failWithRefund(502, { error: 'Invalid response from AI' })
+    }
+
+    return jsonResponse(200, { ...parsed, creditsRemaining, creditsUsed: cost })
   } catch (err) {
-    return new Response(JSON.stringify({ error: String(err) }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
-    })
+    // Anything thrown after a successful deduction — network, runtime, a
+    // malformed body — must not leave the user charged.
+    if (admin && userId && deducted > 0) {
+      const refund = await refundCredits(admin, userId, deducted)
+      if (!refund.ok) console.error('Credit refund failed:', refund.message)
+    }
+    return jsonResponse(500, { error: String(err) })
   }
 })

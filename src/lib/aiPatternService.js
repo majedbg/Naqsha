@@ -6,8 +6,39 @@ import { CREDIT_COST_NEW, CREDIT_COST_REVISION } from './creditModel';
 export { CREDIT_COST_NEW, CREDIT_COST_REVISION };
 
 /**
+ * Read the structured error code out of a failed `functions.invoke` result.
+ *
+ * supabase-js signals a non-2xx edge response with a FunctionsHttpError whose
+ * `message` is the generic "Edge Function returned a non-2xx status code" and
+ * whose `context` is the untouched Response. The distinguishing code lives in
+ * the body, so read it there. Relay/network errors carry no `context` at all;
+ * they fall through to null and the caller reports a generic failure.
+ *
+ * @returns {Promise<string|null>}
+ */
+async function readEdgeErrorCode(error) {
+  try {
+    const ctx = error?.context;
+    if (!ctx || typeof ctx.json !== 'function') return null;
+    // Clone where possible so the body stays readable for anything downstream.
+    const source = typeof ctx.clone === 'function' ? ctx.clone() : ctx;
+    const body = await source.json();
+    return typeof body?.error === 'string' ? body.error : null;
+  } catch {
+    return null; // unreadable or already-consumed body — not a code we can use
+  }
+}
+
+/**
  * Generate a new pattern or revise an existing one via Claude API.
  * Calls the Supabase Edge Function 'generate-pattern' which proxies to Claude.
+ *
+ * CREDITS ARE SERVER-SIDE (issue #216, adversarial review §B1). The edge
+ * function resolves the caller, prices the request from `mode`, deducts before
+ * generating, and refunds itself if generation fails — this module no longer
+ * calls deduct_ai_credits / add_ai_credits, and migration 016 revokes the
+ * EXECUTE privilege that made those calls possible. `creditsRemaining` is
+ * whatever the server reports.
  *
  * @param {string} prompt - User's description of the pattern
  * @param {object} options
@@ -20,54 +51,35 @@ export { CREDIT_COST_NEW, CREDIT_COST_REVISION };
 export async function generatePattern(prompt, { mode = 'create', existingSource, existingName, chatHistory = [] } = {}) {
   if (!supabase) throw new Error('Supabase not configured');
 
+  // Local price, used only to record credits_used if the server omits it.
+  // The server's price is authoritative for what is actually charged.
   const cost = mode === 'revise' ? CREDIT_COST_REVISION : CREDIT_COST_NEW;
 
-  // Deduct credits atomically first
-  const { data: remaining, error: creditErr } = await supabase.rpc('deduct_ai_credits', { amount: cost });
-  if (creditErr) throw new Error('Failed to check credits: ' + creditErr.message);
-  if (remaining === -1) throw new Error('Insufficient credits');
-
-  // Helper: refund credits on any subsequent failure.
-  // Uses deduct_ai_credits with a negative amount rather than add_ai_credits,
-  // because add_ai_credits also increments ai_credits_purchased (migration 002)
-  // which would record a phantom purchase on every failed generation.
-  // deduct_ai_credits(-cost) simply restores ai_credits without side effects.
-  // TODO(backend): Add a dedicated refund_ai_credits RPC to remove this subtle
-  // dependency on deduct_ai_credits accepting negative amounts.
-  async function refund() {
-    try {
-      await supabase.rpc('deduct_ai_credits', { amount: -cost });
-    } catch (refundErr) {
-      console.warn('Credit refund failed:', refundErr);
-    }
-  }
-
-  // Call edge function
+  // Call edge function — it charges before it generates.
   const { data, error } = await supabase.functions.invoke('generate-pattern', {
     body: { prompt, mode, existingSource, existingName, chatHistory },
   });
 
   if (error) {
-    await refund();
+    // Same user-facing string as the pre-#216 client-side balance check, which
+    // AIPatternChat renders straight into the chat bubble.
+    if ((await readEdgeErrorCode(error)) === 'insufficient_credits') {
+      throw new Error('Insufficient credits');
+    }
     throw new Error('Generation failed: ' + error.message);
   }
-  if (!data?.sourceCode) {
-    await refund();
-    throw new Error('Invalid response from AI');
-  }
+  if (data?.error === 'insufficient_credits') throw new Error('Insufficient credits');
+  if (!data?.sourceCode) throw new Error('Invalid response from AI');
 
-  // Compile the pattern — throws typed PatternCompileError if invalid
-  let PatternClass;
-  try {
-    PatternClass = compilePatternClass(data.sourceCode);
-  } catch (compileErr) {
-    await refund();
-    throw compileErr;
-  }
+  // Compile the pattern — throws typed PatternCompileError if invalid.
+  // No refund here: the server already refunds every failure it can see, and a
+  // client-side refund would require exactly the mint primitive #216 removed.
+  const PatternClass = compilePatternClass(data.sourceCode);
 
   const patternId = `ai-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 
-  // Resolve the auth'd user id (already authenticated if deduct succeeded)
+  // Resolve the auth'd user id (already authenticated — the edge function
+  // rejects callers it cannot resolve to a user before charging them)
   const { data: authData } = await supabase.auth.getUser();
   const userId = authData?.user?.id;
 
@@ -80,7 +92,7 @@ export async function generatePattern(prompt, { mode = 'create', existingSource,
     source_code: data.sourceCode,
     param_defs: data.paramDefs,
     default_params: data.defaultParams,
-    credits_used: cost,
+    credits_used: data.creditsUsed ?? cost,
   });
   if (saveErr) console.warn('Failed to save pattern record:', saveErr);
 
@@ -93,7 +105,7 @@ export async function generatePattern(prompt, { mode = 'create', existingSource,
     sourceCode: data.sourceCode,
     paramDefs: data.paramDefs,
     defaultParams: data.defaultParams,
-    creditsRemaining: remaining,
+    creditsRemaining: data.creditsRemaining,
   };
 }
 

@@ -35,7 +35,8 @@ export const TIER_LIMITS = {
     aiCredits: false,             // no AI access (gated — costs real money per use)
   },
   // Free tier = full creative product. The only scarce resource is the AI
-  // credit balance (enforced by the deduct_ai_credits RPC). Pro / Studio
+  // credit balance (enforced server-side by the generate-pattern edge
+  // function, which deducts before generating — see #216). Pro / Studio
   // remain in this file as the landing pad for any future paid upgrade.
   free: {
     patterns: null,                  // null = all patterns

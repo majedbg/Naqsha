@@ -166,6 +166,106 @@ grant execute on function public.deduct_ai_credits_for(uuid, int) to service_rol
 grant execute on function public.refund_ai_credits_for(uuid, int) to service_role;
 
 -- ------------------------------------------------------------
+-- 2c. The rest of the advisor-flagged EXECUTE surface (#217).
+--
+-- Supabase's security advisors flagged six more functions as executable by
+-- anon — same grant mechanics as B1: PostgreSQL's default EXECUTE grant to
+-- PUBLIC, which no migration ever revoked. Each is handled by caller
+-- analysis, not a blanket sweep, because two different mistakes are possible
+-- here and only one of them is loud:
+--
+--   * over-revoking a function that an RLS POLICY calls breaks every query
+--     against the guarded table for that role. Policy expressions are
+--     evaluated AS THE QUERYING ROLE, so that role needs EXECUTE — being
+--     SECURITY DEFINER does not exempt the call itself.
+--   * a policy with NO `to` clause applies to EVERY role, anon included.
+--     Multiple permissive policies are OR'd into one qual and Postgres may
+--     evaluate any branch, so `to anon` on a *different* policy does not
+--     spare the unrestricted one from being evaluated for anon.
+--
+-- Granting the org predicates to anon leaks nothing: all three resolve
+-- through auth.uid() / auth.email(), which are NULL for anon, so they can
+-- only ever return false for that role. The grant exists to let the policy
+-- evaluate, not to give anon an answer it did not already have.
+-- ------------------------------------------------------------
+
+-- handle_new_user() — TRIGGER ONLY. Fired by `on_auth_user_created` on
+-- auth.users (001:68-70, function rewritten in 003). PostgreSQL checks
+-- EXECUTE on a trigger function at CREATE TRIGGER time, not each time the
+-- trigger fires, so no client role needs the privilege for signup to work.
+-- No policy references it and no client .rpc() calls it. Revoked outright.
+revoke execute on function public.handle_new_user() from public, anon, authenticated;
+
+-- claim_memberships() — CLIENT RPC, authenticated only.
+-- Called from membershipService.js:28 (`claimOnLogin`), reached only via
+-- claimOnLogin.js:19, which returns early unless the session has
+-- `email_confirmed_at` — so the caller is always a signed-in user. The body
+-- also returns early when auth.uid() / auth.email() is NULL, so anon could
+-- never have accomplished anything with it.
+revoke execute on function public.claim_memberships() from public, anon;
+grant  execute on function public.claim_memberships() to authenticated;
+
+-- is_org_accepting_guests(uuid) — POLICY PREDICATE, anon only.
+-- Referenced by five policies, and every one of them is role-scoped
+-- `to anon`: "submissions anon guest insert" and "submissions storage anon
+-- guest insert" (005:47,64) and the three guest-read policies (007:16,22,35).
+-- A policy with `to anon` is not applied when the current role is
+-- authenticated (which is not a member of anon), so authenticated never
+-- evaluates this predicate and revoking it there changes no query's result.
+revoke execute on function public.is_org_accepting_guests(uuid) from public, authenticated;
+grant  execute on function public.is_org_accepting_guests(uuid) to anon;
+
+-- is_org_member(uuid) — POLICY PREDICATE, both client roles.
+-- Referenced by "org_materials read member" (004:215), "submissions member
+-- insert own" (004:229) and "submissions storage insert owner" (004:282) —
+-- NONE of which carry a `to` clause, so all three apply to anon as well.
+-- anon genuinely queries those tables: it reads org_materials and inserts
+-- into submissions + storage.objects through the guest flow (005, 007).
+-- Revoking from anon would break guest submission outright.
+revoke execute on function public.is_org_member(uuid) from public;
+grant  execute on function public.is_org_member(uuid) to anon, authenticated;
+
+-- is_org_admin(uuid) — POLICY PREDICATE, both client roles.
+-- Referenced by "org_members admin all" (004:196), "org_materials write
+-- admin" (004:218), "submissions admin read org" / "submissions admin update
+-- org" (004:254,257) and "submissions storage read owner or admin"
+-- (004:274) — again none role-scoped. The storage SELECT policy is the
+-- reason anon needs it: the guest upload path touches storage.objects, and
+-- any read-back there evaluates that policy as anon.
+revoke execute on function public.is_org_admin(uuid) from public;
+grant  execute on function public.is_org_admin(uuid) to anon, authenticated;
+
+-- is_platform_admin() — POLICY PREDICATE, both client roles.
+-- Referenced by "orgs read member or platform" (004:179), the two orgs write
+-- policies (004:182,185) and "materials write platform" (004:207) — none
+-- role-scoped, and "materials write platform" is FOR ALL, so its USING clause
+-- is OR'd into anon's SELECT qual on materials too. anon reads both tables
+-- via the 007 guest-read policies.
+revoke execute on function public.is_platform_admin() from public;
+grant  execute on function public.is_platform_admin() to anon, authenticated;
+
+-- service_role is deliberately NOT granted on any of the six. It holds
+-- BYPASSRLS, so policy predicates are never evaluated for it, and nothing
+-- server-side calls these functions directly (the only service-role RPC
+-- callers in this repo are the two credit functions above).
+--
+-- jwt_email_verified() keeps its grants: it is called only from inside
+-- is_platform_admin() and claim_memberships(), both SECURITY DEFINER, so the
+-- nested EXECUTE check runs against the function owner rather than the
+-- client role. No policy and no client calls it directly.
+
+-- ------------------------------------------------------------
+-- 2d. search_path on the last two flagged functions (#217).
+--
+-- Neither is SECURITY DEFINER, so neither is an escalation primitive the way
+-- the B1 three were — but a mutable search_path on a function that runs
+-- inside every write to profiles / designs / collections / user_motifs /
+-- material_evaluations is worth closing anyway, and it clears the advisor.
+-- ------------------------------------------------------------
+alter function public.set_updated_at()      set search_path = public;
+alter function public.jwt_email_verified()  set search_path = public;
+
+-- ------------------------------------------------------------
 -- 3. B2 — column-level UPDATE privileges on `profiles`.
 --
 -- Measured on production (#217): both `anon` AND `authenticated` hold
@@ -252,17 +352,32 @@ drop policy if exists "Public read shared" on public.designs;
 -- ============================================================
 -- Post-apply verification (run in the SQL editor as the owner):
 --
---   -- 1 + 2: search_path pinned, PUBLIC gone from the credit RPCs
+--   -- 1 + 2: search_path pinned, PUBLIC gone from every flagged function
 --   select p.proname, p.prosecdef, p.proconfig,
 --          array(select grantee::text from information_schema.routine_privileges rp
 --                where rp.routine_name = p.proname and rp.privilege_type = 'EXECUTE') as executors
 --   from pg_proc p join pg_namespace n on n.oid = p.pronamespace
 --   where n.nspname = 'public'
 --     and p.proname in ('add_ai_credits','deduct_ai_credits','get_shared_design',
---                       'deduct_ai_credits_for','refund_ai_credits_for');
---   -- expect: proconfig = {search_path=public} on all five;
---   --         no PUBLIC/anon/authenticated executor on any credit RPC;
---   --         anon + authenticated retained on get_shared_design only.
+--                       'deduct_ai_credits_for','refund_ai_credits_for',
+--                       'handle_new_user','claim_memberships','is_org_accepting_guests',
+--                       'is_org_admin','is_org_member','is_platform_admin',
+--                       'set_updated_at','jwt_email_verified');
+--   -- expect: proconfig = {search_path=public} on ALL of them;
+--   --         PUBLIC absent everywhere except jwt_email_verified;
+--   --         credit RPCs: service_role (+ postgres) only;
+--   --         get_shared_design: anon + authenticated + service_role;
+--   --         handle_new_user: postgres only;
+--   --         claim_memberships: authenticated only;
+--   --         is_org_accepting_guests: anon only;
+--   --         is_org_member / is_org_admin / is_platform_admin:
+--   --           anon + authenticated.
+--
+--   -- 1b: no policy predicate lost a role it needs. Smoke-test with the anon
+--   -- key against an org that has submissions_open = true: a guest read of
+--   -- orgs / org_materials / materials must still return the branding row,
+--   -- and a guest submission insert must still succeed. A 42501
+--   -- "permission denied for function is_org_*" means a grant above is short.
 --
 --   -- 3: no privileged column left writable by a client role
 --   select grantee, column_name, privilege_type

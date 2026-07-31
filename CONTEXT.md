@@ -22,6 +22,16 @@ The physical material the machine works on; the canvas work-piece maps to it. Di
 from the Bed (the machine's reachable area, shown as an overlay).
 _Avoid_: Canvas (the on-screen surface), work area
 
+**Panel**:
+A document partition that targets one physical Sheet. Each Panel owns its Sheet stock
+identity — material choice and thickness — and the Layers assigned to that Sheet.
+_Avoid_: Layer group, canvas group
+
+**Canvas Background**:
+A visual aid behind the design, not a description of the Sheet and not fabrication
+content. It belongs to the maker's workspace preferences rather than the document.
+_Avoid_: Sheet color, material color
+
 **Pen Swap**:
 The manual pause on a pen plotter to change pens between operations that use different
 pens. Surfaced in the Run Plan as markers between operation groups and as a flat time

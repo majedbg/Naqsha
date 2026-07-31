@@ -190,10 +190,27 @@ grant execute on function public.refund_ai_credits_for(uuid, int) to service_rol
 -- ------------------------------------------------------------
 
 -- handle_new_user() — TRIGGER ONLY. Fired by `on_auth_user_created` on
--- auth.users (001:68-70, function rewritten in 003). PostgreSQL checks
--- EXECUTE on a trigger function at CREATE TRIGGER time, not each time the
--- trigger fires, so no client role needs the privilege for signup to work.
--- No policy references it and no client .rpc() calls it. Revoked outright.
+-- auth.users (001:68-70, function rewritten in 003). No policy references it
+-- and no client .rpc() calls it.
+--
+-- The grant is inert in BOTH directions, which is what makes this revoke
+-- safe rather than merely defensible:
+--   * It cannot be exercised. The function is `returns trigger`, and
+--     PostgreSQL refuses a direct call to a trigger function outright
+--     ("trigger functions can only be called as triggers", 0A000). PostgREST
+--     does not expose them as RPCs either. So the advisor's "executable by
+--     anon" flag is true of the ACL and false of the reachability — nobody
+--     can call this no matter who holds EXECUTE.
+--   * Removing it cannot break signup. EXECUTE on a trigger function is
+--     checked at CREATE TRIGGER time; the trigger manager does not re-check
+--     it per firing, and the insert into auth.users is performed by GoTrue's
+--     own role, not by anon/authenticated.
+--
+-- Step 1a of the deploy checklist verifies this empirically anyway (create a
+-- user, confirm the profiles row appears) because signup is the one thing in
+-- this migration whose failure would be both silent and total. If it ever
+-- regresses, `grant execute on function public.handle_new_user() to public;`
+-- restores the prior state in one statement with no security cost.
 revoke execute on function public.handle_new_user() from public, anon, authenticated;
 
 -- claim_memberships() — CLIENT RPC, authenticated only.
@@ -372,6 +389,11 @@ drop policy if exists "Public read shared" on public.designs;
 --   --         is_org_accepting_guests: anon only;
 --   --         is_org_member / is_org_admin / is_platform_admin:
 --   --           anon + authenticated.
+--
+--   -- 1a: SIGNUP STILL WORKS. Create a user (dashboard or
+--   -- auth.admin.createUser) and confirm a public.profiles row appears with
+--   -- ai_credits = 24. This is the one revoke whose failure would be silent
+--   -- and total; see the handle_new_user note above for the one-line undo.
 --
 --   -- 1b: no policy predicate lost a role it needs. Smoke-test with the anon
 --   -- key against an org that has submissions_open = true: a guest read of
